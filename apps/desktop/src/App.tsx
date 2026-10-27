@@ -25,6 +25,7 @@ type AppInfo = { name: string; version: string };
 type ProjectInfo = { name: string; path: string };
 
 export default function App() {
+  const hasMacTitlebarOverlay = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${hasMacTitlebarOverlay ? " macos-titlebar-overlay" : ""}`}>
       <aside className="sidebar">
         <div className="brand-row">
           <div className="brand-mark"><Orbit size={17} strokeWidth={1.8} /></div>
