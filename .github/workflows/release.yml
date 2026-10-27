@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }} release assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify release tag matches project version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          workspace_version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+          app_version = json.loads(Path("apps/desktop/src-tauri/tauri.conf.json").read_text())["version"]
+          frontend_version = json.loads(Path("apps/desktop/package.json").read_text())["version"]
+          tag = os.environ["RELEASE_TAG"]
+
+          if len({workspace_version, app_version, frontend_version}) != 1:
+              raise SystemExit(
+                  "Cargo workspace, Tauri app, and frontend package versions must match: "
+                  f"{workspace_version}, {app_version}, {frontend_version}"
+              )
+          if tag != f"v{workspace_version}":
+              raise SystemExit(f"Tag {tag} must match project version v{workspace_version}")
+          PY
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build standalone CLI
+        run: cargo build --locked --release -p caelum-cli --target "${{ matrix.target }}"
+
+      - name: Build desktop app
+        run: pnpm --filter @caelum/desktop tauri build --bundles app,dmg --target "${{ matrix.target }}"
+
+      - name: Package architecture-specific release assets
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: scripts/release/package_macos_assets.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        working-directory: dist
+        run: sha256sum ./* > SHA256SUMS
+
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag \
+              --title "Caelum $RELEASE_TAG" \
+              --generate-notes \
+              --prerelease
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag \
+              --title "Caelum $RELEASE_TAG" \
+              --generate-notes
+          fi
+
+  update-homebrew-tap:
+    name: Open Homebrew tap update
+    needs: publish
+    if: ${{ vars.HOMEBREW_TAP_UPDATES == 'enabled' && !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo ch55secake/caelum \
+            --pattern SHA256SUMS \
+            --dir "$RUNNER_TEMP/release"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ch55secake/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Render Homebrew formula and cask
+        working-directory: homebrew-tap
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/render_caelum_release.py \
+            "${RELEASE_TAG#v}" \
+            "$RUNNER_TEMP/release/SHA256SUMS" \
+            .
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          branch: automation/caelum-${{ github.ref_name }}
+          delete-branch: true
+          commit-message: "caelum: update packages to ${{ github.ref_name }}"
+          title: "caelum: update Homebrew packages to ${{ github.ref_name }}"
+          body: |
+            Update the Caelum CLI formula and desktop cask for the latest release.
+
+            Release: https://github.com/ch55secake/caelum/releases/tag/${{ github.ref_name }}

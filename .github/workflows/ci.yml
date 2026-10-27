@@ -69,7 +69,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @caelum/desktop tauri build --bundles app
+      - run: pnpm --filter @caelum/desktop tauri build --bundles app,dmg
 
   desktop-frontend:
     name: desktop-frontend-build
@@ -85,3 +85,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @caelum/desktop build
+
+  release-package:
+    name: release-package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n scripts/release/package_macos_assets.sh
