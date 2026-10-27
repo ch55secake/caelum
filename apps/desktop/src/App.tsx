@@ -32,6 +32,7 @@ type ApprovalPrompt = {
 };
 
 export default function App() {
+  const hasMacTitlebarOverlay = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -120,7 +121,7 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${hasMacTitlebarOverlay ? " macos-titlebar-overlay" : ""}`}>
       {approvals[0] && (
         <div className="approval-backdrop">
           <section className="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approval-title">
