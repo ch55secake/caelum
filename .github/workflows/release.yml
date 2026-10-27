@@ -2,6 +2,7 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags:
       - "v*"
 
@@ -9,12 +10,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Prepare release tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+      should_release: ${{ steps.tag.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create a tag for a merged version bump
+        id: tag
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: python3 scripts/release/create_version_tag.py
+
   build:
     name: Build ${{ matrix.arch }} release assets
+    needs: prepare
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,10 +50,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Verify release tag matches project version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           python3 - <<'PY'
           import json
@@ -82,7 +106,7 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           ARCH: ${{ matrix.arch }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: scripts/release/package_macos_assets.sh
 
       - uses: actions/upload-artifact@v4
@@ -94,7 +118,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -112,7 +136,7 @@ jobs:
       - name: Publish tagged release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           if [[ "$RELEASE_TAG" == *-* ]]; then
             gh release create "$RELEASE_TAG" dist/* \
@@ -129,16 +153,17 @@ jobs:
 
   update-homebrew-tap:
     name: Open Homebrew tap update
-    needs: publish
-    if: ${{ vars.HOMEBREW_TAP_UPDATES == 'enabled' && !contains(github.ref_name, '-') }}
+    needs: [prepare, publish]
+    if: ${{ vars.HOMEBREW_TAP_UPDATES == 'enabled' && !contains(needs.prepare.outputs.release_tag, '-') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download release checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/release"
-          gh release download "$GITHUB_REF_NAME" \
+          gh release download "$RELEASE_TAG" \
             --repo ch55secake/caelum \
             --pattern SHA256SUMS \
             --dir "$RUNNER_TEMP/release"
@@ -152,7 +177,7 @@ jobs:
       - name: Render Homebrew formula and cask
         working-directory: homebrew-tap
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           python3 scripts/render_caelum_release.py \
             "${RELEASE_TAG#v}" \
@@ -163,11 +188,11 @@ jobs:
         with:
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          branch: automation/caelum-${{ github.ref_name }}
+          branch: automation/caelum-${{ needs.prepare.outputs.release_tag }}
           delete-branch: true
-          commit-message: "caelum: update packages to ${{ github.ref_name }}"
-          title: "caelum: update Homebrew packages to ${{ github.ref_name }}"
+          commit-message: "caelum: update packages to ${{ needs.prepare.outputs.release_tag }}"
+          title: "caelum: update Homebrew packages to ${{ needs.prepare.outputs.release_tag }}"
           body: |
             Update the Caelum CLI formula and desktop cask for the latest release.
 
-            Release: https://github.com/ch55secake/caelum/releases/tag/${{ github.ref_name }}
+            Release: https://github.com/ch55secake/caelum/releases/tag/${{ needs.prepare.outputs.release_tag }}
