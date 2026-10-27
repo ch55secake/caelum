@@ -28,35 +28,44 @@ docs/                     Architecture and development notes
 - Node.js 22 and pnpm 10
 - Tauri 2 platform prerequisites ([Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
 
+Alternatively, use the Nix development shell for the Rust, Node.js, pnpm, and Make toolchain:
+
+```bash
+nix develop
+make help
+```
+
+On Linux, the shell also provides Tauri's native build libraries. On macOS, install the Tauri platform prerequisites on the host.
+
 ## Run locally
 
 ```bash
-pnpm install
-pnpm tauri:dev
+make help
+make dev
 ```
 
-Build the frontend without launching Tauri:
+`make dev` installs the frontend dependencies if needed and starts the Tauri desktop app. The machine must also have the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/) installed.
+
+Build the macOS app bundle, or just the frontend:
 
 ```bash
-pnpm desktop:build
+make app
+make frontend
 ```
 
-Build and run the CLI:
+Build and run the CLI scaffold:
 
 ```bash
-cargo run -p caelum-cli -- --help
-cargo run -p caelum-cli -- .
+make cli
+make cli-run PROJECT=.
 ```
 
-The CLI's `chat` and `run` commands are intentionally not active until provider sessions exist. `sessions` currently reports that persistence is not available.
+The CLI currently validates and reports the project path; `chat` and `run` are not active until provider sessions exist. `sessions` reports that persistence is not available.
 
 ## Verification
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-pnpm --filter @caelum/desktop build
+make check
 ```
 
 ## Roadmap
