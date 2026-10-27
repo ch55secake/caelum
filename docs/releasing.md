@@ -1,19 +1,16 @@
 # Releasing Caelum
 
-Releases are created by pushing a version tag that matches both the Cargo workspace and Tauri app versions. The workflow builds Apple Silicon and Intel macOS assets, signs and notarizes the desktop app, publishes a GitHub release with SHA-256 checksums, and can open a pull request updating the Homebrew tap.
+Releases are created by pushing a version tag that matches the Cargo workspace, Tauri app, and frontend versions. The workflow builds Apple Silicon and Intel macOS assets, code-signs the desktop app, publishes a GitHub release with SHA-256 checksums, and can open a pull request updating the Homebrew tap. Notarization is deferred for now; macOS may warn users when opening the app.
 
 ## One-time GitHub setup
 
-Add these repository Actions secrets before the first release:
+Add these repository Actions secrets before the first signed release:
 
 | Secret | Value |
 | --- | --- |
 | `APPLE_CERTIFICATE` | Base64-encoded Apple **Developer ID Application** `.p12` certificate |
 | `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` certificate |
 | `APPLE_SIGNING_IDENTITY` | Full Developer ID Application identity from `security find-identity -v -p codesigning` |
-| `APPLE_ID` | Apple ID used for notarization |
-| `APPLE_PASSWORD` | App-specific password for that Apple ID |
-| `APPLE_TEAM_ID` | Apple Developer team ID |
 
 Export the Developer ID Application certificate from Keychain Access as a password-protected `.p12`, then encode it without line breaks:
 
@@ -22,7 +19,7 @@ openssl base64 -A -in certificate.p12 -out certificate-base64.txt
 gh secret set APPLE_CERTIFICATE < certificate-base64.txt
 ```
 
-Set the remaining secrets with `gh secret set SECRET_NAME`; enter secret values locally and never commit them. A paid Apple Developer account is required for notarization.
+Set the remaining secrets with `gh secret set SECRET_NAME`; enter secret values locally and never commit them. A paid Apple Developer account and a Developer ID Application certificate are required for code signing. Notarization credentials can be added later; notarizing after publication would require publishing updated DMGs, checksums, and cask metadata.
 
 To have releases automatically open a pull request in `ch55secake/homebrew-tap`, also:
 
@@ -43,7 +40,7 @@ The workflow opens a tap PR; it does not merge it. The formula installs the CLI 
    git push origin v0.1.0
    ```
 
-The tag triggers native arm64 and Intel builds. The resulting release contains a signed/notarized DMG for each architecture, a standalone CLI archive for each architecture, and `SHA256SUMS`. If Homebrew updates are enabled, the workflow opens a separate pull request with the updated formula, cask, and tap README.
+The tag triggers native arm64 and Intel builds. The resulting release contains a signed DMG for each architecture (not notarized), a standalone CLI archive for each architecture, and `SHA256SUMS`. If Homebrew updates are enabled, the workflow opens a separate pull request with the updated formula, cask, and tap README.
 
 ## Install
 
