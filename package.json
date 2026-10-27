@@ -1,0 +1,14 @@
+{
+  "name": "caelum",
+  "private": true,
+  "packageManager": "pnpm@10.12.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "desktop:dev": "pnpm --filter @caelum/desktop dev",
+    "desktop:build": "pnpm --filter @caelum/desktop build",
+    "tauri:dev": "pnpm --filter @caelum/desktop tauri dev",
+    "tauri:build": "pnpm --filter @caelum/desktop tauri build"
+  }
+}

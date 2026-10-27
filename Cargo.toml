@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/caelum-core",
+  "crates/caelum-protocol",
+  "apps/cli",
+  "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

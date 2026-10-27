@@ -1,0 +1,9 @@
+[package]
+name = "caelum-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+caelum-protocol = { path = "../caelum-protocol" }
+thiserror.workspace = true

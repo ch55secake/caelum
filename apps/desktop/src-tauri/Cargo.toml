@@ -1,0 +1,20 @@
+[package]
+name = "caelum-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Caelum desktop application"
+build = "build.rs"
+
+[lib]
+name = "caelum_desktop"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+caelum-core = { path = "../../../crates/caelum-core" }
+caelum-protocol = { path = "../../../crates/caelum-protocol" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"

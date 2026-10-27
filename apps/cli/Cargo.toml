@@ -1,0 +1,13 @@
+[package]
+name = "caelum-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "caelum"
+path = "src/main.rs"
+
+[dependencies]
+caelum-core = { path = "../../crates/caelum-core" }
+clap.workspace = true
