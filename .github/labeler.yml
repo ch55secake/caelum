@@ -1,20 +1,20 @@
-"area: core":
+core:
   - changed-files:
       - any-glob-to-any-file: "crates/caelum-core/**"
 
-"area: protocol":
+protocol:
   - changed-files:
       - any-glob-to-any-file: "crates/caelum-protocol/**"
 
-"area: cli":
+cli:
   - changed-files:
       - any-glob-to-any-file: "apps/cli/**"
 
-"area: desktop":
+desktop:
   - changed-files:
       - any-glob-to-any-file: "apps/desktop/**"
 
-"area: build":
+build:
   - changed-files:
       - any-glob-to-any-file:
           - "Cargo.toml"
@@ -23,7 +23,7 @@
           - "pnpm-workspace.yaml"
           - "pnpm-lock.yaml"
 
-"area: ci":
+ci:
   - changed-files:
       - any-glob-to-any-file:
           - ".github/workflows/**"
@@ -31,32 +31,25 @@
           - ".github/dependabot.yml"
           - ".github/PULL_REQUEST_TEMPLATE.md"
 
-"area: release":
+release:
   - changed-files:
       - any-glob-to-any-file:
           - "scripts/release/**"
           - "docs/distribution/**"
 
-"area: docs":
+docs:
   - changed-files:
       - any-glob-to-any-file:
           - "README.md"
           - "docs/**"
           - ".github/PULL_REQUEST_TEMPLATE.md"
 
-"area: security":
+security:
   - changed-files:
       - any-glob-to-any-file:
           - "docs/security/**"
           - "crates/caelum-core/src/permissions/**"
           - "apps/desktop/src-tauri/capabilities/**"
-
-documentation:
-  - changed-files:
-      - any-glob-to-any-file:
-          - "README.md"
-          - "docs/**"
-          - ".github/PULL_REQUEST_TEMPLATE.md"
 
 dependencies:
   - changed-files:
