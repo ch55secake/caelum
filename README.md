@@ -70,7 +70,7 @@ make check
 
 ## Releases
 
-See [docs/releasing.md](docs/releasing.md) for signed macOS release and Homebrew setup instructions.
+See [docs/releasing.md](docs/releasing.md) for macOS release and Homebrew setup instructions.
 
 Caelum is licensed under the [MIT License](LICENSE).
 

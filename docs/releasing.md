@@ -1,27 +1,12 @@
 # Releasing Caelum
 
-Releases are created by pushing a version tag that matches the Cargo workspace, Tauri app, and frontend versions. The workflow builds Apple Silicon and Intel macOS assets, code-signs the desktop app, publishes a GitHub release with SHA-256 checksums, and can open a pull request updating the Homebrew tap. Notarization is deferred for now; macOS may warn users when opening the app.
+Releases are created by pushing a version tag that matches the Cargo workspace, Tauri app, and frontend versions. The workflow builds Apple Silicon and Intel macOS app DMGs and standalone CLI archives, publishes a GitHub release with SHA-256 checksums, and can open a pull request updating the Homebrew tap.
 
-## One-time GitHub setup
+The app builds are currently unsigned and not notarized. macOS may warn users or block opening the downloaded app. No Apple Developer account or signing secrets are needed for these builds.
 
-Add these repository Actions secrets before the first signed release:
+## Optional Homebrew setup
 
-| Secret | Value |
-| --- | --- |
-| `APPLE_CERTIFICATE` | Base64-encoded Apple **Developer ID Application** `.p12` certificate |
-| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` certificate |
-| `APPLE_SIGNING_IDENTITY` | Full Developer ID Application identity from `security find-identity -v -p codesigning` |
-
-Export the Developer ID Application certificate from Keychain Access as a password-protected `.p12`, then encode it without line breaks:
-
-```sh
-openssl base64 -A -in certificate.p12 -out certificate-base64.txt
-gh secret set APPLE_CERTIFICATE < certificate-base64.txt
-```
-
-Set the remaining secrets with `gh secret set SECRET_NAME`; enter secret values locally and never commit them. A paid Apple Developer account and a Developer ID Application certificate are required for code signing. Notarization credentials can be added later; notarizing after publication would require publishing updated DMGs, checksums, and cask metadata.
-
-To have releases automatically open a pull request in `ch55secake/homebrew-tap`, also:
+To have releases automatically open a pull request in `ch55secake/homebrew-tap`:
 
 1. Merge the [tap-side Caelum packaging PR](https://github.com/ch55secake/homebrew-tap/pull/1). The release workflow checks out the tap's default branch and runs its renderer.
 2. Create a fine-grained GitHub token with **Contents: read and write** and **Pull requests: read and write** access to `ch55secake/homebrew-tap`.
@@ -40,7 +25,7 @@ The workflow opens a tap PR; it does not merge it. The formula installs the CLI 
    git push origin v0.1.0
    ```
 
-The tag triggers native arm64 and Intel builds. The resulting release contains a DMG containing the Developer ID-signed app for each architecture (not notarized), a standalone CLI archive for each architecture, and `SHA256SUMS`. If Homebrew updates are enabled, the workflow opens a separate pull request with the updated formula, cask, and tap README.
+The tag triggers native arm64 and Intel builds. The resulting release contains an unsigned DMG for each architecture, a standalone CLI archive for each architecture, and `SHA256SUMS`. If Homebrew updates are enabled, the workflow opens a separate pull request with the updated formula, cask, and tap README.
 
 ## Install
 

@@ -53,23 +53,6 @@ jobs:
               raise SystemExit(f"Tag {tag} must match project version v{workspace_version}")
           PY
 
-      - name: Require code-signing credentials
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          missing=()
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY; do
-            if [[ -z "${!name}" ]]; then
-              missing+=("$name")
-            fi
-          done
-          if (( ${#missing[@]} > 0 )); then
-            printf 'Missing required GitHub Actions secrets: %s\n' "${missing[*]}" >&2
-            exit 1
-          fi
-
       - uses: pnpm/action-setup@v4
         with:
           version: 10.12.1
@@ -92,12 +75,8 @@ jobs:
       - name: Build standalone CLI
         run: cargo build --locked --release -p caelum-cli --target "${{ matrix.target }}"
 
-      - name: Build and sign desktop app
+      - name: Build desktop app
         run: pnpm --filter @caelum/desktop tauri build --bundles app,dmg --target "${{ matrix.target }}"
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
       - name: Package architecture-specific release assets
         env:
