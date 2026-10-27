@@ -1,0 +1,70 @@
+core:
+  - changed-files:
+      - any-glob-to-any-file: "crates/caelum-core/**"
+
+protocol:
+  - changed-files:
+      - any-glob-to-any-file: "crates/caelum-protocol/**"
+
+cli:
+  - changed-files:
+      - any-glob-to-any-file: "apps/cli/**"
+
+desktop:
+  - changed-files:
+      - any-glob-to-any-file: "apps/desktop/**"
+
+build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "Cargo.toml"
+          - "Cargo.lock"
+          - "package.json"
+          - "pnpm-workspace.yaml"
+          - "pnpm-lock.yaml"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/labeler.yml"
+          - ".github/dependabot.yml"
+          - ".github/PULL_REQUEST_TEMPLATE.md"
+
+release:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "scripts/release/**"
+          - "docs/distribution/**"
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "README.md"
+          - "docs/**"
+          - ".github/PULL_REQUEST_TEMPLATE.md"
+
+security:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/security/**"
+          - "crates/caelum-core/src/permissions/**"
+          - "apps/desktop/src-tauri/capabilities/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/Cargo.toml"
+          - "Cargo.lock"
+          - "**/package.json"
+          - "pnpm-lock.yaml"
+          - "pnpm-workspace.yaml"
+
+bug:
+  - head-branch: ["^fix/", "^bugfix/"]
+
+enhancement:
+  - head-branch: ["^feat/", "^feature/"]
+
+maintenance:
+  - head-branch: ["^chore/", "^ci/", "^refactor/"]
