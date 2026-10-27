@@ -26,9 +26,10 @@ Set the remaining secrets with `gh secret set SECRET_NAME`; enter secret values 
 
 To have releases automatically open a pull request in `ch55secake/homebrew-tap`, also:
 
-1. Create a fine-grained GitHub token with **Contents: read and write** and **Pull requests: read and write** access to `ch55secake/homebrew-tap`.
-2. Store it in this repository as `HOMEBREW_TAP_TOKEN`.
-3. Set the Actions repository variable `HOMEBREW_TAP_UPDATES` to `enabled`.
+1. Merge the [tap-side Caelum packaging PR](https://github.com/ch55secake/homebrew-tap/pull/1). The release workflow checks out the tap's default branch and runs its renderer.
+2. Create a fine-grained GitHub token with **Contents: read and write** and **Pull requests: read and write** access to `ch55secake/homebrew-tap`.
+3. Store it in this repository as `HOMEBREW_TAP_TOKEN`.
+4. Set the Actions repository variable `HOMEBREW_TAP_UPDATES` to `enabled`.
 
 The workflow opens a tap PR; it does not merge it. The formula installs the CLI as `caelum`, while the cask installs `Caelum.app` without linking a second executable.
 
