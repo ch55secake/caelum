@@ -1,0 +1,21 @@
+cask "caelum" do
+  arch arm: "aarch64", intel: "x86_64"
+
+  version "$VERSION"
+  sha256 arm:   "$AARCH64_DMG_SHA256",
+         intel: "$X86_64_DMG_SHA256"
+
+  url "https://github.com/ch55secake/caelum/releases/download/v#{version}/Caelum-v#{version}-#{arch}.dmg"
+  name "Caelum"
+  desc "Local-first AI coding workspace"
+  homepage "https://github.com/ch55secake/caelum"
+
+  depends_on :macos
+
+  app "Caelum.app"
+
+  zap trash: [
+    "~/Library/Application Support/dev.caelum.desktop",
+    "~/Library/Preferences/dev.caelum.desktop.plist",
+  ]
+end

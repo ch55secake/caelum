@@ -68,6 +68,12 @@ The CLI currently validates and reports the project path; `chat` and `run` are n
 make check
 ```
 
+## Releases
+
+See [docs/releasing.md](docs/releasing.md) for signed macOS release and Homebrew setup instructions.
+
+Caelum is licensed under the [MIT License](LICENSE).
+
 ## Roadmap
 
 See [docs/roadmap.md](docs/roadmap.md) for milestones and [docs/architecture.md](docs/architecture.md) for current boundaries and planned integrations.
