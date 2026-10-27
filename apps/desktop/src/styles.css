@@ -21,6 +21,7 @@ button { color: inherit; }
 button:focus-visible, textarea:focus-visible { outline: 2px solid #7798d1; outline-offset: 2px; }
 .app-shell { display: flex; width: 100vw; height: 100vh; min-height: 620px; overflow: hidden; background: #111318; }
 .sidebar { display: flex; flex: 0 0 254px; flex-direction: column; padding: 16px 12px 10px; border-right: 1px solid var(--border); background: #14161b; }
+.macos-titlebar-overlay .sidebar { padding-top: 44px; }
 .brand-row { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 4px; margin-bottom: 24px; }
 .brand-mark { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid #33405a; border-radius: 8px; color: #a5b9e6; background: #20283a; }
 .brand-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; }
@@ -59,6 +60,7 @@ kbd { padding: 2px 5px; border: 1px solid #363a45; border-radius: 4px; color: #8
 .profile-card strong { color: #c4c8d2; font-size: 10px; font-weight: 550; }
 .profile-card small { color: #747b89; font-size: 9px; }
 .main-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.macos-titlebar-overlay .main-panel { padding-top: 40px; }
 .topbar { display: flex; height: 49px; flex: 0 0 49px; align-items: center; justify-content: space-between; padding: 0 23px; border-bottom: 1px solid #242730; }
 .breadcrumbs { display: flex; align-items: center; gap: 9px; color: #828896; font-size: 10px; }
 .breadcrumbs strong { color: #d0d3dc; font-weight: 550; }

@@ -17,7 +17,10 @@
         "width": 1440,
         "height": 960,
         "minWidth": 800,
-        "minHeight": 620
+        "minHeight": 620,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "backgroundColor": "#111318"
       }
     ],
     "security": {
