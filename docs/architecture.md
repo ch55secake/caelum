@@ -2,17 +2,19 @@
 
 ## Current structure
 
-- `caelum-core` contains application logic that must remain independent of Tauri and the CLI. Its first feature validates a local path, canonicalizes it, and exposes project metadata.
-- `caelum-protocol` contains serializable types that can cross the Rust/UI boundary without importing desktop framework types.
-- `apps/desktop/src-tauri` is the privileged desktop boundary. It provides typed Tauri commands for app metadata and opening a validated project; folder selection uses Tauri's native dialog plugin.
+- `caelum-core` contains application logic that must remain independent of Tauri and the CLI. It validates project roots, resolves existing paths within the selected project, coordinates one-shot approvals, and owns managed child-process lifecycles.
+- `caelum-protocol` contains serializable types that can cross the Rust/UI boundary without importing desktop framework types, including provider-preserving approval requests.
+- `apps/desktop/src-tauri` is the privileged desktop boundary. It provides typed Tauri commands for app metadata, opening a validated project, and resolving explicit approval prompts; folder selection uses Tauri's native dialog plugin.
 - `apps/desktop/src` is a React UI. It does not access the filesystem directly.
 - `apps/cli` is a separate clap binary and links the same core library.
 
-## Planned core modules
+## Provider integration
 
-Provider adapters, sessions, SQLite storage, Git, terminal/PTY, filesystem access, and permission handling belong in `caelum-core` or focused core submodules. Tauri commands should stay thin and validate inputs before calling core APIs. CLI commands should use those same APIs rather than duplicate behavior.
+Provider adapters, sessions, SQLite storage, Git, terminal/PTY, and filesystem operations belong in `caelum-core` or focused core submodules. Tauri commands should stay thin and validate inputs before calling core APIs. CLI commands should use those same APIs rather than duplicate behavior.
 
 Codex and OpenCode adapters will preserve provider-specific capabilities behind shared session/event abstractions. Their protocol behavior must be verified against official documentation during implementation; no provider protocol is assumed by this foundation.
+
+See [security.md](security.md) for current permission boundaries and process lifecycle guarantees.
 
 ## Security boundaries
 
