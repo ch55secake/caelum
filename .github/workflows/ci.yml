@@ -86,10 +86,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @caelum/desktop build
 
-  release-tools:
-    name: release-tools
+  release-package:
+    name: release-package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s scripts/release/tests
       - run: bash -n scripts/release/package_macos_assets.sh

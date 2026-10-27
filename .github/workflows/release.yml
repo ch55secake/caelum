@@ -160,15 +160,15 @@ jobs:
     if: ${{ vars.HOMEBREW_TAP_UPDATES == 'enabled' && !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          path: caelum
-
       - name: Download release checksums
-        working-directory: caelum
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "$GITHUB_REF_NAME" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo ch55secake/caelum \
+            --pattern SHA256SUMS \
+            --dir "$RUNNER_TEMP/release"
 
       - uses: actions/checkout@v4
         with:
@@ -177,14 +177,14 @@ jobs:
           path: homebrew-tap
 
       - name: Render Homebrew formula and cask
-        working-directory: caelum
+        working-directory: homebrew-tap
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python3 scripts/release/render_homebrew.py \
+          python3 scripts/render_caelum_release.py \
             "${RELEASE_TAG#v}" \
             "$RUNNER_TEMP/release/SHA256SUMS" \
-            "$GITHUB_WORKSPACE/homebrew-tap"
+            .
 
       - uses: peter-evans/create-pull-request@v7
         with:
