@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   rust-format:
-    name: Rust formatting
+    name: rust-format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
       - run: cargo fmt --all -- --check
 
   rust-clippy:
-    name: Rust lint
+    name: rust-lint
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   rust-test:
-    name: Rust tests
+    name: rust-tests
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +43,7 @@ jobs:
       - run: cargo test --workspace
 
   macos-app:
-    name: macOS desktop bundle
+    name: desktop-bundle-build
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +60,7 @@ jobs:
       - run: pnpm --filter @caelum/desktop tauri build --bundles app
 
   desktop-frontend:
-    name: Desktop frontend
+    name: desktop-frontend-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
