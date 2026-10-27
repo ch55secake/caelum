@@ -262,6 +262,7 @@ name = "caelum-core"
 version = "0.1.0"
 dependencies = [
  "caelum-protocol",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -281,6 +282,7 @@ name = "caelum-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

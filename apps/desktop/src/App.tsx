@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   Activity,
   ArrowUp,
@@ -23,6 +24,12 @@ import {
 
 type AppInfo = { name: string; version: string };
 type ProjectInfo = { name: string; path: string };
+type ApprovalPrompt = {
+  provider: string;
+  requestId: string;
+  summary: string;
+  description: string;
+};
 
 export default function App() {
   const hasMacTitlebarOverlay = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
@@ -30,12 +37,48 @@ export default function App() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
+  const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
+  const [isResolvingApproval, setIsResolvingApproval] = useState(false);
 
   useEffect(() => {
     if (!isTauri()) return;
     void invoke<AppInfo>("app_info").then(setAppInfo).catch((reason: unknown) => {
       setError(String(reason));
     });
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let snapshotLoaded = false;
+    let deferredUpdates: ApprovalPrompt[] | undefined;
+
+    void listen<ApprovalPrompt[]>("approval-requests", (event) => {
+      if (snapshotLoaded) setApprovals(event.payload);
+      else deferredUpdates = event.payload;
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((reason: unknown) => {
+      if (!disposed) setError(String(reason));
+    });
+    void invoke<ApprovalPrompt[]>("pending_approvals").then((snapshot) => {
+      if (disposed) return;
+      setApprovals(deferredUpdates ?? snapshot);
+      snapshotLoaded = true;
+    }).catch((reason: unknown) => {
+      if (disposed) return;
+      if (deferredUpdates) setApprovals(deferredUpdates);
+      snapshotLoaded = true;
+      setError(String(reason));
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   async function chooseProject() {
@@ -58,8 +101,45 @@ export default function App() {
     }
   }
 
+  async function resolveApproval(decision: "allowOnce" | "deny") {
+    const request = approvals[0];
+    if (!request || isResolvingApproval) return;
+
+    setIsResolvingApproval(true);
+    setError(null);
+    try {
+      await invoke("resolve_approval", {
+        provider: request.provider,
+        requestId: request.requestId,
+        decision,
+      });
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setIsResolvingApproval(false);
+    }
+  }
+
   return (
     <main className={`app-shell${hasMacTitlebarOverlay ? " macos-titlebar-overlay" : ""}`}>
+      {approvals[0] && (
+        <div className="approval-backdrop">
+          <section className="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+            <span className="card-kicker">{approvals.length > 1 ? `APPROVAL 1 OF ${approvals.length}` : "APPROVAL REQUIRED"}</span>
+            <h2 id="approval-title">{approvals[0].summary}</h2>
+            <p>{approvals[0].description}</p>
+            <small>Requested by {approvals[0].provider}. Approval applies to this request only.</small>
+            <div className="approval-actions">
+              <button className="approval-deny" onClick={() => void resolveApproval("deny")} disabled={isResolvingApproval}>
+                Deny
+              </button>
+              <button className="approval-allow" onClick={() => void resolveApproval("allowOnce")} disabled={isResolvingApproval}>
+                Allow once
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       <aside className="sidebar">
         <div className="brand-row">
           <div className="brand-mark"><Orbit size={17} strokeWidth={1.8} /></div>
