@@ -105,6 +105,16 @@ h1 { margin: 17px 0 8px; color: #ebedf2; font-size: clamp(25px, 3vw, 34px); font
 .prompt-footer button { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 6px; color: #838a97; background: #292c35; }
 .prompt-footer button:disabled { opacity: .6; }
 .bottom-note { margin-top: 10px; overflow: hidden; color: #656b78; font-size: 9px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.approval-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: #08090dbd; backdrop-filter: blur(5px); }
+.approval-dialog { width: min(440px, 100%); padding: 22px; border: 1px solid #3a3f4c; border-radius: 12px; background: #181a21; box-shadow: 0 24px 90px #0009; }
+.approval-dialog h2 { margin: 12px 0 8px; color: #edf0f6; font-size: 18px; font-weight: 580; letter-spacing: -.025em; }
+.approval-dialog p { margin: 0; color: #a7adba; font-size: 12px; line-height: 1.65; }
+.approval-dialog > small { display: block; margin-top: 14px; color: #777e8d; font-size: 10px; }
+.approval-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
+.approval-actions button { min-width: 92px; padding: 8px 12px; border: 1px solid #383c47; border-radius: 7px; font-size: 11px; background: #20232b; cursor: pointer; }
+.approval-actions button:disabled { cursor: wait; opacity: .55; }
+.approval-actions .approval-deny { color: #d5d8df; }
+.approval-actions .approval-allow { border-color: #526d9b; color: #e5ebf7; background: #283752; }
 
 @media (max-width: 980px) {
   .sidebar { flex-basis: 218px; }

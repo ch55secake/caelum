@@ -2,8 +2,9 @@
 
 use std::path::PathBuf;
 
-use caelum_core::projects::Project;
-use caelum_protocol::{AppInfo, ProjectInfo};
+use caelum_core::{approvals::ApprovalBroker, processes::ProcessRegistry, projects::Project};
+use caelum_protocol::{AppInfo, ApprovalDecision, ApprovalPrompt, ProjectInfo};
+use tauri::{Emitter, Manager, State};
 
 #[tauri::command]
 fn app_info() -> AppInfo {
@@ -20,10 +21,53 @@ fn open_project(path: String) -> Result<ProjectInfo, String> {
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn pending_approvals(approvals: State<'_, ApprovalBroker>) -> Vec<ApprovalPrompt> {
+    approvals.pending()
+}
+
+#[tauri::command]
+fn resolve_approval(
+    approvals: State<'_, ApprovalBroker>,
+    provider: String,
+    request_id: String,
+    decision: ApprovalDecision,
+) -> Result<(), String> {
+    approvals
+        .resolve(&provider, &request_id, decision)
+        .map_err(|error| error.to_string())
+}
+
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .manage(ApprovalBroker::default())
+        .manage(ProcessRegistry::default())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![app_info, open_project])
-        .run(tauri::generate_context!())
+        .setup(|app| {
+            let updates = app.state::<ApprovalBroker>().subscribe();
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                while let Ok(prompts) = updates.recv() {
+                    if handle.emit("approval-requests", prompts).is_err() {
+                        break;
+                    }
+                }
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            open_project,
+            pending_approvals,
+            resolve_approval
+        ])
+        .build(tauri::generate_context!())
         .expect("error while running Caelum desktop application");
+
+    app.run(|handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            handle.state::<ApprovalBroker>().shutdown();
+            handle.state::<ProcessRegistry>().shutdown();
+        }
+    });
 }
