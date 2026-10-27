@@ -40,7 +40,7 @@ The workflow opens a tap PR; it does not merge it. The formula installs the CLI 
    git push origin v0.1.0
    ```
 
-The tag triggers native arm64 and Intel builds. The resulting release contains a signed DMG for each architecture (not notarized), a standalone CLI archive for each architecture, and `SHA256SUMS`. If Homebrew updates are enabled, the workflow opens a separate pull request with the updated formula, cask, and tap README.
+The tag triggers native arm64 and Intel builds. The resulting release contains a DMG containing the Developer ID-signed app for each architecture (not notarized), a standalone CLI archive for each architecture, and `SHA256SUMS`. If Homebrew updates are enabled, the workflow opens a separate pull request with the updated formula, cask, and tap README.
 
 ## Install
 
