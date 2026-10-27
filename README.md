@@ -28,6 +28,15 @@ docs/                     Architecture and development notes
 - Node.js 22 and pnpm 10
 - Tauri 2 platform prerequisites ([Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
 
+Alternatively, use the Nix development shell for the Rust, Node.js, pnpm, and Make toolchain:
+
+```bash
+nix develop
+make help
+```
+
+On Linux, the shell also provides Tauri's native build libraries. On macOS, install the Tauri platform prerequisites on the host.
+
 ## Run locally
 
 ```bash
