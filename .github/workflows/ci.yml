@@ -13,7 +13,7 @@ jobs:
     name: rust-format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust formatter
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -24,7 +24,7 @@ jobs:
     name: rust-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust linter
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,7 +42,7 @@ jobs:
     name: rust-tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Install Tauri system dependencies
@@ -58,11 +58,11 @@ jobs:
     name: desktop-bundle-build
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.12.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -75,11 +75,11 @@ jobs:
     name: desktop-frontend-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.12.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -90,5 +90,5 @@ jobs:
     name: release-package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash -n scripts/release/package_macos_assets.sh
