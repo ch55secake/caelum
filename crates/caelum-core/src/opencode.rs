@@ -4,7 +4,7 @@ use std::{
     io::{self, BufRead, BufReader},
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
@@ -60,7 +60,7 @@ struct OpenCodeServer {
     base_url: String,
     client: Client,
     event_client: Client,
-    password: Option<String>,
+    password: String,
     alive: Arc<AtomicBool>,
     session_ids: Mutex<HashSet<String>>,
     pending_permission_ids: Arc<Mutex<HashSet<String>>>,
@@ -307,22 +307,57 @@ impl OpenCodeProvider {
             None => find_opencode_executable()?,
         };
         let port = reserve_local_port()?;
+        let startup_deadline = Instant::now() + SERVER_START_TIMEOUT;
         let port_string = port.to_string();
-        let child = Command::new(&executable)
+        let configured_password = env::var(SERVER_PASSWORD_ENV)
+            .ok()
+            .filter(|password| !password.is_empty());
+        let mut command = Command::new(&executable);
+        command
             .args(["serve", "--hostname", "127.0.0.1", "--port", &port_string])
             .current_dir(project.path())
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(if configured_password.is_some() {
+                Stdio::null()
+            } else {
+                Stdio::piped()
+            })
+            .stderr(Stdio::null());
+        let mut child = command
             .spawn()
             .map_err(|source| OpenCodeError::StartServer {
                 executable: executable.clone(),
                 source,
             })?;
+        let password_receiver = if configured_password.is_none() {
+            child.stdout.take().map(capture_server_password)
+        } else {
+            None
+        };
         let process_id = self.inner.processes.register(child)?;
-        let password = env::var(SERVER_PASSWORD_ENV)
-            .ok()
-            .filter(|password| !password.is_empty());
+        let password = match configured_password {
+            Some(password) => password,
+            None => {
+                let Some(receiver) = password_receiver else {
+                    let _ = self.inner.processes.terminate(process_id);
+                    return Err(OpenCodeError::ServerPasswordUnavailable(
+                        "OpenCode stdout was not available".to_owned(),
+                    ));
+                };
+                let timeout = startup_deadline.saturating_duration_since(Instant::now());
+                match receiver.recv_timeout(timeout) {
+                    Ok(Ok(password)) => password,
+                    Ok(Err(message)) => {
+                        let _ = self.inner.processes.terminate(process_id);
+                        return Err(OpenCodeError::ServerPasswordUnavailable(message));
+                    }
+                    Err(error) => {
+                        let _ = self.inner.processes.terminate(process_id);
+                        return Err(OpenCodeError::ServerPasswordUnavailable(error.to_string()));
+                    }
+                }
+            }
+        };
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(1))
             .timeout(REQUEST_TIMEOUT)
@@ -352,7 +387,6 @@ impl OpenCodeProvider {
         });
 
         let query = [("directory", project.path().to_string_lossy().into_owned())];
-        let deadline = Instant::now() + SERVER_START_TIMEOUT;
         loop {
             let readiness = match server.request_json(Method::GET, "/api/session", &query, None) {
                 Ok(response) if response.get("data").and_then(Value::as_array).is_some() => Ok(()),
@@ -367,7 +401,7 @@ impl OpenCodeProvider {
                     let _ = self.inner.processes.terminate(process_id);
                     return Err(OpenCodeError::AuthenticationRequired);
                 }
-                Err(error) if Instant::now() >= deadline => {
+                Err(error) if Instant::now() >= startup_deadline => {
                     let _ = self.inner.processes.terminate(process_id);
                     return Err(OpenCodeError::ServerNotReady(error.to_string()));
                 }
@@ -399,10 +433,10 @@ impl OpenCodeServer {
         body: Option<Value>,
     ) -> Result<Value, OpenCodeError> {
         let url = api_url(&self.base_url, path, query)?;
-        let mut request = self.client.request(method, url);
-        if let Some(password) = &self.password {
-            request = request.basic_auth("opencode", Some(password));
-        }
+        let mut request = self
+            .client
+            .request(method, url)
+            .basic_auth("opencode", Some(&self.password));
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -442,10 +476,10 @@ fn spawn_event_listener(
             Ok(url) => url,
             Err(_) => return,
         };
-        let mut request = server.event_client.get(url);
-        if let Some(password) = &server.password {
-            request = request.basic_auth("opencode", Some(password));
-        }
+        let request = server
+            .event_client
+            .get(url)
+            .basic_auth("opencode", Some(&server.password));
         let result = request.send();
         let Ok(response) = result else {
             publish_disconnected(&server, &project_path, &approvals, &subscribers);
@@ -699,6 +733,39 @@ where
             data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
         }
     }
+}
+
+fn capture_server_password(stdout: ChildStdout) -> Receiver<Result<String, String>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut sent_password = false;
+        for line in BufReader::new(stdout).lines() {
+            match line {
+                Ok(line) => {
+                    if !sent_password {
+                        if let Some(password) = line.strip_prefix("server password ") {
+                            sent_password = true;
+                            if sender.send(Ok(password.to_owned())).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    if !sent_password {
+                        let _ = sender.send(Err(error.to_string()));
+                    }
+                    return;
+                }
+            }
+        }
+        if !sent_password {
+            let _ = sender.send(Err(
+                "OpenCode exited without printing its generated server password".to_owned(),
+            ));
+        }
+    });
+    receiver
 }
 
 fn api_url(base_url: &str, path: &str, query: &[(&str, String)]) -> Result<Url, OpenCodeError> {
@@ -1036,7 +1103,9 @@ pub enum OpenCodeError {
     PortAssignment(#[source] io::Error),
     #[error("OpenCode server did not become ready: {0}")]
     ServerNotReady(String),
-    #[error("OpenCode server requires authentication. Check OPENCODE_SERVER_PASSWORD and restart Caelum.")]
+    #[error("could not obtain the OpenCode server password: {0}")]
+    ServerPasswordUnavailable(String),
+    #[error("OpenCode rejected the credentials Caelum obtained. Check OPENCODE_SERVER_PASSWORD and restart Caelum.")]
     AuthenticationRequired,
     #[error("OpenCode HTTP request failed: {0}")]
     Request(String),
@@ -1219,7 +1288,7 @@ mod tests {
             base_url: "http://127.0.0.1:1".to_owned(),
             client: client.clone(),
             event_client: client,
-            password: None,
+            password: "unused-test-password".to_owned(),
             alive: Arc::new(AtomicBool::new(true)),
             session_ids: Mutex::new(HashSet::new()),
             pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -1254,6 +1323,7 @@ mod tests {
             &executable,
             r##"#!/usr/bin/env python3
 import json
+import base64
 import os
 import sys
 import time
@@ -1261,11 +1331,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 PROJECT = os.getcwd()
+PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
 SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
+
+    def authorized(self):
+        expected = "Basic " + base64.b64encode(("opencode:" + PASSWORD).encode()).decode()
+        if self.headers.get("Authorization") == expected:
+            return True
+        self.send_error(401)
+        return False
 
     def send_json(self, value):
         body = json.dumps(value).encode()
@@ -1276,6 +1354,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self.authorized():
+            return
         path = urlsplit(self.path).path
         if path == "/api/event":
             self.send_response(200)
@@ -1309,6 +1389,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if not self.authorized():
+            return
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length) or b"{}")
         path = urlsplit(self.path).path
@@ -1325,7 +1407,10 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-ThreadingHTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler).serve_forever()
+server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler)
+if not os.environ.get("OPENCODE_SERVER_PASSWORD"):
+    print("server password " + PASSWORD, flush=True)
+server.serve_forever()
 "##,
         )
         .unwrap();

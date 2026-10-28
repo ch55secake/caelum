@@ -25,7 +25,7 @@ Provider adapters must launch a configured executable with a discrete argument v
 
 The Codex adapter starts `codex app-server --listen stdio://` with an explicit argument vector and validated project working directory. The child is registered with `ProcessRegistry`; an unexpected exit fails outstanding requests and the next operation starts a fresh server. App shutdown terminates/reaps all registered provider children. The stdio transport avoids exposing an app-server network listener.
 
-The OpenCode adapter starts `opencode serve --hostname 127.0.0.1 --port <available-port>` with the validated project as its working directory. The listener is not exposed on a network interface. If `OPENCODE_SERVER_PASSWORD` is configured, Caelum uses it only for Basic authentication to this local server; provider credentials remain under OpenCode's control.
+The OpenCode adapter starts `opencode serve --hostname 127.0.0.1 --port <available-port>` with the validated project as its working directory. The listener is not exposed on a network interface. OpenCode generates a random password by default; Caelum captures it from startup output and keeps it in memory for local Basic authentication. If `OPENCODE_SERVER_PASSWORD` is configured, Caelum reuses it instead. Provider credentials remain under OpenCode's control.
 
 ## Tauri capabilities
 

@@ -8,7 +8,7 @@ Caelum integrates with the local OpenCode v2 server API. It starts one `opencode
 2. Configure and sign in to at least one provider in OpenCode. Caelum relies on OpenCode's existing provider configuration and credentials and does not copy or store them.
 3. Open a project in Caelum and select **OpenCode** in the provider card. Caelum starts its local server when sessions are loaded or created.
 
-OpenCode server Basic authentication is optional. If `OPENCODE_SERVER_PASSWORD` is set for Caelum, the managed server inherits it and Caelum authenticates using OpenCode's default `opencode` username. Authentication failures and HTTP/API errors are shown in the desktop error banner.
+OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SERVER_PASSWORD` is unset, the CLI generates a random password and prints it during startup. Caelum captures that startup password privately and authenticates using OpenCode's default `opencode` username. If `OPENCODE_SERVER_PASSWORD` is set for Caelum, the managed server inherits and reuses it instead. You do not need to configure a password manually. Authentication failures and HTTP/API errors are shown in the desktop error banner.
 
 ## Protocol behavior
 
