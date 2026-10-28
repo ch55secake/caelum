@@ -12,9 +12,12 @@
 
 Provider adapters, sessions, SQLite storage, Git, terminal/PTY, and filesystem operations belong in `caelum-core` or focused core submodules. Tauri commands should stay thin and validate inputs before calling core APIs. CLI commands should use those same APIs rather than duplicate behavior.
 
-Codex and OpenCode adapters will preserve provider-specific capabilities behind shared session/event abstractions. Their protocol behavior must be verified against official documentation during implementation; no provider protocol is assumed by this foundation.
+The Codex adapter in `caelum-core` starts one local `codex app-server --listen stdio://` process per project and speaks the official JSONL request/notification protocol. It performs the `initialize`/`initialized` handshake, checks CLI authentication with `codex login status`, scopes thread listing and resumption to the validated project directory, and forwards streamed app-server events to the desktop. Command and file-change requests use the shared one-shot approval broker. Processes are tracked for shutdown and restarted on the next request after an unexpected exit.
+
+OpenCode adapters will preserve their provider-specific behavior behind shared session/event abstractions. Verify its supported local server API and authentication requirements before implementation rather than assuming protocol compatibility.
 
 See [security.md](security.md) for current permission boundaries and process lifecycle guarantees.
+See [codex.md](codex.md) for Codex CLI setup and app-server protocol behavior.
 
 ## Security boundaries
 

@@ -53,6 +53,15 @@ kbd { padding: 2px 5px; border: 1px solid #363a45; border-radius: 4px; color: #8
 .sessions-heading { margin-top: 27px; }
 .sessions-heading .icon-button { margin: -5px -5px -5px 0; }
 .empty-sessions { padding: 9px 8px; color: #696f7c; font-size: 10px; line-height: 1.7; }
+.session-list { display: flex; max-height: 32vh; flex-direction: column; gap: 3px; overflow: auto; }
+.session-item { display: flex; min-width: 0; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid transparent; border-radius: 6px; color: #858b99; text-align: left; background: transparent; cursor: pointer; }
+.session-item:hover:not(:disabled), .session-item.selected { border-color: #2c303b; color: #d7dbe5; background: #1d2028; }
+.session-item:disabled { opacity: .55; }
+.session-item > svg { flex: 0 0 auto; margin-top: 2px; color: #8b9fc5; }
+.session-item > span { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.session-item strong, .session-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item strong { font-size: 10px; font-weight: 550; }
+.session-item small { color: #6f7583; font-size: 9px; }
 .sidebar-bottom { margin-top: auto; }
 .profile-card { display: flex; align-items: center; gap: 9px; margin-top: 8px; padding: 9px 6px 2px; border-top: 1px solid #292c34; }
 .avatar { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid #3b4251; border-radius: 50%; color: #d2dcf1; font-size: 11px; background: #293244; }
@@ -88,6 +97,17 @@ h1 { margin: 17px 0 8px; color: #ebedf2; font-size: clamp(25px, 3vw, 34px); font
 .card-arrow { position: absolute; top: 15px; right: 14px; color: #879cc3; font-size: 13px; }
 .provider-badge { position: absolute; right: 12px; bottom: 11px; color: #6e7483; font-size: 8px; letter-spacing: .07em; }
 .starter-panel { margin-top: 20px; padding: 16px 17px 8px; border: 1px solid #292c34; border-radius: 9px; background: #16181e; }
+.conversation { display: flex; min-height: 150px; max-height: 48vh; flex-direction: column; gap: 12px; overflow: auto; margin-top: 18px; padding: 8px 2px; }
+.conversation-entry { max-width: 92%; padding: 11px 13px; border: 1px solid #292c34; border-radius: 9px; background: #17191f; }
+.conversation-entry.user { align-self: flex-end; border-color: #35425a; background: #202838; }
+.conversation-entry.assistant { align-self: flex-start; }
+.conversation-entry.activity, .conversation-entry.status { align-self: stretch; padding: 7px 10px; border-color: #242730; color: #858c9b; background: #14161b; }
+.conversation-entry p { margin: 0; color: #d4d8e2; font-size: 11px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-entry.activity p, .conversation-entry.status p { color: #8c93a1; font-size: 10px; }
+.entry-kicker { display: block; margin-bottom: 4px; color: #777f90; font-size: 8px; font-weight: 650; letter-spacing: .1em; }
+.working-indicator { display: flex; align-items: center; gap: 8px; padding: 8px 3px; color: #8b93a3; font-size: 10px; }
+.working-indicator .status-dot { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .4; } }
 .starter-heading { display: flex; align-items: center; gap: 11px; }
 .starter-orbit { display: grid; width: 31px; height: 31px; place-items: center; border: 1px solid #33405a; border-radius: 8px; color: #9db3e0; background: #21293a; }
 .starter-heading strong { color: #d6d9e1; font-size: 11px; font-weight: 570; }
@@ -104,7 +124,9 @@ h1 { margin: 17px 0 8px; color: #ebedf2; font-size: clamp(25px, 3vw, 34px); font
 .prompt-footer { display: flex; align-items: center; justify-content: space-between; }
 .prompt-footer > span { display: flex; align-items: center; gap: 6px; color: #828896; font-size: 9px; }
 .tiny-agent-dot { width: 6px; height: 6px; border-radius: 50%; background: #707785; }
+.tiny-agent-dot.connected { background: #85bc9b; box-shadow: 0 0 0 3px #85bc9b1b; }
 .prompt-footer button { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 6px; color: #838a97; background: #292c35; }
+.prompt-footer button:not(:disabled) { cursor: pointer; }
 .prompt-footer button:disabled { opacity: .6; }
 .bottom-note { margin-top: 10px; overflow: hidden; color: #656b78; font-size: 9px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .approval-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: #08090dbd; backdrop-filter: blur(5px); }
