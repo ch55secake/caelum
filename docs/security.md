@@ -17,11 +17,15 @@ Provider adapters submit `PermissionRequest` values that retain provider-specifi
 
 The Codex adapter routes app-server command-execution and file-change approval requests through this broker. Caelum responds with a one-request `accept` or `decline`; unsupported request methods are rejected instead of being silently granted. Codex runs with its `workspaceWrite` sandbox and `unlessTrusted` approval policy. Review those provider-managed sandbox semantics separately from Caelum's own filesystem boundary.
 
+The OpenCode adapter maps server `permission.asked` requests to the same broker and responds with OpenCode's one-shot `once` or `reject` decision. It never answers `always`. OpenCode applies its own project permissions and tool sandboxing; those provider-managed rules do not become Caelum filesystem restrictions.
+
 ## Child-process lifecycle
 
 Provider adapters must launch a configured executable with a discrete argument vector, never by interpolating input into a shell command. Each child must be registered with `ProcessRegistry`. It can be polled for an exit status so the adapter can decide whether to recover, explicitly terminated on cancellation, and killed/reaped on app shutdown or when its managed handle is dropped.
 
 The Codex adapter starts `codex app-server --listen stdio://` with an explicit argument vector and validated project working directory. The child is registered with `ProcessRegistry`; an unexpected exit fails outstanding requests and the next operation starts a fresh server. App shutdown terminates/reaps all registered provider children. The stdio transport avoids exposing an app-server network listener.
+
+The OpenCode adapter starts `opencode serve --hostname 127.0.0.1 --port <available-port>` with the validated project as its working directory. The listener is not exposed on a network interface. If `OPENCODE_SERVER_PASSWORD` is configured, Caelum uses it only for Basic authentication to this local server; provider credentials remain under OpenCode's control.
 
 ## Tauri capabilities
 

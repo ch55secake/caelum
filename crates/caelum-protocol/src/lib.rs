@@ -90,9 +90,56 @@ pub struct CodexEvent {
     pub request_id: Option<serde_json::Value>,
 }
 
+/// A session owned by the OpenCode HTTP API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeSession {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<u64>,
+}
+
+/// The selected project and OpenCode session shown in the desktop workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeSessionInfo {
+    pub project: ProjectInfo,
+    pub session: OpenCodeSession,
+}
+
+/// Recent OpenCode sessions scoped to one project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeSessionList {
+    pub project: ProjectInfo,
+    pub sessions: Vec<OpenCodeSession>,
+}
+
+/// A flattened entry from OpenCode's persisted session history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeConversationEntry {
+    pub id: String,
+    pub kind: String,
+    pub text: String,
+}
+
+/// An event received from OpenCode's `/api/event` server-sent event stream.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeEvent {
+    pub project_path: String,
+    pub event_type: String,
+    pub data: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<serde_json::Value>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::CodexEvent;
+    use super::{CodexEvent, OpenCodeEvent};
     use serde_json::json;
 
     #[test]
@@ -110,6 +157,25 @@ mod tests {
                 "projectPath": "/workspace/project",
                 "method": "item/agentMessage/delta",
                 "params": { "delta": "hello" }
+            })
+        );
+    }
+
+    #[test]
+    fn opencode_events_use_the_frontend_camel_case_contract() {
+        let event = OpenCodeEvent {
+            project_path: "/workspace/project".into(),
+            event_type: "session.text.delta".into(),
+            data: json!({ "sessionID": "ses_1", "delta": "hello" }),
+            location: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            json!({
+                "projectPath": "/workspace/project",
+                "eventType": "session.text.delta",
+                "data": { "sessionID": "ses_1", "delta": "hello" }
             })
         );
     }
