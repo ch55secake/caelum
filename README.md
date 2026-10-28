@@ -2,14 +2,14 @@
 
 **Your code. New horizons.**
 
-Caelum is a local-first AI coding workspace for macOS, with a native Rust core shared by its Tauri desktop app and standalone CLI. The project is in its foundation milestone: the desktop shell can select and validate a local project, while agent sessions, persistence, and code review are not implemented yet.
+Caelum is a local-first AI coding workspace for macOS, with a native Rust core shared by its Tauri desktop app and standalone CLI. The desktop supports project-scoped Codex and OpenCode sessions; Caelum-managed persistence and code review are not implemented yet.
 
 ## Project status
 
 - **Desktop:** Tauri 2 + React + TypeScript + Vite + Tailwind CSS v4; native folder picker and Rust-validated project paths.
 - **CLI:** Rust/clap executable scaffold sharing `caelum-core`; currently reports project information and clearly marks agent features as unavailable.
-- **Core:** independent Rust library for shared application behavior; currently includes project path validation.
-- **Providers:** Codex and OpenCode integrations are planned, not yet implemented.
+- **Core:** independent Rust library for shared application behavior, project validation, and provider adapters.
+- **Providers:** Codex and OpenCode integrations use their local server protocols and share the desktop session and approval experience.
 
 ## Repository layout
 

@@ -2,5 +2,6 @@
 
 pub mod approvals;
 pub mod codex;
+pub mod opencode;
 pub mod processes;
 pub mod projects;

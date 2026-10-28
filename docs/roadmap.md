@@ -20,9 +20,9 @@
 
 ## 3. OpenCode provider
 
-- Verify the supported local server API and authentication behavior
-- Manage the server process and HTTP/SSE lifecycle
-- Stream sessions, prompts, tool events, permissions, cancellation, and restoration
+- [x] Verify the local v2 HTTP API, SSE events, and optional Basic authentication
+- [x] Manage the per-project server process and HTTP/SSE lifecycle
+- [x] Stream sessions, prompts, tool events, permissions, cancellation, and restoration
 
 ## 4. Workspace MVP
 

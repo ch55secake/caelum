@@ -31,14 +31,39 @@ type ApprovalPrompt = {
   summary: string;
   description: string;
 };
-type CodexThreadInfo = { id: string; name: string | null; preview: string; updatedAt: number | null };
-type CodexSessionInfo = { project: ProjectInfo; thread: CodexThreadInfo };
-type CodexSessionList = { project: ProjectInfo; threads: CodexThreadInfo[] };
+type ProviderKind = "codex" | "opencode";
+type SessionSummary = { id: string; name: string | null; preview: string; updatedAt: number | null };
+type CodexSessionInfo = { project: ProjectInfo; thread: SessionSummary };
+type CodexSessionList = { project: ProjectInfo; threads: SessionSummary[] };
 type CodexEvent = { projectPath: string; method: string; params: Record<string, unknown>; requestId: unknown };
+type OpenCodeSession = { id: string; title: string | null; updatedAt: number | null };
+type OpenCodeSessionInfo = { project: ProjectInfo; session: OpenCodeSession };
+type OpenCodeSessionList = { project: ProjectInfo; sessions: OpenCodeSession[] };
+type OpenCodeHistoryEntry = { id: string; kind: string; text: string };
+type OpenCodeEvent = { projectPath: string; eventType: string; data: Record<string, unknown>; location: unknown };
+type WorkspaceSessionInfo = { project: ProjectInfo; thread: SessionSummary; provider: ProviderKind };
 type ConversationEntry = { id: string; kind: "user" | "assistant" | "activity" | "status"; text: string };
 
 function valueString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function valueRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function openCodeToolInput(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    try {
+      return openCodeToolInput(JSON.parse(value) as unknown) ?? value;
+    } catch {
+      return value;
+    }
+  }
+  const input = valueRecord(value);
+  const command = valueString(input.command);
+  if (command) return command;
+  return Object.keys(input).length > 0 ? JSON.stringify(input) : undefined;
 }
 
 function itemActivity(item: unknown): string | undefined {
@@ -60,12 +85,13 @@ export default function App() {
   const hasMacTitlebarOverlay = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [provider, setProvider] = useState<ProviderKind>("codex");
   const [error, setError] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
   const [isResolvingApproval, setIsResolvingApproval] = useState(false);
-  const [sessions, setSessions] = useState<CodexThreadInfo[]>([]);
-  const [session, setSession] = useState<CodexSessionInfo | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [session, setSession] = useState<WorkspaceSessionInfo | null>(null);
   const [conversation, setConversation] = useState<ConversationEntry[]>([]);
   const [prompt, setPrompt] = useState("");
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
@@ -73,8 +99,10 @@ export default function App() {
   const [isWorking, setIsWorking] = useState(false);
   const projectRef = useRef(project);
   const sessionRef = useRef(session);
+  const providerRef = useRef(provider);
   projectRef.current = project;
   sessionRef.current = session;
+  providerRef.current = provider;
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -143,14 +171,26 @@ export default function App() {
     }
   }
 
-  async function loadSessions(target: ProjectInfo) {
+  async function loadSessions(target: ProjectInfo, selectedProvider = provider) {
     setIsLoadingSessions(true);
     setError(null);
     try {
-      const result = await invoke<CodexSessionList>("codex_list_sessions", {
-        projectPath: target.path,
-      });
-      setSessions(result.threads);
+      if (selectedProvider === "codex") {
+        const result = await invoke<CodexSessionList>("codex_list_sessions", {
+          projectPath: target.path,
+        });
+        setSessions(result.threads);
+      } else {
+        const result = await invoke<OpenCodeSessionList>("opencode_list_sessions", {
+          projectPath: target.path,
+        });
+        setSessions(result.sessions.map((item) => ({
+          id: item.id,
+          name: item.title,
+          preview: "",
+          updatedAt: item.updatedAt,
+        })));
+      }
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -158,14 +198,38 @@ export default function App() {
     }
   }
 
+  async function changeProvider(nextProvider: ProviderKind) {
+    if (provider === nextProvider) return;
+    setProvider(nextProvider);
+    setSession(null);
+    setConversation([]);
+    setPrompt("");
+    setIsWorking(false);
+    setSessions([]);
+    if (project) await loadSessions(project, nextProvider);
+  }
+
   async function startSession() {
     if (!project || isLoadingSessions) return;
     setError(null);
     setIsLoadingSessions(true);
     try {
-      const started = await invoke<CodexSessionInfo>("codex_start_session", {
-        projectPath: project.path,
-      });
+      let started: WorkspaceSessionInfo;
+      if (provider === "codex") {
+        const result = await invoke<CodexSessionInfo>("codex_start_session", {
+          projectPath: project.path,
+        });
+        started = { ...result, provider };
+      } else {
+        const result = await invoke<OpenCodeSessionInfo>("opencode_start_session", {
+          projectPath: project.path,
+        });
+        started = {
+          project: result.project,
+          thread: { id: result.session.id, name: result.session.title, preview: "", updatedAt: result.session.updatedAt },
+          provider,
+        };
+      }
       setSession(started);
       setConversation([]);
       setIsWorking(false);
@@ -177,17 +241,38 @@ export default function App() {
     }
   }
 
-  async function resumeSession(thread: CodexThreadInfo) {
+  async function resumeSession(thread: SessionSummary) {
     if (!project || isLoadingSessions) return;
     setError(null);
     setIsLoadingSessions(true);
     try {
-      const resumed = await invoke<CodexSessionInfo>("codex_resume_session", {
-        projectPath: project.path,
-        threadId: thread.id,
-      });
-      setSession(resumed);
-      setConversation(thread.preview ? [{ id: `preview-${thread.id}`, kind: "status", text: thread.preview }] : []);
+      if (provider === "codex") {
+        const resumed = await invoke<CodexSessionInfo>("codex_resume_session", {
+          projectPath: project.path,
+          threadId: thread.id,
+        });
+        setSession({ ...resumed, provider });
+        setConversation(thread.preview ? [{ id: `preview-${thread.id}`, kind: "status", text: thread.preview }] : []);
+      } else {
+        const resumed = await invoke<OpenCodeSessionInfo>("opencode_resume_session", {
+          projectPath: project.path,
+          sessionId: thread.id,
+        });
+        const history = await invoke<OpenCodeHistoryEntry[]>("opencode_session_history", {
+          projectPath: project.path,
+          sessionId: thread.id,
+        });
+        setSession({
+          project: resumed.project,
+          thread: { id: resumed.session.id, name: resumed.session.title, preview: "", updatedAt: resumed.session.updatedAt },
+          provider,
+        });
+        setConversation(history.map((entry) => ({
+          id: entry.id,
+          kind: (["user", "assistant", "activity", "status"].includes(entry.kind) ? entry.kind : "status") as ConversationEntry["kind"],
+          text: entry.text,
+        })));
+      }
       setIsWorking(false);
     } catch (reason) {
       setError(String(reason));
@@ -211,11 +296,19 @@ export default function App() {
     }]);
     setError(null);
     try {
-      await invoke("codex_send_prompt", {
-        projectPath: currentProject.path,
-        threadId: currentSession.thread.id,
-        prompt: text,
-      });
+      if (currentSession.provider === "codex") {
+        await invoke("codex_send_prompt", {
+          projectPath: currentProject.path,
+          threadId: currentSession.thread.id,
+          prompt: text,
+        });
+      } else {
+        await invoke("opencode_send_prompt", {
+          projectPath: currentProject.path,
+          sessionId: currentSession.thread.id,
+          prompt: text,
+        });
+      }
     } catch (reason) {
       setIsWorking(false);
       setError(String(reason));
@@ -228,10 +321,17 @@ export default function App() {
     if (!project || !session || !isWorking) return;
     setError(null);
     try {
-      await invoke("codex_cancel_turn", {
-        projectPath: project.path,
-        threadId: session.thread.id,
-      });
+      if (session.provider === "codex") {
+        await invoke("codex_cancel_turn", {
+          projectPath: project.path,
+          threadId: session.thread.id,
+        });
+      } else {
+        await invoke("opencode_cancel_turn", {
+          projectPath: project.path,
+          sessionId: session.thread.id,
+        });
+      }
     } catch (reason) {
       setError(String(reason));
     }
@@ -246,7 +346,7 @@ export default function App() {
       if (disposed) return;
       const currentProject = projectRef.current;
       const currentSession = sessionRef.current;
-      if (!currentProject || update.projectPath !== currentProject.path) return;
+      if (currentSession?.provider !== "codex" || !currentProject || update.projectPath !== currentProject.path) return;
       const params = update.params && typeof update.params === "object" ? update.params : {};
       if (update.method === "codex/processExited") {
         if (currentSession) setIsWorking(false);
@@ -330,6 +430,112 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<OpenCodeEvent>("opencode-event", (event) => {
+      const update = event.payload;
+      if (disposed || providerRef.current !== "opencode") return;
+      const currentProject = projectRef.current;
+      const currentSession = sessionRef.current;
+      if (!currentProject || update.projectPath !== currentProject.path) return;
+      const data = update.data && typeof update.data === "object" ? update.data : {};
+      if (update.eventType === "server.disconnected") {
+        setIsWorking(false);
+        setError("The OpenCode server disconnected. Start or resume a session to reconnect.");
+        return;
+      }
+      if (update.eventType === "permission.reply.failed") {
+        setError(`OpenCode could not apply the permission decision: ${valueString(data.message) ?? "server request failed"}`);
+        return;
+      }
+      if (!currentSession || currentSession.provider !== "opencode") return;
+      if (valueString(data.sessionID) !== currentSession.thread.id) return;
+
+      if (update.eventType === "session.execution.started") setIsWorking(true);
+      if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(update.eventType)) {
+        setIsWorking(false);
+        const error = valueRecord(data.error);
+        const errorMessage = valueString(error.message) ?? valueString(data.error);
+        const outcome = update.eventType === "session.execution.interrupted"
+          ? "Turn cancelled"
+          : update.eventType === "session.execution.failed"
+            ? `OpenCode could not complete this turn${errorMessage ? `: ${errorMessage}` : ""}`
+            : "Turn complete";
+        setConversation((current): ConversationEntry[] => [...current, {
+          id: `opencode-turn-${valueString(data.messageID) ?? Date.now()}`,
+          kind: "status" as const,
+          text: outcome,
+        }].slice(-300));
+      }
+      if (update.eventType === "session.idle") setIsWorking(false);
+      if (update.eventType === "session.text.delta") {
+        const delta = valueString(data.delta) ?? valueString(data.text);
+        if (!delta) return;
+        const messageId = valueString(data.assistantMessageID) ?? valueString(data.messageID) ?? `stream-${currentSession.thread.id}`;
+        setConversation((current): ConversationEntry[] => {
+          const entryId = `opencode-assistant-${messageId}`;
+          const existing = current.findIndex((entry) => entry.id === entryId);
+          if (existing < 0) return [...current, { id: entryId, kind: "assistant" as const, text: delta }].slice(-300);
+          const next = [...current];
+          next[existing] = { ...next[existing], text: next[existing].text + delta };
+          return next;
+        });
+      }
+      if ([
+        "session.tool.input.started",
+        "session.tool.input.delta",
+        "session.tool.input.ended",
+        "session.tool.called",
+        "session.tool.progress",
+        "session.tool.success",
+        "session.tool.failed",
+      ].includes(update.eventType)) {
+        const toolId = valueString(data.id) ?? valueString(data.partID);
+        if (!toolId) return;
+        const existingEntryId = `opencode-tool-${toolId}`;
+        const input = valueRecord(data.input);
+        const eventInput = update.eventType === "session.tool.input.ended"
+          ? openCodeToolInput(data.text)
+          : openCodeToolInput(data.input);
+        const delta = valueString(data.delta);
+        const status = update.eventType === "session.tool.success"
+          ? "complete"
+          : update.eventType === "session.tool.failed"
+            ? "failed"
+            : update.eventType === "session.tool.progress" || update.eventType === "session.tool.called"
+              ? "running"
+              : "preparing";
+        setConversation((current): ConversationEntry[] => {
+          const existing = current.findIndex((entry) => entry.id === existingEntryId);
+          const existingText = existing < 0 ? "" : current[existing].text;
+          const existingName = existingText.match(/^Using tool: (.+?) \(/)?.[1];
+          const toolName = valueString(data.name) ?? valueString(data.tool) ?? existingName ?? "tool";
+          const existingCommand = existingText.split("\n").slice(1).join("\n");
+          const accumulated = delta ? `${existingCommand}${delta}` : existingCommand;
+          const command = eventInput ?? (accumulated || openCodeToolInput(input) || "");
+          const toolError = valueString(valueRecord(data.error).message);
+          const detail = command || (update.eventType === "session.tool.failed" ? toolError : undefined);
+          const nextText = `Using tool: ${toolName} (${status})${detail ? `\n${detail}` : ""}`;
+          if (existing < 0) return [...current, { id: existingEntryId, kind: "activity" as const, text: nextText }].slice(-300);
+          const next = [...current];
+          next[existing] = { ...next[existing], text: nextText };
+          return next;
+        });
+      }
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((reason: unknown) => {
+      if (!disposed) setError(String(reason));
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   async function resolveApproval(decision: "allowOnce" | "deny") {
     const request = approvals[0];
     if (!request || isResolvingApproval) return;
@@ -348,6 +554,11 @@ export default function App() {
       setIsResolvingApproval(false);
     }
   }
+
+  const providerName = provider === "codex" ? "Codex" : "OpenCode";
+  const providerDetails = provider === "codex"
+    ? "Local Codex CLI · project-scoped sessions"
+    : "OpenCode local server · HTTP/SSE sessions";
 
   return (
     <main className={`app-shell${hasMacTitlebarOverlay ? " macos-titlebar-overlay" : ""}`}>
@@ -382,7 +593,7 @@ export default function App() {
           <ChevronDown size={14} className="muted-icon" />
         </button>
 
-        <button className="new-session" onClick={() => void startSession()} disabled={!project || isLoadingSessions} title={!project ? "Choose a project first" : "Start a Codex session"}>
+        <button className="new-session" onClick={() => void startSession()} disabled={!project || isLoadingSessions} title={!project ? "Choose a project first" : `Start an ${providerName} session`}>
           <MessageSquarePlus size={16} /><span>New session</span><kbd>⌘ N</kbd>
         </button>
 
@@ -396,12 +607,12 @@ export default function App() {
 
         <div className="section-heading sessions-heading"><span>RECENT SESSIONS</span><button className="icon-button quiet" aria-label="Add session" onClick={() => void startSession()} disabled={!project || isLoadingSessions}><Plus size={14} /></button></div>
         <div className="session-list">
-          {!project && <div className="empty-sessions">Choose a project to see its Codex conversations.</div>}
-          {project && isLoadingSessions && sessions.length === 0 && <div className="empty-sessions">Connecting to Codex…</div>}
-          {project && !isLoadingSessions && sessions.length === 0 && <div className="empty-sessions">No Codex conversations yet.</div>}
+          {!project && <div className="empty-sessions">Choose a project to see its {providerName} conversations.</div>}
+          {project && isLoadingSessions && sessions.length === 0 && <div className="empty-sessions">Connecting to {providerName}…</div>}
+          {project && !isLoadingSessions && sessions.length === 0 && <div className="empty-sessions">No {providerName} conversations yet.</div>}
           {sessions.map((item) => (
             <button className={`session-item${session?.thread.id === item.id ? " selected" : ""}`} key={item.id} onClick={() => void resumeSession(item)} disabled={isLoadingSessions}>
-              <MessageSquarePlus size={13} /><span><strong>{item.name || item.preview || "New Codex session"}</strong><small>{item.preview || "No messages yet"}</small></span>
+              <MessageSquarePlus size={13} /><span><strong>{item.name || item.preview || `New ${providerName} session`}</strong><small>{item.preview || "No messages yet"}</small></span>
             </button>
           ))}
         </div>
@@ -422,7 +633,7 @@ export default function App() {
           <div className="welcome-block">
             <div className="eyebrow"><span className="status-dot" /> LOCAL-FIRST AI WORKSPACE</div>
             <h1>{session ? session.thread.name || `Working in ${project?.name}.` : project ? `Ready to work in ${project.name}.` : "A clearer sky for your code."}</h1>
-            <p>{session ? `Codex session · ${session.thread.id}` : project ? "Your project is open. Start or resume a Codex session to begin." : "Bring your coding agents and projects together in one native workspace."}</p>
+            <p>{session ? `${providerName} session · ${session.thread.id}` : project ? `Your project is open. Start or resume a ${providerName} session to begin.` : "Bring your coding agents and projects together in one native workspace."}</p>
           </div>
 
           {error && <div className="error-banner" role="alert">{error}</div>}
@@ -435,38 +646,43 @@ export default function App() {
             </button>
             <div className="setup-card provider-card">
               <div className="card-icon violet"><Sparkles size={18} /></div>
-              <div className="card-copy"><span className="card-kicker">PROVIDER</span><strong>Codex app-server</strong><small>{project ? "Local Codex CLI · project-scoped sessions" : "Open a project to connect Codex"}</small></div>
-              <span className="provider-badge">CODEX</span>
+              <div className="card-copy"><span className="card-kicker">PROVIDER</span><strong>{provider === "codex" ? "Codex app-server" : "OpenCode server"}</strong><small>{project ? providerDetails : `Open a project to connect ${providerName}`}</small>
+                <select className="provider-select" aria-label="AI provider" value={provider} disabled={isLoadingSessions || isSubmitting || isWorking} onChange={(event) => void changeProvider(event.target.value as ProviderKind)}>
+                  <option value="codex">Codex</option>
+                  <option value="opencode">OpenCode</option>
+                </select>
+              </div>
+              <span className="provider-badge">{provider === "codex" ? "CODEX" : "OPENCODE"}</span>
             </div>
           </div>
 
           {session ? (
-            <div className="conversation" aria-live="polite" aria-label="Codex conversation">
+            <div className="conversation" aria-live="polite" aria-label={`${providerName} conversation`}>
               {conversation.map((entry) => (
                 <article className={`conversation-entry ${entry.kind}`} key={entry.id}>
-                  {entry.kind !== "user" && entry.kind !== "assistant" && <span className="entry-kicker">{entry.kind === "activity" ? "ACTIVITY" : "CODEX"}</span>}
+                  {entry.kind !== "user" && entry.kind !== "assistant" && <span className="entry-kicker">{entry.kind === "activity" ? "ACTIVITY" : provider.toUpperCase()}</span>}
                   <p>{entry.text}</p>
                 </article>
               ))}
-              {isWorking && <div className="working-indicator"><span className="status-dot" /> Codex is working…</div>}
+              {isWorking && <div className="working-indicator"><span className="status-dot" /> {providerName} is working…</div>}
             </div>
           ) : (
             <div className="starter-panel">
-              <div className="starter-heading"><div className="starter-orbit"><Orbit size={17} /></div><div><strong>{project ? "Your project is ready" : "Designed for your flow"}</strong><p>{project ? "Start a Codex session to work with this project." : "A calm, focused home for AI-assisted development."}</p></div></div>
+              <div className="starter-heading"><div className="starter-orbit"><Orbit size={17} /></div><div><strong>{project ? "Your project is ready" : "Designed for your flow"}</strong><p>{project ? `Start a ${providerName} session to work with this project.` : "A calm, focused home for AI-assisted development."}</p></div></div>
               <div className="starter-divider" />
               <div className="feature-row"><span className="feature-check">01</span><span>Native macOS shell, powered by Tauri and Rust</span><span className="feature-state">READY</span></div>
-              <div className="feature-row"><span className="feature-check">02</span><span>Project-scoped Codex app-server sessions</span><span className="feature-state">READY</span></div>
+              <div className="feature-row"><span className="feature-check">02</span><span>Project-scoped {providerName} sessions</span><span className="feature-state">READY</span></div>
               <div className="feature-row"><span className="feature-check">03</span><span>Streamed responses, tool activity, and approvals</span><span className="feature-state">READY</span></div>
             </div>
           )}
 
           <div className="prompt-dock">
-            <textarea aria-label="Prompt" placeholder={session ? "Ask Codex to work on your project…" : project ? "Start or resume a session to send a prompt…" : "Open a project to begin…"} value={prompt} disabled={!session || isWorking} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submitPrompt(); } }} />
-            <div className="prompt-footer"><span><span className={`tiny-agent-dot${session ? " connected" : ""}`} /> {session ? isWorking ? "Codex is working" : "Codex connected" : "No session selected"}</span>
-              {isWorking ? <button onClick={() => void cancelTurn()} aria-label="Cancel Codex turn" title="Cancel turn"><Square size={13} /></button> : <button onClick={() => void submitPrompt()} disabled={!session || !prompt.trim() || isSubmitting} aria-label="Send prompt"><ArrowUp size={16} /></button>}
+            <textarea aria-label="Prompt" placeholder={session ? `Ask ${providerName} to work on your project…` : "Start or resume a session to send a prompt…"} value={prompt} disabled={!session || isWorking} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submitPrompt(); } }} />
+            <div className="prompt-footer"><span><span className={`tiny-agent-dot${session ? " connected" : ""}`} /> {session ? isWorking ? `${providerName} is working` : `${providerName} connected` : "No session selected"}</span>
+              {isWorking ? <button onClick={() => void cancelTurn()} aria-label={`Cancel ${providerName} turn`} title="Cancel turn"><Square size={13} /></button> : <button onClick={() => void submitPrompt()} disabled={!session || !prompt.trim() || isSubmitting} aria-label="Send prompt"><ArrowUp size={16} /></button>}
             </div>
           </div>
-          <div className="bottom-note">{project ? `${session ? "Codex · " : "Working locally · "}${project.path}` : "Your projects stay on your machine."}</div>
+          <div className="bottom-note">{project ? `${session ? `${providerName} · ` : "Working locally · "}${project.path}` : "Your projects stay on your machine."}</div>
         </div>
       </section>
     </main>

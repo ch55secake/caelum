@@ -14,10 +14,11 @@ Provider adapters, sessions, SQLite storage, Git, terminal/PTY, and filesystem o
 
 The Codex adapter in `caelum-core` starts one local `codex app-server --listen stdio://` process per project and speaks the official JSONL request/notification protocol. It performs the `initialize`/`initialized` handshake, checks CLI authentication with `codex login status`, scopes thread listing and resumption to the validated project directory, and forwards streamed app-server events to the desktop. Command and file-change requests use the shared one-shot approval broker. Processes are tracked for shutdown and restarted on the next request after an unexpected exit.
 
-OpenCode adapters will preserve their provider-specific behavior behind shared session/event abstractions. Verify its supported local server API and authentication requirements before implementation rather than assuming protocol compatibility.
+The OpenCode adapter in `caelum-core` starts one `opencode serve` HTTP API process per project, bound to loopback on an available port. It scopes sessions to the validated project directory, streams `/api/event` over SSE, forwards permission requests through the shared one-shot approval broker, and terminates/restarts managed servers as needed. It uses the optional server Basic authentication configuration without storing provider credentials.
 
 See [security.md](security.md) for current permission boundaries and process lifecycle guarantees.
 See [codex.md](codex.md) for Codex CLI setup and app-server protocol behavior.
+See [opencode.md](opencode.md) for OpenCode server setup and HTTP/SSE behavior.
 
 ## Security boundaries
 
