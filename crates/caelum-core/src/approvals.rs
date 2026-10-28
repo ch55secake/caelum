@@ -26,7 +26,7 @@ struct PendingRequest {
 
 /// Coordinates one-shot approvals between provider adapters and the desktop UI.
 /// Unknown, timed-out, or cancelled requests always resolve as denied.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ApprovalBroker {
     state: Arc<Mutex<BrokerState>>,
 }

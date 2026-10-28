@@ -15,13 +15,13 @@ Provider adapters submit `PermissionRequest` values that retain provider-specifi
 - There is no persistent allow-all decision.
 - Timeouts, cancellation, app shutdown, unknown IDs, and dropped waiters resolve as denied.
 
-No agent provider currently creates approval requests. This broker and UI are the required boundary for future integrations, not a claim that provider actions are already available.
+The Codex adapter routes app-server command-execution and file-change approval requests through this broker. Caelum responds with a one-request `accept` or `decline`; unsupported request methods are rejected instead of being silently granted. Codex runs with its `workspaceWrite` sandbox and `unlessTrusted` approval policy. Review those provider-managed sandbox semantics separately from Caelum's own filesystem boundary.
 
 ## Child-process lifecycle
 
 Provider adapters must launch a configured executable with a discrete argument vector, never by interpolating input into a shell command. Each child must be registered with `ProcessRegistry`. It can be polled for an exit status so the adapter can decide whether to recover, explicitly terminated on cancellation, and killed/reaped on app shutdown or when its managed handle is dropped.
 
-The current application does not launch agent processes. The registry's lifecycle behavior is tested independently; process-specific restart policy will live in the adapter that owns the process.
+The Codex adapter starts `codex app-server --listen stdio://` with an explicit argument vector and validated project working directory. The child is registered with `ProcessRegistry`; an unexpected exit fails outstanding requests and the next operation starts a fresh server. App shutdown terminates/reaps all registered provider children. The stdio transport avoids exposing an app-server network listener.
 
 ## Tauri capabilities
 
