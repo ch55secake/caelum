@@ -21,13 +21,14 @@ jobs:
       contents: write
     outputs:
       release_tag: ${{ steps.tag.outputs.release_tag }}
+      release_commit: ${{ steps.tag.outputs.release_commit }}
       should_release: ${{ steps.tag.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Create a tag for a merged version bump
+      - name: Bump patch version, tag, and prepare release
         id: tag
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -51,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.prepare.outputs.release_commit }}
 
       - name: Verify release tag matches project version
         env:
