@@ -3,13 +3,14 @@
 use std::{path::PathBuf, sync::Arc};
 
 use caelum_core::{
-    approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase, git::GitClient,
-    opencode::OpenCodeProvider, processes::ProcessRegistry, projects::Project,
+    approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase, files,
+    git::GitClient, opencode::OpenCodeProvider, processes::ProcessRegistry, projects::Project,
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
-    GitRepositoryStatus, OpenCodeConversationEntry, OpenCodeSessionInfo, OpenCodeSessionList,
-    ProjectInfo, WorkspaceSnapshot,
+    GitFileVersions, GitRepositoryStatus, OpenCodeConversationEntry, OpenCodeSessionInfo,
+    OpenCodeSessionList, ProjectDirectoryListing, ProjectFileContent, ProjectInfo,
+    WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -83,6 +84,46 @@ async fn git_file_diff(project_path: String, file_path: String) -> Result<GitFil
         GitClient::new()
             .file_diff(project_path, &file_path)
             .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn git_file_versions(
+    project_path: String,
+    file_path: String,
+) -> Result<GitFileVersions, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        GitClient::new()
+            .file_versions(project_path, &file_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn list_project_directory(
+    project_path: String,
+    path: String,
+    offset: usize,
+    limit: usize,
+) -> Result<ProjectDirectoryListing, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        files::list_directory(project_path, &path, offset, limit).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_project_file(
+    project_path: String,
+    path: String,
+) -> Result<ProjectFileContent, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        files::read_text_file(project_path, &path).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -443,6 +484,9 @@ pub fn run() {
             open_project,
             git_repository_status,
             git_file_diff,
+            git_file_versions,
+            list_project_directory,
+            read_project_file,
             restore_workspace,
             remember_project,
             close_project_record,
