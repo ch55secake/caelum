@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -130,6 +131,17 @@ def set_outputs(tag: str, should_release: bool, commit: str) -> None:
         output.write(f"should_release={str(should_release).lower()}\n")
 
 
+def is_automatic_release_commit(revision: str) -> bool:
+    author_name = git("show", "-s", "--format=%an", revision)
+    author_email = git("show", "-s", "--format=%ae", revision)
+    message = git("show", "-s", "--format=%B", revision)
+    return (
+        author_name == BOT_NAME
+        and author_email == BOT_EMAIL
+        and any(line.startswith("Release source: ") for line in message.splitlines())
+    )
+
+
 def remote_tag_commit(tag: str) -> str | None:
     tag_ref = f"refs/tags/{tag}"
     result = subprocess.run(
@@ -228,7 +240,18 @@ def create_tag(tag: str, commit: str) -> None:
             ],
             check=True,
         )
-        subprocess.run(["git", "push", "origin", f"refs/tags/{tag}"], check=True)
+        push_args = ["git"]
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            encoded_token = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+            push_args.extend(
+                [
+                    "-c",
+                    f"http.https://github.com/.extraheader=AUTHORIZATION: basic {encoded_token}",
+                ]
+            )
+        push_args.extend(["push", "origin", f"refs/tags/{tag}"])
+        subprocess.run(push_args, check=True)
         print(f"Created release tag {tag} on {commit}.")
     else:
         print(f"Reusing release tag {tag} on {commit}.")
@@ -246,6 +269,11 @@ def main() -> None:
 
     if ref != "refs/heads/main":
         raise SystemExit(f"Expected a main branch push or version tag, got {ref}")
+
+    if is_automatic_release_commit(commit):
+        print(f"Skipping duplicate release workflow for automated version commit {commit}.")
+        set_outputs("", False, commit)
+        return
 
     current = project_versions("HEAD")
     before = os.environ.get("BEFORE_SHA", "")

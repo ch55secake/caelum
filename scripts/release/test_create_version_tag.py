@@ -147,6 +147,22 @@ class AutomaticReleaseTests(unittest.TestCase):
             self.assertEqual(retry_outputs["release_commit"], release_commit)
             self.assertEqual(retry_outputs["release_tag"], "v0.1.2")
 
+            bot_push_output = root / "bot-push-output"
+            environment.update(
+                {
+                    "GITHUB_SHA": release_commit,
+                    "BEFORE_SHA": source_commit,
+                    "GITHUB_OUTPUT": str(bot_push_output),
+                }
+            )
+            subprocess.run([sys.executable, str(script)], cwd=repository, env=environment, check=True)
+            bot_push_outputs = dict(
+                line.split("=", maxsplit=1)
+                for line in bot_push_output.read_text(encoding="utf-8").splitlines()
+            )
+            self.assertEqual(bot_push_outputs["release_tag"], "")
+            self.assertEqual(bot_push_outputs["should_release"], "false")
+
 
 if __name__ == "__main__":
     unittest.main()

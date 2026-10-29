@@ -4,6 +4,17 @@ Every merge to `main` creates a patch release: the workflow commits the next pat
 
 The app builds are currently unsigned and not notarized. macOS may warn users or block opening the downloaded app. No Apple Developer account or signing secrets are needed for these builds.
 
+## Automatic version commit setup
+
+The `main` ruleset requires pull requests and status checks. The release workflow uses a dedicated GitHub App installation token to bypass those rules only for its automated version commit.
+
+1. Create a private GitHub App under the `ch55secake` account with **Contents: read and write** repository permissions. Disable webhooks; no events are needed.
+2. Install the app on `ch55secake/caelum` only, then generate a private key.
+3. Add the app ID and private key as repository Actions secrets named `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY`.
+4. Add the installed app to the `main` ruleset's bypass list with **Always allow**.
+
+The release workflow uses the app token for the version commit and the normal Actions token for the release tag, avoiding a duplicate release run.
+
 ## Optional Homebrew setup
 
 To have releases automatically open a pull request in `ch55secake/homebrew-tap`:
