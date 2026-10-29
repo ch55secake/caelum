@@ -6,6 +6,11 @@ export type SessionSummary = {
   updatedAt: number | null;
   isWorking?: boolean;
 };
+export type SessionDetails = {
+  branch: string | null;
+  branchIsCurrent: boolean;
+  changes: { additions: number; deletions: number } | null;
+};
 export type ConversationEntry = {
   id: string;
   kind: "user" | "assistant" | "tool" | "status" | "reasoning";
@@ -85,6 +90,9 @@ export type SessionWorkspaceState = {
 
 export type ProviderWorkspaceState = {
   sessions: SessionSummary[];
+  sessionDetails: Record<string, SessionDetails>;
+  archivingSessionIds: string[];
+  archivedSessionIds: string[];
   sessionsLoaded: boolean;
   isLoadingSessions: boolean;
   selectedSessionId: string | null;

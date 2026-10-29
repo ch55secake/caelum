@@ -61,8 +61,19 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .session-search input { width: 0; flex: 1; padding: 0; border: 0; outline: 0; font-size: 11px; background: transparent; }
 .session-search input::placeholder { color: var(--muted); }
 .session-list { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: auto; gap: 2px; }
-.session-item { display: flex; min-height: 33px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 7px 8px; border: 0; background: transparent; text-align: left; color: var(--muted); font-size: 12px; }
-.session-item.selected { color: var(--text); background: #a39af610; box-shadow: inset 2px 0 var(--accent); }
+.session-row { position: relative; flex: 0 0 auto; border-radius: 5px; }
+.session-row.selected { color: var(--text); background: #a39af610; box-shadow: inset 2px 0 var(--accent); }
+.session-item { display: flex; width: 100%; min-width: 0; min-height: 50px; flex-direction: column; gap: 5px; padding: 8px; border: 0; background: transparent; text-align: left; color: var(--muted); font-size: 12px; }
+.session-row.selected .session-item { color: var(--text); }
+.session-heading { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; padding-right: 20px; }
+.session-context { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; min-height: 13px; padding-left: 23px; color: var(--muted); font-size: 10px; }
+.session-branch { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.session-branch > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-lines { display: flex; flex-shrink: 0; gap: 5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lines-added { color: #89bc9b; }.lines-deleted { color: #d98e98; }
+.session-archive { position: absolute; top: 3px; right: 3px; width: 22px; height: 24px; opacity: 0; }
+.session-row:hover .session-archive, .session-row:focus-within .session-archive { opacity: 1; }
+.session-row:hover .session-archive:disabled, .session-row:focus-within .session-archive:disabled { opacity: .45; }
 .session-provider { display: grid; flex: 0 0 16px; height: 16px; place-items: center; border: 1px solid var(--border); border-radius: 4px; font-size: 9px; }
 .session-title { overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
 .empty-sessions { padding: 9px 8px; color: var(--muted); font-size: 12px; }
@@ -91,6 +102,10 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .error-banner > span, .inline-error > span { min-width: 0; }
 .error-banner button, .connection-banner button, .inline-error button { flex-shrink: 0; padding: 4px 8px; }
 .connection-banner { color: #d2b989; background: #211e16; border-color: #423b2a; }
+.archive-notice { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; padding: 7px 16px; border-bottom: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: 12px; }
+.archive-notice > span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.archive-notice strong { color: var(--text); font-weight: 500; }
+.archive-notice > button { flex-shrink: 0; }.archive-notice > button:not(.icon-button) { padding: 4px 8px; color: var(--accent); }
 .transcript-wrap { display: flex; flex: 1; min-height: 0; position: relative; }
 .transcript { position: relative; flex: 1; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; }
 .transcript-content { max-width: 856px; margin: 0 auto; padding: 22px 32px 30px; }

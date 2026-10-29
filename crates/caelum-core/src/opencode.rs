@@ -15,8 +15,9 @@ use std::{
 };
 
 use caelum_protocol::{
-    ApprovalDecision, OpenCodeEvent, OpenCodeSession, OpenCodeSessionInfo, OpenCodeSessionList,
-    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, SessionHistoryPage,
+    ApprovalDecision, LineChanges, OpenCodeEvent, OpenCodeSession, OpenCodeSessionInfo,
+    OpenCodeSessionList, PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice,
+    SessionDetails, SessionHistoryPage,
 };
 use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -383,6 +384,73 @@ impl OpenCodeProvider {
             &path,
             &[],
             Some(json!({ "text": prompt, "id": message_id })),
+        )?;
+        Ok(())
+    }
+
+    pub fn session_details(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+    ) -> Result<SessionDetails, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        self.session(&server, &project, session_id)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let branch = server
+            .request_json(Method::GET, "/api/vcs", &query, None)
+            .ok()
+            .and_then(|response| {
+                response
+                    .pointer("/data/branch/current")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        let changes = server
+            .request_json(
+                Method::GET,
+                &format!("/api/session/{session_id}/diff"),
+                &[("context", "0".to_owned())],
+                None,
+            )
+            .ok()
+            .and_then(|response| {
+                let mut total = LineChanges::default();
+                for file in response.get("data")?.as_array()? {
+                    total.additions += file.get("additions")?.as_u64()?;
+                    total.deletions += file.get("deletions")?.as_u64()?;
+                }
+                Some(total)
+            });
+        Ok(SessionDetails {
+            branch,
+            branch_is_current: true,
+            changes,
+        })
+    }
+
+    pub fn set_session_archived(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        archived: bool,
+    ) -> Result<(), OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let session = self.session(&server, &project, session_id)?;
+        if archived && session.is_working {
+            return Err(OpenCodeError::Protocol(
+                "stop the running turn before archiving this session".into(),
+            ));
+        }
+        server.request_json(
+            Method::PATCH,
+            &format!("/api/session/{session_id}"),
+            &[],
+            Some(json!({ "archived": archived })),
         )?;
         Ok(())
     }
@@ -1577,9 +1645,26 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
         elif path == "/api/session":
-            self.send_json({"data": [SESSION], "cursor": {"previous": None, "next": None}})
+            assert parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["false"]
+            self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
         elif path == "/api/session/ses_fake":
-            self.send_json({"data": SESSION})
+            session = dict(SESSION)
+            if os.path.exists(os.path.join(PROJECT, "busy")): session["time"] = {"busy": 2, "idle": 1}
+            self.send_json({"data": session})
+        elif path == "/api/session/ses_foreign":
+            self.send_json({"data": {"id": "ses_foreign", "location": {"directory": os.path.dirname(PROJECT)}}})
+        elif path == "/api/vcs":
+            assert parse_qs(urlsplit(self.path).query)["location[directory]"] == [PROJECT]
+            if os.path.exists(os.path.join(PROJECT, "no-vcs")):
+                self.send_error(404)
+                return
+            self.send_json({"data": {"branch": {"current": "feature/current"}}})
+        elif path == "/api/session/ses_fake/diff":
+            assert parse_qs(urlsplit(self.path).query) == {"context": ["0"]}
+            if os.path.exists(os.path.join(PROJECT, "no-vcs")):
+                self.send_error(404)
+                return
+            self.send_json({"data": [{"additions": 12, "deletions": 2}, {"additions": 3, "deletions": 5}]})
         elif path == "/api/session/ses_fake/message":
             query = parse_qs(urlsplit(self.path).query)
             if "cursor" in query:
@@ -1599,6 +1684,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}]})
         else:
             self.send_error(404)
+
+    def do_PATCH(self):
+        if not self.authorized(): return
+        assert urlsplit(self.path).path == "/api/session/ses_fake"
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        assert set(body) == {"archived"} and isinstance(body["archived"], bool)
+        if os.path.exists(os.path.join(PROJECT, "archive-error")):
+            self.send_error(500)
+            return
+        SESSION["archived"] = body["archived"]
+        self.send_response(204)
+        self.end_headers()
 
     def do_POST(self):
         if not self.authorized():
@@ -1851,6 +1948,64 @@ server.serve_forever()
         }
         let reply: Value = serde_json::from_slice(&fs::read(approval_path).unwrap()).unwrap();
         assert_eq!(reply["decision"], "once");
+
+        let details = provider.session_details(&project_path, "ses_fake").unwrap();
+        assert_eq!(details.branch.as_deref(), Some("feature/current"));
+        assert!(details.branch_is_current);
+        assert_eq!(
+            details.changes,
+            Some(LineChanges {
+                additions: 15,
+                deletions: 7
+            })
+        );
+        fs::write(project_path.join("no-vcs"), "").unwrap();
+        let details = provider.session_details(&project_path, "ses_fake").unwrap();
+        assert_eq!(details.branch, None);
+        assert_eq!(details.changes, None);
+        assert!(matches!(
+            provider.session_details(&project_path, "ses_foreign"),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        for archived in [true, false] {
+            assert!(matches!(
+                provider.set_session_archived(&project_path, "ses_foreign", archived),
+                Err(OpenCodeError::SessionNotInProject)
+            ));
+        }
+        fs::write(project_path.join("busy"), "").unwrap();
+        assert!(provider
+            .set_session_archived(&project_path, "ses_fake", true)
+            .is_err());
+        fs::remove_file(project_path.join("busy")).unwrap();
+        fs::write(project_path.join("archive-error"), "").unwrap();
+        assert!(provider
+            .set_session_archived(&project_path, "ses_fake", true)
+            .is_err());
+        assert_eq!(
+            provider
+                .list_sessions(&project_path)
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        fs::remove_file(project_path.join("archive-error")).unwrap();
+        provider
+            .set_session_archived(&project_path, "ses_fake", true)
+            .unwrap();
+        assert!(provider
+            .list_sessions(&project_path)
+            .unwrap()
+            .sessions
+            .is_empty());
+        provider
+            .set_session_archived(&project_path, "ses_fake", false)
+            .unwrap();
+        assert_eq!(
+            provider.list_sessions(&project_path).unwrap().sessions[0].id,
+            "ses_fake"
+        );
 
         let process_id = provider
             .inner

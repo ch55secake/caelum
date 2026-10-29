@@ -14,8 +14,9 @@ use std::{
 };
 
 use caelum_protocol::{
-    ApprovalDecision, CodexEvent, CodexSessionInfo, CodexSessionList, CodexThreadInfo,
-    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, SessionHistoryPage,
+    ApprovalDecision, CodexEvent, CodexSessionInfo, CodexSessionList, CodexThreadInfo, LineChanges,
+    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, SessionDetails,
+    SessionHistoryPage,
 };
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -130,6 +131,7 @@ impl CodexProvider {
                     "cursor": cursor,
                     "limit": 100,
                     "sortKey": "updated_at",
+                    "archived": false,
                     "cwd": project.path().to_string_lossy(),
                     "sourceKinds": ["appServer", "cli", "vscode"]
                 }),
@@ -403,6 +405,91 @@ impl CodexProvider {
                 return Err(error);
             }
         }
+        Ok(())
+    }
+
+    pub fn session_details(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+    ) -> Result<SessionDetails, CodexError> {
+        let project = Project::open(project_path)?;
+        let connection = self.connection_for_thread(&project, thread_id)?;
+        let response = connection.request("thread/read", json!({ "threadId": thread_id }))?;
+        let branch = response
+            .pointer("/thread/gitInfo/branch")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        // A newly created thread may not have materialized history yet.
+        let response = connection.request("thread/turns/list", json!({ "threadId": thread_id, "limit": 1, "sortDirection": "desc", "itemsView": "full" })).ok();
+        let changes = response
+            .as_ref()
+            .and_then(|response| response.pointer("/data/0/items"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                let mut total = LineChanges::default();
+                for item in items.iter().filter(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("fileChange")
+                        && item.get("status").and_then(Value::as_str) == Some("completed")
+                }) {
+                    for change in item
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let counts = file_change_lines(change);
+                        total.additions += counts.additions;
+                        total.deletions += counts.deletions;
+                    }
+                }
+                total
+            });
+        Ok(SessionDetails {
+            branch,
+            branch_is_current: false,
+            changes,
+        })
+    }
+
+    pub fn set_session_archived(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        archived: bool,
+    ) -> Result<(), CodexError> {
+        if thread_id.trim().is_empty() {
+            return Err(CodexError::InvalidThreadId);
+        }
+        let project = Project::open(project_path)?;
+        // Read also works for archived threads, which are absent from thread/list.
+        let connection = self.connection(&project)?;
+        let response = connection.request("thread/read", json!({ "threadId": thread_id }))?;
+        let cwd = response
+            .pointer("/thread/cwd")
+            .and_then(Value::as_str)
+            .ok_or(CodexError::ThreadNotInProject)?;
+        if Path::new(cwd).canonicalize().ok().as_deref() != Some(project.path()) {
+            return Err(CodexError::ThreadNotInProject);
+        }
+        if archived
+            && response
+                .pointer("/thread/status/type")
+                .and_then(Value::as_str)
+                == Some("active")
+        {
+            return Err(CodexError::Protocol(
+                "stop the running turn before archiving this session".into(),
+            ));
+        }
+        connection.request(
+            if archived {
+                "thread/archive"
+            } else {
+                "thread/unarchive"
+            },
+            json!({ "threadId": thread_id }),
+        )?;
         Ok(())
     }
 
@@ -1009,6 +1096,37 @@ fn publish_event(subscribers: &EventSubscribers, event: CodexEvent) {
         .retain(|subscriber| subscriber.send(event.clone()).is_ok());
 }
 
+fn file_change_lines(change: &Value) -> LineChanges {
+    let diff = change.get("diff").and_then(Value::as_str).unwrap_or("");
+    let mut counts = LineChanges::default();
+    let mut in_hunk = false;
+    let mut unified = false;
+    for line in diff.lines() {
+        if line.starts_with("@@ ") {
+            in_hunk = true;
+            unified = true;
+        } else if line.starts_with("diff ") {
+            in_hunk = false;
+        } else if in_hunk {
+            if line.starts_with('+') {
+                counts.additions += 1;
+            }
+            if line.starts_with('-') {
+                counts.deletions += 1;
+            }
+        }
+    }
+    if !unified {
+        // Added/deleted files can carry their complete contents rather than a patch.
+        match change.pointer("/kind/type").and_then(Value::as_str) {
+            Some("add") => counts.additions = diff.lines().count() as u64,
+            Some("delete") => counts.deletions = diff.lines().count() as u64,
+            _ => {}
+        }
+    }
+    counts
+}
+
 fn thread_info(value: &Value) -> Option<CodexThreadInfo> {
     Some(CodexThreadInfo {
         is_working: value.pointer("/status/type").and_then(Value::as_str) == Some("active"),
@@ -1228,6 +1346,7 @@ mod tests {
 import json, os, sys
 models = {'thread-existing': 'saved-model'}
 efforts = {'thread-existing': 'low'}
+archived = set()
 for raw in sys.stdin:
     request = json.loads(raw)
     method = request.get('method')
@@ -1241,7 +1360,17 @@ for raw in sys.stdin:
     if method == 'initialize':
         result = {'userAgent': 'fake-codex'}
     elif method == 'thread/list':
-        result = {'data': [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123}], 'nextCursor': None}
+        assert params['archived'] is False
+        result = {'data': [] if 'thread-existing' in archived else [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123}], 'nextCursor': None}
+    elif method == 'thread/read':
+        result = {'thread': {'id': params['threadId'], 'cwd': os.path.dirname(os.getcwd()) if params['threadId'] == 'foreign-thread' else os.getcwd(), 'gitInfo': {'branch': 'feature/sidebar'}, 'status': {'type': 'active' if os.path.exists('active-thread') else 'idle'}}}
+    elif method in ['thread/archive', 'thread/unarchive']:
+        if os.path.exists('archive-error'):
+            print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'archive unavailable'}}), flush=True)
+            continue
+        if method == 'thread/archive': archived.add(params['threadId'])
+        else: archived.discard(params['threadId'])
+        result = {}
     elif method == 'thread/start':
         models['thread-new'] = params.get('model') or 'default-model'
         efforts['thread-new'] = 'medium'
@@ -1254,11 +1383,21 @@ for raw in sys.stdin:
         assert params['cwd'] == os.getcwd()
         result = {'config': {'model': 'configured-model'}}
     elif method == 'thread/turns/list':
-        assert params['itemsView'] == 'full' and params['sortDirection'] == 'desc' and params['limit'] == 30
-        if params.get('cursor'):
+        assert params['itemsView'] == 'full' and params['sortDirection'] == 'desc'
+        if params['limit'] == 1:
+            if os.path.exists('missing-details'):
+                print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'no history yet'}}), flush=True)
+                continue
+            result = {'data': [{'id': 'latest', 'items': [
+                {'type': 'fileChange', 'status': 'completed', 'changes': [
+                    {'kind': {'type': 'update'}, 'diff': '--- a/file\n+++ b/file\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n'},
+                    {'kind': {'type': 'add'}, 'diff': 'first\nsecond\n'}]},
+                {'type': 'fileChange', 'status': 'failed', 'changes': [{'kind': {'type': 'add'}, 'diff': 'not applied'}]}]}], 'nextCursor': 'older'}
+        elif params.get('cursor'):
             assert params['cursor'] == 'older-cursor'
             result = {'data': [{'id': 'turn-old', 'items': [{'id': 'old-user', 'type': 'userMessage', 'content': [{'type': 'text', 'text': 'Oldest'}]}]}], 'nextCursor': None}
         else:
+            assert params['limit'] == 30
             result = {'data': [{'id': 'turn-b', 'items': [{'id': 'cmd', 'type': 'commandExecution', 'command': 'git status', 'aggregatedOutput': 'clean', 'status': 'completed'}]}, {'id': 'turn-a', 'items': []}], 'nextCursor': 'older-cursor'}
     elif method == 'turn/start':
         prompt = params['input'][0]['text']
@@ -1285,6 +1424,89 @@ for raw in sys.stdin:
         os.unlink('die-after-list')
         sys.exit(0)
 "#;
+
+    #[test]
+    fn session_archiving_is_reversible_scoped_and_keeps_recorded_branch_details() {
+        let directory = TestDirectory::new();
+        let project_path = directory.project();
+        let provider = CodexProvider::with_executable(
+            Arc::new(ProcessRegistry::default()),
+            ApprovalBroker::default(),
+            directory.fake_codex(true),
+        );
+        let details = provider
+            .session_details(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(details.branch.as_deref(), Some("feature/sidebar"));
+        assert!(!details.branch_is_current);
+        assert_eq!(
+            details.changes,
+            Some(LineChanges {
+                additions: 4,
+                deletions: 1
+            })
+        );
+        fs::write(project_path.join("missing-details"), "").unwrap();
+        let details = provider
+            .session_details(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(details.branch.as_deref(), Some("feature/sidebar"));
+        assert_eq!(details.changes, None);
+        assert!(matches!(
+            provider.session_details(&project_path, "foreign-thread"),
+            Err(CodexError::ThreadNotInProject)
+        ));
+        for archived in [true, false] {
+            assert!(matches!(
+                provider.set_session_archived(&project_path, "foreign-thread", archived),
+                Err(CodexError::ThreadNotInProject)
+            ));
+        }
+        fs::write(project_path.join("active-thread"), "").unwrap();
+        assert!(provider
+            .set_session_archived(&project_path, "thread-existing", true)
+            .is_err());
+        assert_eq!(
+            provider.list_sessions(&project_path).unwrap().threads.len(),
+            1
+        );
+        fs::remove_file(project_path.join("active-thread")).unwrap();
+        fs::write(project_path.join("archive-error"), "").unwrap();
+        assert!(matches!(
+            provider.set_session_archived(&project_path, "thread-existing", true),
+            Err(CodexError::Rpc(_))
+        ));
+        fs::remove_file(project_path.join("archive-error")).unwrap();
+        provider
+            .set_session_archived(&project_path, "thread-existing", true)
+            .unwrap();
+        assert!(provider
+            .list_sessions(&project_path)
+            .unwrap()
+            .threads
+            .is_empty());
+        provider
+            .set_session_archived(&project_path, "thread-existing", false)
+            .unwrap();
+        assert_eq!(
+            provider.list_sessions(&project_path).unwrap().threads[0].id,
+            "thread-existing"
+        );
+        provider.shutdown();
+    }
+
+    #[test]
+    fn line_counts_handle_patch_headers_context_and_full_file_contents() {
+        for (kind, diff, additions, deletions) in [
+            ("update", "--- a/file\n+++ b/file\n@@ -1,2 +1,3 @@\n context\n-old\n+++literal\n+\n\\ No newline at end of file\n@@ -9 +10 @@\n-old2\n+new2\n", 3, 2),
+            ("add", "first\n\nlast", 3, 0),
+            ("delete", "first\nlast\n", 0, 2),
+            ("add", "", 0, 0),
+            ("update", "Binary files a/file and b/file differ", 0, 0),
+        ] {
+            assert_eq!(file_change_lines(&json!({ "kind": { "type": kind }, "diff": diff })), LineChanges { additions, deletions });
+        }
+    }
 
     #[test]
     fn project_sessions_can_be_listed_started_resumed_and_cancelled() {

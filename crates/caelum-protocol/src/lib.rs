@@ -247,6 +247,21 @@ pub struct SessionHistoryPage {
     pub effort: Option<String>,
 }
 
+/// Compact provider-owned context for a session's sidebar entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDetails {
+    pub branch: Option<String>,
+    pub branch_is_current: bool,
+    pub changes: Option<LineChanges>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineChanges {
+    pub additions: u64,
+    pub deletions: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderChoice {
     pub id: String,

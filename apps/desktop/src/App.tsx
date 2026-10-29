@@ -189,6 +189,31 @@ export default function App() {
             </button>
           </div>
         )}
+        {app.archivedSession && (
+          <div
+            className="archive-notice"
+            role="status"
+            aria-label="Session archived"
+          >
+            <span title={sessionTitle(app.archivedSession.thread)}>
+              Archived{" "}
+              <strong>{sessionTitle(app.archivedSession.thread)}</strong>
+            </span>
+            <button
+              onClick={() => void app.undoArchive()}
+              disabled={app.undoingArchive}
+            >
+              {app.undoingArchive ? "Restoring…" : "Undo"}
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Dismiss archived session notice"
+              onClick={app.dismissArchive}
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
         {app.view === "files" ? (
           <div className="panel-content">
             <FilesPanel project={app.project} />
@@ -324,6 +349,9 @@ export default function App() {
                     Boolean(
                       app.selectedId &&
                       (!app.selected ||
+                        app.providerWorkspace?.archivingSessionIds.includes(
+                          app.selectedId,
+                        ) ||
                         app.selected.connection !== "connected"),
                     ) ||
                     Boolean(

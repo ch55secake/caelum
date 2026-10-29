@@ -1,4 +1,5 @@
 import {
+  Archive,
   FileCode2,
   FolderGit2,
   GitBranch,
@@ -13,16 +14,68 @@ import {
   ShieldAlert,
   X,
 } from "lucide-react";
-import type { RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import {
   projectHasActiveTurn,
   type ProviderKind,
   type SessionSummary,
+  type SessionDetails,
 } from "./workspaceState.js";
 import type { useWorkspace } from "./useWorkspace.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
 export function sessionTitle(item: SessionSummary) {
   return item.name || item.preview || "Untitled session";
+}
+
+function SessionContext({
+  details,
+  load,
+  revision,
+}: {
+  details?: SessionDetails;
+  load: () => void;
+  revision: number | null;
+}) {
+  const element = useRef<HTMLSpanElement>(null);
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadRef.current();
+      },
+      { root: element.current?.closest(".session-list") },
+    );
+    if (element.current) observer.observe(element.current);
+    return () => observer.disconnect();
+  }, [revision]);
+  return (
+    <span className="session-context" ref={element}>
+      {details?.branch && (
+        <span
+          className="session-branch"
+          title={`${details.branchIsCurrent ? "Current working-directory branch" : "Session branch"}: ${details.branch}`}
+        >
+          <GitBranch size={10} aria-hidden="true" />
+          <span>{details.branch}</span>
+        </span>
+      )}
+      {details?.changes && (
+        <span
+          className="session-lines"
+          title="Lines changed in the latest turn"
+          aria-label={`Latest turn: ${details.changes.additions} added, ${details.changes.deletions} deleted`}
+        >
+          <span className="lines-added">
+            +{details.changes.additions.toLocaleString()}
+          </span>
+          <span className="lines-deleted">
+            −{details.changes.deletions.toLocaleString()}
+          </span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 export function Sidebar({
@@ -53,7 +106,7 @@ export function Sidebar({
     )
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
     .filter((item) =>
-      `${sessionTitle(item)} ${item.provider}`
+      `${sessionTitle(item)} ${item.provider} ${app.workspace?.providers[item.provider].sessionDetails[item.id]?.branch ?? ""}`
         .toLowerCase()
         .includes(search.toLowerCase()),
     );
@@ -188,17 +241,21 @@ export function Sidebar({
         <kbd>⌘K</kbd>
       </label>
       <div className="session-list">
-        {app.providerWorkspace?.isLoadingSessions && sessions.length === 0 && (
-          <div className="empty-sessions">Connecting…</div>
-        )}
-        {sessions.length === 0 && !app.providerWorkspace?.isLoadingSessions && (
-          <div className="empty-sessions">
-            {search ? "No matching sessions" : "No sessions yet"}
-          </div>
-        )}
+        {app.providerWorkspace?.isLoadingSessions &&
+          sessions.length === 0 && (
+            <div className="empty-sessions">Connecting…</div>
+          )}
+        {sessions.length === 0 &&
+          !app.providerWorkspace?.isLoadingSessions && (
+            <div className="empty-sessions">
+              {search ? "No matching sessions" : "No sessions yet"}
+            </div>
+          )}
         {sessions.map((item) => {
-          const state =
-            app.workspace?.providers[item.provider].sessionsById[item.id];
+          const workspace = app.workspace?.providers[item.provider];
+          const state = workspace?.sessionsById[item.id];
+          const archiving = workspace?.archivingSessionIds.includes(item.id);
+          const working = state?.isWorking ?? item.isWorking;
           const approval = app.approvals.some(
             (request) =>
               request.projectPath === app.project?.path &&
@@ -206,34 +263,87 @@ export function Sidebar({
               request.sessionId === item.id,
           );
           return (
-            <button
-              key={`${item.provider}-${item.id}`}
-              className={`session-item${app.provider === item.provider && app.selectedId === item.id && app.view === "session" ? " selected" : ""}`}
-              title={sessionTitle(item)}
-              onClick={() => app.selectSession(item, item.provider)}
+            <div
+              key={`${app.project?.path}-${item.provider}-${item.id}`}
+              className={`session-row${app.provider === item.provider && app.selectedId === item.id && app.view === "session" ? " selected" : ""}`}
             >
-              <span className="session-provider" title={item.provider}>
-                {item.provider === "codex" ? "C" : "O"}
-              </span>
-              <span className="session-title">{sessionTitle(item)}</span>
-              {approval ? (
-                <ShieldAlert
-                  size={13}
-                  className="approval-indicator"
-                  aria-label="Approval required"
+              <button
+                className="session-item"
+                title={sessionTitle(item)}
+                aria-label={sessionTitle(item)}
+                aria-current={
+                  app.provider === item.provider &&
+                  app.selectedId === item.id &&
+                  app.view === "session"
+                    ? "page"
+                    : undefined
+                }
+                disabled={archiving}
+                onClick={() => app.selectSession(item, item.provider)}
+              >
+                <span className="session-heading">
+                  <span className="session-provider" title={item.provider}>
+                    {item.provider === "codex" ? "C" : "O"}
+                  </span>
+                  <span className="session-title">{sessionTitle(item)}</span>
+                  {approval ? (
+                    <ShieldAlert
+                      size={13}
+                      className="approval-indicator"
+                      aria-label="Approval required"
+                    />
+                  ) : working ? (
+                    <LoaderCircle
+                      size={13}
+                      className="spinning"
+                      aria-label="Running"
+                    />
+                  ) : state?.unread ? (
+                    <span className="unread-dot" aria-label="Unread" />
+                  ) : state?.connection === "disconnected" ? (
+                    <span
+                      className="disconnected-dot"
+                      aria-label="Disconnected"
+                    />
+                  ) : null}
+                </span>
+                <SessionContext
+                  details={workspace?.sessionDetails[item.id]}
+                  revision={item.updatedAt}
+                  load={() => {
+                    if (app.project)
+                      void app.loadSessionDetails(
+                        app.project.path,
+                        item.provider,
+                        item.id,
+                      );
+                  }}
                 />
-              ) : state?.isWorking ? (
-                <LoaderCircle
-                  size={13}
-                  className="spinning"
-                  aria-label="Running"
-                />
-              ) : state?.unread ? (
-                <span className="unread-dot" aria-label="Unread" />
-              ) : state?.connection === "disconnected" ? (
-                <span className="disconnected-dot" aria-label="Disconnected" />
-              ) : null}
-            </button>
+              </button>
+              <button
+                className="icon-button session-archive"
+                aria-label="Archive session"
+                title={
+                  working || state?.isSubmitting || approval
+                    ? "Stop the running turn before archiving"
+                    : `Archive ${sessionTitle(item)}`
+                }
+                disabled={
+                  archiving ||
+                  working ||
+                  state?.isSubmitting ||
+                  state?.connection === "connecting" ||
+                  approval
+                }
+                onClick={() => void app.archiveSession(item, item.provider)}
+              >
+                {archiving ? (
+                  <LoaderCircle size={13} className="spinning" />
+                ) : (
+                  <Archive size={13} />
+                )}
+              </button>
+            </div>
           );
         })}
       </div>

@@ -19,6 +19,7 @@ import {
   type ProviderWorkspaceState,
   type SessionWorkspaceState,
   type SessionSummary,
+  type SessionDetails,
   type WorkspaceMap,
   type WorkspaceSessionInfo,
 } from "./workspaceState.js";
@@ -33,6 +34,14 @@ export type ApprovalPrompt = {
 };
 type PersistedProject = Parameters<typeof restoreProjectWorkspace>[0] & {
   project: ProjectInfo;
+};
+type ArchivedSession = {
+  project: ProjectInfo;
+  provider: ProviderKind;
+  thread: SessionSummary;
+  cached?: SessionWorkspaceState;
+  details?: SessionDetails;
+  restoreNavigation: number | null;
 };
 type HistoryPage = {
   data: Record<string, unknown>[];
@@ -115,9 +124,17 @@ export function useWorkspace() {
   const [selecting, setSelecting] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
   const [resolving, setResolving] = useState<string | null>(null);
+  const [archivedSession, setArchivedSession] =
+    useState<ArchivedSession | null>(null);
+  const [undoingArchive, setUndoingArchive] = useState(false);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const locks = useRef(new Set<string>());
   const historyRefreshes = useRef(new Set<string>());
+  const detailsRefreshes = useRef(new Set<string>());
+  const detailsChecked = useRef(new Map<string, number>());
+  // Archive/Undo invalidates snapshots already in flight, including snapshots
+  // for the same session ID after it has been restored.
+  const revisions = useRef(new Map<string, number>());
   const navigation = useRef(0);
   const workspace = project ? workspaces[project.path] : undefined;
   const provider = workspace?.provider ?? "codex";
@@ -156,6 +173,19 @@ export function useWorkspace() {
       );
     return queue.current;
   }
+  const revision = (key: string) => revisions.current.get(key) ?? 0;
+  function invalidateSession(path: string, kind: ProviderKind, id: string) {
+    for (const key of [keyFor(path, kind), keyFor(path, kind, id)])
+      revisions.current.set(key, revision(key) + 1);
+  }
+  function unavailable(path: string, kind: ProviderKind, id: string) {
+    const current = state.current[path]?.providers[kind];
+    return (
+      !current ||
+      current.archivingSessionIds.includes(id) ||
+      current.archivedSessionIds.includes(id)
+    );
+  }
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -175,7 +205,19 @@ export function useWorkspace() {
     void Promise.all([
       subscribe<Parameters<typeof applyCodexEvent>[1]>(
         "codex-event",
-        (event) => update((current) => applyCodexEvent(current, event)),
+        (event) => {
+          update((current) => applyCodexEvent(current, event));
+          if (
+            event.method === "turn/completed" &&
+            typeof event.params.threadId === "string"
+          )
+            void loadSessionDetails(
+              event.projectPath,
+              "codex",
+              event.params.threadId,
+              true,
+            );
+        },
       ),
       subscribe<Parameters<typeof applyOpenCodeEvent>[1]>(
         "opencode-event",
@@ -193,6 +235,12 @@ export function useWorkspace() {
               event.projectPath,
               "opencode",
               event.data.sessionID,
+            );
+            void loadSessionDetails(
+              event.projectPath,
+              "opencode",
+              event.data.sessionID,
+              true,
             );
           }
         },
@@ -432,6 +480,8 @@ export function useWorkspace() {
       }));
   }
   async function loadSessions(target: ProjectInfo, kind: ProviderKind) {
+    const scope = keyFor(target.path, kind);
+    const version = revision(scope);
     const key = `list:${keyFor(target.path, kind)}`;
     if (locks.current.has(key) || !isTauri()) return;
     locks.current.add(key);
@@ -445,6 +495,7 @@ export function useWorkspace() {
         threads?: SessionSummary[];
         sessions?: OpenCodeInfo["session"][];
       }>(`${kind}_list_sessions`, { projectPath: target.path });
+      if (revision(scope) !== version) return;
       const sessions = (
         result.threads ??
         result.sessions?.map((item) => ({
@@ -455,13 +506,20 @@ export function useWorkspace() {
           isWorking: item.isWorking,
         })) ??
         []
-      ).map((item) => ({
-        ...item,
-        updatedAt:
-          item.updatedAt && item.updatedAt < 1e12
-            ? item.updatedAt * 1000
-            : item.updatedAt,
-      }));
+      )
+        .filter(
+          (item) =>
+            !state.current[target.path].providers[
+              kind
+            ].archivedSessionIds.includes(item.id),
+        )
+        .map((item) => ({
+          ...item,
+          updatedAt:
+            item.updatedAt && item.updatedAt < 1e12
+              ? item.updatedAt * 1000
+              : item.updatedAt,
+        }));
       mutateProvider(target.path, kind, (value) => ({
         ...value,
         sessions: [
@@ -488,17 +546,224 @@ export function useWorkspace() {
           (item) => item.id,
         ),
       });
+      for (const { id } of state.current[target.path].providers[kind]
+        .sessions)
+        if (
+          detailsChecked.current.has(
+            `details:${keyFor(target.path, kind, id)}`,
+          )
+        )
+          void loadSessionDetails(target.path, kind, id, true);
     } catch (reason) {
-      mutateProvider(target.path, kind, (value) => ({
-        ...value,
-        error: String(reason),
-      }));
+      if (revision(scope) === version)
+        mutateProvider(target.path, kind, (value) => ({
+          ...value,
+          error: String(reason),
+        }));
     } finally {
       locks.current.delete(key);
       mutateProvider(target.path, kind, (value) => ({
         ...value,
         isLoadingSessions: false,
       }));
+      if (revision(scope) !== version) void loadSessions(target, kind);
+    }
+  }
+  async function loadSessionDetails(
+    path: string,
+    kind: ProviderKind,
+    id: string,
+    force = false,
+  ) {
+    if (
+      !isTauri() ||
+      unavailable(path, kind, id) ||
+      !state.current[path].providers[kind].sessions.some(
+        (item) => item.id === id,
+      )
+    )
+      return;
+    const scope = keyFor(path, kind, id);
+    const key = `details:${scope}`;
+    if (locks.current.has(key)) {
+      if (force) detailsRefreshes.current.add(key);
+      return;
+    }
+    if (
+      !force &&
+      Date.now() - (detailsChecked.current.get(key) ?? 0) < 15_000
+    )
+      return;
+    const version = revision(scope);
+    locks.current.add(key);
+    try {
+      const details = await invoke<SessionDetails>("session_details", {
+        projectPath: path,
+        provider: kind,
+        sessionId: id,
+      });
+      if (revision(scope) !== version || unavailable(path, kind, id)) return;
+      mutateProvider(path, kind, (value) => ({
+        ...value,
+        sessionDetails: { ...value.sessionDetails, [id]: details },
+      }));
+    } catch {
+      // Optional sidebar context must not block opening a session.
+    } finally {
+      locks.current.delete(key);
+      if (revision(scope) === version)
+        detailsChecked.current.set(key, Date.now());
+      if (detailsRefreshes.current.delete(key) || revision(scope) !== version)
+        void loadSessionDetails(path, kind, id, true);
+    }
+  }
+  async function archiveSession(thread: SessionSummary, kind: ProviderKind) {
+    if (!project || unavailable(project.path, kind, thread.id)) return;
+    const target = project;
+    const current = state.current[target.path].providers[kind];
+    const cached = current.sessionsById[thread.id];
+    if (
+      (cached?.isWorking ?? thread.isWorking) ||
+      cached?.isSubmitting ||
+      cached?.connection === "connecting" ||
+      approvals.some(
+        (request) =>
+          request.projectPath === target.path &&
+          request.provider === kind &&
+          request.sessionId === thread.id,
+      )
+    )
+      return;
+    const nav = navigation.current;
+    mutateProvider(target.path, kind, (value) => ({
+      ...value,
+      archivingSessionIds: [...value.archivingSessionIds, thread.id],
+    }));
+    try {
+      await invoke("set_session_archived", {
+        projectPath: target.path,
+        provider: kind,
+        sessionId: thread.id,
+        archived: true,
+      });
+      const latest = state.current[target.path].providers[kind];
+      const wasSelected = latest.selectedSessionId === thread.id;
+      const restoreNavigation =
+        wasSelected && navigation.current === nav
+          ? ++navigation.current
+          : null;
+      const notice: ArchivedSession = {
+        project: target,
+        provider: kind,
+        thread:
+          latest.sessions.find((item) => item.id === thread.id) ?? thread,
+        cached: latest.sessionsById[thread.id],
+        details: latest.sessionDetails[thread.id],
+        restoreNavigation,
+      };
+      invalidateSession(target.path, kind, thread.id);
+      mutateProvider(target.path, kind, (value) => {
+        const sessionsById = { ...value.sessionsById };
+        const sessionDetails = { ...value.sessionDetails };
+        delete sessionsById[thread.id];
+        delete sessionDetails[thread.id];
+        return {
+          ...value,
+          sessionsById,
+          sessionDetails,
+          sessions: value.sessions.filter((item) => item.id !== thread.id),
+          archivedSessionIds: [...value.archivedSessionIds, thread.id],
+          selectedSessionId: wasSelected ? null : value.selectedSessionId,
+        };
+      });
+      setArchivedSession(notice);
+      void persist("forget_project_session", {
+        projectPath: target.path,
+        provider: kind,
+        sessionId: thread.id,
+      });
+    } catch (reason) {
+      setError(`Could not archive session: ${String(reason)}`);
+    } finally {
+      mutateProvider(target.path, kind, (value) => ({
+        ...value,
+        archivingSessionIds: value.archivingSessionIds.filter(
+          (id) => id !== thread.id,
+        ),
+      }));
+    }
+  }
+  async function undoArchive() {
+    if (!archivedSession || locks.current.has("undo-archive")) return;
+    const notice = archivedSession;
+    const { project: target, provider: kind, thread } = notice;
+    locks.current.add("undo-archive");
+    setUndoingArchive(true);
+    try {
+      await invoke("set_session_archived", {
+        projectPath: target.path,
+        provider: kind,
+        sessionId: thread.id,
+        archived: false,
+      });
+      invalidateSession(target.path, kind, thread.id);
+      const restoreSelection =
+        notice.restoreNavigation === navigation.current;
+      mutateProvider(target.path, kind, (value) => ({
+        ...value,
+        archivedSessionIds: value.archivedSessionIds.filter(
+          (id) => id !== thread.id,
+        ),
+        sessions: [
+          thread,
+          ...value.sessions.filter((item) => item.id !== thread.id),
+        ].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
+        selectedSessionId: restoreSelection
+          ? thread.id
+          : value.selectedSessionId,
+        sessionDetails: notice.details
+          ? { ...value.sessionDetails, [thread.id]: notice.details }
+          : value.sessionDetails,
+        sessionsById: {
+          ...value.sessionsById,
+          [thread.id]: {
+            ...(notice.cached ??
+              createSessionWorkspace({
+                project: target,
+                provider: kind,
+                thread,
+              })),
+            connection: "disconnected",
+            isLoadingHistory: false,
+            isWorking: false,
+            isSubmitting: false,
+            activity: null,
+            error: null,
+          },
+        },
+      }));
+      void persist("sync_provider_sessions", {
+        projectPath: target.path,
+        provider: kind,
+        sessionIds: state.current[target.path].providers[kind].sessions.map(
+          (item) => item.id,
+        ),
+      });
+      if (restoreSelection) {
+        void persist("select_project_session", {
+          projectPath: target.path,
+          provider: kind,
+          sessionId: thread.id,
+        });
+        void connectSession(target, kind, thread);
+      }
+      void loadSessionDetails(target.path, kind, thread.id, true);
+      setArchivedSession((value) => (value === notice ? null : value));
+    } catch (reason) {
+      setError(`Could not restore session: ${String(reason)}`);
+    } finally {
+      locks.current.delete("undo-archive");
+      setUndoingArchive(false);
     }
   }
   async function loadHistory(
@@ -507,7 +772,10 @@ export function useWorkspace() {
     id: string,
     older = false,
   ) {
-    const key = `history:${keyFor(path, kind, id)}`;
+    if (unavailable(path, kind, id)) return;
+    const scope = keyFor(path, kind, id);
+    const version = revision(scope);
+    const key = `history:${scope}`;
     const current = state.current[path]?.providers[kind].sessionsById[id];
     if (!current) return;
     if (locks.current.has(key)) {
@@ -527,6 +795,7 @@ export function useWorkspace() {
         sessionId: id,
         cursor: older ? current.nextCursor : null,
       });
+      if (revision(scope) !== version) return;
       const entries = historyEntries(kind, page.data);
       mutateSession(path, kind, id, (value) => {
         const overlap = entries.some((entry) =>
@@ -571,17 +840,20 @@ export function useWorkspace() {
             : value.historyAnchor,
         };
       });
+      if (!older) void loadSessionDetails(path, kind, id);
     } catch (reason) {
-      mutateSession(path, kind, id, (value) => ({
-        ...value,
-        historyError: String(reason),
-      }));
+      if (revision(scope) === version)
+        mutateSession(path, kind, id, (value) => ({
+          ...value,
+          historyError: String(reason),
+        }));
     } finally {
       locks.current.delete(key);
-      mutateSession(path, kind, id, (value) => ({
-        ...value,
-        isLoadingHistory: false,
-      }));
+      if (revision(scope) === version)
+        mutateSession(path, kind, id, (value) => ({
+          ...value,
+          isLoadingHistory: false,
+        }));
       if (historyRefreshes.current.delete(key))
         void loadHistory(path, kind, id);
     }
@@ -591,6 +863,9 @@ export function useWorkspace() {
     kind: ProviderKind,
     thread: SessionSummary,
   ) {
+    if (unavailable(target.path, kind, thread.id)) return;
+    const scope = keyFor(target.path, kind, thread.id);
+    const version = revision(scope);
     const key = `connect:${keyFor(target.path, kind, thread.id)}`;
     if (locks.current.has(key)) return;
     const cached =
@@ -624,6 +899,7 @@ export function useWorkspace() {
         threadId: thread.id,
         sessionId: thread.id,
       });
+      if (revision(scope) !== version) return;
       const info = providerInfo(kind, result);
       mutateSession(target.path, kind, thread.id, (value) => ({
         ...value,
@@ -634,19 +910,20 @@ export function useWorkspace() {
             ? (info.thread.isWorking ?? value.isWorking)
             : value.isWorking,
       }));
-      await loadHistory(target.path, kind, thread.id);
+      void loadHistory(target.path, kind, thread.id);
     } catch (reason) {
-      mutateSession(target.path, kind, thread.id, (value) => ({
-        ...value,
-        connection: "disconnected",
-        error: String(reason),
-      }));
+      if (revision(scope) === version)
+        mutateSession(target.path, kind, thread.id, (value) => ({
+          ...value,
+          connection: "disconnected",
+          error: String(reason),
+        }));
     } finally {
       locks.current.delete(key);
     }
   }
   function selectSession(thread: SessionSummary, kind = provider) {
-    if (!project) return;
+    if (!project || unavailable(project.path, kind, thread.id)) return;
     navigation.current++;
     setView("session");
     if (kind !== provider) changeProvider(kind, false);
@@ -753,6 +1030,7 @@ export function useWorkspace() {
     const key = `send:${keyFor(target.path, kind, id ?? "new")}`;
     if (
       !text ||
+      (id && unavailable(target.path, kind, id)) ||
       locks.current.has(key) ||
       cached?.isWorking ||
       cached?.isSubmitting ||
@@ -958,6 +1236,7 @@ export function useWorkspace() {
     });
     if (!request.sessionId) return;
     const id = request.sessionId;
+    if (unavailable(target.path, kind, id)) return;
     const thread = state.current[target.path].providers[kind].sessions.find(
       (item) => item.id === id,
     ) ?? { id, name: null, preview: "Approval required", updatedAt: null };
@@ -993,6 +1272,11 @@ export function useWorkspace() {
     selecting,
     approvals,
     resolving,
+    archivedSession,
+    undoingArchive,
+    dismissArchive: () => setArchivedSession(null),
+    archiveSession,
+    undoArchive,
     activateProject,
     chooseProject,
     closeProject,
@@ -1000,6 +1284,7 @@ export function useWorkspace() {
     newSession,
     selectSession,
     loadSessions,
+    loadSessionDetails,
     loadHistory,
     connectSession,
     setDraft,

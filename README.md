@@ -87,6 +87,8 @@ Responses and thinking update live. Expand a thinking row to read the provider's
 
 The **Changes** pane shows project diffs beside the conversation and refreshes while the agent works. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
 
+Session rows show a branch and added/deleted lines from the latest turn when available. Hover the branch to see whether it is recorded with the session (Codex) or the current working-directory branch (OpenCode). Search also matches branch names. Hover or focus a row to **Archive** an old session; **Undo** restores the most recently archived session, including its in-app draft and pending settings. Archiving uses the provider’s archive and keeps its conversation history. Stop an active turn before archiving.
+
 - **Enter** or **⌘Enter** sends; **Shift+Enter** inserts a newline.
 - **⌘N** opens a new draft; **⌘K** searches sessions; **⌘\\** toggles the sidebar. Ctrl works in place of ⌘.
 - Draft the next message while a response runs. Stop interrupts the active turn.

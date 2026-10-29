@@ -234,6 +234,30 @@ impl WorkspaceDatabase {
         Ok(())
     }
 
+    /// Forget one archived session and clear its selection atomically.
+    pub fn remove_session(
+        &self,
+        path: &str,
+        provider: &str,
+        session_id: &str,
+    ) -> Result<(), DatabaseError> {
+        validate_nonempty("project path", path)?;
+        validate_provider(provider)?;
+        validate_nonempty("session ID", session_id)?;
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM sessions WHERE project_path = ?1 AND provider = ?2 AND session_id = ?3",
+            params![path, provider, session_id],
+        )?;
+        transaction.execute(
+            "UPDATE project_provider_state SET selected_session_id = NULL WHERE project_path = ?1 AND provider = ?2 AND selected_session_id = ?3",
+            params![path, provider, session_id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Record provider-owned session identifiers without copying provider history or content.
     pub fn sync_sessions(
         &self,
@@ -499,6 +523,46 @@ mod tests {
         ProjectInfo {
             name: name.to_owned(),
             path: path.to_owned(),
+        }
+    }
+
+    #[test]
+    fn removing_a_session_clears_only_its_scoped_saved_selection() {
+        let directory = TestDirectory::new("remove-session");
+        let path = directory.database_path();
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        for name in ["one", "two"] {
+            let project_path = format!("/work/{name}");
+            database
+                .remember_project(&project(&project_path, name))
+                .unwrap();
+            for provider in PROVIDERS {
+                database
+                    .select_session(&project_path, provider, Some("same-id"))
+                    .unwrap();
+                database
+                    .sync_sessions(&project_path, provider, &["same-id".into(), "kept".into()])
+                    .unwrap();
+            }
+        }
+        database
+            .remove_session("/work/one", "codex", "same-id")
+            .unwrap();
+        database
+            .remove_session("/work/one", "codex", "same-id")
+            .unwrap();
+        drop(database);
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        for entry in database.restore().unwrap().projects {
+            if entry.project.path == "/work/one" {
+                assert_eq!(entry.codex_session_id, None);
+                assert_eq!(entry.codex_session_ids, ["kept"]);
+            } else {
+                assert_eq!(entry.codex_session_id.as_deref(), Some("same-id"));
+                assert_eq!(entry.codex_session_ids.len(), 2);
+            }
+            assert_eq!(entry.opencode_session_id.as_deref(), Some("same-id"));
+            assert_eq!(entry.opencode_session_ids.len(), 2);
         }
     }
 

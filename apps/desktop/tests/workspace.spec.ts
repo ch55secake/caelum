@@ -6,6 +6,18 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
       const callbacks = new Map<number, (event: unknown) => void>();
       const listeners = new Map<string, number[]>();
       const project = { name: "caelum", path: "/work/caelum" };
+      const otherProject = { name: "other", path: "/work/other" };
+      const archived = new Set<string>(
+        JSON.parse(sessionStorage.getItem("archived") ?? "[]"),
+      );
+      const sessionKey = (path: string, provider: string, id: string) =>
+        `${path}:${provider}:${id}`;
+      const gates = new Map<
+        string,
+        { promise: Promise<void>; release: () => void }
+      >();
+      const sessionDetails = new Map<string, any>();
+      let failNextArchive = false;
       const threads = [
         {
           id: "thread-a",
@@ -55,6 +67,28 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         fixture: {
           calls,
           emit,
+          hold: (command: string) => {
+            let release = () => {};
+            const promise = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            gates.set(command, { promise, release });
+          },
+          release: (command: string) => {
+            const gate = gates.get(command);
+            gates.delete(command);
+            gate?.release();
+          },
+          failArchive: () => {
+            failNextArchive = true;
+          },
+          setSessionDetails: (
+            provider: string,
+            id: string,
+            value: unknown,
+          ) => {
+            sessionDetails.set(`${provider}:${id}`, value);
+          },
           setGitFiles: (files: typeof gitFiles) => {
             gitFiles = files;
           },
@@ -115,16 +149,73 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                   {
                     project,
                     provider: "codex",
-                    codexSessionId: selected,
+                    codexSessionId:
+                      selected &&
+                      !archived.has(
+                        sessionKey(project.path, "codex", selected),
+                      )
+                        ? selected
+                        : null,
                     opencodeSessionId: null,
-                    codexSessionIds: threads.map((item) => item.id),
+                    codexSessionIds: threads
+                      .filter(
+                        (item) =>
+                          !archived.has(
+                            sessionKey(project.path, "codex", item.id),
+                          ),
+                      )
+                      .map((item) => item.id),
                     opencodeSessionIds: [],
                   },
                 ],
                 activeProjectPath: project.path,
               };
             if (command === "startup_project") return null;
-            if (command === "open_project") return project;
+            if (command === "open_project")
+              return args.path === otherProject.path ? otherProject : project;
+            if (command === "plugin:dialog|open") return otherProject.path;
+            if (command === "session_details") {
+              const key = `${args.provider}:${args.sessionId}`;
+              const details = sessionDetails.has(key)
+                ? sessionDetails.get(key)
+                : {
+                    branch:
+                      args.projectPath === otherProject.path
+                        ? "other-project"
+                        : args.provider === "opencode"
+                          ? "main"
+                          : args.sessionId === "thread-a"
+                            ? "feat/session-ui-redesign"
+                            : "fix/provider-adapters",
+                    branchIsCurrent: args.provider === "opencode",
+                    changes: {
+                      additions: args.sessionId === "thread-a" ? 42 : 7,
+                      deletions: 3,
+                    },
+                  };
+              await gates.get(command)?.promise;
+              if (details === null) throw new Error("Metadata unavailable");
+              return details;
+            }
+            if (command === "set_session_archived") {
+              await gates.get(command)?.promise;
+              if (failNextArchive) {
+                failNextArchive = false;
+                throw new Error("Archive unavailable");
+              }
+              const key = sessionKey(
+                args.projectPath,
+                args.provider,
+                args.sessionId,
+              );
+              if (args.archived) archived.add(key);
+              else archived.delete(key);
+              sessionStorage.setItem(
+                "archived",
+                JSON.stringify([...archived]),
+              );
+              return;
+            }
             if (command === "pending_approvals") return [];
             if (command === "plugin:opener|open_url") return;
             if (command === "provider_choices")
@@ -154,15 +245,34 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                     ? [{ id: "build", name: "Build" }]
                     : [],
               };
-            if (command === "codex_list_sessions")
-              return { project, threads };
-            if (command === "opencode_list_sessions")
-              return {
+            if (command === "codex_list_sessions") {
+              const snapshot = {
+                project,
+                threads: threads.filter(
+                  (item) =>
+                    !archived.has(
+                      sessionKey(args.projectPath, "codex", item.id),
+                    ),
+                ),
+              };
+              await gates.get(command)?.promise;
+              return snapshot;
+            }
+            if (command === "opencode_list_sessions") {
+              const snapshot = {
                 project,
                 sessions: [
                   { id: "ses-a", title: "OpenCode session", updatedAt: 123 },
-                ],
+                ].filter(
+                  (item) =>
+                    !archived.has(
+                      sessionKey(args.projectPath, "opencode", item.id),
+                    ),
+                ),
               };
+              await gates.get(command)?.promise;
+              return snapshot;
+            }
             if (command === "codex_resume_session")
               return {
                 project,
@@ -321,6 +431,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 "set_project_provider",
                 "select_project_session",
                 "sync_provider_sessions",
+                "forget_project_session",
                 "close_project_record",
               ].includes(command)
             )
@@ -360,6 +471,360 @@ async function choose(page: Page, label: string, option: string) {
   await page.getByRole("button", { name: label, exact: true }).click();
   await page.getByRole("option", { name: option, exact: true }).click();
 }
+
+function sessionRow(page: Page, title: string) {
+  return page
+    .locator(".session-row")
+    .filter({ has: page.getByRole("button", { name: title, exact: true }) });
+}
+
+for (const provider of ["codex", "opencode"]) {
+  const title =
+    provider === "codex"
+      ? "Refine the session workspace"
+      : "OpenCode session";
+  const id = provider === "codex" ? "thread-a" : "ses-a";
+  test(`${provider} archives old sessions, restores drafts and settings with Undo, and stays removed after restart`, async ({
+    page,
+  }) => {
+    await desktop(page, provider === "codex" ? id : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page.getByRole("button", { name: title, exact: true }).click();
+    }
+    const row = sessionRow(page, title);
+    await expect(row.locator(".session-branch")).toHaveAttribute(
+      "title",
+      provider === "codex"
+        ? "Session branch: feat/session-ui-redesign"
+        : "Current working-directory branch: main",
+    );
+    await expect(row.locator(".session-lines")).toHaveAttribute(
+      "title",
+      "Lines changed in the latest turn",
+    );
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Keep my unsent draft");
+    await choose(page, "Model", "Fast model provider/fast");
+    await choose(page, "Effort", "Low");
+    await row.hover();
+    await row
+      .getByRole("button", { name: "Archive session", exact: true })
+      .click();
+    await expect(row).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "New session", exact: true }),
+    ).toBeVisible();
+    const notice = page.getByRole("status", { name: "Session archived" });
+    await expect(notice).toContainText(title);
+    await page.evaluate(() => (window as any).fixture.failArchive());
+    await notice.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      "Could not restore session",
+    );
+    await expect(row).toHaveCount(0);
+    await page.getByRole("button", { name: "Dismiss error" }).click();
+    await notice.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue("Keep my unsent draft");
+    await expect(
+      page.getByRole("button", { name: "Model", exact: true }),
+    ).toHaveText("Fast model");
+    await expect(
+      page.getByRole("button", { name: "Effort", exact: true }),
+    ).toHaveText("Low");
+    await expect(row).toHaveCount(1);
+    await expect(notice).toHaveCount(0);
+    await row.hover();
+    await row
+      .getByRole("button", { name: "Archive session", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Refresh sessions" }).click();
+    await expect(row).toHaveCount(0);
+    const forgets = await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "forget_project_session",
+      ),
+    );
+    expect(forgets.map((call: any) => call.args)).toEqual(
+      Array(2).fill({ projectPath: "/work/caelum", provider, sessionId: id }),
+    );
+    await page.reload();
+    await expect(input).toBeEnabled();
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    await expect(row).toHaveCount(0);
+  });
+
+  test(`${provider} protects active sessions and keeps archive failures and Undo from disturbing navigation`, async ({
+    page,
+  }) => {
+    await desktop(page, provider === "codex" ? id : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page.getByRole("button", { name: title, exact: true }).click();
+    }
+    const row = sessionRow(page, title);
+    const archive = row.getByRole("button", {
+      name: "Archive session",
+      exact: true,
+    });
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Work on this session");
+    await input.press("Enter");
+    await expect(archive).toBeDisabled();
+    await emit(
+      page,
+      provider === "codex" ? "turn/completed" : "session.execution.succeeded",
+      provider === "codex"
+        ? { threadId: id, turn: { id: "turn-new", status: "completed" } }
+        : { sessionID: id },
+      provider,
+    );
+    await expect(archive).toBeEnabled();
+    await page.evaluate(
+      ({ provider, id }) =>
+        (window as any).fixture.emit("approval-requests", [
+          {
+            provider,
+            sessionId: id,
+            projectPath: "/work/caelum",
+            requestId: "archive-approval",
+            summary: "Approve command",
+            description: "Run a command",
+          },
+        ]),
+      { provider, id },
+    );
+    await expect(archive).toBeDisabled();
+    await page.evaluate(() =>
+      (window as any).fixture.emit("approval-requests", []),
+    );
+    await input.fill("Draft kept if archiving fails");
+    await page.evaluate(() => (window as any).fixture.failArchive());
+    await row.hover();
+    await archive.click();
+    await expect(page.getByRole("alert")).toContainText(
+      "Could not archive session",
+    );
+    await expect(input).toHaveValue("Draft kept if archiving fails");
+    await expect(archive).toBeEnabled();
+    await page.getByRole("button", { name: "Dismiss error" }).click();
+    await page.evaluate(() =>
+      (window as any).fixture.hold("set_session_archived"),
+    );
+    await archive.click();
+    await expect(archive).toBeDisabled();
+    await expect(input).toBeDisabled();
+    await page
+      .getByRole("button", {
+        name: "Review the provider adapters",
+        exact: true,
+      })
+      .click();
+    await input.fill("Other session draft");
+    await page.evaluate(() =>
+      (window as any).fixture.release("set_session_archived"),
+    );
+    await expect(row).toHaveCount(0);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(row).toHaveCount(1);
+    await expect(input).toHaveValue("Other session draft");
+    await expect(page.locator(".breadcrumbs")).toContainText(
+      "Review the provider adapters",
+    );
+    await page.getByRole("button", { name: title, exact: true }).click();
+    await expect(input).toHaveValue("Draft kept if archiving fails");
+  });
+}
+
+test("late listings, history and metadata cannot overwrite an archived and restored session", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  const row = sessionRow(page, "OpenCode session");
+  await expect(row.locator(".session-branch")).toHaveText("main");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.holdHistory();
+    fixture.setOpenWorking(true);
+    fixture.hold("session_details");
+    fixture.hold("opencode_list_sessions");
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await emit(
+    page,
+    "session.execution.succeeded",
+    { sessionID: "ses-a" },
+    "opencode",
+  );
+  await row.hover();
+  await row
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(row).toHaveCount(0);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setOpenWorking(false);
+    fixture.setSessionDetails("opencode", "ses-a", {
+      branch: "fresh-branch",
+      branchIsCurrent: true,
+      changes: { additions: 19, deletions: 4 },
+    });
+  });
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(row).toHaveCount(1);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.releaseHistory();
+    fixture.release("session_details");
+    fixture.release("opencode_list_sessions");
+  });
+  await expect(row.locator(".session-branch")).toHaveText("fresh-branch");
+  await expect(row.locator(".lines-added")).toHaveText("+19");
+  await expect(
+    page.getByRole("form", { name: "Message composer" }),
+  ).toHaveAttribute("data-working", "false");
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
+  await row.hover();
+  await row
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(row).toHaveCount(0);
+  await emit(
+    page,
+    "session.title.updated",
+    { sessionID: "ses-a", title: "Late title" },
+    "opencode",
+  );
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await expect(
+    page.locator(".session-item").filter({ hasText: "Late title" }),
+  ).toHaveCount(0);
+});
+
+test("sidebar metadata and archiving stay scoped when projects reuse a session ID", async ({
+  page,
+}) => {
+  await desktop(page);
+  const row = sessionRow(page, "Refine the session workspace");
+  await expect(row.locator(".session-branch")).toHaveText(
+    "feat/session-ui-redesign",
+  );
+  await page.evaluate(() => (window as any).fixture.hold("session_details"));
+  await emit(page, "turn/completed", {
+    threadId: "thread-a",
+    turn: { id: "turn-1", status: "completed" },
+  });
+  await page
+    .getByRole("button", { name: "Open project", exact: true })
+    .click();
+  await expect(page.locator(".breadcrumbs")).toContainText("other");
+  await page.evaluate(() =>
+    (window as any).fixture.release("session_details"),
+  );
+  await expect(row.locator(".session-branch")).toHaveText("other-project");
+  await row.hover();
+  await row
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(row).toHaveCount(0);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(row.locator(".session-branch")).toHaveText(
+    "feat/session-ui-redesign",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(
+    page.getByRole("status", { name: "Session archived" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "other", exact: true }).click();
+  await expect(row.locator(".session-branch")).toHaveText("other-project");
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "set_session_archived",
+    ),
+  );
+  expect(calls.map((call: any) => call.args.projectPath)).toEqual([
+    "/work/other",
+    "/work/other",
+  ]);
+});
+
+test("sidebar details refresh, allow branch search and fit at the minimum window size", async ({
+  page,
+}) => {
+  await desktop(page);
+  const row = sessionRow(page, "Refine the session workspace");
+  await expect(row.locator(".lines-added")).toHaveText("+42");
+  await page
+    .getByRole("textbox", { name: "Search sessions" })
+    .fill("fix/provider-adapters");
+  await expect(page.locator(".session-item")).toHaveCount(1);
+  await page.getByRole("textbox", { name: "Search sessions" }).fill("");
+  await page.evaluate(() =>
+    (window as any).fixture.setSessionDetails("codex", "thread-a", {
+      branch: "feature/a-very-long-branch-name-for-the-sidebar",
+      branchIsCurrent: false,
+      changes: { additions: 1234, deletions: 56 },
+    }),
+  );
+  await emit(page, "turn/completed", {
+    threadId: "thread-a",
+    turn: { id: "turn-new", status: "completed" },
+  });
+  await expect(row.locator(".lines-added")).toHaveText("+1,234");
+  await page.setViewportSize({ width: 800, height: 620 });
+  await row.hover();
+  await expect(row.locator(".session-lines")).toBeInViewport({ ratio: 1 });
+  await expect(
+    row.getByRole("button", { name: "Archive session", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBe(800);
+  await page.screenshot({ path: "test-results/session-sidebar.png" });
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setSessionDetails("codex", "thread-a", {
+      branch: null,
+      branchIsCurrent: false,
+      changes: { additions: 0, deletions: 0 },
+    });
+    fixture.setSessionDetails("codex", "thread-b", {
+      branch: null,
+      branchIsCurrent: false,
+      changes: null,
+    });
+  });
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await expect(row.locator(".session-branch")).toHaveCount(0);
+  await expect(row.locator(".lines-added")).toHaveText("+0");
+  await expect(
+    sessionRow(page, "Review the provider adapters").locator(
+      ".session-lines",
+    ),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.setSessionDetails("codex", "thread-b", null),
+  );
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await page
+    .getByRole("button", {
+      name: "Review the provider adapters",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
 
 test("restores Markdown and tool details in a full-height dark workspace", async ({
   page,

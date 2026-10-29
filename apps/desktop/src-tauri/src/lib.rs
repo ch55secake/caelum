@@ -9,8 +9,8 @@ use caelum_core::{
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
     GitFileVersions, GitRepositoryStatus, OpenCodeSessionInfo, OpenCodeSessionList,
-    ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProviderChoices, SessionHistoryPage,
-    WorkspaceSnapshot,
+    ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProviderChoices, SessionDetails,
+    SessionHistoryPage, WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -241,6 +241,70 @@ async fn sync_provider_sessions(
         database
             .sync_sessions(&project_path, &provider, &session_ids)
             .map_err(|error| format!("Could not save session metadata: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn forget_project_session(
+    persistence: State<'_, PersistenceState>,
+    project_path: String,
+    provider: String,
+    session_id: String,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .remove_session(&project_path, &provider, &session_id)
+            .map_err(|error| format!("Could not remove the saved session: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn session_details(
+    codex: State<'_, CodexProvider>,
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    provider: String,
+    session_id: String,
+) -> Result<SessionDetails, String> {
+    let codex = codex.inner().clone();
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
+        "codex" => codex
+            .session_details(project_path, &session_id)
+            .map_err(|error| error.to_string()),
+        "opencode" => opencode
+            .session_details(project_path, &session_id)
+            .map_err(|error| error.to_string()),
+        _ => Err("Unknown provider".into()),
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn set_session_archived(
+    codex: State<'_, CodexProvider>,
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    provider: String,
+    session_id: String,
+    archived: bool,
+) -> Result<(), String> {
+    let codex = codex.inner().clone();
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
+        "codex" => codex
+            .set_session_archived(project_path, &session_id, archived)
+            .map_err(|error| error.to_string()),
+        "opencode" => opencode
+            .set_session_archived(project_path, &session_id, archived)
+            .map_err(|error| error.to_string()),
+        _ => Err("Unknown provider".into()),
     })
     .await
     .map_err(|error| error.to_string())?
@@ -570,6 +634,9 @@ pub fn run() {
             set_project_provider,
             select_project_session,
             sync_provider_sessions,
+            forget_project_session,
+            session_details,
+            set_session_archived,
             pending_approvals,
             resolve_approval,
             codex_list_sessions,

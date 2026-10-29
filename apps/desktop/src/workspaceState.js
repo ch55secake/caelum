@@ -4,6 +4,9 @@ const PROVIDERS = ["codex", "opencode"];
 function emptyProviderWorkspace() {
   return {
     sessions: [],
+    sessionDetails: {},
+    archivingSessionIds: [],
+    archivedSessionIds: [],
     sessionsLoaded: false,
     isLoadingSessions: false,
     selectedSessionId: null,
