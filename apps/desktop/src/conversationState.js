@@ -10,7 +10,8 @@ const textContent = (content) =>
     ? content.map((part) => part.text ?? displayValue(part)).join("\n")
     : displayValue(content);
 
-const isText = (entry) => ["assistant", "reasoning"].includes(entry.kind);
+const isText = (entry) =>
+  ["assistant", "reasoning", "compaction"].includes(entry.kind);
 const openCodePartId = (messageId, kind, ordinal = 0) =>
   kind === "text" && ordinal === 0
     ? `opencode-${messageId}`
@@ -81,6 +82,15 @@ const status = (value) =>
 export function codexItem(item, completed = false) {
   if (!item.id) return null;
   const base = { id: `codex-${item.id}` };
+  if (item.type === "contextCompaction")
+    return {
+      ...base,
+      kind: "compaction",
+      text: "",
+      status: completed ? "completed" : "running",
+      complete: completed,
+      startedAt: item.startedAtMs,
+    };
   if (item.type === "userMessage")
     return {
       ...base,
@@ -139,6 +149,22 @@ export function codexItem(item, completed = false) {
 
 export function openCodeMessage(message) {
   const id = `opencode-${message.id}`;
+  if (message.type === "compaction")
+    return [
+      {
+        id,
+        messageId: message.id,
+        kind: "compaction",
+        text: message.summary ?? "",
+        status: status(message.status),
+        complete: message.status !== "running",
+        startedAt: message.time?.created,
+        compactionReason: message.reason,
+        error: message.error
+          ? displayValue(message.error.message ?? message.error)
+          : undefined,
+      },
+    ];
   if (message.type === "user")
     return [{ id, kind: "user", text: message.text ?? "" }];
   if (message.type === "assistant") {
@@ -210,10 +236,48 @@ export function openCodeMessage(message) {
 }
 
 export function historyEntries(provider, data) {
-  if (provider === "opencode") return data.flatMap(openCodeMessage);
+  if (provider === "opencode") {
+    let compaction;
+    return data.flatMap((message) => {
+      const entries = openCodeMessage(message);
+      if (message.type === "compaction") compaction = entries[0];
+      if (message.type === "idle" && compaction && !compaction.complete) {
+        compaction.complete = true;
+        compaction.status =
+          message.outcome === "succeeded"
+            ? "completed"
+            : status(message.outcome);
+        if (message.outcome === "failed")
+          compaction.error = displayValue(
+            message.error?.message ?? message.error,
+          );
+      }
+      return entries;
+    });
+  }
   return data.flatMap((turn) =>
     (turn.items ?? [])
-      .map((item) => codexItem(item, turn.status !== "inProgress"))
+      .map((item, index, items) => {
+        const turnStatus = turn.status?.type ?? turn.status;
+        const compacted =
+          item.type === "contextCompaction" &&
+          (item.completedAtMs != null || index < items.length - 1);
+        const entry = codexItem(
+          item,
+          compacted || turnStatus !== "inProgress",
+        );
+        if (
+          entry?.kind === "compaction" &&
+          !compacted &&
+          ["failed", "interrupted"].includes(turnStatus)
+        )
+          return {
+            ...entry,
+            status: turnStatus,
+            error: turn.error?.message,
+          };
+        return entry;
+      })
       .filter(Boolean),
   );
 }
@@ -288,6 +352,8 @@ export function mergeHistory(
         result.text = reasoningText(result.reasoning);
       }
       if (entry.complete) result.status = entry.status;
+      if (entry.kind === "compaction" && !current.complete)
+        result.status = entry.status;
     }
     if (
       entry.kind === "tool" &&
@@ -338,13 +404,29 @@ export function mergeHistory(
   ];
 }
 
-export function applyConversationEvent(session, provider, method, data) {
+export function applyConversationEvent(
+  session,
+  provider,
+  method,
+  data,
+  event = {},
+) {
   let next = session;
   const put = (entry) => {
     if (entry)
       next = { ...next, conversation: upsertEntry(next.conversation, entry) };
   };
   const working = (label = "Working…", detail) => {
+    if (
+      label === "Working…" &&
+      next.conversation.some(
+        (entry) =>
+          entry.kind === "compaction" &&
+          entry.status === "running" &&
+          !entry.complete,
+      )
+    )
+      label = "Compacting context…";
     next = {
       ...next,
       isWorking: true,
@@ -352,7 +434,7 @@ export function applyConversationEvent(session, provider, method, data) {
       lastOutcome: null,
     };
   };
-  const settle = (outcome) => {
+  const settle = (outcome, error, resumable = false) => {
     next = {
       ...next,
       isWorking: false,
@@ -360,11 +442,18 @@ export function applyConversationEvent(session, provider, method, data) {
       activity: null,
       lastOutcome: outcome,
       conversation: next.conversation.map((entry) =>
-        entry.kind === "tool" && entry.status === "running"
-          ? { ...entry, status: status(outcome) }
-          : isText(entry) && !entry.complete
-            ? { ...entry, complete: true, status: status(outcome) }
-            : entry,
+        entry.kind === "compaction" && !entry.complete
+          ? {
+              ...entry,
+              complete: !resumable,
+              status: status(outcome),
+              error: outcome === "failed" ? displayValue(error) : entry.error,
+            }
+          : entry.kind === "tool" && entry.status === "running"
+            ? { ...entry, status: status(outcome) }
+            : isText(entry) && !entry.complete
+              ? { ...entry, complete: true, status: status(outcome) }
+              : entry,
       ),
     };
   };
@@ -377,7 +466,7 @@ export function applyConversationEvent(session, provider, method, data) {
         ["completed", "failed"].includes(existing.status))
     )
       return;
-    if (kind === "assistant" || kind === "reasoning") {
+    if (isText({ kind })) {
       const streamText =
         (existing?.streamText ??
           (existing?.historyText === undefined
@@ -387,11 +476,19 @@ export function applyConversationEvent(session, provider, method, data) {
         ...existing,
         id,
         kind,
-        ...(existing?.status === "interrupted" ? { status: undefined } : {}),
+        ...(existing?.status === "interrupted"
+          ? { status: kind === "compaction" ? "running" : undefined }
+          : {}),
         streamText,
         text: reconcileText(existing?.historyText ?? "", streamText),
       });
-      working(kind === "reasoning" ? "Thinking…" : "Responding…");
+      working(
+        kind === "compaction"
+          ? "Compacting context…"
+          : kind === "reasoning"
+            ? "Thinking…"
+            : "Responding…",
+      );
       return;
     }
     if (field === "output") {
@@ -439,6 +536,12 @@ export function applyConversationEvent(session, provider, method, data) {
         if (method === "item/completed")
           entry.durationMs ??= Date.now() - entry.startedAt;
       }
+      if (entry?.kind === "compaction") {
+        const previous = next.conversation.find(
+          (item) => item.id === entry.id,
+        );
+        entry.startedAt ??= previous?.startedAt ?? Date.now();
+      }
       if (entry && method === "item/started")
         next = {
           ...next,
@@ -446,7 +549,13 @@ export function applyConversationEvent(session, provider, method, data) {
         };
       else put(entry);
       if (method === "item/started")
-        working(data.item?.type === "reasoning" ? "Thinking…" : "Working…");
+        working(
+          entry?.kind === "compaction"
+            ? "Compacting context…"
+            : data.item?.type === "reasoning"
+              ? "Thinking…"
+              : "Working…",
+        );
       else if (next.isWorking) working();
     }
     if (
@@ -503,7 +612,7 @@ export function applyConversationEvent(session, provider, method, data) {
     }
     if (method === "turn/completed") {
       const turnStatus = data.turn?.status?.type ?? data.turn?.status;
-      settle(turnStatus);
+      settle(turnStatus, data.turn?.error?.message);
       if (["interrupted", "failed"].includes(turnStatus))
         put({
           id: `codex-turn-${data.turn.id}`,
@@ -522,6 +631,64 @@ export function applyConversationEvent(session, provider, method, data) {
         ),
       };
   } else {
+    if (method.startsWith("session.compaction.")) {
+      const latest = next.conversation.findLast(
+        (entry) => entry.kind === "compaction",
+      );
+      // Native V2 compaction messages use the input ID for manual requests,
+      // otherwise the start event ID with the msg_ prefix (SessionMessage.ID.fromEvent).
+      const messageId = data.inputID ?? event.id?.replace(/^evt_/, "msg_");
+      if (
+        event.created != null &&
+        latest?.startedAt != null &&
+        event.created < latest.startedAt
+      )
+        return next;
+      if (method === "session.compaction.started") {
+        const id = messageId ? `opencode-${messageId}` : null;
+        const previous = next.conversation.find((entry) => entry.id === id);
+        if (previous?.complete) return next;
+        if (id)
+          put({
+            ...previous,
+            id,
+            messageId,
+            kind: "compaction",
+            text: previous?.text ?? "",
+            status: "running",
+            complete: false,
+            startedAt: previous?.startedAt ?? event.created,
+            compactionReason: data.reason,
+          });
+        working("Compacting context…");
+      } else if (latest && !latest.complete) {
+        if (method === "session.compaction.delta") {
+          delta(latest.id, "compaction", data.text);
+          return next;
+        }
+        if (
+          ["session.compaction.ended", "session.compaction.failed"].includes(
+            method,
+          )
+        ) {
+          const failed = method.endsWith("failed");
+          put({
+            ...latest,
+            text: failed ? latest.text : (data.text ?? latest.text),
+            status: failed ? "failed" : "completed",
+            complete: true,
+            error: failed
+              ? displayValue(data.error?.message ?? data.error)
+              : undefined,
+          });
+          // Compaction is a step within execution; the agent may continue.
+          if (next.isWorking) working();
+        }
+      }
+      // Missing starts are recovered from native history instead of inventing
+      // an identity that would duplicate the provider's persisted message.
+      return next;
+    }
     if (
       method === "session.model.selected" &&
       data.model?.providerID &&
@@ -652,13 +819,18 @@ export function applyConversationEvent(session, provider, method, data) {
       const outcome = method.split(".").at(-1);
       settle(
         outcome === "succeeded" || outcome === "idle" ? "completed" : outcome,
+        data.error?.message,
+        method === "session.execution.interrupted" &&
+          data.reason === "shutdown",
       );
       if (method.endsWith("failed") || method.endsWith("interrupted"))
         put({
           id: `opencode-outcome-${data.messageID ?? Date.now()}`,
           kind: "status",
           text: method.endsWith("interrupted")
-            ? "Turn cancelled"
+            ? data.reason === "shutdown"
+              ? "Execution paused"
+              : "Turn cancelled"
             : displayValue(data.error?.message ?? "Turn failed"),
         });
     }

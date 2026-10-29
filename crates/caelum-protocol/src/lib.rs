@@ -299,6 +299,11 @@ pub struct OpenCodeEvent {
     pub project_path: String,
     pub event_type: String,
     pub data: serde_json::Value,
+    /// Native event identity and time are needed to reconcile projected compaction messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<serde_json::Value>,
 }
@@ -337,6 +342,8 @@ mod tests {
             project_path: "/workspace/project".into(),
             event_type: "session.text.delta".into(),
             data: json!({ "sessionID": "ses_1", "delta": "hello" }),
+            id: Some("evt_1".into()),
+            created: Some(123),
             location: None,
         };
 
@@ -345,6 +352,8 @@ mod tests {
             json!({
                 "projectPath": "/workspace/project",
                 "eventType": "session.text.delta",
+                "id": "evt_1",
+                "created": 123,
                 "data": { "sessionID": "ses_1", "delta": "hello" }
             })
         );

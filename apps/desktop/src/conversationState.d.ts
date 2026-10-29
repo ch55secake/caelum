@@ -23,4 +23,5 @@ export function applyConversationEvent(
   provider: ProviderKind,
   method: string,
   data: Record<string, unknown>,
+  event?: { id?: string; created?: number },
 ): SessionWorkspaceState;

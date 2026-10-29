@@ -949,6 +949,8 @@ fn request_permission(
                 OpenCodeEvent {
                     project_path: project_path.to_string_lossy().into_owned(),
                     event_type: "permission.reply.failed".to_owned(),
+                    id: None,
+                    created: None,
                     data: json!({ "sessionID": session_id, "message": error.to_string() }),
                     location: Some(json!({ "directory": project_path.to_string_lossy() })),
                 },
@@ -1013,6 +1015,8 @@ fn publish_disconnected(
             OpenCodeEvent {
                 project_path: project_path.clone(),
                 event_type: "server.disconnected".to_owned(),
+                id: None,
+                created: None,
                 data: Value::Null,
                 location: Some(json!({ "directory": project_path })),
             },
@@ -1173,6 +1177,8 @@ fn parse_event(payload: &str, project_path: &Path) -> Result<OpenCodeEvent, Open
     Ok(OpenCodeEvent {
         project_path: project_path.to_string_lossy().into_owned(),
         event_type: event_type.to_owned(),
+        id: value.get("id").and_then(Value::as_str).map(str::to_owned),
+        created: value.get("created").and_then(Value::as_u64),
         data: value.get("data").cloned().unwrap_or(Value::Null),
         location: value.get("location").cloned(),
     })
@@ -1445,12 +1451,14 @@ mod tests {
     #[test]
     fn event_parser_maps_open_code_sse_payload_to_the_desktop_contract() {
         let event = parse_event(
-            r#"{"id":"evt_1","type":"session.text.delta","location":{"directory":"/workspace"},"data":{"sessionID":"ses_1","delta":"hi"}}"#,
+            r#"{"id":"evt_1","created":123,"type":"session.text.delta","location":{"directory":"/workspace"},"data":{"sessionID":"ses_1","delta":"hi"}}"#,
             Path::new("/workspace"),
         )
         .unwrap();
 
         assert_eq!(event.event_type, "session.text.delta");
+        assert_eq!(event.id.as_deref(), Some("evt_1"));
+        assert_eq!(event.created, Some(123));
         assert_eq!(event.project_path, "/workspace");
         assert_eq!(event.data["sessionID"], "ses_1");
         assert_eq!(event.location.as_ref().unwrap()["directory"], "/workspace");

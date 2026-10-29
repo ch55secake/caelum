@@ -13,7 +13,7 @@ export type SessionDetails = {
 };
 export type ConversationEntry = {
   id: string;
-  kind: "user" | "assistant" | "tool" | "status" | "reasoning";
+  kind: "user" | "assistant" | "tool" | "status" | "reasoning" | "compaction";
   text: string;
   optimistic?: boolean;
   complete?: boolean;
@@ -40,6 +40,7 @@ export type ConversationEntry = {
   error?: string;
   durationMs?: number;
   startedAt?: number;
+  compactionReason?: "auto" | "manual";
 };
 export type ProjectInfo = { name: string; path: string };
 export type WorkspaceSessionInfo = {
@@ -160,6 +161,8 @@ export function applyOpenCodeEvent(
   event: {
     projectPath: string;
     eventType: string;
+    id?: string;
+    created?: number;
     data: Record<string, unknown>;
     location?: unknown;
   },

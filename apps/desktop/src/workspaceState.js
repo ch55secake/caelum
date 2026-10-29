@@ -131,6 +131,7 @@ function applyEvent(
   method,
   data,
   disconnected,
+  event,
 ) {
   return updateProviderWorkspace(
     workspaces,
@@ -153,7 +154,8 @@ function applyEvent(
                 conversation: session.conversation.map((entry) =>
                   entry.kind === "tool" && entry.status === "running"
                     ? { ...entry, status: "interrupted" }
-                    : entry.kind === "reasoning" && !entry.complete
+                    : ["reasoning", "compaction"].includes(entry.kind) &&
+                        !entry.complete
                       ? { ...entry, status: "interrupted" }
                       : entry,
                 ),
@@ -170,7 +172,7 @@ function applyEvent(
       if (!id) return workspace;
       const current = workspace.sessionsById[id];
       const next = current
-        ? applyConversationEvent(current, provider, method, data)
+        ? applyConversationEvent(current, provider, method, data, event)
         : null;
       const name =
         data.thread?.name ??
@@ -232,5 +234,6 @@ export function applyOpenCodeEvent(workspaces, event) {
     event.eventType,
     event.data ?? {},
     event.eventType === "server.disconnected",
+    event,
   );
 }

@@ -429,3 +429,284 @@ test("retry, interruption, and missed final deltas settle activity and keep rest
   );
   assert.equal(live.conversation[0].text, "Partial trace recovered");
 });
+
+test("Codex compaction is a stable checkpoint that keeps execution active until the turn ends", () => {
+  let live = session();
+  const item = { id: "compact-1", type: "contextCompaction" };
+  live = applyConversationEvent(live, "codex", "item/started", { item });
+  assert.equal(live.isWorking, true);
+  assert.equal(live.activity.label, "Compacting context…");
+  assert.equal(live.conversation[0].kind, "compaction");
+  assert.equal(live.conversation[0].status, "running");
+  live = applyConversationEvent(live, "codex", "item/completed", { item });
+  assert.equal(live.isWorking, true);
+  assert.equal(live.activity.label, "Working…");
+  live.conversation = mergeHistory(
+    live.conversation,
+    historyEntries("codex", [{ status: "inProgress", items: [item] }]),
+  );
+  assert.equal(live.conversation.length, 1);
+  assert.equal(live.conversation[0].status, "completed");
+  live = applyConversationEvent(live, "codex", "turn/completed", {
+    turn: { id: "turn", status: "completed" },
+  });
+  live = applyConversationEvent(live, "codex", "item/started", { item });
+  assert.equal(
+    live.isWorking,
+    false,
+    "late starts must not reopen completed compaction",
+  );
+  const restored = historyEntries("codex", [
+    {
+      status: "inProgress",
+      items: [
+        item,
+        { id: "after", type: "agentMessage", text: "Continuing" },
+      ],
+    },
+  ]);
+  assert.equal(
+    restored[0].status,
+    "completed",
+    "compaction before a continuing response is complete",
+  );
+});
+
+test("Codex cancelled and failed compactions settle without losing their checkpoint or error", () => {
+  for (const outcome of ["failed", "interrupted"]) {
+    const item = { id: "compact", type: "contextCompaction" };
+    let live = applyConversationEvent(session(), "codex", "item/started", {
+      item,
+    });
+    live = applyConversationEvent(live, "codex", "turn/completed", {
+      turn: {
+        id: "turn",
+        status: outcome,
+        error: { message: "Context limit reached" },
+      },
+    });
+    assert.equal(live.isWorking, false);
+    assert.equal(live.conversation[0].status, outcome);
+    assert.equal(live.conversation[0].complete, true);
+    if (outcome === "failed")
+      assert.equal(live.conversation[0].error, "Context limit reached");
+    const restored = historyEntries("codex", [
+      { status: outcome, items: [item] },
+    ]);
+    assert.equal(restored[0].status, outcome);
+    const completed = historyEntries("codex", [
+      { status: outcome, items: [{ ...item, completedAtMs: 42 }] },
+    ]);
+    assert.equal(completed[0].status, "completed");
+  }
+});
+
+for (const reason of ["auto", "manual"]) {
+  test(`OpenCode ${reason} compaction streams and reconciles native history without duplicate summaries`, () => {
+    let live = session();
+    const inputID = reason === "manual" ? "msg_manual" : undefined;
+    const messageId = inputID ?? "msg_compact";
+    const send = (phase, data = {}, created = 100) => {
+      live = applyConversationEvent(
+        live,
+        "opencode",
+        `session.compaction.${phase}`,
+        { reason, ...data },
+        { id: "evt_compact", created },
+      );
+    };
+    const snapshot = (status, summary) =>
+      historyEntries("opencode", [
+        {
+          id: messageId,
+          type: "compaction",
+          reason,
+          status,
+          summary,
+          time: { created: 100 },
+        },
+      ]);
+    send("started", { inputID });
+    assert.equal(live.conversation[0].id, `opencode-${messageId}`);
+    assert.equal(live.activity.label, "Compacting context…");
+    send("delta", { text: "Keep the" }, 110);
+    live.conversation = mergeHistory(
+      live.conversation,
+      snapshot("running", "Keep the decisions"),
+    );
+    send("started", { inputID });
+    send("delta", { text: " decisions" }, 120);
+    assert.equal(live.conversation[0].text, "Keep the decisions");
+    assert.equal(live.conversation.length, 1);
+    send(
+      "ended",
+      { text: "## Summary\nKeep the decisions and next steps." },
+      130,
+    );
+    assert.equal(
+      live.isWorking,
+      true,
+      "compaction completion is not execution completion",
+    );
+    assert.equal(live.conversation[0].status, "completed");
+    live.conversation = mergeHistory(
+      live.conversation,
+      snapshot("running", "stale summary"),
+    );
+    assert.equal(
+      live.conversation[0].text,
+      "## Summary\nKeep the decisions and next steps.",
+    );
+    assert.equal(live.conversation[0].status, "completed");
+    live = applyConversationEvent(
+      live,
+      "opencode",
+      "session.execution.succeeded",
+      {},
+    );
+    send("started", { inputID });
+    send("delta", { text: " late" }, 140);
+    assert.equal(live.isWorking, false);
+    assert.equal(live.conversation.length, 1);
+    live = applyConversationEvent(
+      live,
+      "opencode",
+      "session.compaction.started",
+      { reason },
+      { id: "evt_second", created: 200 },
+    );
+    send("ended", { text: "stale previous result" }, 150);
+    assert.equal(live.conversation[1].status, "running");
+    assert.equal(live.conversation[1].text, "");
+  });
+}
+
+test("OpenCode missed starts and terminal snapshots recover without inventing checkpoint IDs", () => {
+  let live = applyConversationEvent(
+    session(),
+    "opencode",
+    "session.compaction.ended",
+    { text: "Recovered summary" },
+    { id: "evt_end", created: 120 },
+  );
+  assert.equal(live.conversation.length, 0);
+  live.conversation = mergeHistory(
+    live.conversation,
+    historyEntries("opencode", [
+      {
+        id: "msg_start",
+        type: "compaction",
+        status: "completed",
+        reason: "auto",
+        summary: "Recovered summary",
+        time: { created: 100 },
+      },
+    ]),
+  );
+  live = applyConversationEvent(
+    live,
+    "opencode",
+    "session.compaction.started",
+    { reason: "auto" },
+    { id: "evt_start", created: 100 },
+  );
+  assert.equal(live.isWorking, false);
+  assert.equal(live.conversation.length, 1);
+  assert.equal(live.conversation[0].text, "Recovered summary");
+});
+
+test("OpenCode idle history settles unfinished compaction before later work", () => {
+  for (const outcome of ["succeeded", "failed", "interrupted"]) {
+    const restored = historyEntries("opencode", [
+      {
+        id: "msg_compact",
+        type: "compaction",
+        status: "running",
+        summary: "Partial summary",
+        reason: "auto",
+      },
+      {
+        id: "msg_idle",
+        type: "idle",
+        outcome,
+        error: { message: "Provider unavailable" },
+      },
+      {
+        id: "msg_next",
+        type: "compaction",
+        status: "running",
+        reason: "auto",
+      },
+    ]);
+    assert.equal(
+      restored[0].status,
+      outcome === "succeeded" ? "completed" : outcome,
+    );
+    assert.equal(restored[0].complete, true);
+    assert.equal(restored[0].text, "Partial summary");
+    if (outcome === "failed")
+      assert.equal(restored[0].error, "Provider unavailable");
+    assert.equal(restored.at(-1).status, "running");
+    assert.equal(restored.at(-1).complete, false);
+  }
+});
+
+test("OpenCode compaction failures, shutdown resumption and native checkpoints are explicit", () => {
+  let live = applyConversationEvent(
+    session(),
+    "opencode",
+    "session.compaction.started",
+    { reason: "auto" },
+    { id: "evt_compact", created: 100 },
+  );
+  live = applyConversationEvent(
+    live,
+    "opencode",
+    "session.execution.interrupted",
+    { reason: "shutdown" },
+  );
+  assert.equal(live.conversation[0].status, "interrupted");
+  assert.equal(live.conversation[0].complete, false);
+  live = applyConversationEvent(
+    live,
+    "opencode",
+    "session.compaction.delta",
+    { text: "Resumed" },
+    { created: 150 },
+  );
+  assert.equal(live.conversation[0].status, "running");
+  assert.equal(live.isWorking, true);
+  live = applyConversationEvent(
+    live,
+    "opencode",
+    "session.compaction.failed",
+    { error: { message: "Summary request failed" } },
+    { created: 200 },
+  );
+  assert.equal(live.conversation[0].status, "failed");
+  assert.equal(live.conversation[0].error, "Summary request failed");
+  live = applyConversationEvent(
+    live,
+    "opencode",
+    "session.execution.failed",
+    {
+      error: { message: "Summary request failed" },
+    },
+  );
+  assert.equal(live.isWorking, false);
+  const restored = historyEntries("opencode", [
+    {
+      id: "msg_native",
+      type: "compaction",
+      status: "completed",
+      reason: "auto",
+      summary: "",
+      native: { encrypted_content: "opaque" },
+      time: { created: 300 },
+    },
+  ]);
+  assert.equal(restored[0].kind, "compaction");
+  assert.equal(restored[0].status, "completed");
+  assert.equal(restored[0].text, "");
+  assert.equal(restored[0].input, undefined);
+});

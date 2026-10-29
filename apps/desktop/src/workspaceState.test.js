@@ -295,3 +295,34 @@ test("OpenCode model changes update native session metadata without replacing a 
   assert.equal(session.session.effort, "low");
   assert.equal(session.effort, "high");
 });
+
+test("compaction preserves native identity, stays session-scoped and survives a disconnect", () => {
+  let workspaces = withSession({}, projectA, "opencode", "ses-a");
+  workspaces = withSession(workspaces, projectB, "opencode", "ses-a");
+  workspaces = applyOpenCodeEvent(workspaces, {
+    projectPath: projectA.path,
+    eventType: "session.compaction.started",
+    id: "evt_checkpoint",
+    created: 100,
+    data: { sessionID: "ses-a", reason: "auto" },
+  });
+  const active =
+    workspaces[projectA.path].providers.opencode.sessionsById["ses-a"];
+  assert.equal(active.conversation[0].id, "opencode-msg_checkpoint");
+  assert.equal(active.isWorking, true);
+  assert.equal(
+    workspaces[projectB.path].providers.opencode.sessionsById["ses-a"]
+      .conversation.length,
+    0,
+  );
+  workspaces = applyOpenCodeEvent(workspaces, {
+    projectPath: projectA.path,
+    eventType: "server.disconnected",
+    data: {},
+  });
+  const interrupted =
+    workspaces[projectA.path].providers.opencode.sessionsById["ses-a"];
+  assert.equal(interrupted.isWorking, false);
+  assert.equal(interrupted.conversation[0].status, "interrupted");
+  assert.equal(interrupted.conversation[0].complete, false);
+});

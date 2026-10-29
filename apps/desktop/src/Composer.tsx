@@ -15,6 +15,7 @@ export function Composer({
   changeProvider,
   isNew,
   working,
+  activity,
   submitting,
   disabled,
   textareaRef,
@@ -39,6 +40,7 @@ export function Composer({
   changeProvider: (kind: ProviderKind) => void;
   isNew: boolean;
   working: boolean;
+  activity?: string;
   submitting: boolean;
   disabled: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -95,7 +97,9 @@ export function Composer({
     <div className="composer-wrap">
       {busy && (
         <span className="sr-only" role="status" aria-label="Agent activity">
-          {awaitingApproval ? "Approval required" : "Agent working"}
+          {awaitingApproval
+            ? "Approval required"
+            : (activity ?? "Agent working")}
         </span>
       )}
       {awaitingApproval && (
@@ -271,7 +275,9 @@ export function Composer({
               : modelPending
                 ? "Model applies to next message"
                 : working
-                  ? "Draft while the agent works"
+                  ? activity === "Compacting context…"
+                    ? activity
+                    : "Draft while the agent works"
                   : !draft && lastMessage
                     ? "↑ Recall · ↵ Send"
                     : "↵ Send · ⇧↵ Newline"}

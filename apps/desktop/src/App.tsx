@@ -343,6 +343,7 @@ export default function App() {
                   changeProvider={app.changeProvider}
                   isNew={!app.selectedId}
                   working={app.selected?.isWorking ?? false}
+                  activity={app.selected?.activity?.label}
                   awaitingApproval={activeApprovals.length > 0}
                   submitting={
                     app.selected?.isSubmitting ||

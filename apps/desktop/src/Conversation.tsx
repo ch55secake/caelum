@@ -6,7 +6,7 @@ import {
   LoaderCircle,
   ShieldCheck,
   Sparkles,
-  UserRound,
+  Minimize2,
 } from "lucide-react";
 import type {
   ConversationEntry,
@@ -16,6 +16,77 @@ import type { ApprovalPrompt } from "./useWorkspace.js";
 import { CopyButton, MessageContent } from "./MessageContent.js";
 import { ToolActivity } from "./ToolActivity.js";
 import { conversationPresentation } from "./shellMessages.js";
+
+function CompactionNotice({
+  entry,
+  working,
+  expanded,
+  toggle,
+}: {
+  entry: ConversationEntry;
+  working: boolean;
+  expanded: boolean;
+  toggle: () => void;
+}) {
+  const status =
+    entry.status === "running" && !working ? "interrupted" : entry.status;
+  const label =
+    status === "running"
+      ? "Compacting context…"
+      : status === "failed"
+        ? "Compaction failed"
+        : status === "interrupted"
+          ? "Compaction interrupted"
+          : "Context compacted";
+  const hasDetails = Boolean(entry.text || entry.error);
+  const heading = (
+    <>
+      {status === "running" ? (
+        <LoaderCircle size={13} className="spinning" aria-hidden="true" />
+      ) : (
+        <Minimize2 size={13} aria-hidden="true" />
+      )}
+      <span role="status">{label}</span>
+      {hasDetails && (
+        <ChevronDown
+          size={12}
+          className={expanded ? "expanded" : undefined}
+          aria-hidden="true"
+        />
+      )}
+    </>
+  );
+  return (
+    <section
+      className="compaction-notice"
+      aria-label="Context compaction"
+      data-status={status}
+    >
+      {hasDetails ? (
+        <button
+          className="compaction-heading"
+          aria-label={label}
+          aria-expanded={expanded}
+          onClick={toggle}
+        >
+          {heading}
+        </button>
+      ) : (
+        <div className="compaction-heading">{heading}</div>
+      )}
+      {hasDetails && expanded && (
+        <div className="compaction-details">
+          {entry.error && (
+            <p className="compaction-error" role="alert">
+              {entry.error}
+            </p>
+          )}
+          {entry.text && <MessageContent text={entry.text} />}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function ThinkingTrace({
   entry,
@@ -127,6 +198,10 @@ export function Conversation({
   const entries = useMemo(
     () => conversationPresentation(session.conversation),
     [session.conversation],
+  );
+  const latestUserId = useMemo(
+    () => [...entries].reverse().find((entry) => entry.kind === "user")?.id,
+    [entries],
   );
   const endIndex =
     end === null ? -1 : entries.findIndex((entry) => entry.id === end);
@@ -252,7 +327,7 @@ export function Conversation({
             <article
               key={entry.id}
               data-entry-id={entry.id}
-              className={`conversation-entry ${entry.kind}`}
+              className={`conversation-entry ${entry.kind}${entry.id === latestUserId ? " latest-user" : ""}`}
             >
               {entry.kind === "tool" ? (
                 <ToolActivity
@@ -290,25 +365,46 @@ export function Conversation({
                     setEnd(entries[windowEnd - 1]?.id ?? null);
                   }}
                 />
+              ) : entry.kind === "compaction" ? (
+                <CompactionNotice
+                  entry={entry}
+                  working={session.isWorking}
+                  expanded={
+                    session.expandedTools[entry.id] ??
+                    entry.status === "failed"
+                  }
+                  toggle={() => {
+                    following.current = false;
+                    setAtBottom(false);
+                    setEnd(entries[windowEnd - 1]?.id ?? null);
+                    saveView({
+                      expandedTools: {
+                        ...session.expandedTools,
+                        [entry.id]: !(
+                          session.expandedTools[entry.id] ??
+                          entry.status === "failed"
+                        ),
+                      },
+                    });
+                  }}
+                />
               ) : entry.kind === "status" ? (
                 <div className="turn-status">{entry.text}</div>
               ) : (
                 <>
-                  <div className="message-heading">
-                    <span>
-                      {entry.kind === "user" ? (
-                        <UserRound size={13} aria-hidden="true" />
-                      ) : (
+                  {entry.kind === "user" ? (
+                    <CopyButton text={entry.text} label="Copy message" />
+                  ) : (
+                    <div className="message-heading">
+                      <span>
                         <Sparkles size={13} aria-hidden="true" />
-                      )}
-                      {entry.kind === "user"
-                        ? "You"
-                        : session.session.provider === "codex"
+                        {session.session.provider === "codex"
                           ? "Codex"
                           : "OpenCode"}
-                    </span>
-                    <CopyButton text={entry.text} label="Copy message" />
-                  </div>
+                      </span>
+                      <CopyButton text={entry.text} label="Copy message" />
+                    </div>
+                  )}
                   {entry.kind === "user" ? (
                     <div className="user-text">{entry.text}</div>
                   ) : (

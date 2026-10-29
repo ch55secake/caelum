@@ -208,6 +208,17 @@ export function useWorkspace() {
         (event) => {
           update((current) => applyCodexEvent(current, event));
           if (
+            event.method === "item/completed" &&
+            (event.params.item as { type?: string } | undefined)?.type ===
+              "contextCompaction" &&
+            typeof event.params.threadId === "string"
+          )
+            void loadHistory(
+              event.projectPath,
+              "codex",
+              event.params.threadId,
+            );
+          if (
             event.method === "turn/completed" &&
             typeof event.params.threadId === "string"
           )
@@ -223,6 +234,19 @@ export function useWorkspace() {
         "opencode-event",
         (event) => {
           update((current) => applyOpenCodeEvent(current, event));
+          if (
+            [
+              "session.compaction.started",
+              "session.compaction.ended",
+              "session.compaction.failed",
+            ].includes(event.eventType) &&
+            typeof event.data.sessionID === "string"
+          )
+            void loadHistory(
+              event.projectPath,
+              "opencode",
+              event.data.sessionID,
+            );
           if (
             [
               "session.execution.succeeded",
@@ -816,6 +840,18 @@ export function useWorkspace() {
         const isWorking = fresh
           ? (page.isWorking ?? value.isWorking)
           : value.isWorking;
+        const conversation = mergeHistory(
+          value.conversation,
+          entries,
+          older || !value.historyLoaded ? "prepend" : "refresh",
+          older ? value.historyAnchor : null,
+        );
+        const compacting = conversation.some(
+          (entry) =>
+            entry.kind === "compaction" &&
+            entry.status === "running" &&
+            !entry.complete,
+        );
         return {
           ...value,
           session: fresh
@@ -826,13 +862,14 @@ export function useWorkspace() {
               }
             : value.session,
           isWorking,
-          activity: isWorking ? value.activity : null,
-          conversation: mergeHistory(
-            value.conversation,
-            entries,
-            older || !value.historyLoaded ? "prepend" : "refresh",
-            older ? value.historyAnchor : null,
-          ),
+          activity: !isWorking
+            ? null
+            : fresh && compacting
+              ? { label: "Compacting context…" }
+              : fresh && value.activity?.label === "Compacting context…"
+                ? { label: "Working…" }
+                : value.activity,
+          conversation,
           historyLoaded: true,
           nextCursor: advance ? page.nextCursor : value.nextCursor,
           historyAnchor: advance

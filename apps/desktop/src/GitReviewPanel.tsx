@@ -297,11 +297,6 @@ export function GitReviewPanel({
                         {code.replaceAll(" ", "·")}
                       </span>
                       <span className="git-file-path">{change.path}</span>
-                      {latestPath === change.path && (
-                        <span className="git-latest-badge" aria-hidden="true">
-                          Latest
-                        </span>
-                      )}
                     </button>
                   );
                 })}
