@@ -16,6 +16,26 @@ pub struct ProjectInfo {
     pub path: String,
 }
 
+/// Project and session metadata restored from Caelum's local workspace database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedProject {
+    pub project: ProjectInfo,
+    pub provider: String,
+    pub codex_session_id: Option<String>,
+    pub opencode_session_id: Option<String>,
+    pub codex_session_ids: Vec<String>,
+    pub opencode_session_ids: Vec<String>,
+}
+
+/// App-owned workspace metadata. Provider conversation history is not included.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSnapshot {
+    pub projects: Vec<PersistedProject>,
+    pub active_project_path: Option<String>,
+}
+
 /// A provider-specific request for explicit user approval.
 ///
 /// `provider_details` is intentionally opaque to Caelum so adapters can retain
@@ -145,7 +165,9 @@ pub struct OpenCodeEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApprovalPrompt, CodexEvent, OpenCodeEvent};
+    use super::{
+        ApprovalPrompt, CodexEvent, OpenCodeEvent, PersistedProject, ProjectInfo, WorkspaceSnapshot,
+    };
     use serde_json::json;
 
     #[test]
@@ -206,6 +228,39 @@ mod tests {
                 "requestId": "ses_1:per_1",
                 "summary": "Approve command",
                 "description": "Run a command"
+            })
+        );
+    }
+
+    #[test]
+    fn workspace_snapshot_uses_the_frontend_restore_contract() {
+        let snapshot = WorkspaceSnapshot {
+            projects: vec![PersistedProject {
+                project: ProjectInfo {
+                    name: "project".into(),
+                    path: "/workspace/project".into(),
+                },
+                provider: "opencode".into(),
+                codex_session_id: Some("thread-1".into()),
+                opencode_session_id: None,
+                codex_session_ids: vec!["thread-1".into()],
+                opencode_session_ids: vec![],
+            }],
+            active_project_path: Some("/workspace/project".into()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(snapshot).unwrap(),
+            json!({
+                "projects": [{
+                    "project": { "name": "project", "path": "/workspace/project" },
+                    "provider": "opencode",
+                    "codexSessionId": "thread-1",
+                    "opencodeSessionId": null,
+                    "codexSessionIds": ["thread-1"],
+                    "opencodeSessionIds": []
+                }],
+                "activeProjectPath": "/workspace/project"
             })
         );
     }

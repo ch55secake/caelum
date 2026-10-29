@@ -3,14 +3,53 @@
 use std::{path::PathBuf, sync::Arc};
 
 use caelum_core::{
-    approvals::ApprovalBroker, codex::CodexProvider, opencode::OpenCodeProvider,
-    processes::ProcessRegistry, projects::Project,
+    approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase,
+    opencode::OpenCodeProvider, processes::ProcessRegistry, projects::Project,
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList,
     OpenCodeConversationEntry, OpenCodeSessionInfo, OpenCodeSessionList, ProjectInfo,
+    WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
+
+struct PersistenceState {
+    database: Option<WorkspaceDatabase>,
+    unavailable_reason: Option<String>,
+}
+
+impl PersistenceState {
+    fn open(app_data_dir: Result<PathBuf, tauri::Error>) -> Self {
+        match app_data_dir {
+            Ok(path) => match WorkspaceDatabase::open(path.join("workspace.sqlite3")) {
+                Ok(database) => Self {
+                    database: Some(database),
+                    unavailable_reason: None,
+                },
+                Err(error) => Self::unavailable(error.to_string()),
+            },
+            Err(error) => Self::unavailable(error.to_string()),
+        }
+    }
+
+    fn unavailable(reason: String) -> Self {
+        Self {
+            database: None,
+            unavailable_reason: Some(reason),
+        }
+    }
+
+    fn database(&self) -> Result<WorkspaceDatabase, String> {
+        self.database.clone().ok_or_else(|| {
+            format!(
+                "Local workspace persistence is unavailable: {}",
+                self.unavailable_reason
+                    .as_deref()
+                    .unwrap_or("unknown error")
+            )
+        })
+    }
+}
 
 #[tauri::command]
 fn app_info() -> AppInfo {
@@ -25,6 +64,116 @@ fn open_project(path: String) -> Result<ProjectInfo, String> {
     Project::open(PathBuf::from(path))
         .map(|project| project.info())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn restore_workspace(
+    persistence: State<'_, PersistenceState>,
+) -> Result<WorkspaceSnapshot, String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .restore()
+            .map_err(|error| format!("Could not restore the local workspace: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn remember_project(
+    persistence: State<'_, PersistenceState>,
+    project: ProjectInfo,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .remember_project(&project)
+            .map_err(|error| format!("Could not save the project: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn close_project_record(
+    persistence: State<'_, PersistenceState>,
+    project_path: String,
+    active_project_path: Option<String>,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .close_project(&project_path, active_project_path.as_deref())
+            .map_err(|error| format!("Could not update the open projects: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn set_active_project(
+    persistence: State<'_, PersistenceState>,
+    project_path: Option<String>,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .set_active_project(project_path.as_deref())
+            .map_err(|error| format!("Could not save the active project: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn set_project_provider(
+    persistence: State<'_, PersistenceState>,
+    project_path: String,
+    provider: String,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .set_provider(&project_path, &provider)
+            .map_err(|error| format!("Could not save the selected provider: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn select_project_session(
+    persistence: State<'_, PersistenceState>,
+    project_path: String,
+    provider: String,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .select_session(&project_path, &provider, session_id.as_deref())
+            .map_err(|error| format!("Could not save the selected session: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn sync_provider_sessions(
+    persistence: State<'_, PersistenceState>,
+    project_path: String,
+    provider: String,
+    session_ids: Vec<String>,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .sync_sessions(&project_path, &provider, &session_ids)
+            .map_err(|error| format!("Could not save session metadata: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -225,6 +374,9 @@ pub fn run() {
         .manage(Arc::new(ProcessRegistry::default()))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let app_data_dir = app.path().app_data_dir();
+            app.manage(PersistenceState::open(app_data_dir));
+
             let approvals = app.state::<ApprovalBroker>().inner().clone();
             let processes = app.state::<Arc<ProcessRegistry>>().inner().clone();
             app.manage(CodexProvider::new(processes, approvals));
@@ -267,6 +419,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             open_project,
+            restore_workspace,
+            remember_project,
+            close_project_record,
+            set_active_project,
+            set_project_provider,
+            select_project_session,
+            sync_provider_sessions,
             pending_approvals,
             resolve_approval,
             codex_list_sessions,

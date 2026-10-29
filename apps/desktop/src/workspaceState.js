@@ -22,6 +22,37 @@ export function createProjectWorkspace() {
   };
 }
 
+export function restoreProjectWorkspace(persisted) {
+  const workspace = createProjectWorkspace();
+  const provider = persisted.provider === "opencode" ? "opencode" : "codex";
+  return {
+    ...workspace,
+    provider,
+    providers: {
+      codex: {
+        ...workspace.providers.codex,
+        selectedSessionId: persisted.codexSessionId ?? null,
+        sessions: (persisted.codexSessionIds ?? []).map((id) => ({
+          id,
+          name: null,
+          preview: "",
+          updatedAt: null,
+        })),
+      },
+      opencode: {
+        ...workspace.providers.opencode,
+        selectedSessionId: persisted.opencodeSessionId ?? null,
+        sessions: (persisted.opencodeSessionIds ?? []).map((id) => ({
+          id,
+          name: null,
+          preview: "",
+          updatedAt: null,
+        })),
+      },
+    },
+  };
+}
+
 export function updateProjectWorkspace(workspaces, projectPath, update) {
   const current = workspaces[projectPath] ?? createProjectWorkspace();
   const next = update(current);

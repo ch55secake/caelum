@@ -30,6 +30,13 @@ export type ProjectWorkspaceState = {
 export type WorkspaceMap = Record<string, ProjectWorkspaceState>;
 
 export function createProjectWorkspace(): ProjectWorkspaceState;
+export function restoreProjectWorkspace(persisted: {
+  provider: ProviderKind;
+  codexSessionId: string | null;
+  opencodeSessionId: string | null;
+  codexSessionIds: string[];
+  opencodeSessionIds: string[];
+}): ProjectWorkspaceState;
 export function updateProjectWorkspace(
   workspaces: WorkspaceMap,
   projectPath: string,

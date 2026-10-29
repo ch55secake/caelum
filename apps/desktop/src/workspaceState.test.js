@@ -6,6 +6,7 @@ import {
   applyOpenCodeEvent,
   createProjectWorkspace,
   projectHasActiveTurn,
+  restoreProjectWorkspace,
   updateProviderWorkspace,
   updateProjectWorkspace,
 } from "./workspaceState.js";
@@ -51,6 +52,22 @@ test("project provider, selected session, and prompt state stay independent", ()
   assert.equal(workspaces[projectA.path].providers.opencode.selectedSessionId, "ses-alpha");
   assert.equal(workspaces[projectB.path], undefined);
   assert.equal(createProjectWorkspace().provider, "codex");
+});
+
+test("restores provider and selected session IDs without copying conversation history", () => {
+  const workspace = restoreProjectWorkspace({
+    provider: "opencode",
+    codexSessionId: "thread-1",
+    opencodeSessionId: "session-1",
+    codexSessionIds: ["thread-1", "thread-older"],
+    opencodeSessionIds: ["session-1"],
+  });
+
+  assert.equal(workspace.provider, "opencode");
+  assert.equal(workspace.providers.codex.selectedSessionId, "thread-1");
+  assert.equal(workspace.providers.opencode.selectedSessionId, "session-1");
+  assert.deepEqual(workspace.providers.codex.sessions.map((session) => session.id), ["thread-1", "thread-older"]);
+  assert.deepEqual(workspace.providers.opencode.sessionsById, {});
 });
 
 test("Codex events update only their originating project and session, even when unselected", () => {
