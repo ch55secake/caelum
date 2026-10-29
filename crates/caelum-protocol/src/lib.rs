@@ -45,6 +45,55 @@ pub struct GitFileDiff {
     pub untracked: String,
 }
 
+/// Bounded before/working-tree text for Monaco's side-by-side diff editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileVersions {
+    pub path: String,
+    pub original: String,
+    pub modified: String,
+    pub truncated: bool,
+}
+
+/// Kind of an entry in the selected project's filesystem tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectEntryKind {
+    File,
+    Directory,
+    Symlink,
+}
+
+/// A single, non-recursive entry in a project directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: ProjectEntryKind,
+    pub size_bytes: Option<u64>,
+}
+
+/// One paginated directory listing; child directories are fetched only when expanded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDirectoryListing {
+    pub path: String,
+    pub entries: Vec<ProjectFileEntry>,
+    pub total: usize,
+    pub next_offset: Option<usize>,
+}
+
+/// A bounded UTF-8 preview of a file inside the selected project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileContent {
+    pub path: String,
+    pub content: String,
+    pub size_bytes: u64,
+    pub truncated: bool,
+}
+
 /// Project and session metadata restored from Caelum's local workspace database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -195,8 +244,9 @@ pub struct OpenCodeEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApprovalPrompt, CodexEvent, GitFileDiff, GitFileStatus, GitRepositoryStatus, OpenCodeEvent,
-        PersistedProject, ProjectInfo, WorkspaceSnapshot,
+        ApprovalPrompt, CodexEvent, GitFileDiff, GitFileStatus, GitFileVersions,
+        GitRepositoryStatus, OpenCodeEvent, PersistedProject, ProjectDirectoryListing,
+        ProjectEntryKind, ProjectFileContent, ProjectFileEntry, ProjectInfo, WorkspaceSnapshot,
     };
     use serde_json::json;
 
@@ -334,6 +384,66 @@ mod tests {
                 "staged": "staged",
                 "unstaged": "unstaged",
                 "untracked": ""
+            })
+        );
+    }
+
+    #[test]
+    fn file_browser_and_version_responses_use_the_frontend_contract() {
+        let listing = ProjectDirectoryListing {
+            path: "src".into(),
+            entries: vec![ProjectFileEntry {
+                name: "main.rs".into(),
+                path: "src/main.rs".into(),
+                kind: ProjectEntryKind::File,
+                size_bytes: Some(42),
+            }],
+            total: 201,
+            next_offset: Some(200),
+        };
+        let content = ProjectFileContent {
+            path: "src/main.rs".into(),
+            content: "fn main() {}".into(),
+            size_bytes: 42,
+            truncated: false,
+        };
+        let versions = GitFileVersions {
+            path: "src/main.rs".into(),
+            original: "before".into(),
+            modified: "after".into(),
+            truncated: false,
+        };
+
+        assert_eq!(
+            serde_json::to_value(listing).unwrap(),
+            json!({
+                "path": "src",
+                "entries": [{
+                    "name": "main.rs",
+                    "path": "src/main.rs",
+                    "kind": "file",
+                    "sizeBytes": 42
+                }],
+                "total": 201,
+                "nextOffset": 200
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(content).unwrap(),
+            json!({
+                "path": "src/main.rs",
+                "content": "fn main() {}",
+                "sizeBytes": 42,
+                "truncated": false
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(versions).unwrap(),
+            json!({
+                "path": "src/main.rs",
+                "original": "before",
+                "modified": "after",
+                "truncated": false
             })
         );
     }

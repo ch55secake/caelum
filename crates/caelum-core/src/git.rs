@@ -1,11 +1,14 @@
 use std::{
     ffi::OsString,
     fs,
+    io::Read,
     path::{Component, Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
-use caelum_protocol::{GitFileDiff, GitFileStatus, GitRepositoryStatus};
+use caelum_protocol::{
+    GitFileDiff, GitFileStatus, GitFileVersions, GitRepositoryStatus, ProjectFileContent,
+};
 use thiserror::Error;
 
 use crate::projects::{Project, ProjectError};
@@ -122,6 +125,53 @@ impl GitClient {
         })
     }
 
+    /// Return bounded HEAD and working-tree text for Monaco's side-by-side diff editor.
+    pub fn file_versions(
+        &self,
+        project_path: impl AsRef<Path>,
+        file_path: &str,
+    ) -> Result<GitFileVersions, GitError> {
+        let project = Project::open(project_path)?;
+        let relative_path = validate_project_relative_path(file_path)?;
+        validate_scoped_file(&project, &relative_path)?;
+
+        let repository_root = self
+            .repository_root(&project)?
+            .ok_or(GitError::NotRepository)?;
+        let repository_project = Project::open(&repository_root)?;
+        let project_prefix = project_relative_prefix(&project, &repository_root)?;
+        let repository_relative_path = project_prefix.join(&relative_path);
+        let git_path = git_path_string(&repository_relative_path);
+        let changes = self.project_status_changes(&project, &repository_root)?;
+        let change = changes
+            .iter()
+            .find(|change| change.path == file_path)
+            .ok_or_else(|| GitError::NotChanged(file_path.to_owned()))?;
+
+        let (original, original_truncated) = if is_new_file(change) {
+            (String::new(), false)
+        } else {
+            self.head_file_content(&repository_project, &git_path, file_path)?
+        };
+        let modified = if project.path().join(&relative_path).exists() {
+            crate::files::read_text_file(project.path(), file_path)?
+        } else {
+            ProjectFileContent {
+                path: file_path.to_owned(),
+                content: String::new(),
+                size_bytes: 0,
+                truncated: false,
+            }
+        };
+
+        Ok(GitFileVersions {
+            path: file_path.to_owned(),
+            original,
+            modified: modified.content,
+            truncated: original_truncated || modified.truncated,
+        })
+    }
+
     fn repository_root(&self, project: &Project) -> Result<Option<PathBuf>, GitError> {
         let output = self.run(project, &["rev-parse", "--show-toplevel"])?;
         if !output.status.success() {
@@ -208,6 +258,88 @@ impl GitClient {
         }
     }
 
+    fn head_file_content(
+        &self,
+        repository: &Project,
+        git_path: &str,
+        project_path: &str,
+    ) -> Result<(String, bool), GitError> {
+        let object = format!("HEAD:{git_path}");
+        let size = self.run_os(
+            repository,
+            &[
+                OsString::from("cat-file"),
+                OsString::from("-s"),
+                OsString::from(&object),
+            ],
+        )?;
+        self.require_success(&size, "read original file size")?;
+        let size = output_text(&size.stdout)
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| {
+                command_error(
+                    "read original file size",
+                    "Git returned an invalid size".into(),
+                )
+            })?;
+        let mut command = Command::new(&self.executable);
+        command
+            .arg("-C")
+            .arg(repository.path())
+            .arg("--literal-pathspecs")
+            .arg("cat-file")
+            .arg("blob")
+            .arg(&object)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .env("LC_ALL", "C")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = command.spawn().map_err(|source| GitError::Unavailable {
+            executable: self.executable.clone(),
+            source,
+        })?;
+        let mut bytes = Vec::with_capacity(crate::files::MAX_TEXT_FILE_BYTES + 1);
+        child
+            .stdout
+            .take()
+            .expect("Git stdout is piped")
+            .take((crate::files::MAX_TEXT_FILE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|source| GitError::ReadOutput {
+                operation: "read original file content",
+                source,
+            })?;
+        let status = child.wait().map_err(|source| GitError::ReadOutput {
+            operation: "wait for original file content",
+            source,
+        })?;
+        let truncated = size > crate::files::MAX_TEXT_FILE_BYTES as u64
+            || bytes.len() > crate::files::MAX_TEXT_FILE_BYTES;
+        if bytes.len() > crate::files::MAX_TEXT_FILE_BYTES {
+            bytes.truncate(crate::files::MAX_TEXT_FILE_BYTES);
+        }
+        if !status.success() && !truncated {
+            return Err(command_error(
+                "read original file content",
+                "Git exited unsuccessfully".to_owned(),
+            ));
+        }
+        if bytes.contains(&0) {
+            return Err(GitError::NotTextFile(project_path.to_owned()));
+        }
+        let content = match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(error) if truncated && error.utf8_error().error_len().is_none() => {
+                let valid_up_to = error.utf8_error().valid_up_to();
+                let bytes = error.into_bytes();
+                String::from_utf8(bytes[..valid_up_to].to_vec()).expect("valid UTF-8 prefix")
+            }
+            Err(_) => return Err(GitError::NotTextFile(project_path.to_owned())),
+        };
+        Ok((content, truncated))
+    }
+
     fn run(&self, project: &Project, args: &[&str]) -> Result<Output, GitError> {
         let arguments = args.iter().map(OsString::from).collect::<Vec<_>>();
         self.run_os(project, &arguments)
@@ -261,6 +393,12 @@ fn parse_status(output: &[u8]) -> Result<Vec<GitFileStatus>, GitError> {
         offset = end + 1;
     }
     Ok(changes)
+}
+
+fn is_new_file(change: &GitFileStatus) -> bool {
+    (change.index_status == "?" && change.worktree_status == "?")
+        || change.index_status == "A"
+        || change.worktree_status == "A"
 }
 
 fn project_relative_prefix(project: &Project, repository_root: &Path) -> Result<PathBuf, GitError> {
@@ -374,6 +512,8 @@ fn null_device_path() -> OsString {
 pub enum GitError {
     #[error(transparent)]
     Project(#[from] ProjectError),
+    #[error(transparent)]
+    File(#[from] crate::files::FileBrowserError),
     #[error("Git is unavailable at '{executable:?}': {source}")]
     Unavailable {
         executable: OsString,
@@ -403,6 +543,14 @@ pub enum GitError {
     },
     #[error("Git returned malformed porcelain status data")]
     MalformedStatus,
+    #[error("Git could not {operation}: {source}")]
+    ReadOutput {
+        operation: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("'{0}' is not UTF-8 text and cannot be shown in the code editor")]
+    NotTextFile(String),
 }
 
 #[cfg(test)]
@@ -520,6 +668,61 @@ mod tests {
         assert!(untracked.staged.is_empty());
         assert!(untracked.unstaged.is_empty());
         assert!(untracked.untracked.contains("new file body"));
+    }
+
+    #[test]
+    fn returns_bounded_head_and_worktree_versions_for_changed_files() {
+        let directory = TestDirectory::new("versions");
+        let project = directory.init_repository();
+        fs::write(project.join("tracked.txt"), "working tree version\n").unwrap();
+        fs::write(project.join("new.txt"), "new file version\n").unwrap();
+
+        let tracked = GitClient::new()
+            .file_versions(&project, "tracked.txt")
+            .unwrap();
+        assert_eq!(tracked.original, "original\n");
+        assert_eq!(tracked.modified, "working tree version\n");
+        assert!(!tracked.truncated);
+
+        let untracked = GitClient::new().file_versions(&project, "new.txt").unwrap();
+        assert!(untracked.original.is_empty());
+        assert_eq!(untracked.modified, "new file version\n");
+    }
+
+    #[test]
+    fn deleted_files_have_an_empty_working_tree_version() {
+        let directory = TestDirectory::new("deleted-version");
+        let project = directory.init_repository();
+        fs::remove_file(project.join("tracked.txt")).unwrap();
+
+        let versions = GitClient::new()
+            .file_versions(&project, "tracked.txt")
+            .unwrap();
+        assert_eq!(versions.original, "original\n");
+        assert!(versions.modified.is_empty());
+        assert!(!versions.truncated);
+    }
+
+    #[test]
+    fn head_file_versions_are_limited_to_the_preview_size() {
+        let directory = TestDirectory::new("large-version");
+        let project = directory.init_repository();
+        let original = vec![b'a'; crate::files::MAX_TEXT_FILE_BYTES + 32];
+        fs::write(project.join("large.txt"), &original).unwrap();
+        git(&project, &["add", "large.txt"]);
+        git(&project, &["commit", "--quiet", "-m", "add large file"]);
+        let mut modified = original;
+        modified[0] = b'b';
+        fs::write(project.join("large.txt"), modified).unwrap();
+
+        let versions = GitClient::new()
+            .file_versions(&project, "large.txt")
+            .unwrap();
+        assert_eq!(versions.original.len(), crate::files::MAX_TEXT_FILE_BYTES);
+        assert_eq!(versions.modified.len(), crate::files::MAX_TEXT_FILE_BYTES);
+        assert!(versions.original.starts_with('a'));
+        assert!(versions.modified.starts_with('b'));
+        assert!(versions.truncated);
     }
 
     #[test]

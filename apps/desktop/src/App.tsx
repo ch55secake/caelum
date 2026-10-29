@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { FilesPanel } from "./FilesPanel.js";
 import { GitReviewPanel } from "./GitReviewPanel.js";
 import { addOpenProject, closeOpenProject, selectOpenProject } from "./projectWorkspace.js";
 import {
@@ -74,7 +75,7 @@ export default function App() {
   const [openProjects, setOpenProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMap>({});
-  const [workspaceView, setWorkspaceView] = useState<"overview" | "changes">("overview");
+  const [workspaceView, setWorkspaceView] = useState<"overview" | "files" | "changes">("overview");
   const [isRestoringWorkspace, setIsRestoringWorkspace] = useState(isTauri());
   const [appError, setAppError] = useState<string | null>(null);
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
@@ -722,7 +723,7 @@ export default function App() {
         <div className="section-heading"><span>WORKSPACE</span></div>
         <nav className="side-nav" aria-label="Workspace">
           <button className={`nav-item${workspaceView === "overview" ? " active" : ""}`} onClick={() => setWorkspaceView("overview")}><Layers3 size={16} /><span>Overview</span></button>
-          <button className="nav-item" disabled><FileCode2 size={16} /><span>Files</span><span className="nav-soon">Soon</span></button>
+          <button className={`nav-item${workspaceView === "files" ? " active" : ""}`} onClick={() => setWorkspaceView("files")} disabled={!project} title={!project ? "Choose a project first" : "Browse project files"}><FileCode2 size={16} /><span>Files</span></button>
           <button className={`nav-item${workspaceView === "changes" ? " active" : ""}`} onClick={() => setWorkspaceView("changes")} disabled={!project} title={!project ? "Choose a project first" : "Inspect Git status and diffs"}><GitBranch size={16} /><span>Changes</span></button>
           <button className="nav-item" disabled><Activity size={16} /><span>Terminal</span><span className="nav-soon">Soon</span></button>
         </nav>
@@ -748,13 +749,15 @@ export default function App() {
 
       <section className="main-panel">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Workspace</span><span className="crumb-divider">/</span><strong>{workspaceView === "changes" ? "Changes" : project?.name ?? "Overview"}</strong></div>
+          <div className="breadcrumbs"><span>Workspace</span><span className="crumb-divider">/</span><strong>{workspaceView === "changes" ? "Changes" : workspaceView === "files" ? "Files" : project?.name ?? "Overview"}</strong></div>
           <div className="topbar-actions"><button className="command-button"><Command size={13} /><span>Quick actions</span><kbd>⌘ K</kbd></button><button className="icon-button" aria-label="Performance"><Gauge size={16} /></button></div>
         </header>
 
-        <div className={`content-scroll${workspaceView === "changes" ? " changes-content" : ""}`}>
+        <div className={`content-scroll${workspaceView === "changes" ? " changes-content" : workspaceView === "files" ? " files-content" : ""}`}>
           {workspaceView === "changes" ? (
             <GitReviewPanel project={project} />
+          ) : workspaceView === "files" ? (
+            <FilesPanel project={project} />
           ) : (
             <>
           <div className="welcome-block">
