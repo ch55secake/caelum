@@ -6,7 +6,7 @@ Caelum integrates with the local OpenCode v2 server API. It starts one `opencode
 
 1. Install OpenCode and make `opencode` available on `PATH`. Caelum also checks common Homebrew and user-local install paths.
 2. Configure and sign in to at least one provider in OpenCode. Caelum relies on OpenCode's existing provider configuration and credentials and does not copy or store them.
-3. Open a project in Caelum and select **OpenCode** in the provider card. Caelum starts its local server when sessions are loaded or created.
+3. Open a project in Caelum and select **OpenCode** in the new-session composer. Caelum starts its local server when sessions are loaded or created.
 
 OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SERVER_PASSWORD` is unset, the CLI generates a random password and prints it during startup. Caelum captures that startup password privately and authenticates using OpenCode's default `opencode` username. If `OPENCODE_SERVER_PASSWORD` is set for Caelum, the managed server inherits and reuses it instead. You do not need to configure a password manually. Authentication failures and HTTP/API errors are shown in the desktop error banner.
 
@@ -14,8 +14,9 @@ OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SE
 
 - The adapter verifies the local server by listing sessions through `GET /api/session` and scopes all session operations to the canonical project directory.
 - Sessions are created, restored, and listed through the v2 `/api/session` endpoints. Prompts use `/api/session/{sessionID}/prompt`; cancellation uses `/interrupt`.
-- `/api/event` streams native server events. Text deltas and tool lifecycle events are forwarded to the desktop; session history is loaded from the message endpoint on resume.
-- `permission.asked` events are shown in the shared approval dialog. **Allow once** maps to OpenCode's `once` decision; denial maps to `reject`. Caelum never sends the `always` decision.
+- `/api/event` streams native server events. Text deltas and tool lifecycle events are forwarded to the desktop; history pages retain native message content, tool input/output, errors, and timing. The initial message page uses `order=desc`; subsequent pages use only the opaque cursor and limit.
+- Available models and primary agents come from `/api/model` and `/api/agent`. New-session selections are passed to session creation. Prompts carry a client message ID so optimistic messages reconcile with persisted history.
+- `permission.asked` events are shown inline in the requesting session. **Allow once** maps to OpenCode's `once` decision; denial maps to `reject`. Caelum never sends the `always` decision.
 - Managed server processes are registered for application shutdown and restarted on the next provider request after an SSE disconnect.
 
 The integration follows the API exposed by the installed OpenCode binary, so API changes may require an adapter update. The running server's `/openapi.json` is the authoritative schema for that installation.

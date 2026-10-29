@@ -12,6 +12,17 @@ globalThis.MonacoEnvironment = {
 };
 
 loader.config({ monaco });
+monaco.editor.defineTheme("caelum-dark", {
+  base: "vs-dark", inherit: true, rules: [],
+  colors: {
+    "editor.background": "#0B0C0E", "editor.foreground": "#E7E8EC",
+    "editorLineNumber.foreground": "#737580", "editorLineNumber.activeForeground": "#B7B2D4",
+    "editor.selectionBackground": "#7669C44D", "editor.lineHighlightBackground": "#17181C",
+    "editorGutter.background": "#0B0C0E", "editorWidget.background": "#17181C",
+    "editorWidget.border": "#25262D", "diffEditor.insertedTextBackground": "#5DA77526",
+    "diffEditor.removedTextBackground": "#C96A7926",
+  },
+});
 
 const languageLoaders: Record<string, () => Promise<unknown>> = {
   cpp: () => import("monaco-editor/esm/vs/languages/definitions/cpp/register.js"),

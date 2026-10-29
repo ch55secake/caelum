@@ -12,6 +12,8 @@ Caelum relies on Codex-managed credentials and does not copy or store them. Miss
 
 ## Protocol behavior
 
-The implementation follows the current [Codex app-server documentation](https://developers.openai.com/codex/app-server) and [authentication documentation](https://developers.openai.com/codex/auth). JSON-RPC responses are correlated independently from notifications; output deltas and item lifecycle events are forwarded to the desktop. Command execution and file-change approval requests are shown in Caelum's one-shot approval dialog. Cancelling a turn sends `turn/interrupt`; exited app-server processes are reaped and recreated on the next project operation.
+The implementation follows the current [Codex app-server documentation](https://developers.openai.com/codex/app-server) and [authentication documentation](https://developers.openai.com/codex/auth). JSON-RPC responses are correlated independently from notifications; output deltas and item lifecycle events are forwarded to the desktop. Command execution and file-change approval requests are shown inline in the requesting session. Cancelling a turn sends `turn/interrupt`; exited app-server processes are reaped and recreated on reconnect.
+
+History uses `thread/turns/list` with `itemsView: "full"`, newest-first pages and opaque cursors. Native items cross the desktop boundary intact and share stable identities with live events. New-session model choices come from `model/list` and are passed to `thread/start`; Codex's configured default is used when none is selected.
 
 The app-server command and protocol can change with Codex CLI releases. Live CLI/auth behavior should be checked with an installed Codex CLI in addition to the fake-server protocol and lifecycle tests.

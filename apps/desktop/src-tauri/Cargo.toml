@@ -18,3 +18,4 @@ caelum-core = { path = "../../../crates/caelum-core" }
 caelum-protocol = { path = "../../../crates/caelum-protocol" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"

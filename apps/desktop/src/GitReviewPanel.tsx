@@ -95,7 +95,7 @@ export function GitReviewPanel({ project }: { project: ProjectInfo | null }) {
     <section className="git-review" aria-labelledby="git-review-title">
       <header className="git-review-heading">
         <GitBranch size={17} />
-        <div><h1 id="git-review-title">Changes</h1><p>{project.path}</p></div>
+        <div><h1 id="git-review-title" title={project.path}>Changes</h1></div>
         <button className="git-refresh" onClick={() => setRefreshKey((key) => key + 1)} disabled={isLoadingStatus} aria-label="Refresh Git status" title="Refresh Git status">
           <RefreshCw size={14} className={isLoadingStatus ? "spinning" : undefined} />
           <span>Refresh</span>
@@ -110,9 +110,8 @@ export function GitReviewPanel({ project }: { project: ProjectInfo | null }) {
       {status?.repositoryRoot && (
         <>
           <div className="git-repository-meta">
-            <div><span>BRANCH</span><strong>{status.branch ?? "Detached HEAD"}</strong></div>
-            <div><span>REPOSITORY</span><strong title={status.repositoryRoot}>{status.repositoryRoot}</strong></div>
-            <div><span>CHANGES</span><strong>{status.changes.length === 0 ? "Clean" : status.changes.length}</strong></div>
+            <div title={status.repositoryRoot}><GitBranch size={13} /><strong>{status.branch ?? "Detached HEAD"}</strong></div>
+            <div><strong>{status.changes.length}</strong><span>changed files</span></div>
           </div>
           {status.changes.length === 0 ? (
             <div className="git-empty"><strong>Working tree clean</strong><span>There are no staged, unstaged, or untracked changes.</span></div>

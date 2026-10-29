@@ -165,6 +165,8 @@ pub struct CodexThreadInfo {
     pub preview: String,
     #[serde(default)]
     pub updated_at: Option<u64>,
+    #[serde(default)]
+    pub is_working: bool,
 }
 
 /// The project and thread selected in the desktop Codex workspace.
@@ -203,6 +205,8 @@ pub struct OpenCodeSession {
     pub title: Option<String>,
     #[serde(default)]
     pub updated_at: Option<u64>,
+    #[serde(default)]
+    pub is_working: bool,
 }
 
 /// The selected project and OpenCode session shown in the desktop workspace.
@@ -221,13 +225,25 @@ pub struct OpenCodeSessionList {
     pub sessions: Vec<OpenCodeSession>,
 }
 
-/// A flattened entry from OpenCode's persisted session history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One chronological page of provider-owned history, retaining native tool details.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenCodeConversationEntry {
+pub struct SessionHistoryPage {
+    pub data: Vec<serde_json::Value>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderChoice {
     pub id: String,
-    pub kind: String,
-    pub text: String,
+    pub name: String,
+}
+
+/// Choices reported by the installed provider, rather than hard-coded UI options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderChoices {
+    pub models: Vec<ProviderChoice>,
+    pub agents: Vec<ProviderChoice>,
 }
 
 /// An event received from OpenCode's `/api/event` server-sent event stream.

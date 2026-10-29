@@ -1,8 +1,6 @@
 # Caelum
 
-**Your code. New horizons.**
-
-Caelum is a local-first AI coding workspace for macOS, with a native Rust core shared by its Tauri desktop app and standalone CLI. The desktop supports project-scoped Codex and OpenCode sessions; Caelum-managed persistence and code review are not implemented yet.
+Caelum is an AI coding workspace for macOS, with a native Rust core shared by its Tauri desktop app and standalone CLI. The desktop supports project-scoped Codex and OpenCode sessions, workspace restoration, file browsing, and Git review.
 
 ## Project status
 
@@ -70,6 +68,26 @@ With no subcommand, `caelum [PROJECT]` opens the project in the installed Caelum
 ```bash
 make check
 ```
+
+Session state and browser interaction checks:
+
+```bash
+pnpm --filter @caelum/desktop test
+pnpm --filter @caelum/desktop exec playwright install chromium
+pnpm --filter @caelum/desktop test:ui
+```
+
+Browser checks use a mocked desktop/provider boundary. Rust integration tests exercise the actual provider adapters against local fake servers.
+
+## Sessions
+
+Open a project and send a message to create a session. Choose the provider and any available model/agent before sending. Each session keeps its own draft, reading position, and expanded tools while the app is open. Provider-owned history is restored in pages; use **Load earlier messages** to read further back.
+
+- **Enter** or **⌘Enter** sends; **Shift+Enter** inserts a newline.
+- **⌘N** opens a new draft; **⌘K** searches sessions; **⌘\\** toggles the sidebar. Ctrl works in place of ⌘.
+- Draft the next message while a response runs. Stop interrupts the active turn.
+- Approvals appear in the requesting conversation; the sidebar and header identify pending background requests.
+- A disconnected session offers **Reconnect**. A failed submission restores its text in the composer.
 
 ## Releases
 

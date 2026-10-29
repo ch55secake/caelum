@@ -1,8 +1,39 @@
 export type ProviderKind = "codex" | "opencode";
-export type SessionSummary = { id: string; name: string | null; preview: string; updatedAt: number | null };
-export type ConversationEntry = { id: string; kind: "user" | "assistant" | "activity" | "status"; text: string };
+export type SessionSummary = {
+  id: string;
+  name: string | null;
+  preview: string;
+  updatedAt: number | null;
+  isWorking?: boolean;
+};
+export type ConversationEntry = {
+  id: string;
+  kind: "user" | "assistant" | "tool" | "status" | "reasoning";
+  text: string;
+  optimistic?: boolean;
+  complete?: boolean;
+  historyText?: string;
+  streamText?: string;
+  historyOutput?: string;
+  streamOutput?: string;
+  name?: string;
+  status?: "running" | "completed" | "failed" | "interrupted";
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+  durationMs?: number;
+  startedAt?: number;
+};
 export type ProjectInfo = { name: string; path: string };
-export type WorkspaceSessionInfo = { project: ProjectInfo; thread: SessionSummary; provider: ProviderKind };
+export type WorkspaceSessionInfo = {
+  project: ProjectInfo;
+  thread: SessionSummary;
+  provider: ProviderKind;
+};
+export type ProviderChoices = {
+  models: { id: string; name: string }[];
+  agents: { id: string; name: string }[];
+};
 
 export type SessionWorkspaceState = {
   session: WorkspaceSessionInfo;
@@ -10,6 +41,19 @@ export type SessionWorkspaceState = {
   isWorking: boolean;
   isSubmitting: boolean;
   error: string | null;
+  draft: string;
+  connection: "connecting" | "connected" | "disconnected";
+  historyError: string | null;
+  historyLoaded: boolean;
+  isLoadingHistory: boolean;
+  nextCursor: string | null;
+  historyAnchor: string | null;
+  unread: boolean;
+  expandedTools: Record<string, boolean>;
+  scrollTop: number | null;
+  windowEndId: string | null;
+  eventRevision: number;
+  lastOutcome: string | null;
 };
 
 export type ProviderWorkspaceState = {
@@ -19,17 +63,25 @@ export type ProviderWorkspaceState = {
   selectedSessionId: string | null;
   sessionsById: Record<string, SessionWorkspaceState>;
   error: string | null;
+  draft: string;
+  isCreating: boolean;
+  choices: ProviderChoices | null;
+  choicesError: string | null;
+  model: string;
+  agent: string;
 };
 
 export type ProjectWorkspaceState = {
   provider: ProviderKind;
-  prompt: string;
   providers: Record<ProviderKind, ProviderWorkspaceState>;
 };
 
 export type WorkspaceMap = Record<string, ProjectWorkspaceState>;
 
 export function createProjectWorkspace(): ProjectWorkspaceState;
+export function createSessionWorkspace(
+  session: WorkspaceSessionInfo,
+): SessionWorkspaceState;
 export function restoreProjectWorkspace(persisted: {
   provider: ProviderKind;
   codexSessionId: string | null;
@@ -56,9 +108,21 @@ export function updateSessionWorkspace(
   update: (session: SessionWorkspaceState) => SessionWorkspaceState,
 ): WorkspaceMap;
 export function projectHasActiveTurn(workspace: ProjectWorkspaceState): boolean;
-export function applyCodexEvent(workspaces: WorkspaceMap, event: {
-  projectPath: string; method: string; params: Record<string, unknown>; requestId?: unknown;
-}): WorkspaceMap;
-export function applyOpenCodeEvent(workspaces: WorkspaceMap, event: {
-  projectPath: string; eventType: string; data: Record<string, unknown>; location?: unknown;
-}): WorkspaceMap;
+export function applyCodexEvent(
+  workspaces: WorkspaceMap,
+  event: {
+    projectPath: string;
+    method: string;
+    params: Record<string, unknown>;
+    requestId?: unknown;
+  },
+): WorkspaceMap;
+export function applyOpenCodeEvent(
+  workspaces: WorkspaceMap,
+  event: {
+    projectPath: string;
+    eventType: string;
+    data: Record<string, unknown>;
+    location?: unknown;
+  },
+): WorkspaceMap;

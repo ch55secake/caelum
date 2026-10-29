@@ -298,7 +298,7 @@ export function FilesPanel({ project }: { project: ProjectInfo | null }) {
     <section className="files-panel" aria-labelledby="files-title">
       <header className="files-panel-heading">
         <FileCode2 size={18} />
-        <div><h1 id="files-title">Files</h1><p title={project.path}>{project.path}</p></div>
+        <div><h1 id="files-title" title={project.path}>Files</h1></div>
         <button className="git-refresh" onClick={() => setRefreshKey((key) => key + 1)} title="Refresh project files and Git status" aria-label="Refresh project files and Git status">
           <RefreshCw size={14} /> <span>Refresh</span>
         </button>
@@ -428,7 +428,7 @@ export function FilesPanel({ project }: { project: ProjectInfo | null }) {
                 <Suspense fallback={<div className="file-editor-empty" role="status">Loading code editor…</div>}>
                   <MonacoEditor
                     height="100%"
-                    theme="vs-dark"
+                    theme="caelum-dark"
                     language={languageForPath(editor.path)}
                     value={editor.content.content}
                     options={editorOptions(`Read-only preview of ${editor.path}`)}
@@ -448,7 +448,7 @@ export function FilesPanel({ project }: { project: ProjectInfo | null }) {
                 <Suspense fallback={<div className="file-editor-empty" role="status">Loading diff editor…</div>}>
                   <MonacoDiffEditor
                     height="100%"
-                    theme="vs-dark"
+                    theme="caelum-dark"
                     language={languageForPath(editor.path)}
                     original={editor.content.original}
                     modified={editor.content.modified}
@@ -495,7 +495,7 @@ function editorOptions(ariaLabel: string) {
   return {
     ariaLabel,
     automaticLayout: true,
-    fontSize: 12,
+    fontSize: 13,
     lineNumbers: "on" as const,
     minimap: { enabled: false },
     readOnly: true,

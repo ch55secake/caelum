@@ -15,7 +15,7 @@ use std::{
 
 use caelum_protocol::{
     ApprovalDecision, CodexEvent, CodexSessionInfo, CodexSessionList, CodexThreadInfo,
-    PermissionRequest,
+    PermissionRequest, ProviderChoice, ProviderChoices, SessionHistoryPage,
 };
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -173,6 +173,49 @@ impl CodexProvider {
         &self,
         project_path: impl AsRef<Path>,
     ) -> Result<CodexSessionInfo, CodexError> {
+        self.start_session_with_model(project_path, None)
+    }
+
+    pub fn choices(&self, project_path: impl AsRef<Path>) -> Result<ProviderChoices, CodexError> {
+        let project = Project::open(project_path)?;
+        let connection = self.connection(&project)?;
+        let mut models = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut seen = HashSet::new();
+        loop {
+            let response =
+                connection.request("model/list", json!({ "limit": 100, "cursor": cursor }))?;
+            let data = response
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or_else(|| CodexError::Protocol("model/list has no data array".into()))?;
+            models.extend(data.iter().filter_map(|model| {
+                Some(ProviderChoice {
+                    id: model.get("model")?.as_str()?.to_owned(),
+                    name: model.get("displayName")?.as_str()?.to_owned(),
+                })
+            }));
+            cursor = response
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            match &cursor {
+                Some(next) if seen.insert(next.clone()) => {}
+                Some(_) => return Err(CodexError::Protocol("model/list repeated cursor".into())),
+                None => break,
+            }
+        }
+        Ok(ProviderChoices {
+            models,
+            agents: Vec::new(),
+        })
+    }
+
+    pub fn start_session_with_model(
+        &self,
+        project_path: impl AsRef<Path>,
+        model: Option<&str>,
+    ) -> Result<CodexSessionInfo, CodexError> {
         let project = Project::open(project_path)?;
         let connection = self.connection(&project)?;
         let response = connection.request(
@@ -181,7 +224,8 @@ impl CodexProvider {
                 "cwd": project.path().to_string_lossy(),
                 "approvalPolicy": "unlessTrusted",
                 "sandbox": "workspaceWrite",
-                "serviceName": "caelum"
+                "serviceName": "caelum",
+                "model": model
             }),
         )?;
         let thread = response
@@ -217,6 +261,34 @@ impl CodexProvider {
         Ok(CodexSessionInfo {
             project: project.info(),
             thread,
+        })
+    }
+
+    pub fn session_history(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        cursor: Option<&str>,
+    ) -> Result<SessionHistoryPage, CodexError> {
+        if thread_id.trim().is_empty() {
+            return Err(CodexError::InvalidThreadId);
+        }
+        let project = Project::open(project_path)?;
+        let connection = self.connection_for_thread(&project, thread_id)?;
+        let response = connection.request(
+            "thread/turns/list",
+            json!({ "threadId": thread_id, "limit": 30, "sortDirection": "desc", "itemsView": "full", "cursor": cursor }),
+        )?;
+        let data = response
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| CodexError::Protocol("thread/turns/list has no data array".into()))?;
+        Ok(SessionHistoryPage {
+            data: data.iter().rev().cloned().collect(),
+            next_cursor: response
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         })
     }
 
@@ -858,6 +930,7 @@ fn publish_event(subscribers: &EventSubscribers, event: CodexEvent) {
 
 fn thread_info(value: &Value) -> Option<CodexThreadInfo> {
     Some(CodexThreadInfo {
+        is_working: value.pointer("/status/type").and_then(Value::as_str) == Some("active"),
         id: value.get("id")?.as_str()?.to_owned(),
         name: value.get("name").and_then(Value::as_str).map(str::to_owned),
         preview: value
@@ -1090,6 +1163,15 @@ for raw in sys.stdin:
         result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}}
     elif method == 'thread/resume':
         result = {'thread': {'id': params['threadId'], 'name': 'Resumed', 'preview': 'History'}}
+    elif method == 'model/list':
+        result = {'data': [{'model': 'test-model', 'displayName': 'Test model'}], 'nextCursor': None}
+    elif method == 'thread/turns/list':
+        assert params['itemsView'] == 'full' and params['sortDirection'] == 'desc' and params['limit'] == 30
+        if params.get('cursor'):
+            assert params['cursor'] == 'older-cursor'
+            result = {'data': [{'id': 'turn-old', 'items': [{'id': 'old-user', 'type': 'userMessage', 'content': [{'type': 'text', 'text': 'Oldest'}]}]}], 'nextCursor': None}
+        else:
+            result = {'data': [{'id': 'turn-b', 'items': [{'id': 'cmd', 'type': 'commandExecution', 'command': 'git status', 'aggregatedOutput': 'clean', 'status': 'completed'}]}, {'id': 'turn-a', 'items': []}], 'nextCursor': 'older-cursor'}
     elif method == 'turn/start':
         prompt = params['input'][0]['text']
         if prompt == 'rpc-error':
@@ -1141,6 +1223,28 @@ for raw in sys.stdin:
             .resume_session(&project_path, "thread-existing")
             .unwrap();
         assert_eq!(resumed.thread.name.as_deref(), Some("Resumed"));
+        assert_eq!(
+            provider.choices(&project_path).unwrap().models[0].id,
+            "test-model"
+        );
+        let history = provider
+            .session_history(&project_path, "thread-existing", None)
+            .unwrap();
+        assert_eq!(history.data[0]["id"], "turn-a");
+        assert_eq!(history.data[1]["items"][0]["aggregatedOutput"], "clean");
+        let older = provider
+            .session_history(
+                &project_path,
+                "thread-existing",
+                history.next_cursor.as_deref(),
+            )
+            .unwrap();
+        assert_eq!(older.data[0]["items"][0]["content"][0]["text"], "Oldest");
+        assert_eq!(older.next_cursor, None);
+        assert!(matches!(
+            provider.session_history(&project_path, "another-project-thread", None),
+            Err(CodexError::ThreadNotInProject)
+        ));
 
         let events = provider.subscribe();
         provider

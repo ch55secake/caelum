@@ -8,8 +8,8 @@ use caelum_core::{
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
-    GitFileVersions, GitRepositoryStatus, OpenCodeConversationEntry, OpenCodeSessionInfo,
-    OpenCodeSessionList, ProjectDirectoryListing, ProjectFileContent, ProjectInfo,
+    GitFileVersions, GitRepositoryStatus, OpenCodeSessionInfo, OpenCodeSessionList,
+    ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProviderChoices, SessionHistoryPage,
     WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
@@ -280,14 +280,37 @@ async fn codex_list_sessions(
 }
 
 #[tauri::command]
+async fn provider_choices(
+    codex: State<'_, CodexProvider>,
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    provider: String,
+) -> Result<ProviderChoices, String> {
+    let codex = codex.inner().clone();
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
+        "codex" => codex
+            .choices(project_path)
+            .map_err(|error| error.to_string()),
+        "opencode" => opencode
+            .choices(project_path)
+            .map_err(|error| error.to_string()),
+        _ => Err("Unknown provider".into()),
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn codex_start_session(
     codex: State<'_, CodexProvider>,
     project_path: String,
+    model: Option<String>,
 ) -> Result<CodexSessionInfo, String> {
     let codex = codex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         codex
-            .start_session(project_path)
+            .start_session_with_model(project_path, model.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -304,6 +327,23 @@ async fn codex_resume_session(
     tauri::async_runtime::spawn_blocking(move || {
         codex
             .resume_session(project_path, &thread_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn codex_session_history(
+    codex: State<'_, CodexProvider>,
+    project_path: String,
+    thread_id: String,
+    cursor: Option<String>,
+) -> Result<SessionHistoryPage, String> {
+    let codex = codex.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        codex
+            .session_history(project_path, &thread_id, cursor.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -362,11 +402,13 @@ async fn opencode_list_sessions(
 async fn opencode_start_session(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,
+    model: Option<String>,
+    agent: Option<String>,
 ) -> Result<OpenCodeSessionInfo, String> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         opencode
-            .start_session(project_path)
+            .start_session_with_options(project_path, model.as_deref(), agent.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -394,11 +436,12 @@ async fn opencode_session_history(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,
     session_id: String,
-) -> Result<Vec<OpenCodeConversationEntry>, String> {
+    cursor: Option<String>,
+) -> Result<SessionHistoryPage, String> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         opencode
-            .session_history(project_path, &session_id)
+            .session_history(project_path, &session_id, cursor.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -411,11 +454,12 @@ async fn opencode_send_prompt(
     project_path: String,
     session_id: String,
     prompt: String,
+    message_id: Option<String>,
 ) -> Result<(), String> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         opencode
-            .send_prompt(project_path, &session_id, &prompt)
+            .send_prompt_with_id(project_path, &session_id, &prompt, message_id.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -443,6 +487,7 @@ pub fn run() {
         .manage(ApprovalBroker::default())
         .manage(Arc::new(ProcessRegistry::default()))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir();
             app.manage(PersistenceState::open(app_data_dir));
@@ -512,7 +557,9 @@ pub fn run() {
             resolve_approval,
             codex_list_sessions,
             codex_start_session,
+            provider_choices,
             codex_resume_session,
+            codex_session_history,
             codex_send_prompt,
             codex_cancel_turn,
             opencode_list_sessions,

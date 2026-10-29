@@ -15,8 +15,8 @@ use std::{
 };
 
 use caelum_protocol::{
-    ApprovalDecision, OpenCodeConversationEntry, OpenCodeEvent, OpenCodeSession,
-    OpenCodeSessionInfo, OpenCodeSessionList, PermissionRequest,
+    ApprovalDecision, OpenCodeEvent, OpenCodeSession, OpenCodeSessionInfo, OpenCodeSessionList,
+    PermissionRequest, ProviderChoice, ProviderChoices, SessionHistoryPage,
 };
 use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -147,14 +147,83 @@ impl OpenCodeProvider {
         &self,
         project_path: impl AsRef<Path>,
     ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
+        self.start_session_with_options(project_path, None, None)
+    }
+
+    pub fn choices(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<ProviderChoices, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let models = server.request_json(Method::GET, "/api/model", &query, None)?;
+        let agents = server.request_json(Method::GET, "/api/agent", &query, None)?;
+        let models = models
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| OpenCodeError::Protocol("model list has no data array".into()))?
+            .iter()
+            .filter(|model| model.get("enabled").and_then(Value::as_bool) == Some(true))
+            .filter_map(|model| {
+                Some(ProviderChoice {
+                    id: format!(
+                        "{}/{}",
+                        model.get("providerID")?.as_str()?,
+                        model.get("id")?.as_str()?
+                    ),
+                    name: model.get("name")?.as_str()?.to_owned(),
+                })
+            })
+            .collect();
+        let agents = agents
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| OpenCodeError::Protocol("agent list has no data array".into()))?
+            .iter()
+            .filter(|agent| {
+                agent.get("hidden").and_then(Value::as_bool) != Some(true)
+                    && agent.get("mode").and_then(Value::as_str) != Some("subagent")
+            })
+            .filter_map(|agent| {
+                Some(ProviderChoice {
+                    id: agent.get("id")?.as_str()?.to_owned(),
+                    name: agent.get("name")?.as_str()?.to_owned(),
+                })
+            })
+            .collect();
+        Ok(ProviderChoices { models, agents })
+    }
+
+    pub fn start_session_with_options(
+        &self,
+        project_path: impl AsRef<Path>,
+        model: Option<&str>,
+        agent: Option<&str>,
+    ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let model = model
+            .map(|model| {
+                model
+                    .split_once('/')
+                    .map(|(provider, id)| json!({ "providerID": provider, "id": id }))
+                    .ok_or_else(|| {
+                        OpenCodeError::Protocol("model must include its provider".into())
+                    })
+            })
+            .transpose()?;
         let response = server.request_json(
             Method::POST,
             "/api/session",
             &[],
             Some(json!({
-                "location": { "directory": project.path().to_string_lossy() }
+                "location": { "directory": project.path().to_string_lossy() },
+                "model": model,
+                "agent": agent
             })),
         )?;
         let value = response.get("data").ok_or_else(|| {
@@ -193,22 +262,30 @@ impl OpenCodeProvider {
         &self,
         project_path: impl AsRef<Path>,
         session_id: &str,
-    ) -> Result<Vec<OpenCodeConversationEntry>, OpenCodeError> {
+        cursor: Option<&str>,
+    ) -> Result<SessionHistoryPage, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
         self.session(&server, &project, session_id)?;
         let path = format!("/api/session/{session_id}/message");
-        let query = [
-            ("order", "desc".to_owned()),
-            ("limit", SESSION_LIMIT.to_owned()),
-        ];
+        let mut query = vec![("limit", "50".to_owned())];
+        if let Some(cursor) = cursor {
+            query.push(("cursor", cursor.to_owned()));
+        } else {
+            query.push(("order", "desc".to_owned()));
+        }
         let response = server.request_json(Method::GET, &path, &query, None)?;
         let messages = response
             .get("data")
             .and_then(Value::as_array)
             .ok_or_else(|| OpenCodeError::Protocol("session history has no data array".into()))?;
-        let ordered = messages.iter().rev().cloned().collect::<Vec<_>>();
-        Ok(history_entries(&ordered))
+        Ok(SessionHistoryPage {
+            data: messages.iter().rev().cloned().collect(),
+            next_cursor: response
+                .pointer("/cursor/next")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })
     }
 
     /// Submit a prompt. OpenCode durably admits it before this call returns;
@@ -219,6 +296,16 @@ impl OpenCodeProvider {
         session_id: &str,
         prompt: &str,
     ) -> Result<(), OpenCodeError> {
+        self.send_prompt_with_id(project_path, session_id, prompt, None)
+    }
+
+    pub fn send_prompt_with_id(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        prompt: &str,
+        message_id: Option<&str>,
+    ) -> Result<(), OpenCodeError> {
         if prompt.trim().is_empty() {
             return Err(OpenCodeError::EmptyPrompt);
         }
@@ -226,7 +313,12 @@ impl OpenCodeProvider {
         let server = self.server(&project)?;
         self.session(&server, &project, session_id)?;
         let path = format!("/api/session/{session_id}/prompt");
-        server.request_json(Method::POST, &path, &[], Some(json!({ "text": prompt })))?;
+        server.request_json(
+            Method::POST,
+            &path,
+            &[],
+            Some(json!({ "text": prompt, "id": message_id })),
+        )?;
         Ok(())
     }
 
@@ -840,6 +932,14 @@ fn parse_event(payload: &str, project_path: &Path) -> Result<OpenCodeEvent, Open
 
 fn session_info(value: &Value) -> Option<OpenCodeSession> {
     Some(OpenCodeSession {
+        is_working: value
+            .pointer("/time/busy")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > value
+                .pointer("/time/idle")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
         id: value.get("id")?.as_str()?.to_owned(),
         title: value
             .get("title")
@@ -876,124 +976,6 @@ fn valid_permission_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-}
-
-fn history_entries(messages: &[Value]) -> Vec<OpenCodeConversationEntry> {
-    let mut entries = Vec::new();
-    for message in messages {
-        let Some(message_id) = message.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        match message
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-        {
-            "user" => push_entry(
-                &mut entries,
-                message_id,
-                "user",
-                message
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            ),
-            "assistant" => {
-                if let Some(parts) = message.get("content").and_then(Value::as_array) {
-                    for (index, part) in parts.iter().enumerate() {
-                        match part.get("type").and_then(Value::as_str).unwrap_or_default() {
-                            "text" => push_entry(
-                                &mut entries,
-                                &format!("{message_id}-{index}"),
-                                "assistant",
-                                part.get("text").and_then(Value::as_str).unwrap_or_default(),
-                            ),
-                            "tool" => {
-                                let name =
-                                    part.get("name").and_then(Value::as_str).unwrap_or("tool");
-                                let status = part
-                                    .get("state")
-                                    .and_then(|state| state.get("status"))
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("completed");
-                                let input = part
-                                    .get("state")
-                                    .and_then(|state| state.get("input"))
-                                    .map(tool_input_summary)
-                                    .unwrap_or_default();
-                                let text = if input.is_empty() {
-                                    format!("Using tool: {name} ({status})")
-                                } else {
-                                    format!("Using tool: {name} ({status})\n{input}")
-                                };
-                                push_entry(
-                                    &mut entries,
-                                    part.get("id").and_then(Value::as_str).unwrap_or(message_id),
-                                    "activity",
-                                    &text,
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            "shell" => {
-                let command = message
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .unwrap_or("shell command");
-                let status = message
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or("running");
-                push_entry(
-                    &mut entries,
-                    message_id,
-                    "activity",
-                    &format!("Running: {command} ({status})"),
-                );
-            }
-            "idle" => {
-                let outcome = message
-                    .get("outcome")
-                    .and_then(Value::as_str)
-                    .unwrap_or("idle");
-                push_entry(
-                    &mut entries,
-                    message_id,
-                    "status",
-                    &format!("Session {outcome}"),
-                );
-            }
-            "system" | "synthetic" => {
-                if let Some(text) = message.get("text").and_then(Value::as_str) {
-                    push_entry(&mut entries, message_id, "status", text);
-                }
-            }
-            _ => {}
-        }
-    }
-    entries
-}
-
-fn push_entry(entries: &mut Vec<OpenCodeConversationEntry>, id: &str, kind: &str, text: &str) {
-    if text.is_empty() {
-        return;
-    }
-    entries.push(OpenCodeConversationEntry {
-        id: format!("opencode-{kind}-{id}"),
-        kind: kind.to_owned(),
-        text: text.to_owned(),
-    });
-}
-
-fn tool_input_summary(input: &Value) -> String {
-    if let Some(command) = input.get("command").and_then(Value::as_str) {
-        return command.to_owned();
-    }
-    let summary = serde_json::to_string(input).unwrap_or_default();
-    summary.chars().take(600).collect()
 }
 
 fn publish_event(subscribers: &EventSubscribers, event: OpenCodeEvent) {
@@ -1177,25 +1159,6 @@ mod tests {
     }
 
     #[test]
-    fn history_parser_preserves_user_text_assistant_text_and_tool_activity() {
-        let messages = json!([
-            {"id":"msg_user","type":"user","text":"Fix the bug"},
-            {"id":"msg_assistant","type":"assistant","content":[
-                {"type":"text","text":"I will inspect it."},
-                {"type":"tool","id":"part_tool","name":"bash","state":{"status":"completed","input":{"command":"cargo test"}}}
-            ]}
-        ]);
-
-        let entries = history_entries(messages.as_array().unwrap());
-
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].kind, "user");
-        assert_eq!(entries[1].kind, "assistant");
-        assert_eq!(entries[2].kind, "activity");
-        assert!(entries[2].text.contains("cargo test"));
-    }
-
-    #[test]
     fn session_ids_cannot_escape_the_session_route() {
         assert!(valid_session_id("ses_e7b5213dbffeaVPrGggxUYkwrK"));
         assert!(!valid_session_id("ses/other"));
@@ -1356,7 +1319,7 @@ import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 PROJECT = os.getcwd()
 PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
@@ -1409,10 +1372,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/session/ses_fake":
             self.send_json({"data": SESSION})
         elif path == "/api/session/ses_fake/message":
+            query = parse_qs(urlsplit(self.path).query)
+            if "cursor" in query:
+                assert query["cursor"] == ["older+opaque/=="] and "order" not in query
+                self.send_json({"data": [{"id": "msg_old", "type": "user", "text": "Oldest"}], "cursor": {"previous": None, "next": None}})
+                return
+            assert query["order"] == ["desc"] and query["limit"] == ["50"]
             self.send_json({"data": [
-                {"id": "msg_assistant", "type": "assistant", "content": [{"type": "text", "text": "Earlier answer"}]},
+                {"id": "msg_assistant", "type": "assistant", "content": [{"type": "text", "text": "Earlier answer"}, {"id": "tool_1", "type": "tool", "name": "bash", "state": {"status": "completed", "input": {"command": "cargo test"}, "content": [{"type": "text", "text": "All passed"}]}}]},
                 {"id": "msg_user", "type": "user", "text": "Earlier prompt"}
-            ], "cursor": {"previous": None, "next": None}})
+            ], "cursor": {"previous": None, "next": "older+opaque/=="}})
+        elif path == "/api/model":
+            self.send_json({"data": [{"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True}, {"id": "disabled", "providerID": "local", "name": "Hidden", "enabled": False}]})
+        elif path == "/api/agent":
+            self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}]})
         else:
             self.send_error(404)
 
@@ -1423,6 +1396,9 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length) or b"{}")
         path = urlsplit(self.path).path
         if path == "/api/session":
+            if body.get("model"):
+                assert body["model"] == {"providerID": "local", "id": "model/a"}
+                assert body["agent"] == "build"
             self.send_json({"data": SESSION})
         elif path == "/api/session/ses_fake/prompt":
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
@@ -1457,12 +1433,26 @@ server.serve_forever()
 
         let listed = provider.list_sessions(&project_path).unwrap();
         assert_eq!(listed.sessions[0].id, "ses_fake");
-        let started = provider.start_session(&project_path).unwrap();
+        let choices = provider.choices(&project_path).unwrap();
+        assert_eq!(choices.models.len(), 1);
+        assert_eq!(choices.agents.len(), 1);
+        let started = provider
+            .start_session_with_options(&project_path, Some(&choices.models[0].id), Some("build"))
+            .unwrap();
         assert_eq!(started.session.id, "ses_fake");
+        let history = provider
+            .session_history(&project_path, "ses_fake", None)
+            .unwrap();
+        assert_eq!(history.data[0]["text"], "Earlier prompt");
         assert_eq!(
-            provider.session_history(&project_path, "ses_fake").unwrap()[0].text,
-            "Earlier prompt"
+            history.data[1]["content"][1]["state"]["content"][0]["text"],
+            "All passed"
         );
+        let older = provider
+            .session_history(&project_path, "ses_fake", history.next_cursor.as_deref())
+            .unwrap();
+        assert_eq!(older.data[0]["text"], "Oldest");
+        assert_eq!(older.next_cursor, None);
         provider
             .send_prompt(&project_path, "ses_fake", "Continue")
             .unwrap();
