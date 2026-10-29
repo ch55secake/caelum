@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from create_version_tag import bump_patch_version, update_version_files, workspace_lock_versions_from_text
+from create_version_tag import (
+    bump_patch_version,
+    tag_push_args,
+    update_version_files,
+    workspace_lock_versions_from_text,
+)
 
 
 class VersionBumpTests(unittest.TestCase):
@@ -17,6 +22,16 @@ class VersionBumpTests(unittest.TestCase):
     def test_patch_bump_rejects_prerelease_versions(self):
         with self.assertRaises(SystemExit):
             bump_patch_version("1.2.3-rc.1")
+
+    def test_tag_push_resets_checkout_auth_header_before_using_actions_token(self):
+        args = tag_push_args("v0.1.2", "actions-token")
+
+        self.assertEqual(args[1:3], ["-c", "http.https://github.com/.extraheader="])
+        self.assertEqual(args[3], "-c")
+        self.assertTrue(
+            args[4].startswith("http.https://github.com/.extraheader=AUTHORIZATION: basic ")
+        )
+        self.assertEqual(args[-3:], ["push", "origin", "refs/tags/v0.1.2"])
 
     def test_updates_project_manifests_and_only_local_lock_packages(self):
         with tempfile.TemporaryDirectory() as temp_dir:

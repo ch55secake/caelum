@@ -154,6 +154,23 @@ def remote_tag_commit(tag: str) -> str | None:
     return refs.get(f"{tag_ref}^{{}}") or refs.get(tag_ref)
 
 
+def tag_push_args(tag: str, token: str | None) -> list[str]:
+    args = ["git"]
+    if token:
+        encoded_token = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        auth_header = f"http.https://github.com/.extraheader=AUTHORIZATION: basic {encoded_token}"
+        args.extend(
+            [
+                "-c",
+                "http.https://github.com/.extraheader=",
+                "-c",
+                auth_header,
+            ]
+        )
+    args.extend(["push", "origin", f"refs/tags/{tag}"])
+    return args
+
+
 def automatic_release_commit(source_commit: str, root: Path) -> tuple[str, str]:
     for attempt in range(5):
         subprocess.run(
@@ -240,18 +257,7 @@ def create_tag(tag: str, commit: str) -> None:
             ],
             check=True,
         )
-        push_args = ["git"]
-        token = os.environ.get("GITHUB_TOKEN")
-        if token:
-            encoded_token = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-            push_args.extend(
-                [
-                    "-c",
-                    f"http.https://github.com/.extraheader=AUTHORIZATION: basic {encoded_token}",
-                ]
-            )
-        push_args.extend(["push", "origin", f"refs/tags/{tag}"])
-        subprocess.run(push_args, check=True)
+        subprocess.run(tag_push_args(tag, os.environ.get("GITHUB_TOKEN")), check=True)
         print(f"Created release tag {tag} on {commit}.")
     else:
         print(f"Reusing release tag {tag} on {commit}.")
