@@ -175,6 +175,8 @@ pub struct CodexThreadInfo {
 pub struct CodexSessionInfo {
     pub project: ProjectInfo,
     pub thread: CodexThreadInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Recent Codex-owned threads scoped to one project.
@@ -207,6 +209,8 @@ pub struct OpenCodeSession {
     pub updated_at: Option<u64>,
     #[serde(default)]
     pub is_working: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// The selected project and OpenCode session shown in the desktop workspace.
@@ -233,6 +237,8 @@ pub struct SessionHistoryPage {
     pub next_cursor: Option<String>,
     #[serde(default)]
     pub is_working: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

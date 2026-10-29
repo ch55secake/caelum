@@ -21,6 +21,9 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         },
       ];
       const calls: { command: string; args: Record<string, unknown> }[] = [];
+      const models = new Map(
+        ["thread-a", "thread-b", "ses-a"].map((id) => [id, "provider/model"]),
+      );
       let failNextSend = false;
       let sequence = 0;
       let historyGate: Promise<void> | null = null;
@@ -144,6 +147,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             if (command === "codex_resume_session")
               return {
                 project,
+                model: models.get(args.threadId),
                 thread: threads.find((item) => item.id === args.threadId) ?? {
                   id: args.threadId,
                   name: "Fresh session",
@@ -156,6 +160,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                   id: args.sessionId,
                   title: "OpenCode session",
                   isWorking: openWorking,
+                  model: models.get(args.sessionId),
                 },
               };
             if (command === "codex_session_history") {
@@ -215,24 +220,33 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 nextCursor: null,
                 data: openHistory,
                 isWorking: openWorking,
+                model: models.get(args.sessionId),
               };
               if (historyGate) await historyGate;
               return snapshot;
             }
             if (command.endsWith("_start_session")) {
               if (startGate) await startGate;
+              const id = command.startsWith("codex")
+                ? "thread-new"
+                : "ses-new";
+              const model = args.model || "provider/model";
+              models.set(id, model);
               return command.startsWith("codex")
                 ? {
                     project,
+                    model,
                     thread: { id: "thread-new", name: null, preview: "" },
                   }
-                : { project, session: { id: "ses-new", title: null } };
+                : { project, session: { id: "ses-new", title: null, model } };
             }
             if (command.endsWith("_send_prompt")) {
               if (failNextSend) {
                 failNextSend = false;
                 throw new Error("Connection refused");
               }
+              if (args.model)
+                models.set(args.threadId ?? args.sessionId, args.model);
               if (command.startsWith("codex"))
                 emit("codex-event", {
                   projectPath: project.path,
@@ -1106,3 +1120,94 @@ test("a completion during history loading queues a resync without restoring stal
     page.getByRole("button", { name: "Stop generation" }),
   ).toHaveCount(0);
 });
+
+for (const provider of ["codex", "opencode"]) {
+  test(`${provider} changes the model in an existing session and keeps pending choices through navigation and retries`, async ({
+    page,
+  }) => {
+    await desktop(page, provider === "codex" ? "thread-a" : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page.getByRole("button", { name: /OpenCode session/ }).click();
+    }
+    const sessionName =
+      provider === "codex"
+        ? /Refine the session workspace/
+        : /OpenCode session/;
+    const id = provider === "codex" ? "thread-a" : "ses-a";
+    const model = page.getByRole("button", { name: "Model", exact: true });
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(model).toHaveText("Test model");
+    await choose(page, "Model", "Fast model provider/fast");
+    await input.fill("Use the selected model in this conversation");
+    await page.keyboard.press("Meta+n");
+    await expect(model).toHaveText("Default model");
+    await page
+      .getByRole("button", { name: /Review the provider adapters/ })
+      .click();
+    await expect(model).toHaveText("Test model");
+    await page.getByRole("button", { name: sessionName }).click();
+    await expect(model).toHaveText("Fast model");
+    await expect(input).toHaveValue(
+      "Use the selected model in this conversation",
+    );
+    await page.evaluate(() => (window as any).fixture.failSend());
+    await input.press("Enter");
+    await expect(page.getByRole("alert")).toContainText("Connection refused");
+    await expect(model).toHaveText("Fast model");
+    await expect(input).toHaveValue(
+      "Use the selected model in this conversation",
+    );
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    await expect(model).toBeEnabled();
+    await choose(page, "Model", "Test model provider/model");
+    await expect(
+      page.getByText("Model applies to next message"),
+    ).toBeVisible();
+    await choose(
+      page,
+      "Model",
+      "Session model Keep this session’s configured model",
+    );
+    await expect(model).toHaveText("Fast model");
+    await choose(page, "Model", "Test model provider/model");
+    await emit(
+      page,
+      provider === "codex" ? "codex/processExited" : "server.disconnected",
+      {},
+      provider,
+    );
+    await page
+      .getByRole("button", { name: "Reconnect", exact: true })
+      .click();
+    await expect(input).toBeEnabled();
+    await expect(model).toHaveText("Test model");
+    await input.fill("Use the next model");
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    const calls = await page.evaluate(() => (window as any).fixture.calls);
+    const sends = calls.filter(
+      (call: any) => call.command === `${provider}_send_prompt`,
+    );
+    expect(
+      sends.map((call: any) => [call.args.sessionId, call.args.model]),
+    ).toEqual([
+      [id, "provider/fast"],
+      [id, "provider/fast"],
+      [id, "provider/model"],
+    ]);
+    expect(
+      calls.filter((call: any) => call.command.endsWith("_start_session")),
+    ).toHaveLength(0);
+    await expect(
+      provider === "codex"
+        ? page.getByRole("heading", { name: "A focused workspace" })
+        : page.getByText("Restored OpenCode conversation"),
+    ).toBeVisible();
+  });
+}

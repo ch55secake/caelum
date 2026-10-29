@@ -513,6 +513,18 @@ export function applyConversationEvent(session, provider, method, data) {
         ),
       };
   } else {
+    if (
+      method === "session.model.selected" &&
+      data.model?.providerID &&
+      data.model?.id
+    )
+      next = {
+        ...next,
+        session: {
+          ...next.session,
+          model: `${data.model.providerID}/${data.model.id}`,
+        },
+      };
     if (/^session\.(text|reasoning)\.(started|delta|ended)$/.test(method)) {
       const [, type, phase] = method.split(".");
       const messageId = data.assistantMessageID ?? data.messageID;

@@ -24,6 +24,7 @@ export function Composer({
   cancel,
   choices,
   model,
+  modelPending,
   agent,
   setOption,
   choicesError,
@@ -43,6 +44,7 @@ export function Composer({
   cancel: () => void;
   choices: ProviderChoices | null;
   model: string;
+  modelPending: boolean;
   agent: string;
   setOption: (key: "model" | "agent", value: string) => void;
   choicesError: string | null;
@@ -108,71 +110,85 @@ export function Composer({
         <div className="composer-footer">
           <div className="composer-controls">
             {isNew ? (
-              <>
-                <ChoicePicker
-                  label="Provider"
-                  icon={<Layers size={13} />}
-                  value={provider}
-                  onChange={(value) => changeProvider(value as ProviderKind)}
-                  disabled={submitting}
-                  choices={[
-                    { id: "codex", name: "Codex" },
-                    { id: "opencode", name: "OpenCode" },
-                  ]}
-                />
-                {Boolean(choices?.models.length) && (
-                  <ChoicePicker
-                    label="Model"
-                    icon={<Cpu size={13} />}
-                    value={model}
-                    disabled={submitting}
-                    searchable
-                    onChange={(value) => setOption("model", value)}
-                    choices={[
-                      {
-                        id: "",
-                        name: "Default model",
-                        description: "Use provider settings",
-                      },
-                      ...choices!.models.map((choice) => ({
-                        ...choice,
-                        description: choice.id,
-                      })),
-                    ]}
-                  />
-                )}
-                {Boolean(choices?.agents.length) && (
-                  <ChoicePicker
-                    label="Agent"
-                    icon={<Bot size={13} />}
-                    value={agent}
-                    disabled={submitting}
-                    onChange={(value) => setOption("agent", value)}
-                    choices={[
-                      { id: "", name: "Default agent" },
-                      ...choices!.agents,
-                    ]}
-                  />
-                )}
-                {choicesError && (
-                  <button
-                    type="button"
-                    className="text-button choices-retry"
-                    title={choicesError}
-                    onClick={retryChoices}
-                  >
-                    Load models
-                  </button>
-                )}
-              </>
+              <ChoicePicker
+                label="Provider"
+                icon={<Layers size={13} />}
+                value={provider}
+                onChange={(value) => changeProvider(value as ProviderKind)}
+                disabled={submitting}
+                choices={[
+                  { id: "codex", name: "Codex" },
+                  { id: "opencode", name: "OpenCode" },
+                ]}
+              />
             ) : (
               <span className="provider-label">
                 {provider === "codex" ? "Codex" : "OpenCode"}
               </span>
             )}
+            {(Boolean(choices?.models.length) || Boolean(model)) && (
+              <ChoicePicker
+                label="Model"
+                icon={<Cpu size={13} />}
+                value={model}
+                disabled={submitting || disabled}
+                searchable
+                onChange={(value) => setOption("model", value)}
+                choices={[
+                  {
+                    id: "",
+                    name: isNew ? "Default model" : "Session model",
+                    description: isNew
+                      ? "Use provider settings"
+                      : "Keep this session’s configured model",
+                  },
+                  ...(model &&
+                  !choices?.models.some((choice) => choice.id === model)
+                    ? [
+                        {
+                          id: model,
+                          name: model,
+                          description: "Current selection",
+                        },
+                      ]
+                    : []),
+                  ...(choices?.models ?? []).map((choice) => ({
+                    ...choice,
+                    description: choice.id,
+                  })),
+                ]}
+              />
+            )}
+            {isNew && Boolean(choices?.agents.length) && (
+              <ChoicePicker
+                label="Agent"
+                icon={<Bot size={13} />}
+                value={agent}
+                disabled={submitting}
+                onChange={(value) => setOption("agent", value)}
+                choices={[
+                  { id: "", name: "Default agent" },
+                  ...choices!.agents,
+                ]}
+              />
+            )}
+            {choicesError && (
+              <button
+                type="button"
+                className="text-button choices-retry"
+                title={choicesError}
+                onClick={retryChoices}
+              >
+                Load models
+              </button>
+            )}
           </div>
           <span className="composer-hint">
-            {working ? "Draft while the agent works" : "↵ Send · ⇧↵ Newline"}
+            {modelPending
+              ? "Model applies to next message"
+              : working
+                ? "Draft while the agent works"
+                : "↵ Send · ⇧↵ Newline"}
           </span>
           {working ? (
             <button

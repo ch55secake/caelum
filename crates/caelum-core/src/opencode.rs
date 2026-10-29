@@ -207,16 +207,7 @@ impl OpenCodeProvider {
     ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
-        let model = model
-            .map(|model| {
-                model
-                    .split_once('/')
-                    .map(|(provider, id)| json!({ "providerID": provider, "id": id }))
-                    .ok_or_else(|| {
-                        OpenCodeError::Protocol("model must include its provider".into())
-                    })
-            })
-            .transpose()?;
+        let model = model.map(model_ref).transpose()?;
         let response = server.request_json(
             Method::POST,
             "/api/session",
@@ -282,6 +273,7 @@ impl OpenCodeProvider {
             .ok_or_else(|| OpenCodeError::Protocol("session history has no data array".into()))?;
         Ok(SessionHistoryPage {
             is_working: Some(session.is_working),
+            model: session.model,
             data: messages.iter().rev().cloned().collect(),
             next_cursor: response
                 .pointer("/cursor/next")
@@ -308,12 +300,31 @@ impl OpenCodeProvider {
         prompt: &str,
         message_id: Option<&str>,
     ) -> Result<(), OpenCodeError> {
+        self.send_prompt_with_options(project_path, session_id, prompt, message_id, None)
+    }
+
+    pub fn send_prompt_with_options(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        prompt: &str,
+        message_id: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<(), OpenCodeError> {
         if prompt.trim().is_empty() {
             return Err(OpenCodeError::EmptyPrompt);
         }
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
-        self.session(&server, &project, session_id)?;
+        let session = self.session(&server, &project, session_id)?;
+        if let Some(model) = model.filter(|model| session.model.as_deref() != Some(*model)) {
+            server.request_json(
+                Method::POST,
+                &format!("/api/session/{session_id}/model"),
+                &[],
+                Some(json!({ "model": model_ref(model)? })),
+            )?;
+        }
         let path = format!("/api/session/{session_id}/prompt");
         server.request_json(
             Method::POST,
@@ -1047,8 +1058,23 @@ fn parse_event(payload: &str, project_path: &Path) -> Result<OpenCodeEvent, Open
     })
 }
 
+fn model_ref(model: &str) -> Result<Value, OpenCodeError> {
+    model
+        .split_once('/')
+        .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
+        .map(|(provider, id)| json!({ "providerID": provider, "id": id }))
+        .ok_or_else(|| OpenCodeError::Protocol("model must include its provider and ID".into()))
+}
+
 fn session_info(value: &Value) -> Option<OpenCodeSession> {
     Some(OpenCodeSession {
+        model: value.get("model").and_then(|model| {
+            Some(format!(
+                "{}/{}",
+                model.get("providerID")?.as_str()?,
+                model.get("id")?.as_str()?
+            ))
+        }),
         is_working: value
             .pointer("/time/busy")
             .and_then(Value::as_u64)
@@ -1439,7 +1465,7 @@ from urllib.parse import urlsplit, parse_qs
 
 PROJECT = os.getcwd()
 PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
-SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}}
+SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}, "model": {"providerID": "local", "id": "original"}}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
@@ -1511,11 +1537,21 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length) or b"{}")
         path = urlsplit(self.path).path
+        with open(os.path.join(PROJECT, "requests.jsonl"), "a") as requests:
+            requests.write(json.dumps({"path": path, "body": body}) + "\n")
         if path == "/api/session":
             if body.get("model"):
                 assert body["model"] == {"providerID": "local", "id": "model/a"}
                 assert body["agent"] == "build"
+                SESSION["model"] = body["model"]
             self.send_json({"data": SESSION})
+        elif path == "/api/session/ses_fake/model":
+            if body["model"]["id"] == "missing":
+                self.send_error(400)
+                return
+            SESSION["model"] = body["model"]
+            self.send_response(204)
+            self.end_headers()
         elif path == "/api/session/ses_fake/prompt":
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
         elif path == "/api/session/ses_fake/interrupt":
@@ -1556,10 +1592,12 @@ server.serve_forever()
             .start_session_with_options(&project_path, Some(&choices.models[0].id), Some("build"))
             .unwrap();
         assert_eq!(started.session.id, "ses_fake");
+        assert_eq!(started.session.model.as_deref(), Some("local/model/a"));
         let history = provider
             .session_history(&project_path, "ses_fake", None)
             .unwrap();
         assert_eq!(history.data[0]["text"], "Earlier prompt");
+        assert_eq!(history.model.as_deref(), Some("local/model/a"));
         assert_eq!(
             history.data[1]["content"][1]["state"]["content"][0]["text"],
             "All passed"
@@ -1572,6 +1610,56 @@ server.serve_forever()
         provider
             .send_prompt(&project_path, "ses_fake", "Continue")
             .unwrap();
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Switch model",
+                Some("msg_selected"),
+                Some("other/model/b"),
+            )
+            .unwrap();
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .model
+                .as_deref(),
+            Some("other/model/b")
+        );
+        let requests = || {
+            fs::read_to_string(project_path.join("requests.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let sent = requests();
+        let switch = &sent[sent.len() - 2];
+        assert_eq!(switch["path"], "/api/session/ses_fake/model");
+        assert_eq!(
+            switch["body"],
+            json!({ "model": { "providerID": "other", "id": "model/b" } })
+        );
+        assert_eq!(
+            sent.last().unwrap()["body"],
+            json!({ "text": "Switch model", "id": "msg_selected" })
+        );
+        assert!(provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Do not send with a rejected model",
+                None,
+                Some("other/missing")
+            )
+            .is_err());
+        assert_eq!(requests().len(), sent.len() + 1);
+        assert_eq!(
+            requests().last().unwrap()["path"],
+            "/api/session/ses_fake/model"
+        );
         provider.cancel_turn(&project_path, "ses_fake").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut received_text = false;

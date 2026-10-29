@@ -41,6 +41,7 @@ export type WorkspaceSessionInfo = {
   project: ProjectInfo;
   thread: SessionSummary;
   provider: ProviderKind;
+  model?: string | null;
 };
 export type ProviderChoices = {
   models: { id: string; name: string }[];
@@ -49,6 +50,8 @@ export type ProviderChoices = {
 
 export type SessionWorkspaceState = {
   session: WorkspaceSessionInfo;
+  /** Pending selection for the next prompt; null keeps the provider's session model. */
+  model: string | null;
   conversation: ConversationEntry[];
   isWorking: boolean;
   isSubmitting: boolean;

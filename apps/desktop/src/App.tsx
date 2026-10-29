@@ -340,7 +340,14 @@ export default function App() {
                   cancel={() => void app.cancel()}
                   choices={app.providerWorkspace?.choices ?? null}
                   choicesError={app.providerWorkspace?.choicesError ?? null}
-                  model={app.providerWorkspace?.model ?? ""}
+                  model={
+                    app.selected
+                      ? (app.selected.model ??
+                        app.selected.session.model ??
+                        "")
+                      : (app.providerWorkspace?.model ?? "")
+                  }
+                  modelPending={Boolean(app.selected?.model)}
                   agent={app.providerWorkspace?.agent ?? ""}
                   setOption={app.setOption}
                   retryChoices={() =>

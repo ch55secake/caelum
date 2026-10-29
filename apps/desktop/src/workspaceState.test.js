@@ -270,3 +270,26 @@ test("disconnect clears activity and preserves a partial trace for reconnection"
   assert.equal(session.conversation[0].status, "interrupted");
   assert.equal(session.conversation[0].complete, false);
 });
+
+test("OpenCode model changes update native session metadata without replacing a pending local selection", () => {
+  let workspaces = withSession({}, projectA, "opencode", "ses-a");
+  workspaces = updateSessionWorkspace(
+    workspaces,
+    projectA.path,
+    "opencode",
+    "ses-a",
+    (current) => ({ ...current, model: "local/next-model" }),
+  );
+  workspaces = applyOpenCodeEvent(workspaces, {
+    projectPath: projectA.path,
+    eventType: "session.model.selected",
+    data: {
+      sessionID: "ses-a",
+      model: { providerID: "other", id: "remote-model" },
+    },
+  });
+  const session =
+    workspaces[projectA.path].providers.opencode.sessionsById["ses-a"];
+  assert.equal(session.session.model, "other/remote-model");
+  assert.equal(session.model, "local/next-model");
+});

@@ -236,6 +236,10 @@ impl CodexProvider {
         Ok(CodexSessionInfo {
             project: project.info(),
             thread,
+            model: response
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         })
     }
 
@@ -261,6 +265,10 @@ impl CodexProvider {
         Ok(CodexSessionInfo {
             project: project.info(),
             thread,
+            model: response
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         })
     }
 
@@ -284,6 +292,7 @@ impl CodexProvider {
             .and_then(Value::as_array)
             .ok_or_else(|| CodexError::Protocol("thread/turns/list has no data array".into()))?;
         Ok(SessionHistoryPage {
+            model: None,
             is_working: cursor.is_none().then(|| {
                 data.first().is_some_and(|turn| {
                     turn.get("status").and_then(Value::as_str) == Some("inProgress")
@@ -305,6 +314,16 @@ impl CodexProvider {
         thread_id: &str,
         prompt: &str,
     ) -> Result<(), CodexError> {
+        self.send_prompt_with_model(project_path, thread_id, prompt, None)
+    }
+
+    pub fn send_prompt_with_model(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        prompt: &str,
+        model: Option<&str>,
+    ) -> Result<(), CodexError> {
         if thread_id.trim().is_empty() {
             return Err(CodexError::InvalidThreadId);
         }
@@ -318,6 +337,7 @@ impl CodexProvider {
             "turn/start",
             json!({
                 "threadId": thread_id,
+                "model": model,
                 "input": [{ "type": "text", "text": prompt }]
             }),
         ) {
@@ -1150,6 +1170,7 @@ mod tests {
 
     const PYTHON_FAKE_SERVER: &str = r#"
 import json, os, sys
+models = {'thread-existing': 'saved-model'}
 for raw in sys.stdin:
     request = json.loads(raw)
     method = request.get('method')
@@ -1165,9 +1186,10 @@ for raw in sys.stdin:
     elif method == 'thread/list':
         result = {'data': [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123}], 'nextCursor': None}
     elif method == 'thread/start':
-        result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}}
+        models['thread-new'] = params.get('model') or 'default-model'
+        result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}, 'model': models['thread-new']}
     elif method == 'thread/resume':
-        result = {'thread': {'id': params['threadId'], 'name': 'Resumed', 'preview': 'History'}}
+        result = {'thread': {'id': params['threadId'], 'name': 'Resumed', 'preview': 'History'}, 'model': models[params['threadId']]}
     elif method == 'model/list':
         result = {'data': [{'model': 'test-model', 'displayName': 'Test model'}], 'nextCursor': None}
     elif method == 'thread/turns/list':
@@ -1182,6 +1204,8 @@ for raw in sys.stdin:
         if prompt == 'rpc-error':
             print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'fake request error'}}), flush=True)
             continue
+        if params.get('model'):
+            models[params['threadId']] = params['model']
         if prompt == 'request-approval':
             print(json.dumps({'id': 'server-approval-1', 'method': 'item/commandExecution/requestApproval', 'params': {'threadId': params['threadId'], 'turnId': 'turn-approval', 'itemId': 'command-1', 'command': ['git', 'status'], 'cwd': '/project', 'availableDecisions': ['accept', 'decline']}}), flush=True)
         print(json.dumps({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}}), flush=True)
@@ -1224,10 +1248,12 @@ for raw in sys.stdin:
 
         let created = provider.start_session(&project_path).unwrap();
         assert_eq!(created.thread.id, "thread-new");
+        assert_eq!(created.model.as_deref(), Some("default-model"));
         let resumed = provider
             .resume_session(&project_path, "thread-existing")
             .unwrap();
         assert_eq!(resumed.thread.name.as_deref(), Some("Resumed"));
+        assert_eq!(resumed.model.as_deref(), Some("saved-model"));
         assert_eq!(
             provider.choices(&project_path).unwrap().models[0].id,
             "test-model"
@@ -1267,6 +1293,30 @@ for raw in sys.stdin:
         provider
             .cancel_turn(&project_path, "thread-existing")
             .unwrap();
+        provider
+            .send_prompt_with_model(
+                &project_path,
+                "thread-existing",
+                "Use the selected model",
+                Some("test-model"),
+            )
+            .unwrap();
+        let resumed = provider
+            .resume_session(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(resumed.thread.id, "thread-existing");
+        assert_eq!(resumed.model.as_deref(), Some("test-model"));
+        provider
+            .send_prompt(&project_path, "thread-existing", "Keep this model")
+            .unwrap();
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "thread-existing")
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("test-model")
+        );
         assert!(matches!(
             provider.send_prompt(&project_path, "thread-existing", "rpc-error"),
             Err(CodexError::Rpc(message)) if message == "fake request error"

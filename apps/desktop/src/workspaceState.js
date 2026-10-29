@@ -29,6 +29,7 @@ export function createProjectWorkspace() {
 export function createSessionWorkspace(session) {
   return {
     session,
+    model: null,
     conversation: [],
     draft: "",
     isWorking: session.thread.isWorking ?? false,

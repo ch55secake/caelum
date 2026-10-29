@@ -36,6 +36,7 @@ type HistoryPage = {
   data: Record<string, unknown>[];
   nextCursor: string | null;
   isWorking?: boolean | null;
+  model?: string | null;
 };
 type OpenCodeInfo = {
   project: ProjectInfo;
@@ -44,6 +45,7 @@ type OpenCodeInfo = {
     title: string | null;
     updatedAt: number | null;
     isWorking?: boolean;
+    model?: string | null;
   };
 };
 const providerInfo = (
@@ -55,6 +57,7 @@ const providerInfo = (
     : {
         project: value.project,
         provider,
+        model: value.session.model,
         thread: {
           id: value.session.id,
           name: value.session.title,
@@ -371,7 +374,13 @@ export function useWorkspace() {
     }
   }
   function setOption(key: "model" | "agent", value: string) {
-    if (project)
+    if (!project) return;
+    if (key === "model" && selectedId)
+      mutateSession(project.path, provider, selectedId, (current) => ({
+        ...current,
+        model: value || null,
+      }));
+    else
       mutateProvider(project.path, provider, (current) => ({
         ...current,
         [key]: value,
@@ -484,16 +493,21 @@ export function useWorkspace() {
           (!overlap && Boolean(page.nextCursor));
         // A snapshot can race a newer event or an optimistic prompt. Only
         // reconcile activity when nothing changed since the request began.
-        const isWorking =
+        const fresh =
           !older &&
           !current.isSubmitting &&
           !value.isSubmitting &&
           current.eventRevision === value.eventRevision &&
-          current.followRevision === value.followRevision
-            ? (page.isWorking ?? value.isWorking)
-            : value.isWorking;
+          current.followRevision === value.followRevision;
+        const isWorking = fresh
+          ? (page.isWorking ?? value.isWorking)
+          : value.isWorking;
         return {
           ...value,
+          session:
+            fresh && page.model
+              ? { ...value.session, model: page.model }
+              : value.session,
           isWorking,
           activity: isWorking ? value.activity : null,
           conversation: mergeHistory(
@@ -681,6 +695,7 @@ export function useWorkspace() {
     const snapshot = state.current[target.path].providers[kind];
     let id = snapshot.selectedSessionId;
     const cached = id ? snapshot.sessionsById[id] : null;
+    const model = cached?.model ?? null;
     const text = (cached?.draft ?? snapshot.draft).trim();
     const key = `send:${keyFor(target.path, kind, id ?? "new")}`;
     if (
@@ -711,6 +726,7 @@ export function useWorkspace() {
           agent: snapshot.agent || null,
         });
         const started = providerInfo(kind, result);
+        started.model ??= snapshot.model || null;
         id = started.thread.id;
         mutateProvider(target.path, kind, (value) => ({
           ...value,
@@ -777,7 +793,14 @@ export function useWorkspace() {
         sessionId,
         prompt: text,
         messageId,
+        model,
       });
+      if (model)
+        mutateSession(target.path, kind, sessionId, (value) => ({
+          ...value,
+          session: { ...value.session, model },
+          model: value.model === model ? null : value.model,
+        }));
     } catch (reason) {
       if (id)
         mutateSession(target.path, kind, id, (value) => ({
