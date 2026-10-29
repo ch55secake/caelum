@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { addOpenProject, closeOpenProject, selectOpenProject } from "./projectWorkspace.js";
 import {
   Activity,
   ArrowUp,
-  ChevronDown,
   CircleHelp,
   Command,
   FileCode2,
@@ -21,6 +21,7 @@ import {
   Settings2,
   Sparkles,
   Square,
+  X,
 } from "lucide-react";
 
 type AppInfo = { name: string; version: string };
@@ -84,6 +85,7 @@ function itemActivity(item: unknown): string | undefined {
 export default function App() {
   const hasMacTitlebarOverlay = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [openProjects, setOpenProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [provider, setProvider] = useState<ProviderKind>("codex");
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +102,7 @@ export default function App() {
   const projectRef = useRef(project);
   const sessionRef = useRef(session);
   const providerRef = useRef(provider);
+  const workspaceRequest = useRef(0);
   projectRef.current = project;
   sessionRef.current = session;
   providerRef.current = provider;
@@ -157,13 +160,8 @@ export default function App() {
       const selected = await open({ directory: true, multiple: false, title: "Open a project" });
       if (typeof selected !== "string") return;
       const opened = await invoke<ProjectInfo>("open_project", { path: selected });
-      setProject(opened);
-      setSession(null);
-      setConversation([]);
-      setSessions([]);
-      setPrompt("");
-      setIsWorking(false);
-      await loadSessions(opened);
+      setOpenProjects((current) => addOpenProject(current, opened));
+      activateProject(opened);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -171,7 +169,33 @@ export default function App() {
     }
   }
 
+  function activateProject(target: ProjectInfo | null) {
+    if (target?.path === project?.path) return;
+    workspaceRequest.current += 1;
+    setProject(target);
+    setSession(null);
+    setConversation([]);
+    setPrompt("");
+    setSessions([]);
+    setIsWorking(false);
+    setError(null);
+    if (target) {
+      void loadSessions(target);
+    } else {
+      setIsLoadingSessions(false);
+    }
+  }
+
+  function closeProject(path: string) {
+    const next = closeOpenProject(openProjects, project?.path ?? null, path);
+    setOpenProjects(next.projects);
+    if (next.activeProject?.path !== project?.path) {
+      activateProject(next.activeProject);
+    }
+  }
+
   async function loadSessions(target: ProjectInfo, selectedProvider = provider) {
+    const requestId = ++workspaceRequest.current;
     setIsLoadingSessions(true);
     setError(null);
     try {
@@ -179,27 +203,30 @@ export default function App() {
         const result = await invoke<CodexSessionList>("codex_list_sessions", {
           projectPath: target.path,
         });
-        setSessions(result.threads);
+        if (requestId === workspaceRequest.current) setSessions(result.threads);
       } else {
         const result = await invoke<OpenCodeSessionList>("opencode_list_sessions", {
           projectPath: target.path,
         });
-        setSessions(result.sessions.map((item) => ({
-          id: item.id,
-          name: item.title,
-          preview: "",
-          updatedAt: item.updatedAt,
-        })));
+        if (requestId === workspaceRequest.current) {
+          setSessions(result.sessions.map((item) => ({
+            id: item.id,
+            name: item.title,
+            preview: "",
+            updatedAt: item.updatedAt,
+          })));
+        }
       }
     } catch (reason) {
-      setError(String(reason));
+      if (requestId === workspaceRequest.current) setError(String(reason));
     } finally {
-      setIsLoadingSessions(false);
+      if (requestId === workspaceRequest.current) setIsLoadingSessions(false);
     }
   }
 
   async function changeProvider(nextProvider: ProviderKind) {
     if (provider === nextProvider) return;
+    workspaceRequest.current += 1;
     setProvider(nextProvider);
     setSession(null);
     setConversation([]);
@@ -211,61 +238,70 @@ export default function App() {
 
   async function startSession() {
     if (!project || isLoadingSessions) return;
+    const requestId = ++workspaceRequest.current;
+    const currentProject = project;
+    const currentProvider = provider;
     setError(null);
     setIsLoadingSessions(true);
     try {
       let started: WorkspaceSessionInfo;
-      if (provider === "codex") {
+      if (currentProvider === "codex") {
         const result = await invoke<CodexSessionInfo>("codex_start_session", {
-          projectPath: project.path,
+          projectPath: currentProject.path,
         });
-        started = { ...result, provider };
+        started = { ...result, provider: currentProvider };
       } else {
         const result = await invoke<OpenCodeSessionInfo>("opencode_start_session", {
-          projectPath: project.path,
+          projectPath: currentProject.path,
         });
         started = {
           project: result.project,
           thread: { id: result.session.id, name: result.session.title, preview: "", updatedAt: result.session.updatedAt },
-          provider,
+          provider: currentProvider,
         };
       }
+      if (requestId !== workspaceRequest.current) return;
       setSession(started);
       setConversation([]);
       setIsWorking(false);
       setSessions((current) => [started.thread, ...current.filter((item) => item.id !== started.thread.id)]);
     } catch (reason) {
-      setError(String(reason));
+      if (requestId === workspaceRequest.current) setError(String(reason));
     } finally {
-      setIsLoadingSessions(false);
+      if (requestId === workspaceRequest.current) setIsLoadingSessions(false);
     }
   }
 
   async function resumeSession(thread: SessionSummary) {
     if (!project || isLoadingSessions) return;
+    const requestId = ++workspaceRequest.current;
+    const currentProject = project;
+    const currentProvider = provider;
     setError(null);
     setIsLoadingSessions(true);
     try {
-      if (provider === "codex") {
+      if (currentProvider === "codex") {
         const resumed = await invoke<CodexSessionInfo>("codex_resume_session", {
-          projectPath: project.path,
+          projectPath: currentProject.path,
           threadId: thread.id,
         });
-        setSession({ ...resumed, provider });
+        if (requestId !== workspaceRequest.current) return;
+        setSession({ ...resumed, provider: currentProvider });
         setConversation(thread.preview ? [{ id: `preview-${thread.id}`, kind: "status", text: thread.preview }] : []);
       } else {
         const resumed = await invoke<OpenCodeSessionInfo>("opencode_resume_session", {
-          projectPath: project.path,
+          projectPath: currentProject.path,
           sessionId: thread.id,
         });
         const history = await invoke<OpenCodeHistoryEntry[]>("opencode_session_history", {
-          projectPath: project.path,
+          projectPath: currentProject.path,
           sessionId: thread.id,
         });
+        if (requestId !== workspaceRequest.current) return;
         setSession({
           project: resumed.project,
           thread: { id: resumed.session.id, name: resumed.session.title, preview: "", updatedAt: resumed.session.updatedAt },
-          provider,
+          provider: currentProvider,
         });
         setConversation(history.map((entry) => ({
           id: entry.id,
@@ -275,9 +311,9 @@ export default function App() {
       }
       setIsWorking(false);
     } catch (reason) {
-      setError(String(reason));
+      if (requestId === workspaceRequest.current) setError(String(reason));
     } finally {
-      setIsLoadingSessions(false);
+      if (requestId === workspaceRequest.current) setIsLoadingSessions(false);
     }
   }
 
@@ -587,11 +623,41 @@ export default function App() {
           <button className="icon-button quiet" aria-label="Collapse sidebar"><PanelLeftClose size={16} /></button>
         </div>
 
-        <button className="workspace-picker" onClick={chooseProject} disabled={isSelecting}>
-          <span className="workspace-icon"><FolderGit2 size={16} /></span>
-          <span className="workspace-label"><strong>{project?.name ?? "Select a project"}</strong><small>{project ? "Local workspace" : "Choose a folder to begin"}</small></span>
-          <ChevronDown size={14} className="muted-icon" />
-        </button>
+        <div className="section-heading projects-heading">
+          <span>PROJECTS</span>
+          <button className="icon-button quiet" aria-label="Add project" title="Add project" onClick={() => void chooseProject()} disabled={isSelecting}>
+            <Plus size={14} />
+          </button>
+        </div>
+        <nav className="project-list" aria-label="Open projects">
+          {openProjects.length === 0 && (
+            <div className="empty-projects">
+              <span>No projects open</span>
+              <button onClick={() => void chooseProject()} disabled={isSelecting}>Open a project</button>
+            </div>
+          )}
+          {openProjects.map((item) => (
+            <div className={`project-row${project?.path === item.path ? " selected" : ""}`} key={item.path}>
+              <button
+                className="project-item"
+                aria-current={project?.path === item.path ? "page" : undefined}
+                title={item.path}
+                onClick={() => activateProject(selectOpenProject(openProjects, item.path))}
+              >
+                <FolderGit2 size={14} />
+                <span><strong>{item.name}</strong><small>{item.path}</small></span>
+              </button>
+              <button
+                className="project-close"
+                aria-label={`Close ${item.name}`}
+                title={`Close ${item.name}`}
+                onClick={() => closeProject(item.path)}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </nav>
 
         <button className="new-session" onClick={() => void startSession()} disabled={!project || isLoadingSessions} title={!project ? "Choose a project first" : `Start an ${providerName} session`}>
           <MessageSquarePlus size={16} /><span>New session</span><kbd>⌘ N</kbd>
@@ -641,7 +707,7 @@ export default function App() {
           <div className="setup-grid">
             <button className="setup-card project-card" onClick={chooseProject} disabled={isSelecting}>
               <div className="card-icon blue"><FolderOpen size={18} /></div>
-              <div className="card-copy"><span className="card-kicker">FIRST STEP</span><strong>{project ? "Switch project" : "Open a project"}</strong><small>{project ? project.path : "Select a local folder to get started"}</small></div>
+              <div className="card-copy"><span className="card-kicker">FIRST STEP</span><strong>{project ? "Add another project" : "Open a project"}</strong><small>{project ? project.path : "Select a local folder to get started"}</small></div>
               <span className="card-arrow">↗</span>
             </button>
             <div className="setup-card provider-card">
