@@ -154,6 +154,7 @@ export function Conversation({
       if (following.current && endRef.current === null)
         container.scrollTop = container.scrollHeight;
     });
+    observer.observe(container);
     if (content.current) observer.observe(content.current);
     return () => {
       observer.disconnect();

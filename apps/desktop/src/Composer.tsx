@@ -1,4 +1,4 @@
-import { useLayoutEffect, type RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import { ArrowUp, Bot, Cpu, Gauge, Layers, Square } from "lucide-react";
 import type {
   ProviderKind,
@@ -54,18 +54,35 @@ export function Composer({
   retryChoices: () => void;
   awaitingApproval: boolean;
 }) {
+  const measurement = useRef<HTMLTextAreaElement>(null);
   const busy = working || submitting || awaitingApproval;
   const effortName = (name: string) =>
     name === "xhigh"
       ? "Extra high"
       : name.charAt(0).toUpperCase() + name.slice(1);
+  function resizeInput() {
+    const area = textareaRef.current;
+    const measure = measurement.current;
+    if (!area || !measure) return;
+    // Measuring outside the flow avoids briefly expanding the transcript and
+    // clamping its scroll position on every keystroke in a multiline draft.
+    measure.style.width = `${area.getBoundingClientRect().width}px`;
+    area.style.height = `${Math.min(180, Math.max(56, measure.scrollHeight))}px`;
+  }
+  useLayoutEffect(resizeInput, [draft, textareaRef]);
   useLayoutEffect(() => {
     const area = textareaRef.current;
-    if (area) {
-      area.style.height = "0px";
-      area.style.height = `${Math.min(180, Math.max(56, area.scrollHeight))}px`;
-    }
-  }, [draft]);
+    if (!area) return;
+    let width = area.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = area.getBoundingClientRect().width;
+      if (nextWidth === width) return;
+      width = nextWidth;
+      resizeInput();
+    });
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, [textareaRef]);
   return (
     <div className="composer-wrap">
       {busy && (
@@ -85,6 +102,14 @@ export function Composer({
           submit();
         }}
       >
+        <textarea
+          ref={measurement}
+          className="composer-measure"
+          aria-hidden="true"
+          tabIndex={-1}
+          readOnly
+          value={draft}
+        />
         <textarea
           ref={textareaRef}
           aria-label="Message"

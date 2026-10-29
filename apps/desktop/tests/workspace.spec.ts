@@ -869,6 +869,76 @@ test("restores Markdown and tool details in a full-height dark workspace", async
   ).toBe(800);
 });
 
+test("typing and resizing a draft keep the latest response pinned without moving an older reading position", async ({
+  page,
+}) => {
+  await desktop(page);
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(
+    page.getByRole("heading", { name: "A focused workspace" }),
+  ).toBeVisible();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const transcript = page.locator(".transcript");
+  const gap = () =>
+    transcript.evaluate(
+      (node) => node.scrollHeight - node.scrollTop - node.clientHeight,
+    );
+  const height = () =>
+    input.evaluate((node) => node.getBoundingClientRect().height);
+  await input.fill("First\nSecond\nThird\nFourth");
+  await transcript.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect.poll(gap).toBeLessThanOrEqual(1);
+  const bottom = await transcript.evaluate((node) => node.scrollTop);
+  await input.pressSequentially(" abc");
+  await expect.poll(gap).toBeLessThanOrEqual(1);
+  expect(await transcript.evaluate((node) => node.scrollTop)).toBeCloseTo(
+    bottom,
+    0,
+  );
+
+  await input.fill(
+    Array.from({ length: 12 }, (_, index) => `Line ${index}`).join("\n"),
+  );
+  await expect.poll(height).toBe(180);
+  await expect.poll(gap).toBeLessThanOrEqual(1);
+  await input.pressSequentially(" more");
+  await expect.poll(gap).toBeLessThanOrEqual(1);
+  await input.fill("Short");
+  await expect.poll(height).toBe(56);
+  await expect.poll(gap).toBeLessThanOrEqual(1);
+
+  await input.fill(
+    "Keep the discussion visible as this draft wraps onto a few more lines while I review the response.",
+  );
+  await expect.poll(height).toBeGreaterThan(56);
+  await page
+    .getByRole("button", { name: "Hide changes", exact: true })
+    .click();
+  await expect.poll(height).toBe(56);
+  await expect.poll(gap).toBeLessThanOrEqual(1);
+  await page
+    .getByRole("button", { name: "Show changes", exact: true })
+    .click();
+  await expect.poll(height).toBeGreaterThan(56);
+  await expect.poll(gap).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: "Load earlier messages" }).click();
+  await expect(page.locator(".conversation-entry")).toHaveCount(100);
+  await transcript.evaluate((node) => {
+    node.scrollTop = 250;
+  });
+  await expect(
+    page.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeVisible();
+  await input.fill("First\nSecond\nThird\nFourth");
+  await input.pressSequentially(" abc");
+  expect(await transcript.evaluate((node) => node.scrollTop)).toBe(250);
+  await input.fill("Short");
+  expect(await transcript.evaluate((node) => node.scrollTop)).toBe(250);
+});
+
 test("first send creates one session; failure retains a retryable draft; generation permits drafting", async ({
   page,
 }) => {
