@@ -8,6 +8,7 @@ import {
   applyOpenCodeEvent,
   createProjectWorkspace,
   projectHasActiveTurn,
+  restoreProjectWorkspace,
   updateProjectWorkspace,
   updateProviderWorkspace,
   updateSessionWorkspace,
@@ -56,6 +57,15 @@ type OpenCodeSessionInfo = { project: ProjectInfo; session: OpenCodeSession };
 type OpenCodeSessionList = { project: ProjectInfo; sessions: OpenCodeSession[] };
 type OpenCodeHistoryEntry = { id: string; kind: string; text: string };
 type OpenCodeEvent = { projectPath: string; eventType: string; data: Record<string, unknown>; location: unknown };
+type PersistedProject = {
+  project: ProjectInfo;
+  provider: ProviderKind;
+  codexSessionId: string | null;
+  opencodeSessionId: string | null;
+  codexSessionIds: string[];
+  opencodeSessionIds: string[];
+};
+type WorkspaceSnapshot = { projects: PersistedProject[]; activeProjectPath: string | null };
 
 export default function App() {
   const hasMacTitlebarOverlay = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
@@ -63,11 +73,14 @@ export default function App() {
   const [openProjects, setOpenProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMap>({});
+  const [isRestoringWorkspace, setIsRestoringWorkspace] = useState(isTauri());
   const [appError, setAppError] = useState<string | null>(null);
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
   const [isResolvingApproval, setIsResolvingApproval] = useState(false);
   const requestIds = useRef(new Map<string, number>());
+  const persistenceQueue = useRef<Promise<void>>(Promise.resolve());
   const workspace = project ? workspaces[project.path] : undefined;
   const provider = workspace?.provider ?? "codex";
   const providerWorkspace = workspace?.providers[provider];
@@ -103,6 +116,17 @@ export default function App() {
     setWorkspaces((current) => updateSessionWorkspace(current, projectPath, selectedProvider, sessionId, update));
   }
 
+  function persist(command: string, args: Record<string, unknown>): Promise<unknown> {
+    if (!isTauri()) return Promise.resolve();
+    const request = persistenceQueue.current.then(() => invoke(command, args));
+    persistenceQueue.current = request.then(() => undefined, () => undefined);
+    void request.then(() => setPersistenceError(null), () => undefined);
+    void request.catch((reason: unknown) => {
+      setPersistenceError(`Local workspace metadata could not be saved: ${String(reason)}`);
+    });
+    return request;
+  }
+
   function requestKey(projectPath: string, selectedProvider: ProviderKind) {
     return `${projectPath}\0${selectedProvider}`;
   }
@@ -123,6 +147,50 @@ export default function App() {
     void invoke<AppInfo>("app_info").then(setAppInfo).catch((reason: unknown) => {
       setAppError(String(reason));
     });
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    void invoke<WorkspaceSnapshot>("restore_workspace").then(async (snapshot) => {
+      const restored = await Promise.all(snapshot.projects.map(async (entry) => {
+        try {
+          const opened = await invoke<ProjectInfo>("open_project", { path: entry.project.path });
+          return { entry, project: opened };
+        } catch {
+          return null;
+        }
+      }));
+      if (disposed) return;
+
+      const available = restored.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+      const restoredWorkspaces: WorkspaceMap = {};
+      for (const { entry, project: restoredProject } of available) {
+        restoredWorkspaces[restoredProject.path] = restoreProjectWorkspace(entry);
+      }
+
+      const projects = available.map(({ project: restoredProject }) => restoredProject);
+      const active = projects.find((item) => item.path === snapshot.activeProjectPath) ?? projects[0] ?? null;
+      setWorkspaces(restoredWorkspaces);
+      setOpenProjects(projects);
+      setProject(active);
+      setIsRestoringWorkspace(false);
+
+      if (active?.path !== snapshot.activeProjectPath) {
+        persist("set_active_project", { projectPath: active?.path ?? null });
+      }
+      if (available.length !== snapshot.projects.length) {
+        setAppError("One or more saved projects are unavailable. Reopen them when their folders are accessible.");
+      }
+    }).catch((reason: unknown) => {
+      if (disposed) return;
+      setIsRestoringWorkspace(false);
+      setPersistenceError(String(reason));
+    });
+
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -171,6 +239,7 @@ export default function App() {
       const selected = await open({ directory: true, multiple: false, title: "Open a project" });
       if (typeof selected !== "string") return;
       const opened = await invoke<ProjectInfo>("open_project", { path: selected });
+      await persist("remember_project", { project: opened }).catch(() => undefined);
       setOpenProjects((current) => addOpenProject(current, opened));
       activateProject(opened);
     } catch (reason) {
@@ -180,25 +249,30 @@ export default function App() {
     }
   }
 
-  function activateProject(target: ProjectInfo | null) {
+  function activateProject(target: ProjectInfo | null, saveActiveProject = true) {
     if (target?.path === project?.path) return;
+    if (target) {
+      setWorkspaces((current) => current[target.path]
+        ? current
+        : { ...current, [target.path]: createProjectWorkspace() });
+    }
     setProject(target);
     setAppError(null);
-    if (!target) return;
-
-    const targetWorkspace = workspaces[target.path] ?? createProjectWorkspace();
-    const targetProvider = targetWorkspace.provider;
-    const targetProviderWorkspace = targetWorkspace.providers[targetProvider];
-    if (!targetProviderWorkspace.sessionsLoaded && !targetProviderWorkspace.isLoadingSessions) {
-      void loadSessions(target, targetProvider);
+    if (saveActiveProject) {
+      persist("set_active_project", { projectPath: target?.path ?? null });
     }
+    if (!target) return;
   }
 
   function closeProject(path: string) {
     const next = closeOpenProject(openProjects, project?.path ?? null, path);
+    persist("close_project_record", {
+      projectPath: path,
+      activeProjectPath: next.activeProject?.path ?? null,
+    });
     setOpenProjects(next.projects);
     if (next.activeProject?.path !== project?.path) {
-      activateProject(next.activeProject);
+      activateProject(next.activeProject, false);
     }
   }
 
@@ -230,6 +304,11 @@ export default function App() {
           sessionsLoaded: true,
           error: null,
         }));
+        persist("sync_provider_sessions", {
+          projectPath: target.path,
+          provider: selectedProvider,
+          sessionIds: sessions.map((item) => item.id),
+        });
       }
     } catch (reason) {
       if (isCurrentWorkspaceRequest(target.path, selectedProvider, requestId)) {
@@ -242,16 +321,12 @@ export default function App() {
     }
   }
 
-  async function changeProvider(nextProvider: ProviderKind) {
+  function changeProvider(nextProvider: ProviderKind) {
     if (!project || provider === nextProvider) return;
     const target = project;
-    const targetWorkspace = workspaces[target.path] ?? createProjectWorkspace();
-    const targetProviderWorkspace = targetWorkspace.providers[nextProvider];
     mutateWorkspace(target.path, (current) => ({ ...current, provider: nextProvider }));
+    persist("set_project_provider", { projectPath: target.path, provider: nextProvider });
     setAppError(null);
-    if (!targetProviderWorkspace.sessionsLoaded && !targetProviderWorkspace.isLoadingSessions) {
-      await loadSessions(target, nextProvider);
-    }
   }
 
   async function startSession() {
@@ -296,6 +371,11 @@ export default function App() {
         },
         error: null,
       }));
+      persist("select_project_session", {
+        projectPath: currentProject.path,
+        provider: currentProvider,
+        sessionId: started.thread.id,
+      });
     } catch (reason) {
       if (isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) {
         mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, error: String(reason) }));
@@ -313,6 +393,11 @@ export default function App() {
     const currentProviderWorkspace = currentWorkspace.providers[provider];
     if (currentProviderWorkspace.sessionsById[thread.id]) {
       mutateProvider(project.path, provider, (current) => ({ ...current, selectedSessionId: thread.id, error: null }));
+      persist("select_project_session", {
+        projectPath: project.path,
+        provider,
+        sessionId: thread.id,
+      });
       return;
     }
 
@@ -369,6 +454,11 @@ export default function App() {
         },
         error: null,
       }));
+      persist("select_project_session", {
+        projectPath: currentProject.path,
+        provider: currentProvider,
+        sessionId: resumed.thread.id,
+      });
     } catch (reason) {
       if (isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) {
         mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, error: String(reason) }));
@@ -379,6 +469,31 @@ export default function App() {
       }
     }
   }
+
+  useEffect(() => {
+    if (!project || !providerWorkspace) return;
+    if (!providerWorkspace.sessionsLoaded) {
+      if (!providerWorkspace.isLoadingSessions && !providerWorkspace.error) {
+        void loadSessions(project, provider);
+      }
+      return;
+    }
+
+    if (!selectedSessionId || providerWorkspace.isLoadingSessions) return;
+    if (providerWorkspace.sessionsById[selectedSessionId]) return;
+
+    const savedSession = providerWorkspace.sessions.find((item) => item.id === selectedSessionId);
+    if (savedSession) {
+      void resumeSession(savedSession);
+    } else {
+      mutateProvider(project.path, provider, (current) => ({ ...current, selectedSessionId: null }));
+      persist("select_project_session", {
+        projectPath: project.path,
+        provider,
+        sessionId: null,
+      });
+    }
+  }, [project?.path, provider, providerWorkspace, selectedSessionId]);
 
   async function submitPrompt() {
     const currentProject = project;
@@ -564,7 +679,8 @@ export default function App() {
           </button>
         </div>
         <nav className="project-list" aria-label="Open projects">
-          {openProjects.length === 0 && (
+          {isRestoringWorkspace && <div className="empty-sessions">Restoring workspace…</div>}
+          {openProjects.length === 0 && !isRestoringWorkspace && (
             <div className="empty-projects">
               <span>No projects open</span>
               <button onClick={() => void chooseProject()} disabled={isSelecting}>Open a project</button>
@@ -640,6 +756,7 @@ export default function App() {
             <p>{session ? `${providerName} session · ${session.thread.id}` : project ? `Your project is open. Start or resume a ${providerName} session to begin.` : "Bring your coding agents and projects together in one native workspace."}</p>
           </div>
 
+          {persistenceError && <div className="error-banner" role="alert">{persistenceError}</div>}
           {error && <div className="error-banner" role="alert">{error}</div>}
 
           <div className="setup-grid">
