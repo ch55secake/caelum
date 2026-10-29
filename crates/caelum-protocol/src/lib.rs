@@ -231,6 +231,8 @@ pub struct OpenCodeSessionList {
 pub struct SessionHistoryPage {
     pub data: Vec<serde_json::Value>,
     pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub is_working: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

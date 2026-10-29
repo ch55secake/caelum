@@ -133,8 +133,19 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .shell-output-heading { display: flex; justify-content: space-between; padding: 6px 10px; font-size: 11px; color: var(--muted); }.shell-output-heading strong { font-weight: 500; color: var(--text); }
 .tool-value pre { max-height: 360px; overflow: auto; margin: 0; padding: 8px 12px 14px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .text-button { border: 0; color: var(--accent); background: transparent; padding: 8px 12px; font-size: 12px; }
-.reasoning { color: var(--muted); font-size: 12px; }.reasoning p { white-space: pre-wrap; }.reasoning summary { cursor: pointer; }
-.turn-status, .working-indicator { display: flex; align-items: center; gap: 8px; margin: 18px 0 0; color: var(--muted); font-size: 11px; }
+.reasoning { color: var(--muted); font-size: 12px; min-width: 0; }
+.reasoning summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; padding: 6px 0; }
+.reasoning summary::-webkit-details-marker { display: none; }
+.reasoning summary > svg, .reasoning summary > span:not(.reasoning-preview) { flex-shrink: 0; }
+.reasoning-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; min-width: 0; }
+.reasoning-chevron { margin-left: auto; transition: transform .15s; }
+.reasoning[open] .reasoning-chevron { transform: rotate(180deg); }
+.reasoning-content { padding: 8px 0 4px 21px; max-height: 360px; overflow: auto; }
+.reasoning-content .markdown { color: var(--muted); font-size: 12px; }
+.turn-status { display: flex; align-items: center; gap: 8px; margin: 18px 0 0; color: var(--muted); font-size: 11px; }
+.working-indicator { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 2px 8px; color: var(--muted); font-size: 11px; }
+.working-indicator > svg, .working-indicator > span:first-of-type { flex-shrink: 0; }
+.activity-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-button { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 auto 20px; padding: 6px 12px; color: var(--muted); font-size: 11px; background: transparent; }
 .jump-latest { display: flex; align-items: center; gap: 7px; position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 7px 12px; white-space: nowrap; font-size: 12px; box-shadow: 0 4px 15px #0006; }
 .composer-wrap { width: min(856px, 100%); flex: 0 0 auto; align-self: center; padding: 0 32px 22px; }

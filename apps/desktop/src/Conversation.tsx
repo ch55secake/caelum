@@ -2,14 +2,68 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ChevronDown,
+  BrainCircuit,
   LoaderCircle,
   ShieldCheck,
 } from "lucide-react";
-import type { SessionWorkspaceState } from "./workspaceState.js";
+import type {
+  ConversationEntry,
+  SessionWorkspaceState,
+} from "./workspaceState.js";
 import type { ApprovalPrompt } from "./useWorkspace.js";
 import { CopyButton, MessageContent } from "./MessageContent.js";
 import { ToolActivity } from "./ToolActivity.js";
 import { conversationPresentation } from "./shellMessages.js";
+
+function ThinkingTrace({
+  entry,
+  active,
+  onExpand,
+}: {
+  entry: ConversationEntry;
+  active: boolean;
+  onExpand: () => void;
+}) {
+  const preview = entry.text
+    .replace(/[#*_`>\[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (
+    <details
+      className="reasoning"
+      onToggle={(event) => {
+        if (event.currentTarget.open) onExpand();
+      }}
+    >
+      <summary aria-label="Thinking trace">
+        {active ? (
+          <LoaderCircle size={13} className="spinning" />
+        ) : (
+          <BrainCircuit size={13} />
+        )}
+        <span>
+          {entry.status === "interrupted"
+            ? "Thinking interrupted"
+            : active
+              ? "Thinking…"
+              : "Thought"}
+        </span>
+        <span className="reasoning-preview">
+          {preview.slice(0, 160)}
+          {preview.length > 160 ? "…" : ""}
+        </span>
+        <ChevronDown size={12} className="reasoning-chevron" />
+      </summary>
+      <div className="reasoning-content">
+        {entry.text ? (
+          <MessageContent text={entry.text} />
+        ) : (
+          <p>No thinking text was provided yet.</p>
+        )}
+      </div>
+    </details>
+  );
+}
 
 export function ApprovalCard({
   request,
@@ -78,8 +132,12 @@ export function Conversation({
   );
   const endIndex =
     end === null ? -1 : entries.findIndex((entry) => entry.id === end);
-  const windowEnd = endIndex < 0 ? entries.length : endIndex + 1;
-  const start = Math.max(0, windowEnd - 100);
+  const pinnedEnd = endIndex < 0 ? entries.length : endIndex + 1;
+  const start = Math.max(0, pinnedEnd - 100);
+  // Keep appending while there is room in the window, even when the reader
+  // has expanded a trace/tool. Pinning only prevents older entries being evicted.
+  const windowEnd =
+    endIndex < 0 ? entries.length : Math.min(entries.length, start + 100);
   const anchor = useRef<{ id: string; offset: number } | null>(null);
   const rememberAnchor = () => {
     const container = scroll.current;
@@ -120,10 +178,18 @@ export function Conversation({
     } else if (following.current && end === null)
       container.scrollTop = container.scrollHeight;
   }, [entries, end, approvals.length]);
+  const followRevision = useRef(session.followRevision);
+  useLayoutEffect(() => {
+    if (followRevision.current === session.followRevision) return;
+    followRevision.current = session.followRevision;
+    anchor.current = null;
+    jump();
+  }, [session.followRevision]);
   function jump() {
     following.current = true;
     setAtBottom(true);
     setEnd(null);
+    position.current = null;
     requestAnimationFrame(() => {
       if (scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
@@ -166,7 +232,9 @@ export function Conversation({
               onClick={() => void older()}
               disabled={session.isLoadingHistory}
             >
-              {session.isLoadingHistory ? "Loading…" : "Load earlier messages"}
+              {session.isLoadingHistory
+                ? "Loading…"
+                : "Load earlier messages"}
             </button>
           )}
           {session.historyError && (
@@ -191,7 +259,8 @@ export function Conversation({
                 <ToolActivity
                   entry={entry}
                   expanded={
-                    session.expandedTools[entry.id] ?? entry.status === "failed"
+                    session.expandedTools[entry.id] ??
+                    entry.status === "failed"
                   }
                   toggle={() => {
                     following.current = false;
@@ -209,10 +278,19 @@ export function Conversation({
                   }}
                 />
               ) : entry.kind === "reasoning" ? (
-                <details className="reasoning">
-                  <summary>Thinking</summary>
-                  <p>{entry.text}</p>
-                </details>
+                <ThinkingTrace
+                  entry={entry}
+                  active={
+                    session.isWorking &&
+                    !entry.complete &&
+                    entry.status !== "interrupted"
+                  }
+                  onExpand={() => {
+                    following.current = false;
+                    setAtBottom(false);
+                    setEnd(entries[windowEnd - 1]?.id ?? null);
+                  }}
+                />
               ) : entry.kind === "status" ? (
                 <div className="turn-status">{entry.text}</div>
               ) : (
@@ -259,12 +337,6 @@ export function Conversation({
                   resolve={(decision) => resolve(request, decision)}
                 />
               ))}
-              {session.isWorking && (
-                <div className="working-indicator" role="status">
-                  <LoaderCircle className="spinning" size={14} />
-                  {approvals.length ? "Waiting for approval" : "Working…"}
-                </div>
-              )}
               {!session.isWorking && session.lastOutcome && (
                 <div className="turn-status" role="status">
                   {["completed", "succeeded", "idle"].includes(

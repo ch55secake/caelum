@@ -285,7 +285,8 @@ export default function App() {
                       app.provider,
                       app.selectedId!,
                       Boolean(
-                        app.selected?.historyLoaded && app.selected.nextCursor,
+                        app.selected?.historyLoaded &&
+                        app.selected.nextCursor,
                       ),
                     )
                   }
@@ -313,6 +314,13 @@ export default function App() {
                   changeProvider={app.changeProvider}
                   isNew={!app.selectedId}
                   working={app.selected?.isWorking ?? false}
+                  activity={
+                    activeApprovals.length
+                      ? { label: "Waiting for approval" }
+                      : app.selected?.isWorking
+                        ? app.selected.activity
+                        : null
+                  }
                   submitting={
                     app.selected?.isSubmitting ||
                     (!app.selectedId && app.providerWorkspace?.isCreating) ||

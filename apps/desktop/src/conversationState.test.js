@@ -68,10 +68,15 @@ test("OpenCode tool input, failure, output and history retain their identities",
     "session.tool.input.started",
     { id: "tool", name: "bash" },
   );
-  live = applyConversationEvent(live, "opencode", "session.tool.input.delta", {
-    id: "tool",
-    delta: '{"command":"pnpm test"}',
-  });
+  live = applyConversationEvent(
+    live,
+    "opencode",
+    "session.tool.input.delta",
+    {
+      id: "tool",
+      delta: '{"command":"pnpm test"}',
+    },
+  );
   live = applyConversationEvent(live, "opencode", "session.tool.called", {
     id: "tool",
     input: { command: "pnpm test" },
@@ -175,7 +180,12 @@ test("reconnect backfill pages fill a gap without moving older cached turns", ()
     live.map((item) => item.id),
     ["old", "gap-2", "gap-3", "latest"],
   );
-  live = mergeHistory(live, [entry("old"), entry("gap-1")], "prepend", "gap-2");
+  live = mergeHistory(
+    live,
+    [entry("old"), entry("gap-1")],
+    "prepend",
+    "gap-2",
+  );
   assert.deepEqual(
     live.map((item) => item.id),
     ["old", "gap-1", "gap-2", "gap-3", "latest"],
@@ -242,4 +252,180 @@ test("command output reconciles an in-flight snapshot without repeating streamed
     { itemId: "cmd", delta: " tests" },
   );
   assert.equal(live.conversation[0].output, "Running tests");
+});
+
+test("OpenCode interleaved reasoning, text and tools reconcile by type-scoped ordinals", () => {
+  let live = session();
+  const send = (method, data = {}) => {
+    live = applyConversationEvent(live, "opencode", method, {
+      assistantMessageID: "answer",
+      ...data,
+    });
+  };
+  send("session.reasoning.started", { ordinal: 0 });
+  send("session.reasoning.delta", { ordinal: 0, delta: "Inspect the" });
+  assert.equal(live.activity.label, "Thinking…");
+  const snapshot = (complete = false) =>
+    historyEntries("opencode", [
+      {
+        id: "answer",
+        type: "assistant",
+        time: complete ? { completed: 42 } : {},
+        content: [
+          { type: "reasoning", text: "Inspect the project" },
+          { type: "text", text: "I’ll inspect it." },
+          {
+            type: "tool",
+            id: "read",
+            name: "read",
+            state: { status: "completed" },
+          },
+          { type: "reasoning", text: "Check the result" },
+          { type: "text", text: "Finished." },
+        ],
+      },
+    ]);
+  // An in-flight snapshot can be ahead of the SSE reader, including starts.
+  live.conversation = mergeHistory(live.conversation, snapshot());
+  send("session.reasoning.started", { ordinal: 0 });
+  send("session.reasoning.delta", { ordinal: 0, delta: " project" });
+  send("session.reasoning.ended", {
+    ordinal: 0,
+    text: "Inspect the project",
+  });
+  send("session.text.started", { ordinal: 0 });
+  send("session.text.delta", { ordinal: 0, delta: "I’ll inspect it." });
+  send("session.text.ended", { ordinal: 0, text: "I’ll inspect it." });
+  send("session.reasoning.started", { ordinal: 1 });
+  send("session.reasoning.delta", { ordinal: 1, delta: "Check the result" });
+  send("session.text.started", { ordinal: 1 });
+  send("session.text.delta", { ordinal: 1, delta: "Finished." });
+  send("session.text.ended", { ordinal: 1, text: "Finished." });
+  send("session.step.ended");
+  assert.equal(
+    live.isWorking,
+    true,
+    "a step boundary is not execution completion",
+  );
+  send("session.execution.succeeded");
+  assert.equal(live.isWorking, false);
+  assert.equal(live.activity, null);
+  live.conversation = mergeHistory(live.conversation, snapshot(true));
+  assert.deepEqual(
+    live.conversation.map(({ kind, text }) => [kind, text]),
+    [
+      ["reasoning", "Inspect the project"],
+      ["assistant", "I’ll inspect it."],
+      ["tool", ""],
+      ["reasoning", "Check the result"],
+      ["assistant", "Finished."],
+    ],
+  );
+  send("session.reasoning.delta", { ordinal: 1, delta: "Check the result" });
+  assert.equal(
+    live.isWorking,
+    false,
+    "late deltas cannot reopen a completed trace",
+  );
+  assert.equal(live.conversation[3].text, "Check the result");
+});
+
+test("Codex streams indexed summaries, prefers them to raw content, and adopts authoritative completion", () => {
+  let live = session();
+  const send = (method, data) => {
+    live = applyConversationEvent(live, "codex", method, {
+      itemId: "thinking",
+      ...data,
+    });
+  };
+  send("item/reasoning/textDelta", {
+    contentIndex: 0,
+    delta: "Detailed reasoning",
+  });
+  assert.equal(live.conversation[0].text, "Detailed reasoning");
+  send("item/reasoning/summaryTextDelta", {
+    summaryIndex: 0,
+    delta: "Inspect",
+  });
+  const restored = historyEntries("codex", [
+    {
+      status: "inProgress",
+      items: [
+        {
+          id: "thinking",
+          type: "reasoning",
+          summary: ["Inspect files"],
+          content: ["Detailed reasoning"],
+        },
+      ],
+    },
+  ]);
+  live.conversation = mergeHistory(live.conversation, restored);
+  send("item/started", {
+    item: { id: "thinking", type: "reasoning", summary: [], content: [] },
+  });
+  send("item/reasoning/summaryTextDelta", {
+    summaryIndex: 0,
+    delta: " files",
+  });
+  send("item/reasoning/summaryPartAdded", { summaryIndex: 1 });
+  send("item/reasoning/summaryTextDelta", {
+    summaryIndex: 1,
+    delta: "Choose a fix",
+  });
+  assert.equal(live.conversation[0].text, "Inspect files\n\nChoose a fix");
+  assert.equal(live.isWorking, true);
+  assert.equal(live.activity.label, "Thinking…");
+  send("item/completed", {
+    item: {
+      id: "thinking",
+      type: "reasoning",
+      summary: ["Inspected files", "Chose a fix"],
+      content: ["Detailed reasoning"],
+    },
+  });
+  send("item/reasoning/summaryTextDelta", {
+    summaryIndex: 1,
+    delta: " late",
+  });
+  assert.equal(live.conversation[0].text, "Inspected files\n\nChose a fix");
+  assert.equal(live.conversation[0].complete, true);
+});
+
+test("retry, interruption, and missed final deltas settle activity and keep restorable thinking", () => {
+  let live = applyConversationEvent(session(), "opencode", "session.status", {
+    status: { type: "busy" },
+  });
+  live = applyConversationEvent(live, "opencode", "session.reasoning.delta", {
+    assistantMessageID: "a",
+    ordinal: 0,
+    delta: "Partial",
+  });
+  live = applyConversationEvent(live, "opencode", "session.retry.scheduled", {
+    attempt: 2,
+    error: { message: "Rate limit" },
+  });
+  assert.equal(live.activity.label, "Retrying · attempt 2");
+  assert.equal(live.activity.detail, "Rate limit");
+  live = applyConversationEvent(
+    live,
+    "opencode",
+    "session.execution.interrupted",
+    {},
+  );
+  assert.equal(live.isWorking, false);
+  assert.equal(live.activity, null);
+  assert.equal(live.conversation[0].status, "interrupted");
+  live.conversation = mergeHistory(
+    live.conversation,
+    historyEntries("opencode", [
+      {
+        id: "a",
+        type: "assistant",
+        time: { completed: 42 },
+        content: [{ type: "reasoning", text: "Partial trace recovered" }],
+      },
+    ]),
+  );
+  assert.equal(live.conversation[0].text, "Partial trace recovered");
 });

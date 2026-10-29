@@ -38,6 +38,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           content: [{ type: "text", text: "Restored OpenCode conversation" }],
         },
       ];
+      let openWorking: boolean | undefined;
       let release: () => void = () => {};
       const emit = (event: string, payload: unknown) =>
         (listeners.get(event) ?? []).forEach((id) =>
@@ -68,6 +69,9 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           },
           setOpenHistory: (data: unknown[]) => {
             openHistory = data;
+          },
+          setOpenWorking: (working: boolean) => {
+            openWorking = working;
           },
           holdStart: () => {
             startGate = new Promise<void>((resolve) => {
@@ -128,7 +132,8 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                     ? [{ id: "build", name: "Build" }]
                     : [],
               };
-            if (command === "codex_list_sessions") return { project, threads };
+            if (command === "codex_list_sessions")
+              return { project, threads };
             if (command === "opencode_list_sessions")
               return {
                 project,
@@ -147,7 +152,11 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             if (command === "opencode_resume_session")
               return {
                 project,
-                session: { id: args.sessionId, title: "OpenCode session" },
+                session: {
+                  id: args.sessionId,
+                  title: "OpenCode session",
+                  isWorking: openWorking,
+                },
               };
             if (command === "codex_session_history") {
               if (historyGate) await historyGate;
@@ -201,8 +210,15 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 ],
               };
             }
-            if (command === "opencode_session_history")
-              return { nextCursor: null, data: openHistory };
+            if (command === "opencode_session_history") {
+              const snapshot = {
+                nextCursor: null,
+                data: openHistory,
+                isWorking: openWorking,
+              };
+              if (historyGate) await historyGate;
+              return snapshot;
+            }
             if (command.endsWith("_start_session")) {
               if (startGate) await startGate;
               return command.startsWith("codex")
@@ -221,7 +237,10 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 emit("codex-event", {
                   projectPath: project.path,
                   method: "turn/started",
-                  params: { threadId: args.threadId, turn: { id: "turn-new" } },
+                  params: {
+                    threadId: args.threadId,
+                    turn: { id: "turn-new" },
+                  },
                 });
               return;
             }
@@ -343,9 +362,9 @@ test("restores Markdown and tool details in a full-height dark workspace", async
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeInViewport();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    800,
-  );
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBe(800);
 });
 
 test("first send creates one session; failure retains a retryable draft; generation permits drafting", async ({
@@ -409,7 +428,9 @@ test("session drafts, expanded tools, search, and navigation survive switching",
   await expect(
     page.getByRole("textbox", { name: "Search sessions" }),
   ).toBeFocused();
-  await page.getByRole("textbox", { name: "Search sessions" }).fill("adapters");
+  await page
+    .getByRole("textbox", { name: "Search sessions" })
+    .fill("adapters");
   await expect(page.locator(".session-item")).toHaveCount(1);
   await page.keyboard.press("Meta+n");
   await expect(input).toBeFocused();
@@ -494,7 +515,9 @@ test("paginated history keeps a bounded transcript and does not follow while rea
     await page.locator(".transcript").evaluate((node) => node.scrollTop),
   ).toBe(before);
   await page.getByRole("button", { name: "Jump to latest" }).click();
-  await expect(page.getByText("New answer", { exact: true })).toBeInViewport();
+  await expect(
+    page.getByText("New answer", { exact: true }),
+  ).toBeInViewport();
 });
 
 test("history arriving during streaming preserves new live content", async ({
@@ -565,7 +588,9 @@ test("OpenCode uses provider choices, streams structured tools and reconciles ac
     "opencode",
   );
   await page.getByRole("button", { name: /read src\/App.tsx/ }).click();
-  await expect(page.getByText("File contents", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("File contents", { exact: true }),
+  ).toBeVisible();
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     const sent = fixture.calls.find(
@@ -637,9 +662,9 @@ test("changes stay beside the conversation and refresh the selected diff during 
   await pane
     .getByRole("button", { name: "src/styles.css, Staged modified" })
     .click();
-  await expect(pane.getByRole("region", { name: "Staged diff" })).toContainText(
-    "revision 1",
-  );
+  await expect(
+    pane.getByRole("region", { name: "Staged diff" }),
+  ).toContainText("revision 1");
   await emit(page, "turn/started", {
     threadId: "thread-a",
     turn: { id: "turn-live" },
@@ -649,9 +674,9 @@ test("changes stay beside the conversation and refresh the selected diff during 
   ).toBeEnabled();
   await page.evaluate(() => (window as any).fixture.setDiffVersion(2));
   await page.clock.runFor(2600);
-  await expect(pane.getByRole("region", { name: "Staged diff" })).toContainText(
-    "revision 2",
-  );
+  await expect(
+    pane.getByRole("region", { name: "Staged diff" }),
+  ).toContainText("revision 2");
   await expect(
     pane.getByRole("button", { name: "src/styles.css, Staged modified" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -666,9 +691,9 @@ test("changes stay beside the conversation and refresh the selected diff during 
     page.getByRole("button", { name: "Stop generation" }),
   ).toBeInViewport({ ratio: 1 });
   await expect(pane).toBeInViewport({ ratio: 1 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    800,
-  );
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBe(800);
   await page.screenshot({ path: "test-results/session-changes-minimum.png" });
   await page.evaluate(() =>
     (window as any).fixture.setGitFiles([
@@ -720,10 +745,12 @@ test("model picker searches capabilities, supports keyboard selection and return
   await expect(model).toHaveText("Test model");
   await model.click();
   await page.screenshot({ path: "test-results/model-picker.png" });
-  await page.getByRole("heading", { name: "New session", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Choose model" })).toHaveCount(
-    0,
-  );
+  await page
+    .getByRole("heading", { name: "New session", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Choose model" }),
+  ).toHaveCount(0);
   expect(
     await page.evaluate(() =>
       (window as any).fixture.calls.filter((call: any) =>
@@ -793,11 +820,289 @@ test("restored shell notifications and nested tool results display identity and 
     "0px",
   );
   await page.mouse.move(0, 0);
-  await expect(notification).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(notification).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
   await page.getByRole("button", { name: /shell grep schema/ }).click();
   await expect(page.getByText("sh_nested", { exact: true })).toBeVisible();
   await expect(
     page.getByText("schema version 3", { exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/shell-results.png" });
+});
+
+test("sending from expanded tools or older history follows live output while activity stays above the composer", async ({
+  page,
+}) => {
+  await desktop(page);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const activity = page.getByRole("status", { name: "Agent activity" });
+  await page.getByRole("button", { name: /Run pnpm test/ }).click();
+  await input.fill("Continue after expanding a tool");
+  await input.press("Enter");
+  await expect(activity).toContainText("Working…");
+  await emit(page, "item/reasoning/summaryTextDelta", {
+    threadId: "thread-a",
+    itemId: "thinking",
+    summaryIndex: 0,
+    delta: "Inspect the existing implementation",
+  });
+  await expect(activity).toContainText("Thinking…");
+  await expect(page.locator(".reasoning-preview")).toContainText(
+    "Inspect the existing implementation",
+  );
+  await emit(page, "item/agentMessage/delta", {
+    threadId: "thread-a",
+    itemId: "live-one",
+    delta: "Live after tool expansion",
+  });
+  await expect(
+    page.getByText("Live after tool expansion", { exact: true }),
+  ).toBeInViewport();
+  await page.getByRole("button", { name: "Load earlier messages" }).click();
+  await page.getByRole("button", { name: "Load earlier messages" }).click();
+  const before = await page
+    .locator(".transcript")
+    .evaluate((node) => node.scrollTop);
+  await emit(page, "item/agentMessage/delta", {
+    threadId: "thread-a",
+    itemId: "live-one",
+    delta: " continues",
+  });
+  expect(
+    await page.locator(".transcript").evaluate((node) => node.scrollTop),
+  ).toBe(before);
+  await expect(activity).toBeInViewport({ ratio: 1 });
+  await expect(activity).toContainText("Responding…");
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(activity).toBeInViewport({ ratio: 1 });
+  await expect(input).toBeInViewport({ ratio: 1 });
+  await page.getByRole("button", { name: "Stop generation" }).click();
+  await expect(activity).toHaveCount(0);
+  await input.fill("Continue from older history");
+  await input.press("Enter");
+  await emit(page, "item/agentMessage/delta", {
+    threadId: "thread-a",
+    itemId: "live-two",
+    delta: "Live after reading older messages",
+  });
+  await expect(
+    page.getByText("Live after reading older messages", { exact: true }),
+  ).toBeInViewport();
+  await expect(
+    page.getByRole("button", { name: "Jump to latest" }),
+  ).toHaveCount(0);
+});
+
+test("OpenCode thinking streams into expandable previews with retry, approval and disconnect activity", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.getByRole("button", { name: /OpenCode session/ }).click();
+  await expect(
+    page.getByText("Restored OpenCode conversation"),
+  ).toBeVisible();
+  const activity = page.getByRole("status", { name: "Agent activity" });
+  const send = (method: string, data = {}) =>
+    emit(
+      page,
+      method,
+      {
+        sessionID: "ses-a",
+        assistantMessageID: "thinking-answer",
+        ordinal: 0,
+        ...data,
+      },
+      "opencode",
+    );
+  await send("session.reasoning.started");
+  await expect(activity).toContainText("Thinking…");
+  await send("session.reasoning.delta", {
+    delta: "**Inspecting the event stream**\n\nCheck ",
+  });
+  const trace = page.locator("details.reasoning");
+  await expect(trace.locator("summary")).toContainText(
+    "Inspecting the event stream",
+  );
+  await trace.locator("summary").click();
+  await send("session.reasoning.delta", {
+    delta: "the subscription and snapshot.",
+  });
+  await expect(trace.locator(".reasoning-content")).toContainText(
+    "Check the subscription and snapshot.",
+  );
+  await send("session.retry.scheduled", {
+    attempt: 2,
+    error: { message: "Provider temporarily unavailable" },
+  });
+  await expect(activity).toContainText("Retrying · attempt 2");
+  await expect(activity).toContainText("Provider temporarily unavailable");
+  await page.evaluate(() =>
+    (window as any).fixture.emit("approval-requests", [
+      {
+        provider: "opencode",
+        projectPath: "/work/caelum",
+        sessionId: "ses-a",
+        requestId: "approval-live",
+        summary: "Read source?",
+        description: "src/App.tsx",
+      },
+    ]),
+  );
+  await expect(activity).toContainText("Waiting for approval");
+  await page.getByRole("button", { name: "Allow once" }).click();
+  await send("session.reasoning.ended", {
+    text: "**Inspecting the event stream**\n\nCheck the subscription and snapshot.",
+  });
+  await expect(trace.locator("summary")).toContainText("Thought");
+  await send("session.tool.called", {
+    id: "read-live",
+    name: "read",
+    input: { path: "src/App.tsx" },
+  });
+  await expect(activity).toContainText("Running tool…");
+  await page.screenshot({ path: "test-results/live-thinking.png" });
+  await emit(page, "server.disconnected", {}, "opencode");
+  await expect(activity).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(() => {
+    (window as any).fixture.setOpenWorking(false);
+    (window as any).fixture.setOpenHistory([
+      {
+        id: "thinking-answer",
+        type: "assistant",
+        time: { completed: 42 },
+        content: [
+          {
+            type: "reasoning",
+            text: "Recovered the complete thinking trace",
+          },
+          { type: "text", text: "Recovered final response" },
+        ],
+      },
+    ]);
+  });
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect(trace).toHaveCount(1);
+  await expect(trace.locator("summary")).toContainText(
+    "Recovered the complete thinking trace",
+  );
+  await page.getByRole("button", { name: "Jump to latest" }).click();
+  await expect(page.getByText("Recovered final response")).toBeVisible();
+  await expect(activity).toHaveCount(0);
+});
+
+test("snapshots recover missed live events on polling, focus and cached-session selection", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.getByRole("button", { name: /OpenCode session/ }).click();
+  await expect(
+    page.getByText("Restored OpenCode conversation"),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).fixture.setOpenWorking(true);
+    (window as any).fixture.setOpenHistory([
+      {
+        id: "missed",
+        type: "assistant",
+        content: [
+          { type: "reasoning", text: "Thinking from another client" },
+        ],
+      },
+    ]);
+  });
+  await page.clock.runFor(15_100);
+  const activity = page.getByRole("status", { name: "Agent activity" });
+  await expect(activity).toBeVisible();
+  await expect(page.locator(".reasoning-preview")).toContainText(
+    "Thinking from another client",
+  );
+  await page.evaluate(() => {
+    (window as any).fixture.setOpenWorking(false);
+    (window as any).fixture.setOpenHistory([
+      {
+        id: "missed",
+        type: "assistant",
+        time: { completed: 42 },
+        content: [
+          {
+            type: "reasoning",
+            text: "Complete thinking from another client",
+          },
+          { type: "text", text: "Finished while away" },
+        ],
+      },
+    ]);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(
+    page.getByText("Finished while away", { exact: true }),
+  ).toBeVisible();
+  await expect(activity).toHaveCount(0);
+  await page
+    .getByRole("button", { name: /Review the provider adapters/ })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.setOpenHistory([
+      {
+        id: "missed-next",
+        type: "assistant",
+        time: { completed: 43 },
+        content: [{ type: "text", text: "Arrived while on another session" }],
+      },
+    ]),
+  );
+  await page.getByRole("button", { name: /OpenCode session/ }).click();
+  await expect(
+    page.getByText("Arrived while on another session", { exact: true }),
+  ).toBeVisible();
+});
+
+test("a completion during history loading queues a resync without restoring stale busy state", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.evaluate(() => {
+    (window as any).fixture.setOpenWorking(true);
+    (window as any).fixture.holdHistory();
+  });
+  await page.getByRole("button", { name: /OpenCode session/ }).click();
+  await expect(page.getByText("Loading conversation…")).toBeVisible();
+  await emit(
+    page,
+    "session.execution.succeeded",
+    { sessionID: "ses-a" },
+    "opencode",
+  );
+  await page.evaluate(() => {
+    (window as any).fixture.setOpenWorking(false);
+    (window as any).fixture.setOpenHistory([
+      {
+        id: "final",
+        type: "assistant",
+        time: { completed: 42 },
+        content: [
+          { type: "text", text: "Recovered after the in-flight snapshot" },
+        ],
+      },
+    ]);
+    (window as any).fixture.releaseHistory();
+  });
+  await expect(
+    page.getByText("Recovered after the in-flight snapshot", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("status", { name: "Agent activity" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Stop generation" }),
+  ).toHaveCount(0);
 });

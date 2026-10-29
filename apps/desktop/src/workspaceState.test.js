@@ -44,10 +44,14 @@ function withSession(
 
 test("project provider, session drafts, and new-session drafts stay independent", () => {
   let workspaces = {};
-  workspaces = updateProjectWorkspace(workspaces, projectA.path, (current) => ({
-    ...current,
-    provider: "opencode",
-  }));
+  workspaces = updateProjectWorkspace(
+    workspaces,
+    projectA.path,
+    (current) => ({
+      ...current,
+      provider: "opencode",
+    }),
+  );
   workspaces = updateProviderWorkspace(
     workspaces,
     projectA.path,
@@ -75,10 +79,14 @@ test("project provider, session drafts, and new-session drafts stay independent"
     "alpha draft",
   );
   assert.equal(
-    workspaces[projectA.path].providers.opencode.sessionsById["ses-beta"].draft,
+    workspaces[projectA.path].providers.opencode.sessionsById["ses-beta"]
+      .draft,
     "",
   );
-  assert.equal(workspaces[projectA.path].providers.opencode.draft, "new draft");
+  assert.equal(
+    workspaces[projectA.path].providers.opencode.draft,
+    "new draft",
+  );
   assert.equal(
     workspaces[projectA.path].providers.opencode.selectedSessionId,
     "ses-alpha",
@@ -186,7 +194,10 @@ test("OpenCode events update the matching project and session only", () => {
     [
       {
         id: "opencode-message-b",
+        messageId: "message-b",
         kind: "assistant",
+        complete: false,
+        optimistic: false,
         text: "response",
         streamText: "response",
       },
@@ -231,4 +242,31 @@ test("concurrent turns remain independent and cancellation status is scoped", ()
       .conversation[0].text,
     "Turn cancelled",
   );
+});
+
+test("disconnect clears activity and preserves a partial trace for reconnection", () => {
+  let workspaces = withSession({}, projectA, "opencode", "ses-a");
+  workspaces = applyOpenCodeEvent(workspaces, {
+    projectPath: projectA.path,
+    eventType: "session.reasoning.delta",
+    data: {
+      sessionID: "ses-a",
+      assistantMessageID: "a",
+      ordinal: 0,
+      delta: "Still thinking",
+    },
+  });
+  workspaces = applyOpenCodeEvent(workspaces, {
+    projectPath: projectA.path,
+    eventType: "server.disconnected",
+    data: {},
+  });
+  const session =
+    workspaces[projectA.path].providers.opencode.sessionsById["ses-a"];
+  assert.equal(session.connection, "disconnected");
+  assert.equal(session.isWorking, false);
+  assert.equal(session.activity, null);
+  assert.equal(session.conversation[0].text, "Still thinking");
+  assert.equal(session.conversation[0].status, "interrupted");
+  assert.equal(session.conversation[0].complete, false);
 });

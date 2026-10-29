@@ -35,6 +35,7 @@ type PersistedProject = Parameters<typeof restoreProjectWorkspace>[0] & {
 type HistoryPage = {
   data: Record<string, unknown>[];
   nextCursor: string | null;
+  isWorking?: boolean | null;
 };
 type OpenCodeInfo = {
   project: ProjectInfo;
@@ -79,6 +80,7 @@ export function useWorkspace() {
   const [resolving, setResolving] = useState<string | null>(null);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const locks = useRef(new Set<string>());
+  const historyRefreshes = useRef(new Set<string>());
   const navigation = useRef(0);
   const workspace = project ? workspaces[project.path] : undefined;
   const provider = workspace?.provider ?? "codex";
@@ -133,8 +135,9 @@ export function useWorkspace() {
       else stops.push(stop);
     };
     void Promise.all([
-      subscribe<Parameters<typeof applyCodexEvent>[1]>("codex-event", (event) =>
-        update((current) => applyCodexEvent(current, event)),
+      subscribe<Parameters<typeof applyCodexEvent>[1]>(
+        "codex-event",
+        (event) => update((current) => applyCodexEvent(current, event)),
       ),
       subscribe<Parameters<typeof applyOpenCodeEvent>[1]>(
         "opencode-event",
@@ -452,7 +455,11 @@ export function useWorkspace() {
   ) {
     const key = `history:${keyFor(path, kind, id)}`;
     const current = state.current[path]?.providers[kind].sessionsById[id];
-    if (!current || locks.current.has(key)) return;
+    if (!current) return;
+    if (locks.current.has(key)) {
+      if (!older) historyRefreshes.current.add(key);
+      return;
+    }
     locks.current.add(key);
     mutateSession(path, kind, id, (value) => ({
       ...value,
@@ -475,8 +482,20 @@ export function useWorkspace() {
           older ||
           !value.historyLoaded ||
           (!overlap && Boolean(page.nextCursor));
+        // A snapshot can race a newer event or an optimistic prompt. Only
+        // reconcile activity when nothing changed since the request began.
+        const isWorking =
+          !older &&
+          !current.isSubmitting &&
+          !value.isSubmitting &&
+          current.eventRevision === value.eventRevision &&
+          current.followRevision === value.followRevision
+            ? (page.isWorking ?? value.isWorking)
+            : value.isWorking;
         return {
           ...value,
+          isWorking,
+          activity: isWorking ? value.activity : null,
           conversation: mergeHistory(
             value.conversation,
             entries,
@@ -501,6 +520,8 @@ export function useWorkspace() {
         ...value,
         isLoadingHistory: false,
       }));
+      if (historyRefreshes.current.delete(key))
+        void loadHistory(path, kind, id);
     }
   }
   async function connectSession(
@@ -512,7 +533,10 @@ export function useWorkspace() {
     if (locks.current.has(key)) return;
     const cached =
       state.current[target.path]?.providers[kind].sessionsById[thread.id];
-    if (cached?.connection === "connected") return;
+    if (cached?.connection === "connected") {
+      await loadHistory(target.path, kind, thread.id);
+      return;
+    }
     locks.current.add(key);
     mutateProvider(target.path, kind, (value) => ({
       ...value,
@@ -605,6 +629,38 @@ export function useWorkspace() {
       }));
   }, [project?.path, provider, selectedId, selected?.unread, view]);
 
+  useEffect(() => {
+    if (!project || !selectedId || !ready || !isTauri()) return;
+    const path = project.path,
+      kind = provider,
+      id = selectedId;
+    let refreshed = Date.now();
+    const refresh = () => {
+      const session = state.current[path]?.providers[kind].sessionsById[id];
+      if (
+        document.hidden ||
+        session?.connection !== "connected" ||
+        session.isSubmitting ||
+        session.isLoadingHistory
+      )
+        return;
+      refreshed = Date.now();
+      void loadHistory(path, kind, id);
+    };
+    refresh();
+    const timer = window.setInterval(() => {
+      const session = state.current[path]?.providers[kind].sessionsById[id];
+      if (session?.isWorking || Date.now() - refreshed >= 15_000) refresh();
+    }, 5_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [project?.path, provider, selectedId, ready]);
+
   function setDraft(draft: string) {
     if (!project) return;
     if (selectedId)
@@ -613,7 +669,10 @@ export function useWorkspace() {
         draft,
       }));
     else
-      mutateProvider(project.path, provider, (value) => ({ ...value, draft }));
+      mutateProvider(project.path, provider, (value) => ({
+        ...value,
+        draft,
+      }));
   }
   async function submit() {
     if (!project) return;
@@ -688,8 +747,11 @@ export function useWorkspace() {
         error: null,
         isSubmitting: true,
         isWorking: true,
+        activity: { label: "Working…" },
         lastOutcome: null,
         scrollTop: null,
+        windowEndId: null,
+        followRevision: value.followRevision + 1,
         conversation: [
           ...value.conversation,
           { id: optimisticId, kind: "user", text, optimistic: true },
@@ -722,6 +784,7 @@ export function useWorkspace() {
           ...value,
           draft: value.draft ? `${text}\n\n${value.draft}` : text,
           isWorking: false,
+          activity: null,
           error: String(reason),
           conversation: value.conversation.filter(
             (entry) => entry.id !== optimisticId,
@@ -783,7 +846,8 @@ export function useWorkspace() {
     }
   }
   function viewApproval(request: ApprovalPrompt) {
-    if (request.provider !== "codex" && request.provider !== "opencode") return;
+    if (request.provider !== "codex" && request.provider !== "opencode")
+      return;
     const target = projects.find(
       (item) => item.path === request.projectPath,
     ) ?? {

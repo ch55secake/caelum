@@ -16,4 +16,6 @@ The implementation follows the current [Codex app-server documentation](https://
 
 History uses `thread/turns/list` with `itemsView: "full"`, newest-first pages and opaque cursors. Native items cross the desktop boundary intact and share stable identities with live events. New-session model choices come from `model/list` and are passed to `thread/start`; Codex's configured default is used when none is selected.
 
+Reasoning summary sections stream by `summaryIndex`, with `contentIndex` tracking raw reasoning when available. The desktop prefers provider-supplied summaries, displays expandable thinking previews, and reconciles final items with in-flight history. An activity indicator remains above the composer while work runs, including when reading older messages.
+
 The app-server command and protocol can change with Codex CLI releases. Live CLI/auth behavior should be checked with an installed Codex CLI in addition to the fake-server protocol and lifecycle tests.

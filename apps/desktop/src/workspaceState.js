@@ -45,12 +45,15 @@ export function createSessionWorkspace(session) {
     scrollTop: null,
     windowEndId: null,
     eventRevision: 0,
+    followRevision: 0,
+    activity: null,
     lastOutcome: null,
   };
 }
 export function restoreProjectWorkspace(persisted) {
   const workspace = createProjectWorkspace();
-  workspace.provider = persisted.provider === "opencode" ? "opencode" : "codex";
+  workspace.provider =
+    persisted.provider === "opencode" ? "opencode" : "codex";
   for (const provider of PROVIDERS) {
     workspace.providers[provider].selectedSessionId =
       persisted[`${provider}SessionId`] ?? null;
@@ -63,7 +66,9 @@ export function restoreProjectWorkspace(persisted) {
 export function updateProjectWorkspace(workspaces, projectPath, update) {
   const current = workspaces[projectPath] ?? createProjectWorkspace();
   const next = update(current);
-  return next === current ? workspaces : { ...workspaces, [projectPath]: next };
+  return next === current
+    ? workspaces
+    : { ...workspaces, [projectPath]: next };
 }
 export function updateProviderWorkspace(
   workspaces,
@@ -137,11 +142,14 @@ function applyEvent(
                 connection: "disconnected",
                 isWorking: false,
                 isSubmitting: false,
+                activity: null,
                 eventRevision: session.eventRevision + 1,
                 conversation: session.conversation.map((entry) =>
                   entry.kind === "tool" && entry.status === "running"
                     ? { ...entry, status: "interrupted" }
-                    : entry,
+                    : entry.kind === "reasoning" && !entry.complete
+                      ? { ...entry, status: "interrupted" }
+                      : entry,
                 ),
               },
             ]),
@@ -163,7 +171,11 @@ function applyEvent(
         data.session?.title ??
         data.info?.title ??
         (method === "thread/name/updated" ? data.threadName : null) ??
-        (["session.updated", "session.title.updated"].includes(method)
+        ([
+          "session.updated",
+          "session.title.updated",
+          "session.renamed",
+        ].includes(method)
           ? data.title
           : null);
       const changed = next && next !== current;
@@ -186,7 +198,8 @@ function applyEvent(
               ...workspace.sessionsById,
               [id]: {
                 ...next,
-                eventRevision: (current.eventRevision ?? 0) + (changed ? 1 : 0),
+                eventRevision:
+                  (current.eventRevision ?? 0) + (changed ? 1 : 0),
                 unread: changed ? true : next.unread,
               },
             }

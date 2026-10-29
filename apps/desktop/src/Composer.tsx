@@ -1,5 +1,12 @@
 import { useLayoutEffect, type RefObject } from "react";
-import { ArrowUp, Bot, Cpu, Layers, LoaderCircle, Square } from "lucide-react";
+import {
+  ArrowUp,
+  Bot,
+  Cpu,
+  Layers,
+  LoaderCircle,
+  Square,
+} from "lucide-react";
 import type { ProviderKind, ProviderChoices } from "./workspaceState.js";
 import { ChoicePicker } from "./ChoicePicker.js";
 
@@ -21,6 +28,7 @@ export function Composer({
   setOption,
   choicesError,
   retryChoices,
+  activity,
 }: {
   draft: string;
   setDraft: (text: string) => void;
@@ -39,6 +47,7 @@ export function Composer({
   setOption: (key: "model" | "agent", value: string) => void;
   choicesError: string | null;
   retryChoices: () => void;
+  activity: { label: string; detail?: string } | null;
 }) {
   useLayoutEffect(() => {
     const area = textareaRef.current;
@@ -49,6 +58,24 @@ export function Composer({
   }, [draft]);
   return (
     <div className="composer-wrap">
+      {(working || submitting || activity) && (
+        <div
+          className="working-indicator"
+          role="status"
+          aria-label="Agent activity"
+        >
+          <LoaderCircle className="spinning" size={14} aria-hidden="true" />
+          <span>
+            {activity?.label ??
+              (submitting && isNew ? "Starting session…" : "Working…")}
+          </span>
+          {activity?.detail && (
+            <span className="activity-detail" title={activity.detail}>
+              {activity.detail}
+            </span>
+          )}
+        </div>
+      )}
       <form
         className="composer"
         onSubmit={(event) => {

@@ -284,6 +284,11 @@ impl CodexProvider {
             .and_then(Value::as_array)
             .ok_or_else(|| CodexError::Protocol("thread/turns/list has no data array".into()))?;
         Ok(SessionHistoryPage {
+            is_working: cursor.is_none().then(|| {
+                data.first().is_some_and(|turn| {
+                    turn.get("status").and_then(Value::as_str) == Some("inProgress")
+                })
+            }),
             data: data.iter().rev().cloned().collect(),
             next_cursor: response
                 .get("nextCursor")

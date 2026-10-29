@@ -38,9 +38,8 @@ const SESSION_LIMIT: &str = "100";
 
 type EventSubscribers = Arc<Mutex<Vec<Sender<OpenCodeEvent>>>>;
 
-/// Manages one official OpenCode HTTP server for each selected project.
-/// Servers bind only to loopback and use OpenCode's `/api` and `/api/event`
-/// endpoints.
+/// Connects projects to the registered local OpenCode service, falling back to
+/// an owned loopback server. Both use the official `/api` and `/api/event` routes.
 #[derive(Clone)]
 pub struct OpenCodeProvider {
     inner: Arc<ProviderInner>,
@@ -48,6 +47,7 @@ pub struct OpenCodeProvider {
 
 struct ProviderInner {
     executable: Option<PathBuf>,
+    service_file: Option<PathBuf>,
     processes: Arc<ProcessRegistry>,
     approvals: ApprovalBroker,
     servers: Mutex<HashMap<PathBuf, Arc<OpenCodeServer>>>,
@@ -56,11 +56,11 @@ struct ProviderInner {
 }
 
 struct OpenCodeServer {
-    process_id: ProcessId,
+    process_id: Option<ProcessId>,
     base_url: String,
     client: Client,
     event_client: Client,
-    password: String,
+    password: Option<String>,
     alive: Arc<AtomicBool>,
     session_ids: Mutex<HashSet<String>>,
     pending_permission_ids: Arc<Mutex<HashSet<String>>>,
@@ -88,6 +88,7 @@ impl OpenCodeProvider {
     ) -> Self {
         Self {
             inner: Arc::new(ProviderInner {
+                service_file: executable.is_none().then(service_file).flatten(),
                 executable,
                 processes,
                 approvals,
@@ -266,7 +267,7 @@ impl OpenCodeProvider {
     ) -> Result<SessionHistoryPage, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
-        self.session(&server, &project, session_id)?;
+        let session = self.session(&server, &project, session_id)?;
         let path = format!("/api/session/{session_id}/message");
         let mut query = vec![("limit", "50".to_owned())];
         if let Some(cursor) = cursor {
@@ -280,6 +281,7 @@ impl OpenCodeProvider {
             .and_then(Value::as_array)
             .ok_or_else(|| OpenCodeError::Protocol("session history has no data array".into()))?;
         Ok(SessionHistoryPage {
+            is_working: Some(session.is_working),
             data: messages.iter().rev().cloned().collect(),
             next_cursor: response
                 .pointer("/cursor/next")
@@ -346,8 +348,7 @@ impl OpenCodeProvider {
             std::mem::take(&mut *servers)
         };
         for (_, server) in servers {
-            server.alive.store(false, Ordering::Release);
-            let _ = self.inner.processes.terminate(server.process_id);
+            server.close(&self.inner.processes);
         }
         self.inner.lock_subscribers().clear();
     }
@@ -390,7 +391,18 @@ impl OpenCodeProvider {
             let dead = servers
                 .remove(project.path())
                 .expect("entry was just found");
-            let _ = self.inner.processes.terminate(dead.process_id);
+            dead.close(&self.inner.processes);
+        }
+
+        if let Some(server) = self
+            .inner
+            .service_file
+            .as_deref()
+            .and_then(discover_service)
+        {
+            self.listen(&server, project)?;
+            servers.insert(project.path().to_path_buf(), Arc::clone(&server));
+            return Ok(server);
         }
 
         let executable = match self.inner.executable.as_deref() {
@@ -450,33 +462,16 @@ impl OpenCodeProvider {
                 }
             }
         };
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(1))
-            .timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
+        let server = Arc::new(
+            OpenCodeServer::new(
+                Some(process_id),
+                format!("http://127.0.0.1:{port}"),
+                Some(password),
+            )
+            .inspect_err(|_| {
                 let _ = self.inner.processes.terminate(process_id);
-                OpenCodeError::Request(error.to_string())
-            })?;
-        let event_client = Client::builder()
-            .connect_timeout(Duration::from_secs(1))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
-                let _ = self.inner.processes.terminate(process_id);
-                OpenCodeError::Request(error.to_string())
-            })?;
-        let server = Arc::new(OpenCodeServer {
-            process_id,
-            base_url: format!("http://127.0.0.1:{port}"),
-            client,
-            event_client,
-            password,
-            alive: Arc::new(AtomicBool::new(true)),
-            session_ids: Mutex::new(HashSet::new()),
-            pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
-        });
+            })?,
+        );
 
         let query = [("directory", project.path().to_string_lossy().into_owned())];
         loop {
@@ -501,22 +496,74 @@ impl OpenCodeProvider {
             }
         }
 
-        if self.inner.closed.load(Ordering::Acquire) {
-            let _ = self.inner.processes.terminate(process_id);
-            return Err(OpenCodeError::Closed);
-        }
-        spawn_event_listener(
-            Arc::clone(&server),
-            project.path().to_path_buf(),
-            self.inner.approvals.clone(),
-            Arc::clone(&self.inner.subscribers),
-        );
+        self.listen(&server, project)?;
         servers.insert(project.path().to_path_buf(), Arc::clone(&server));
         Ok(server)
+    }
+
+    fn listen(&self, server: &Arc<OpenCodeServer>, project: &Project) -> Result<(), OpenCodeError> {
+        let result = if self.inner.closed.load(Ordering::Acquire) {
+            Err(OpenCodeError::Closed)
+        } else {
+            spawn_event_listener(
+                Arc::clone(server),
+                project.path().to_path_buf(),
+                self.inner.approvals.clone(),
+                Arc::clone(&self.inner.subscribers),
+            )
+        };
+        if result.is_err() {
+            server.close(&self.inner.processes);
+        }
+        result
     }
 }
 
 impl OpenCodeServer {
+    fn new(
+        process_id: Option<ProcessId>,
+        base_url: String,
+        password: Option<String>,
+    ) -> Result<Self, OpenCodeError> {
+        let builder = || {
+            Client::builder()
+                .connect_timeout(Duration::from_secs(1))
+                .redirect(reqwest::redirect::Policy::none())
+        };
+        Ok(Self {
+            process_id,
+            base_url,
+            client: builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .map_err(|error| OpenCodeError::Request(error.to_string()))?,
+            event_client: builder()
+                .build()
+                .map_err(|error| OpenCodeError::Request(error.to_string()))?,
+            password,
+            alive: Arc::new(AtomicBool::new(true)),
+            session_ids: Mutex::new(HashSet::new()),
+            pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
+        })
+    }
+
+    fn authenticate(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        match &self.password {
+            Some(password) => request.basic_auth("opencode", Some(password)),
+            None => request,
+        }
+    }
+
+    fn close(&self, processes: &ProcessRegistry) {
+        self.alive.store(false, Ordering::Release);
+        if let Some(id) = self.process_id {
+            let _ = processes.terminate(id);
+        }
+    }
+
     fn request_json(
         &self,
         method: Method,
@@ -525,10 +572,7 @@ impl OpenCodeServer {
         body: Option<Value>,
     ) -> Result<Value, OpenCodeError> {
         let url = api_url(&self.base_url, path, query)?;
-        let mut request = self
-            .client
-            .request(method, url)
-            .basic_auth("opencode", Some(&self.password));
+        let mut request = self.authenticate(self.client.request(method, url));
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -562,16 +606,14 @@ fn spawn_event_listener(
     project_path: PathBuf,
     approvals: ApprovalBroker,
     subscribers: EventSubscribers,
-) {
+) -> Result<(), OpenCodeError> {
+    let (ready, receiver) = mpsc::channel();
     thread::spawn(move || {
         let url = match api_url(&server.base_url, "/api/event", &[]) {
             Ok(url) => url,
             Err(_) => return,
         };
-        let request = server
-            .event_client
-            .get(url)
-            .basic_auth("opencode", Some(&server.password));
+        let request = server.authenticate(server.event_client.get(url));
         let result = request.send();
         let Ok(response) = result else {
             publish_disconnected(&server, &project_path, &approvals, &subscribers);
@@ -583,32 +625,102 @@ fn spawn_event_listener(
         }
 
         let mut reader = BufReader::new(response);
-        let _ = read_sse_frames(&mut reader, |payload| {
-            let Ok(event) = parse_event(&payload, &project_path) else {
-                return;
-            };
-            if !event_belongs_to_project(
-                event.location.as_ref(),
-                &event.data,
-                &project_path,
-                &server,
-            ) {
-                return;
-            }
-
-            if event.event_type == "permission.asked" {
-                request_permission(
-                    &server,
-                    &approvals,
-                    &project_path,
-                    &subscribers,
+        let mut ready = Some(ready);
+        let _ = read_sse_frames(
+            &mut reader,
+            || server.alive.load(Ordering::Acquire),
+            |payload| {
+                let Ok(event) = parse_event(&payload, &project_path) else {
+                    return;
+                };
+                // Wait for the stream's first frame before admitting prompts or
+                // fetching snapshots: SSE subscriptions have no replay.
+                if let Some(ready) = ready.take() {
+                    let _ = ready.send(());
+                }
+                if !server.alive.load(Ordering::Acquire) {
+                    return;
+                }
+                if !event_belongs_to_project(
+                    event.location.as_ref(),
                     &event.data,
-                );
-            }
-            publish_event(&subscribers, event);
-        });
+                    &project_path,
+                    &server,
+                ) {
+                    return;
+                }
+
+                if event.event_type == "permission.asked" {
+                    request_permission(
+                        &server,
+                        &approvals,
+                        &project_path,
+                        &subscribers,
+                        &event.data,
+                    );
+                }
+                publish_event(&subscribers, event);
+            },
+        );
         publish_disconnected(&server, &project_path, &approvals, &subscribers);
     });
+    receiver
+        .recv_timeout(SERVER_START_TIMEOUT)
+        .map_err(|error| OpenCodeError::ServerNotReady(format!("event subscription: {error}")))
+}
+
+fn service_file() -> Option<PathBuf> {
+    env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .map(|state| state.join("opencode/service.json"))
+}
+
+fn discover_service(file: &Path) -> Option<Arc<OpenCodeServer>> {
+    let registration: Value = serde_json::from_slice(&fs::read(file).ok()?).ok()?;
+    let url = Url::parse(registration.get("url")?.as_str()?).ok()?;
+    let host = url.host_str()?;
+    let local = host == "localhost"
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if !local || !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let server = OpenCodeServer::new(
+        None,
+        url.to_string(),
+        registration
+            .get("password")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    )
+    .ok()?;
+    let response = server
+        .authenticate(
+            server
+                .client
+                .get(api_url(&server.base_url, "/api/info", &[]).ok()?),
+        )
+        .timeout(Duration::from_secs(2))
+        .send()
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let info: Value = response.json().ok()?;
+    let version = info.get("version")?.as_str()?;
+    if info.get("pid")?.as_u64()? != registration.get("pid")?.as_u64()?
+        || !version.starts_with("2.")
+        || registration
+            .get("version")
+            .and_then(Value::as_str)
+            .is_some_and(|registered| registered != version)
+    {
+        return None;
+    }
+    Some(Arc::new(server))
 }
 
 fn request_permission(
@@ -807,13 +919,17 @@ fn deny_pending_approvals(
     }
 }
 
-fn read_sse_frames<R, F>(reader: &mut R, mut on_data: F) -> io::Result<()>
+fn read_sse_frames<R, F>(
+    reader: &mut R,
+    mut active: impl FnMut() -> bool,
+    mut on_data: F,
+) -> io::Result<()>
 where
     R: BufRead,
     F: FnMut(String),
 {
     let mut data = Vec::new();
-    loop {
+    while active() {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
             if !data.is_empty() {
@@ -837,6 +953,7 @@ where
             data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
         }
     }
+    Ok(())
 }
 
 fn capture_server_password(stdout: ChildStdout) -> Receiver<Result<String, String>> {
@@ -1071,8 +1188,7 @@ impl Drop for ProviderInner {
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (_, server) in std::mem::take(servers) {
-            server.alive.store(false, Ordering::Release);
-            let _ = self.processes.terminate(server.process_id);
+            server.close(&self.processes);
         }
     }
 }
@@ -1153,7 +1269,7 @@ mod tests {
         let mut reader = BufReader::new(&input[..]);
         let mut frames = Vec::new();
 
-        read_sse_frames(&mut reader, |frame| frames.push(frame)).unwrap();
+        read_sse_frames(&mut reader, || true, |frame| frames.push(frame)).unwrap();
 
         assert_eq!(frames, ["{\n\"type\":\"session.text.delta\"}", "final"]);
     }
@@ -1275,11 +1391,11 @@ mod tests {
         let client = Client::builder().build().unwrap();
         let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let server = Arc::new(OpenCodeServer {
-            process_id,
+            process_id: Some(process_id),
             base_url: "http://127.0.0.1:1".to_owned(),
             client: client.clone(),
             event_client: client,
-            password: "unused-test-password".to_owned(),
+            password: Some("unused-test-password".to_owned()),
             alive: Arc::new(AtomicBool::new(true)),
             session_ids: Mutex::new(HashSet::new()),
             pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -1506,7 +1622,8 @@ server.serve_forever()
             .lock_servers()
             .get(&Project::open(&project_path).unwrap().path().to_path_buf())
             .unwrap()
-            .process_id;
+            .process_id
+            .unwrap();
         provider.shutdown();
         assert!(matches!(
             processes.terminate(process_id),
@@ -1518,5 +1635,142 @@ server.serve_forever()
     fn reserve_local_port_returns_a_loopback_port_that_can_be_rebound() {
         let port = reserve_local_port().unwrap();
         assert_ne!(port, 0);
+    }
+
+    #[test]
+    fn registered_service_streams_external_work_and_survives_provider_shutdown() {
+        if Command::new("python3").arg("--version").output().is_err() {
+            return;
+        }
+        struct ExternalServer(std::process::Child);
+        impl Drop for ExternalServer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        for password in [None, Some("shared-secret")] {
+            let directory = TestDirectory::new();
+            let script = directory.0.join("service.py");
+            fs::write(&script, r#"
+import base64, json, os, queue, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+events = queue.Queue()
+subscribed = False
+password = os.environ.get('TEST_PASSWORD')
+session = {'id': 'ses_shared', 'title': 'External work', 'location': {'directory': os.getcwd()}, 'time': {'busy': 2, 'idle': 1}}
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args): pass
+    def authorized(self):
+        expected = 'Basic ' + base64.b64encode(('opencode:' + password).encode()).decode() if password else None
+        if self.headers.get('Authorization') == expected: return True
+        self.send_error(401)
+        return False
+    def reply(self, value):
+        body = json.dumps(value).encode()
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        global subscribed
+        if not self.authorized(): return
+        path = urlsplit(self.path).path
+        if path == '/api/info':
+            self.reply({'pid': os.getpid(), 'version': '2.2.1'})
+        elif path == '/api/event':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.end_headers()
+            # Headers alone are not a subscription acknowledgement.
+            time.sleep(0.1)
+            subscribed = True
+            self.wfile.write(b'data: {"type":"server.connected","data":{}}\n\n')
+            self.wfile.flush()
+            try:
+                while True:
+                    try: frame = ('data: ' + json.dumps(events.get(timeout=0.1)) + '\n\n').encode()
+                    except queue.Empty: frame = b': keepalive\n\n'
+                    self.wfile.write(frame)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError): pass
+        elif path == '/api/session':
+            assert subscribed
+            self.reply({'data': [session]})
+        elif path == '/api/session/ses_shared': self.reply({'data': session})
+        elif path == '/api/session/ses_shared/message': self.reply({'data': [], 'cursor': {'next': None}})
+        else: self.send_error(404)
+    def do_POST(self):
+        if not self.authorized(): return
+        events.put({'type': 'session.text.delta', 'location': {'directory': '/other-project'}, 'data': {'sessionID': 'ses_shared', 'delta': 'Wrong project'}})
+        events.put({'type': 'session.reasoning.delta', 'data': {'sessionID': 'ses_shared', 'assistantMessageID': 'msg_external', 'ordinal': 0, 'delta': 'External thinking'}})
+        self.reply({})
+server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+print('http://127.0.0.1:' + str(server.server_port), flush=True)
+server.serve_forever()
+"#).unwrap();
+            let mut command = Command::new("python3");
+            command
+                .arg(script)
+                .current_dir(&directory.0)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            if let Some(password) = password {
+                command.env("TEST_PASSWORD", password);
+            } else {
+                command.env_remove("TEST_PASSWORD");
+            }
+            let mut external = ExternalServer(command.spawn().unwrap());
+            let mut url = String::new();
+            BufReader::new(external.0.stdout.take().unwrap())
+                .read_line(&mut url)
+                .unwrap();
+            let url = url.trim();
+            let registration = directory.0.join("service.json");
+            let mut record = json!({ "url": url, "pid": external.0.id(), "version": "2.2.1", "password": password });
+            // Stale registrations must not attach to a different process/version.
+            record["pid"] = json!(external.0.id() + 1);
+            fs::write(&registration, record.to_string()).unwrap();
+            assert!(discover_service(&registration).is_none());
+            record["pid"] = json!(external.0.id());
+            record["version"] = json!("2.0.0");
+            fs::write(&registration, record.to_string()).unwrap();
+            assert!(discover_service(&registration).is_none());
+            record["version"] = json!("2.2.1");
+            fs::write(&registration, record.to_string()).unwrap();
+
+            let mut provider = OpenCodeProvider::new(
+                Arc::new(ProcessRegistry::default()),
+                ApprovalBroker::default(),
+            );
+            Arc::get_mut(&mut provider.inner).unwrap().service_file = Some(registration);
+            let events = provider.subscribe();
+            let sessions = provider.list_sessions(&directory.0).unwrap();
+            assert!(sessions.sessions[0].is_working);
+            assert_eq!(
+                provider
+                    .session_history(&directory.0, "ses_shared", None)
+                    .unwrap()
+                    .is_working,
+                Some(true)
+            );
+            let server = Arc::clone(provider.inner.lock_servers().values().next().unwrap());
+            assert!(server.process_id.is_none());
+            // Trigger the service independently of Caelum's prompt endpoint.
+            server
+                .request_json(Method::POST, "/external", &[], None)
+                .unwrap();
+            let event = events.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert_eq!(event.event_type, "session.reasoning.delta");
+            assert_eq!(event.data["delta"], "External thinking");
+            assert!(events.try_recv().is_err());
+            provider.shutdown();
+            assert!(external.0.try_wait().unwrap().is_none());
+            assert!(server
+                .request_json(Method::GET, "/api/info", &[], None)
+                .is_ok());
+        }
     }
 }

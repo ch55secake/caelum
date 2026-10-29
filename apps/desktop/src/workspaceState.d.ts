@@ -14,6 +14,17 @@ export type ConversationEntry = {
   complete?: boolean;
   historyText?: string;
   streamText?: string;
+  messageId?: string;
+  reasoning?: {
+    summary: Record<
+      number,
+      { text: string; historyText?: string; streamText?: string }
+    >;
+    content: Record<
+      number,
+      { text: string; historyText?: string; streamText?: string }
+    >;
+  };
   historyOutput?: string;
   streamOutput?: string;
   name?: string;
@@ -54,6 +65,8 @@ export type SessionWorkspaceState = {
   scrollTop: number | null;
   windowEndId: string | null;
   eventRevision: number;
+  followRevision: number;
+  activity: { label: string; detail?: string } | null;
   lastOutcome: string | null;
 };
 
@@ -108,7 +121,9 @@ export function updateSessionWorkspace(
   sessionId: string,
   update: (session: SessionWorkspaceState) => SessionWorkspaceState,
 ): WorkspaceMap;
-export function projectHasActiveTurn(workspace: ProjectWorkspaceState): boolean;
+export function projectHasActiveTurn(
+  workspace: ProjectWorkspaceState,
+): boolean;
 export function applyCodexEvent(
   workspaces: WorkspaceMap,
   event: {

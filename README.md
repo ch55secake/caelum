@@ -83,6 +83,8 @@ Browser checks use a mocked desktop/provider boundary. Rust integration tests ex
 
 Open a project and send a message to create a session. Choose the provider and any available model/agent before sending. Each session keeps its own draft, reading position, and expanded tools while the app is open. Provider-owned history is restored in pages; use **Load earlier messages** to read further back.
 
+Responses and thinking update live. Expand a thinking row to read the provider's summary or trace; activity stays visible above the composer while you browse history. Sending a message returns the transcript to the latest response. OpenCode connects to its existing local background service when available.
+
 The **Changes** pane shows project diffs beside the conversation and refreshes while the agent works. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
 
 - **Enter** or **⌘Enter** sends; **Shift+Enter** inserts a newline.

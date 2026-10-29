@@ -1,12 +1,14 @@
 # OpenCode provider
 
-Caelum integrates with the local OpenCode v2 server API. It starts one `opencode serve` process per project, bound to `127.0.0.1` on an available local port, and uses the server's generated HTTP API and `/api/event` SSE stream. The API currently identifies itself in `/openapi.json` as an experimental HTTP surface; this adapter targets that v2 API rather than older `/session` endpoints.
+Caelum integrates with the local OpenCode v2 server API and `/api/event` SSE stream. It attaches to a healthy registered background service so sessions running in other OpenCode clients update live. If no healthy service is available, it starts an owned `opencode serve` process per project, bound to `127.0.0.1` on an available local port.
 
 ## Setup
 
 1. Install OpenCode and make `opencode` available on `PATH`. Caelum also checks common Homebrew and user-local install paths.
 2. Configure and sign in to at least one provider in OpenCode. Caelum relies on OpenCode's existing provider configuration and credentials and does not copy or store them.
-3. Open a project in Caelum and select **OpenCode** in the new-session composer. Caelum starts its local server when sessions are loaded or created.
+3. Open a project in Caelum and select **OpenCode** in the new-session composer. Caelum connects when sessions are loaded or created.
+
+Service discovery reads `${XDG_STATE_HOME:-~/.local/state}/opencode/service.json`, verifies the loopback endpoint's readiness, PID, and version through `/api/info`, and uses the registered Basic authentication password when present. The shared service remains running when Caelum closes. An explicitly configured executable uses an owned server instead.
 
 OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SERVER_PASSWORD` is unset, the CLI generates a random password and prints it during startup. Caelum captures that startup password privately and authenticates using OpenCode's default `opencode` username. If `OPENCODE_SERVER_PASSWORD` is set for Caelum, the managed server inherits and reuses it instead. You do not need to configure a password manually. Authentication failures and HTTP/API errors are shown in the desktop error banner.
 
@@ -14,9 +16,11 @@ OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SE
 
 - The adapter verifies the local server by listing sessions through `GET /api/session` and scopes all session operations to the canonical project directory.
 - Sessions are created, restored, and listed through the v2 `/api/session` endpoints. Prompts use `/api/session/{sessionID}/prompt`; cancellation uses `/interrupt`.
-- `/api/event` streams native server events. Text deltas and tool lifecycle events are forwarded to the desktop; history pages retain native message content, tool input/output, errors, and timing. The initial message page uses `order=desc`; subsequent pages use only the opaque cursor and limit.
+- `/api/event` streams native server events. Caelum waits for the first stream frame before loading snapshots or sending prompts. Text, reasoning, and tool lifecycle events retain stable identities and their original order; text and reasoning ordinals are scoped by message and fragment kind. Thinking appears in expandable Markdown with a compact preview.
+- History pages retain native message content, tool input/output, errors, timing, and current session activity. The initial message page uses `order=desc`; subsequent pages use only the opaque cursor and limit. The desktop refreshes the selected session on focus, selection, and periodically to recover missed events, reconciling snapshots with any newer live updates.
+- Activity stays visible above the composer during thinking, responses, tool calls, retries, and approvals. A completed model step does not end the session's working state.
 - Available models and primary agents come from `/api/model` and `/api/agent`. New-session selections are passed to session creation. Prompts carry a client message ID so optimistic messages reconcile with persisted history.
 - `permission.asked` events are shown inline in the requesting session. **Allow once** maps to OpenCode's `once` decision; denial maps to `reject`. Caelum never sends the `always` decision.
-- Managed server processes are registered for application shutdown and restarted on the next provider request after an SSE disconnect.
+- Owned server processes are registered for application shutdown and restarted on the next provider request after an SSE disconnect. Reconnecting to a shared service rediscovers its current registration.
 
 The integration follows the API exposed by the installed OpenCode binary, so API changes may require an adapter update. The running server's `/openapi.json` is the authoritative schema for that installation.
