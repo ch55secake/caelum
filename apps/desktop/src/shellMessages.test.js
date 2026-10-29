@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   conversationPresentation,
   splitShellMessages,
+  lastUserMessage,
 } from "./shellMessages.js";
 
 const id = "sh_1894f7b4e001iOMXKwJMCx7VJX";
@@ -11,8 +12,30 @@ const output =
   "   Compiling caelum-core v0.1.4\n\nrunning 53 tests\ntest result: ok. 53 passed; 0 failed;\n";
 const notification = `<shell id="${id}" state="completed" command="${command}">\n${output}</shell>`;
 
+test("recalling a prompt skips provider shell notifications and preserves multiline user text", () => {
+  const text = "Review this change.\nKeep the draft intact.";
+  assert.equal(
+    lastUserMessage([
+      { id: "old", kind: "user", text: "Older message" },
+      { id: "prompt", kind: "user", text },
+      { id: "shell", kind: "user", text: notification },
+      { id: "answer", kind: "assistant", text: "Done" },
+    ]),
+    text,
+  );
+  assert.equal(
+    lastUserMessage([{ id: "shell", kind: "user", text: notification }]),
+    null,
+  );
+  assert.equal(lastUserMessage([]), null);
+});
+
 test("background shell notifications preserve command, execution identity and multiline output", () => {
-  const original = { id: "msg-notification", kind: "user", text: notification };
+  const original = {
+    id: "msg-notification",
+    kind: "user",
+    text: notification,
+  };
   const [tool] = conversationPresentation([original]);
   assert.equal(tool.kind, "tool");
   assert.equal(tool.executionId, id);
@@ -40,7 +63,10 @@ test("mixed messages and multiple shell results keep their order and status", ()
   assert.equal(entries[0].text, "Finished checking.");
   assert.equal(entries[3].status, "interrupted");
   assert.equal(entries[4].text, "\nPlease review.");
-  assert.equal(new Set(entries.map((entry) => entry.id)).size, entries.length);
+  assert.equal(
+    new Set(entries.map((entry) => entry.id)).size,
+    entries.length,
+  );
 });
 
 test("shell attributes decode entities without changing raw command output", () => {

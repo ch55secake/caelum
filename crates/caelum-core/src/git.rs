@@ -4,6 +4,7 @@ use std::{
     io::Read,
     path::{Component, Path, PathBuf},
     process::{Command, Output, Stdio},
+    time::UNIX_EPOCH,
 };
 
 use caelum_protocol::{
@@ -15,7 +16,7 @@ use crate::projects::{Project, ProjectError};
 
 const PORCELAIN_STATUS_ARGS: &[&str] = &[
     "status",
-    "--porcelain=v1",
+    "--porcelain=v2",
     "-z",
     "--untracked-files=all",
     "--no-renames",
@@ -218,6 +219,19 @@ impl GitClient {
                     .map_err(|_| GitError::OutsideProject(change.path.clone()))?
             };
             change.path = git_path_string(project_relative_path);
+            if let Ok(metadata) = fs::symlink_metadata(project.path().join(&change.path)) {
+                change.modified_at = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|time| time.as_nanos().to_string());
+                change.revision = format!(
+                    "{} {} {}",
+                    change.revision,
+                    change.modified_at.as_deref().unwrap_or("-"),
+                    metadata.len()
+                );
+            }
         }
         Ok(changes)
     }
@@ -382,13 +396,32 @@ fn parse_status(output: &[u8]) -> Result<Vec<GitFileStatus>, GitError> {
             .map(|position| offset + position)
             .ok_or(GitError::MalformedStatus)?;
         let record = &output[offset..end];
-        if record.len() < 4 || record[2] != b' ' {
+        // Porcelain v2 includes the index object ID, so staging another version
+        // of an already-staged file is observable even when its XY code is unchanged.
+        // Renames are disabled above; paths may contain spaces and newlines.
+        let (xy, path) = match record.first() {
+            Some(b'?') if record.starts_with(b"? ") => (&b"??"[..], &record[2..]),
+            Some(b'1' | b'u') => {
+                let fields = record
+                    .splitn(if record[0] == b'1' { 9 } else { 11 }, |byte| *byte == b' ')
+                    .collect::<Vec<_>>();
+                if fields.len() != if record[0] == b'1' { 9 } else { 11 } {
+                    return Err(GitError::MalformedStatus);
+                }
+                (fields[1], *fields.last().ok_or(GitError::MalformedStatus)?)
+            }
+            _ => return Err(GitError::MalformedStatus),
+        };
+        if xy.len() != 2 || path.is_empty() {
             return Err(GitError::MalformedStatus);
         }
+        let status = |byte| if byte == b'.' { ' ' } else { char::from(byte) }.to_string();
         changes.push(GitFileStatus {
-            index_status: char::from(record[0]).to_string(),
-            worktree_status: char::from(record[1]).to_string(),
-            path: String::from_utf8_lossy(&record[3..]).into_owned(),
+            index_status: status(xy[0]),
+            worktree_status: status(xy[1]),
+            path: String::from_utf8_lossy(path).into_owned(),
+            modified_at: None,
+            revision: String::from_utf8_lossy(&record[..record.len() - path.len()]).into_owned(),
         });
         offset = end + 1;
     }
@@ -671,6 +704,58 @@ mod tests {
     }
 
     #[test]
+    fn revisions_track_repeated_edits_staging_and_deletion_with_unchanged_status_codes() {
+        let directory = TestDirectory::new("edit-revisions");
+        let project = directory.init_repository();
+        let file = project.join("tracked.txt");
+        let client = GitClient::new();
+        let snapshot = || {
+            client
+                .repository_status(&project)
+                .unwrap()
+                .changes
+                .remove(0)
+        };
+        let edit = |text, seconds| {
+            fs::write(&file, text).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&file)
+                .unwrap()
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(UNIX_EPOCH + std::time::Duration::new(seconds, 123_456_789)),
+                )
+                .unwrap();
+        };
+        edit("staged one\n", 1_700_000_000);
+        git(&project, &["add", "tracked.txt"]);
+        edit("working one\n", 1_700_000_001);
+        let first = snapshot();
+        edit("working two\n", 1_700_000_002);
+        let second = snapshot();
+        assert_eq!(first.index_status, second.index_status);
+        assert_eq!(first.worktree_status, second.worktree_status);
+        assert_ne!(first.modified_at, second.modified_at);
+        assert_ne!(first.revision, second.revision);
+
+        edit("staged two\n", 1_700_000_003);
+        git(&project, &["add", "tracked.txt"]);
+        edit("working two\n", 1_700_000_002);
+        let staged = snapshot();
+        assert_eq!(second.index_status, staged.index_status);
+        assert_eq!(second.worktree_status, staged.worktree_status);
+        assert_eq!(second.modified_at, staged.modified_at);
+        assert_ne!(second.revision, staged.revision);
+
+        fs::remove_file(&file).unwrap();
+        let deleted = snapshot();
+        assert_eq!(deleted.worktree_status, "D");
+        assert_eq!(deleted.modified_at, None);
+        assert_ne!(staged.revision, deleted.revision);
+    }
+
+    #[test]
     fn returns_bounded_head_and_worktree_versions_for_changed_files() {
         let directory = TestDirectory::new("versions");
         let project = directory.init_repository();
@@ -772,6 +857,23 @@ mod tests {
             Err(GitError::MalformedStatus)
         ));
         assert!(parse_status(b"").unwrap().is_empty());
+        assert!(parse_status(b"1 .M too-few-fields\0").is_err());
+        assert!(parse_status(b"? \0").is_err());
+    }
+
+    #[test]
+    fn porcelain_v2_preserves_paths_and_unmerged_status() {
+        let changes = parse_status(b"1 .M N... 100644 100644 100644 head index path with spaces\0? line\nbreak\0u UU N... 100644 100644 100644 100644 base ours theirs conflict.txt\0").unwrap();
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].index_status, " ");
+        assert_eq!(changes[0].worktree_status, "M");
+        assert_eq!(changes[0].path, "path with spaces");
+        assert!(changes[0].revision.contains("index"));
+        assert_eq!(changes[1].index_status, "?");
+        assert_eq!(changes[1].path, "line\nbreak");
+        assert_eq!(changes[2].index_status, "U");
+        assert_eq!(changes[2].worktree_status, "U");
+        assert_eq!(changes[2].path, "conflict.txt");
     }
 
     #[test]
@@ -800,6 +902,7 @@ mod tests {
         );
         assert_eq!(status.changes.len(), 1);
         assert_eq!(status.changes[0].path, "nested.txt");
+        assert!(status.changes[0].modified_at.is_some());
         let diff = GitClient::new()
             .file_diff(&nested_project, "nested.txt")
             .unwrap();

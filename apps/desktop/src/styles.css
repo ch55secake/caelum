@@ -110,12 +110,13 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .transcript { position: relative; flex: 1; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; }
 .transcript-content { max-width: 856px; margin: 0 auto; padding: 22px 32px 30px; }
 .conversation-entry { min-width: 0; margin: 0 0 22px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
-.conversation-entry.user .message-heading > span { color: var(--accent); }
+.conversation-entry.user { margin-block: 28px 30px; padding-left: 16px; border-left: 2px solid var(--accent); }
+.conversation-entry.user .message-heading > span { color: var(--accent); font-weight: 650; letter-spacing: .07em; text-transform: uppercase; }
 .message-heading { display: flex; min-height: 25px; align-items: center; justify-content: space-between; margin-bottom: 5px; font-size: 11px; color: var(--muted); }
-.message-heading > span { font-weight: 500; }
+.message-heading > span { display: inline-flex; align-items: center; gap: 7px; font-weight: 500; }
 .message-heading .copy-button { opacity: 0; }
 .conversation-entry:hover .copy-button, .conversation-entry:focus-within .copy-button { opacity: 1; }
-.user-text { white-space: pre-wrap; }
+.user-text { white-space: pre-wrap; color: #eae6ff; font-weight: 500; }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 .markdown p { margin: 0 0 14px; }
@@ -202,6 +203,9 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .git-list-heading { display: flex; justify-content: space-between; padding: 6px 5px 10px; color: var(--muted); font-size: 10px; }
 .git-file-item, .changed-file-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: 7px; padding: 7px 5px; border: 0; color: #b8bac5; text-align: left; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: transparent; }.git-file-item.selected, .changed-file-item.selected { background: var(--hover); color: var(--text); }.git-file-item > span:last-child, .changed-file-item > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-status-code { width: 20px; flex: 0 0 auto; color: #d8b77d; text-align: center; font-size: 10px; }.git-status-code.untracked { color: #93bca0; }
+.git-file-item.latest { box-shadow: inset 2px 0 var(--accent); }
+.git-file-path { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-latest-badge { flex-shrink: 0; color: var(--accent); font: 9px ui-sans-serif, system-ui, sans-serif; }
 .git-diff-panel { min-width: 0; overflow: auto; }.git-diff-heading { position: sticky; z-index: 1; top: 0; overflow: hidden; padding: 10px 12px; border-bottom: 1px solid var(--border); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; background: var(--panel); }
 .git-diff-section h2 { margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 500; }.git-diff-section pre { overflow: auto; margin: 0; padding: 8px 0; color: #bec0cb; font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; }.git-diff-section pre span { display: block; min-width: max-content; padding: 0 12px; white-space: pre; }.git-diff-section pre .added { color: #a7d3ae; background: #142319; }.git-diff-section pre .removed { color: #e4a8aa; background: #2c181d; }.git-diff-section pre .hunk { color: #b8b0ee; background: #201c30; }
 .git-empty, .file-editor-empty { display: flex; min-height: 100px; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 20px; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; overflow-wrap: anywhere; }.git-empty strong, .file-editor-empty strong { color: var(--text); font-size: 13px; font-weight: 500; }
@@ -211,6 +215,7 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .changes-pane .git-changes-list { flex: 0 1 auto; max-height: 28%; padding: 4px 8px 8px; border: 0; border-bottom: 1px solid var(--border); background: transparent; }
 .changes-pane .git-diff-panel { flex: 1; min-height: 0; }.changes-pane .git-diff-heading { padding: 10px 13px; font-size: 11px; background: #15161a; }
 .changes-pane .git-diff-section pre { font-size: 11px; }.changes-pane .git-diff-section h2 { font-size: 10px; }
+.git-diff-section pre .latest-change { box-shadow: inset 3px 0 var(--accent); background-image: linear-gradient(90deg, #a39af61c, transparent); }
 .file-browser-sidebar { display: flex; min-height: 0; min-width: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); background: var(--sidebar); }
 .file-source-tabs { display: flex; flex: 0 0 auto; gap: 3px; padding: 7px; border-bottom: 1px solid var(--border); }.file-source-tabs button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 6px; min-height: 29px; border: 0; font-size: 11px; color: var(--muted); background: transparent; }.file-source-tabs button.selected { color: var(--text); background: var(--hover); }.file-source-tabs button span { font-size: 10px; }
 .file-tree-scroll, .changed-files-scroll { min-height: 0; flex: 1; overflow: auto; padding: 7px 5px; }.file-tree { display: flex; flex-direction: column; }.file-tree-node { min-width: 0; }.file-tree-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: 6px; padding: 6px 7px 6px calc(7px + var(--tree-depth) * 15px); border: 0; border-radius: 4px; color: #b1b3bf; text-align: left; background: transparent; }.file-tree-item.selected { color: var(--text); background: var(--hover); }.file-tree-item > svg { color: var(--muted); }.tree-chevron-space { width: 13px; flex-shrink: 0; }.file-tree-name { overflow: hidden; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }.file-tree-item.symlink { color: var(--muted); }.tree-loading-dot { width: 5px; height: 5px; margin-left: auto; border-radius: 50%; background: var(--accent); }.tree-error-mark { margin-left: auto; color: var(--danger); font-size: 11px; }

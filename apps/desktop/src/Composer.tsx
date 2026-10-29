@@ -10,6 +10,7 @@ import { ChoicePicker } from "./ChoicePicker.js";
 export function Composer({
   draft,
   setDraft,
+  lastMessage,
   provider,
   changeProvider,
   isNew,
@@ -33,6 +34,7 @@ export function Composer({
 }: {
   draft: string;
   setDraft: (text: string) => void;
+  lastMessage: string | null;
   provider: ProviderKind;
   changeProvider: (kind: ProviderKind) => void;
   isNew: boolean;
@@ -55,6 +57,7 @@ export function Composer({
   awaitingApproval: boolean;
 }) {
   const measurement = useRef<HTMLTextAreaElement>(null);
+  const recalled = useRef(false);
   const busy = working || submitting || awaitingApproval;
   const effortName = (name: string) =>
     name === "xhigh"
@@ -70,6 +73,11 @@ export function Composer({
     area.style.height = `${Math.min(180, Math.max(56, measure.scrollHeight))}px`;
   }
   useLayoutEffect(resizeInput, [draft, textareaRef]);
+  useLayoutEffect(() => {
+    if (!recalled.current) return;
+    recalled.current = false;
+    textareaRef.current?.setSelectionRange(draft.length, draft.length);
+  }, [draft, textareaRef]);
   useLayoutEffect(() => {
     const area = textareaRef.current;
     if (!area) return;
@@ -113,6 +121,7 @@ export function Composer({
         <textarea
           ref={textareaRef}
           aria-label="Message"
+          title={!draft && lastMessage ? "↑ Recall last message" : undefined}
           placeholder={
             working
               ? "Draft your next message…"
@@ -122,6 +131,22 @@ export function Composer({
           disabled={disabled}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
+            if (
+              event.key === "ArrowUp" &&
+              !event.nativeEvent.isComposing &&
+              !event.shiftKey &&
+              !event.altKey &&
+              !event.metaKey &&
+              !event.ctrlKey &&
+              !submitting &&
+              !draft &&
+              lastMessage
+            ) {
+              event.preventDefault();
+              recalled.current = true;
+              setDraft(lastMessage);
+              return;
+            }
             if (
               event.key === "Enter" &&
               !event.nativeEvent.isComposing &&
@@ -247,7 +272,9 @@ export function Composer({
                 ? "Model applies to next message"
                 : working
                   ? "Draft while the agent works"
-                  : "↵ Send · ⇧↵ Newline"}
+                  : !draft && lastMessage
+                    ? "↑ Recall · ↵ Send"
+                    : "↵ Send · ⇧↵ Newline"}
           </span>
           {working ? (
             <button

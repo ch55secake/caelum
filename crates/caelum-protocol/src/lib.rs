@@ -23,6 +23,12 @@ pub struct GitFileStatus {
     pub path: String,
     pub index_status: String,
     pub worktree_status: String,
+    /// Nanoseconds since the Unix epoch, encoded as text to retain precision in JavaScript.
+    #[serde(default)]
+    pub modified_at: Option<String>,
+    /// Opaque Git/index and working-tree metadata revision used to detect repeated edits.
+    #[serde(default)]
+    pub revision: String,
 }
 
 /// Read-only Git status scoped to the selected project directory.
@@ -411,6 +417,8 @@ mod tests {
                 path: "src/main.rs".into(),
                 index_status: "M".into(),
                 worktree_status: " ".into(),
+                modified_at: Some("1793275200000000001".into()),
+                revision: "index-and-worktree-revision".into(),
             }],
         };
         let diff = GitFileDiff {
@@ -429,7 +437,9 @@ mod tests {
                 "changes": [{
                     "path": "src/main.rs",
                     "indexStatus": "M",
-                    "worktreeStatus": " "
+                    "worktreeStatus": " ",
+                    "modifiedAt": "1793275200000000001",
+                    "revision": "index-and-worktree-revision"
                 }]
             })
         );

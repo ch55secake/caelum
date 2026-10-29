@@ -16,6 +16,7 @@ import { Sidebar, sessionTitle } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
 import { projectHasActiveTurn } from "./workspaceState.js";
+import { lastUserMessage } from "./shellMessages.js";
 
 export default function App() {
   const app = useWorkspace();
@@ -335,6 +336,9 @@ export default function App() {
                     app.selected?.draft ?? app.providerWorkspace?.draft ?? ""
                   }
                   setDraft={app.setDraft}
+                  lastMessage={lastUserMessage(
+                    app.selected?.conversation ?? [],
+                  )}
                   provider={app.provider}
                   changeProvider={app.changeProvider}
                   isNew={!app.selectedId}

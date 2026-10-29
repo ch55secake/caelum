@@ -48,9 +48,13 @@ export function splitShellMessages(text) {
     if (
       !attributes.id ||
       !attributes.command ||
-      !["running", "completed", "failed", "cancelled", "interrupted"].includes(
-        attributes.state,
-      )
+      ![
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+      ].includes(attributes.state)
     )
       continue;
     if (match.index > last)
@@ -64,7 +68,8 @@ export function splitShellMessages(text) {
     });
     last = match.index + match[0].length;
   }
-  if (last < text.length) parts.push({ type: "text", text: text.slice(last) });
+  if (last < text.length)
+    parts.push({ type: "text", text: text.slice(last) });
   return parts;
 }
 
@@ -96,4 +101,17 @@ export function conversationPresentation(entries) {
           : [],
     );
   });
+}
+
+export function lastUserMessage(entries) {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (entry.kind !== "user") continue;
+    const text = splitShellMessages(entry.text)
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+    if (text.trim()) return text;
+  }
+  return null;
 }

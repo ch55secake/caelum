@@ -5,6 +5,8 @@ import {
   BrainCircuit,
   LoaderCircle,
   ShieldCheck,
+  Sparkles,
+  UserRound,
 } from "lucide-react";
 import type {
   ConversationEntry,
@@ -294,6 +296,11 @@ export function Conversation({
                 <>
                   <div className="message-heading">
                     <span>
+                      {entry.kind === "user" ? (
+                        <UserRound size={13} aria-hidden="true" />
+                      ) : (
+                        <Sparkles size={13} aria-hidden="true" />
+                      )}
                       {entry.kind === "user"
                         ? "You"
                         : session.session.provider === "codex"

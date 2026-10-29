@@ -12,3 +12,4 @@ export function splitShellMessages(text: string): ShellMessagePart[];
 export function conversationPresentation(
   entries: ConversationEntry[],
 ): ConversationEntry[];
+export function lastUserMessage(entries: ConversationEntry[]): string | null;

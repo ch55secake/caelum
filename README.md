@@ -85,7 +85,9 @@ Open a project and send a message to create a session. Choose the provider and a
 
 Responses and thinking update live. Expand a thinking row to read the provider's summary or trace. A subtle composer outline pulses throughout work, including long-running commands and tool calls, which show elapsed time. Reduced-motion settings keep the outline static. Sending a message returns the transcript to the latest response. OpenCode connects to its existing local background service when available.
 
-The **Changes** pane shows project diffs beside the conversation and refreshes while the agent works. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
+The **Changes** pane follows the latest edited file while the agent works, marks it **Latest**, and reveals newly changed diff hunks. Repeated edits to already-dirty files are detected; unchanged refreshes preserve your selection and reading position. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
+
+Your messages have an accent rail and a distinct **You** heading. Press **↑** in an empty composer to recall the last message sent in that session, ready to edit and resend.
 
 Session rows show a branch and added/deleted lines from the latest turn when available. Hover the branch to see whether it is recorded with the session (Codex) or the current working-directory branch (OpenCode). Search also matches branch names. Hover or focus a row to **Archive** an old session; **Undo** restores the most recently archived session, including its in-app draft and pending settings. Archiving uses the provider’s archive and keeps its conversation history. Stop an active turn before archiving.
 

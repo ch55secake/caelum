@@ -44,10 +44,35 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
       let historyGate: Promise<void> | null = null;
       let startGate: Promise<void> | null = null;
       let releaseStart: () => void = () => {};
-      let gitFiles = [
-        { path: "src/App.tsx", indexStatus: " ", worktreeStatus: "M" },
-        { path: "src/styles.css", indexStatus: "M", worktreeStatus: " " },
-      ];
+      type GitChange = {
+        path: string;
+        indexStatus: string;
+        worktreeStatus: string;
+        modifiedAt?: string | null;
+        revision?: string;
+      };
+      const gitProjects = new Map<string, GitChange[]>([
+        [
+          project.path,
+          [
+            {
+              path: "src/App.tsx",
+              indexStatus: " ",
+              worktreeStatus: "M",
+              modifiedAt: "200",
+              revision: "app-1",
+            },
+            {
+              path: "src/styles.css",
+              indexStatus: "M",
+              worktreeStatus: " ",
+              modifiedAt: "100",
+              revision: "css-1",
+            },
+          ],
+        ],
+      ]);
+      const gitDiffs = new Map<string, Record<string, string>>();
       let diffVersion = 1;
       let openHistory: unknown[] = [
         {
@@ -89,8 +114,15 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           ) => {
             sessionDetails.set(`${provider}:${id}`, value);
           },
-          setGitFiles: (files: typeof gitFiles) => {
-            gitFiles = files;
+          setGitFiles: (files: GitChange[], path = project.path) => {
+            gitProjects.set(path, files);
+          },
+          setGitDiff: (
+            file: string,
+            diff: Record<string, string>,
+            path = project.path,
+          ) => {
+            gitDiffs.set(`${path}:${file}`, diff);
           },
           setDiffVersion: (version: number) => {
             diffVersion = version;
@@ -406,15 +438,18 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               emit("approval-requests", []);
               return;
             }
-            if (command === "git_repository_status")
-              return {
-                projectPath: project.path,
-                repositoryRoot: project.path,
+            if (command === "git_repository_status") {
+              const snapshot = {
+                projectPath: args.projectPath,
+                repositoryRoot: args.projectPath,
                 branch: "main",
-                changes: gitFiles,
+                changes: gitProjects.get(args.projectPath) ?? [],
               };
-            if (command === "git_file_diff")
-              return {
+              await gates.get(command)?.promise;
+              return snapshot;
+            }
+            if (command === "git_file_diff") {
+              const snapshot = {
                 path: args.filePath,
                 staged: args.filePath.endsWith(".css")
                   ? `diff --git a/${args.filePath} b/${args.filePath}\n@@ -1 +1 @@\n-background: white;\n+background: #0b0c0e; /* revision ${diffVersion} */`
@@ -423,7 +458,11 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                   ? `diff --git a/${args.filePath} b/${args.filePath}\n@@ -1 +1 @@\n-const layout = 'page';\n+const layout = 'split'; // revision ${diffVersion}`
                   : "",
                 untracked: "",
+                ...gitDiffs.get(`${args.projectPath}:${args.filePath}`),
               };
+              await gates.get(command)?.promise;
+              return snapshot;
+            }
             if (
               [
                 "remember_project",
@@ -939,6 +978,110 @@ test("typing and resizing a draft keep the latest response pinned without moving
   expect(await transcript.evaluate((node) => node.scrollTop)).toBe(250);
 });
 
+for (const provider of ["codex", "opencode"]) {
+  test(`${provider} recalls the last sent message with Up Arrow without replacing drafts or crossing sessions`, async ({
+    page,
+  }) => {
+    const oldPrompt =
+      provider === "codex"
+        ? "Make the workspace darker and easier to use."
+        : "Review the OpenCode changes.\nKeep the reply short.";
+    const title =
+      provider === "codex"
+        ? "Refine the session workspace"
+        : "OpenCode session";
+    const id = provider === "codex" ? "thread-a" : "ses-a";
+    await desktop(page, provider === "codex" ? id : null);
+    if (provider === "opencode") {
+      await page.evaluate(
+        (text) =>
+          (window as any).fixture.setOpenHistory([
+            { id: "old-user", type: "user", text },
+            {
+              id: "old-answer",
+              type: "assistant",
+              content: [{ type: "text", text: "Ready to review." }],
+            },
+          ]),
+        oldPrompt,
+      );
+      await choose(page, "Provider", "OpenCode");
+      await page.getByRole("button", { name: title, exact: true }).click();
+    }
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(page.locator(".user-text").last()).toHaveText(oldPrompt);
+    await input.press("Shift+ArrowUp");
+    await expect(input).toHaveValue("");
+    await input.dispatchEvent("keydown", {
+      key: "ArrowUp",
+      isComposing: true,
+    });
+    await expect(input).toHaveValue("");
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue(oldPrompt);
+    expect(
+      await input.evaluate(
+        (node: HTMLTextAreaElement) => node.selectionStart,
+      ),
+    ).toBe(oldPrompt.length);
+    await input.fill("An unsent draft\nSecond line");
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue("An unsent draft\nSecond line");
+
+    const prompt = "Please refine this change.\nKeep the compact layout.";
+    await input.fill(prompt);
+    await input.press("Enter");
+    await expect(input).toHaveValue("");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (provider) =>
+            (window as any).fixture.calls.filter(
+              (call: any) => call.command === `${provider}_send_prompt`,
+            ).length,
+          provider,
+        ),
+      )
+      .toBe(1);
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue(prompt);
+    await expect(input).toBeFocused();
+    await page.screenshot({
+      path: `test-results/${provider}-message-contrast.png`,
+    });
+    await page.setViewportSize({ width: 800, height: 620 });
+    await page.screenshot({
+      path: `test-results/${provider}-message-contrast-minimum.png`,
+    });
+    await page.getByRole("button", { name: /New session/ }).click();
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue("");
+    await page.getByRole("button", { name: title, exact: true }).click();
+    await expect(input).toHaveValue(prompt);
+    await emit(
+      page,
+      provider === "codex" ? "turn/completed" : "session.idle",
+      provider === "codex"
+        ? { threadId: id, turn: { id: "turn-new", status: "completed" } }
+        : { sessionID: id, outcome: "succeeded" },
+      provider,
+    );
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toHaveCount(0);
+    await page.evaluate(() => (window as any).fixture.failSend());
+    await input.fill("This send will fail");
+    await input.press("Enter");
+    await expect(page.getByRole("alert")).toContainText("Connection refused");
+    await input.fill("");
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue(prompt);
+  });
+}
+
 test("first send creates one session; failure retains a retryable draft; generation permits drafting", async ({
   page,
 }) => {
@@ -1220,7 +1363,7 @@ test("navigating while first-send creation is pending does not steal the selecte
   ).toContainText("Background task");
 });
 
-test("changes stay beside the conversation and refresh the selected diff during work", async ({
+test("changes follow the most recently edited file during work and preserve manual review between edits", async ({
   page,
 }) => {
   await page.clock.install();
@@ -1230,6 +1373,9 @@ test("changes stay beside the conversation and refresh the selected diff during 
   await expect(
     pane.getByRole("region", { name: "Unstaged diff" }),
   ).toContainText("const layout = 'split'");
+  await expect(pane.locator(".git-file-item.latest")).toContainText(
+    "src/App.tsx",
+  );
   await input.fill("Keep this draft");
   await pane
     .getByRole("button", { name: "src/styles.css, Staged modified" })
@@ -1244,14 +1390,45 @@ test("changes stay beside the conversation and refresh the selected diff during 
   await expect(
     pane.getByRole("button", { name: "Refresh Git status" }),
   ).toBeEnabled();
-  await page.evaluate(() => (window as any).fixture.setDiffVersion(2));
+  await page.evaluate(() => {
+    (window as any).fixture.setDiffVersion(2);
+    (window as any).fixture.setGitFiles([
+      {
+        path: "src/App.tsx",
+        indexStatus: " ",
+        worktreeStatus: "M",
+        modifiedAt: "300",
+        revision: "app-2",
+      },
+      {
+        path: "src/styles.css",
+        indexStatus: "M",
+        worktreeStatus: " ",
+        modifiedAt: "100",
+        revision: "css-1",
+      },
+    ]);
+  });
   await page.clock.runFor(2600);
   await expect(
-    pane.getByRole("region", { name: "Staged diff" }),
+    pane.getByRole("region", { name: "Unstaged diff" }),
   ).toContainText("revision 2");
+  await expect(
+    pane.getByRole("button", { name: "src/App.tsx, Unstaged modified" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(pane.locator(".latest-change.added")).toContainText(
+    "revision 2",
+  );
+  await pane
+    .getByRole("button", { name: "src/styles.css, Staged modified" })
+    .click();
+  await page.clock.runFor(2600);
   await expect(
     pane.getByRole("button", { name: "src/styles.css, Staged modified" }),
   ).toHaveAttribute("aria-pressed", "true");
+  await expect(pane.locator(".git-file-item.latest")).toContainText(
+    "src/App.tsx",
+  );
   await expect(input).toHaveValue("Keep this draft");
   await expect(
     page.getByRole("heading", { name: "A focused workspace" }),
@@ -1290,6 +1467,160 @@ test("changes stay beside the conversation and refresh the selected diff during 
   await expect(input).toHaveValue("Keep this draft");
   await page.getByRole("button", { name: "Show changes" }).click();
   await expect(pane.getByText("Working tree clean")).toBeVisible();
+});
+
+test("repeated edits reveal the updated hunk without shifting the transcript or unchanged review", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page);
+  const pane = page.getByRole("complementary", { name: "Project changes" });
+  const panel = pane.locator(".git-diff-panel");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const refresh = pane.getByRole("button", { name: "Refresh Git status" });
+  const update = async (version: number) => {
+    await page.evaluate((version) => {
+      const fixture = (window as any).fixture;
+      const content = [
+        "diff --git a/src/App.tsx b/src/App.tsx",
+        "@@ -1,40 +1,40 @@",
+        "-old header",
+        "+existing header",
+        ...Array.from({ length: 35 }, (_, index) => ` context ${index}`),
+        "@@ -100,3 +100,3 @@",
+        "-old footer",
+        `+latest footer ${version}`,
+        " unchanged footer",
+      ].join("\n");
+      fixture.setGitDiff("src/App.tsx", { unstaged: content });
+      fixture.setGitFiles([
+        {
+          path: "src/App.tsx",
+          indexStatus: " ",
+          worktreeStatus: "M",
+          modifiedAt: String(300 + version),
+          revision: `app-${version}`,
+        },
+        {
+          path: "src/styles.css",
+          indexStatus: "M",
+          worktreeStatus: " ",
+          modifiedAt: "100",
+          revision: "css-1",
+        },
+      ]);
+    }, version);
+  };
+  await update(1);
+  await refresh.click();
+  await expect(
+    pane.getByText("+latest footer 1", { exact: true }),
+  ).toBeAttached();
+  await page.getByRole("button", { name: "Load earlier messages" }).click();
+  await expect(page.locator(".conversation-entry")).toHaveCount(100);
+  const transcript = page.locator(".transcript");
+  await transcript.evaluate((node) => {
+    node.scrollTop = 250;
+  });
+  await input.fill("Keep this draft and caret");
+  await expect(
+    page.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeVisible();
+  await emit(page, "turn/started", {
+    threadId: "thread-a",
+    turn: { id: "edit" },
+  });
+  await expect(refresh).toBeEnabled();
+  await panel.evaluate((node) => {
+    node.scrollTop = 0;
+  });
+  await update(2);
+  await input.focus();
+  await page.clock.runFor(2600);
+  const latest = pane.locator(".latest-change.added");
+  await expect(latest).toHaveText("+latest footer 2\n");
+  await expect(latest).toBeInViewport({ ratio: 1 });
+  await expect(
+    pane.getByText("+existing header", { exact: true }),
+  ).not.toHaveClass(/latest-change/);
+  expect(await panel.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(await transcript.evaluate((node) => node.scrollTop)).toBe(250);
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Keep this draft and caret");
+  await page.screenshot({ path: "test-results/latest-change-hunk.png" });
+  await panel.evaluate((node) => {
+    node.scrollTop = 80;
+  });
+  await page.clock.runFor(2600);
+  expect(await panel.evaluate((node) => node.scrollTop)).toBe(80);
+});
+
+test("late Git responses cannot replace a newer selection or another project's diff", async ({
+  page,
+}) => {
+  await desktop(page);
+  const pane = page.getByRole("complementary", { name: "Project changes" });
+  const refresh = pane.getByRole("button", { name: "Refresh Git status" });
+  await expect(pane.getByText(/const layout = 'split'/)).toBeVisible();
+  await page.evaluate(() => (window as any).fixture.hold("git_file_diff"));
+  await refresh.click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.command === "git_file_diff",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await pane
+    .getByRole("button", { name: "src/styles.css, Staged modified" })
+    .click();
+  await page.evaluate(() => (window as any).fixture.release("git_file_diff"));
+  await expect(
+    pane.getByRole("region", { name: "Staged diff" }),
+  ).toContainText("background");
+  await expect(
+    pane.getByRole("region", { name: "Unstaged diff", exact: true }),
+  ).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.hold("git_repository_status");
+    fixture.setGitFiles(
+      [
+        {
+          path: "src/App.tsx",
+          indexStatus: " ",
+          worktreeStatus: "M",
+          modifiedAt: "999",
+          revision: "other",
+        },
+      ],
+      "/work/other",
+    );
+    fixture.setGitDiff(
+      "src/App.tsx",
+      { unstaged: "@@ -1 +1 @@\n-old\n+Other project" },
+      "/work/other",
+    );
+  });
+  await refresh.click();
+  await page
+    .getByRole("button", { name: "Open project", exact: true })
+    .click();
+  await expect(page.locator(".project-row.selected")).toContainText("other");
+  await page.evaluate(() =>
+    (window as any).fixture.release("git_repository_status"),
+  );
+  await expect(
+    pane.getByRole("region", { name: "Unstaged diff" }),
+  ).toContainText("Other project");
+  await expect(pane.locator(".git-file-item.latest")).toContainText(
+    "src/App.tsx",
+  );
+  await expect(pane.getByText(/background: #0b0c0e/)).toHaveCount(0);
 });
 
 test("model picker searches capabilities, supports keyboard selection and returns focus", async ({
