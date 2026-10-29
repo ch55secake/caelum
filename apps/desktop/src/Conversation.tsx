@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ChevronDown,
@@ -9,6 +9,7 @@ import type { SessionWorkspaceState } from "./workspaceState.js";
 import type { ApprovalPrompt } from "./useWorkspace.js";
 import { CopyButton, MessageContent } from "./MessageContent.js";
 import { ToolActivity } from "./ToolActivity.js";
+import { conversationPresentation } from "./shellMessages.js";
 
 export function ApprovalCard({
   request,
@@ -71,7 +72,10 @@ export function Conversation({
   endRef.current = end;
   const save = useRef(saveView);
   save.current = saveView;
-  const entries = session.conversation;
+  const entries = useMemo(
+    () => conversationPresentation(session.conversation),
+    [session.conversation],
+  );
   const endIndex =
     end === null ? -1 : entries.findIndex((entry) => entry.id === end);
   const windowEnd = endIndex < 0 ? entries.length : endIndex + 1;

@@ -4,6 +4,7 @@ import {
   FolderOpen,
   LoaderCircle,
   PanelLeftOpen,
+  PanelRight,
   Search,
   ShieldAlert,
   X,
@@ -14,10 +15,12 @@ import { useWorkspace } from "./useWorkspace.js";
 import { Sidebar, sessionTitle } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
+import { projectHasActiveTurn } from "./workspaceState.js";
 
 export default function App() {
   const app = useWorkspace();
   const [collapsed, setCollapsed] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(true);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -25,15 +28,19 @@ export default function App() {
   const title =
     app.view === "files"
       ? "Files"
-      : app.view === "changes"
-        ? "Changes"
-        : app.selected
-          ? sessionTitle(
-              app.providerWorkspace?.sessions.find(
-                (item) => item.id === app.selectedId,
-              ) ?? app.selected.session.thread,
-            )
-          : "New session";
+      : app.selected
+        ? sessionTitle(
+            app.providerWorkspace?.sessions.find(
+              (item) => item.id === app.selectedId,
+            ) ?? app.selected.session.thread,
+          )
+        : "New session";
+  function toggleChanges() {
+    if (app.view !== "session") {
+      app.setView("session");
+      setChangesOpen(true);
+    } else setChangesOpen((value) => !value);
+  }
   function newSession() {
     app.newSession();
     setSearch("");
@@ -92,6 +99,8 @@ export default function App() {
           setSearch={setSearch}
           searchRef={searchRef}
           newSession={newSession}
+          changesOpen={changesOpen && app.view === "session"}
+          toggleChanges={toggleChanges}
         />
       )}
       <section className="main-panel">
@@ -150,6 +159,22 @@ export default function App() {
             >
               <Search size={15} />
             </button>
+            {app.project && (
+              <button
+                className="icon-button changes-toggle"
+                aria-label={
+                  changesOpen && app.view === "session"
+                    ? "Hide changes"
+                    : "Show changes"
+                }
+                aria-expanded={changesOpen && app.view === "session"}
+                aria-controls="changes-pane"
+                title="Toggle changes pane"
+                onClick={toggleChanges}
+              >
+                <PanelRight size={16} />
+              </button>
+            )}
           </div>
         </header>
         {app.error && (
@@ -168,150 +193,169 @@ export default function App() {
           <div className="panel-content">
             <FilesPanel project={app.project} />
           </div>
-        ) : app.view === "changes" ? (
-          <div className="panel-content">
-            <GitReviewPanel project={app.project} />
-          </div>
         ) : (
-          <div className="session-workspace">
-            {sessionError && (
-              <div className="error-banner" role="alert">
-                <span>{sessionError}</span>
-                {!app.selected && app.project && (
+          <div
+            className={`session-layout${changesOpen && app.project ? " with-changes" : ""}`}
+          >
+            <div className="session-workspace">
+              {sessionError && (
+                <div className="error-banner" role="alert">
+                  <span>{sessionError}</span>
+                  {!app.selected && app.project && (
+                    <button
+                      onClick={() =>
+                        void app.loadSessions(app.project!, app.provider)
+                      }
+                    >
+                      Retry connection
+                    </button>
+                  )}
+                </div>
+              )}
+              {app.selected?.connection === "disconnected" && (
+                <div className="connection-banner">
+                  <span>
+                    Connection lost. Reconnect to continue this session.
+                  </span>
                   <button
-                    onClick={() =>
-                      void app.loadSessions(app.project!, app.provider)
-                    }
+                    onClick={() => {
+                      if (app.project && app.selected)
+                        void app.connectSession(
+                          app.project,
+                          app.provider,
+                          app.selected.session.thread,
+                        );
+                    }}
                   >
-                    Retry connection
+                    Reconnect
                   </button>
-                )}
-              </div>
-            )}
-            {app.selected?.connection === "disconnected" && (
-              <div className="connection-banner">
-                <span>
-                  Connection lost. Reconnect to continue this session.
-                </span>
-                <button
-                  onClick={() => {
-                    if (app.project && app.selected)
-                      void app.connectSession(
-                        app.project,
-                        app.provider,
-                        app.selected.session.thread,
-                      );
-                  }}
-                >
-                  Reconnect
-                </button>
-              </div>
-            )}
-            {projectApprovals.map((request) => (
-              <ApprovalCard
-                key={request.requestId}
-                request={request}
-                resolving={Boolean(app.resolving)}
-                resolve={(decision) =>
-                  void app.resolveApproval(request, decision)
-                }
-              />
-            ))}
-            {!app.project ? (
-              <div className="session-empty">
-                {app.restoring ? (
-                  <>
-                    <LoaderCircle size={22} className="spinning" />
-                    <span>Restoring workspace…</span>
-                  </>
-                ) : (
-                  <button
-                    className="open-project-button"
-                    onClick={() => void app.chooseProject()}
-                    disabled={app.selecting}
-                  >
-                    <FolderOpen size={18} />
-                    Open project
-                  </button>
-                )}
-              </div>
-            ) : app.selected ? (
-              <Conversation
-                key={sessionKey}
-                session={app.selected}
-                saveView={(value) =>
-                  app.mutateSession(
-                    app.project!.path,
-                    app.provider,
-                    app.selectedId!,
-                    (current) => ({ ...current, ...value }),
-                  )
-                }
-                loadOlder={() =>
-                  app.loadHistory(
-                    app.project!.path,
-                    app.provider,
-                    app.selectedId!,
-                    true,
-                  )
-                }
-                retryHistory={() =>
-                  void app.loadHistory(
-                    app.project!.path,
-                    app.provider,
-                    app.selectedId!,
+                </div>
+              )}
+              {projectApprovals.map((request) => (
+                <ApprovalCard
+                  key={request.requestId}
+                  request={request}
+                  resolving={Boolean(app.resolving)}
+                  resolve={(decision) =>
+                    void app.resolveApproval(request, decision)
+                  }
+                />
+              ))}
+              {!app.project ? (
+                <div className="session-empty">
+                  {app.restoring ? (
+                    <>
+                      <LoaderCircle size={22} className="spinning" />
+                      <span>Restoring workspace…</span>
+                    </>
+                  ) : (
+                    <button
+                      className="open-project-button"
+                      onClick={() => void app.chooseProject()}
+                      disabled={app.selecting}
+                    >
+                      <FolderOpen size={18} />
+                      Open project
+                    </button>
+                  )}
+                </div>
+              ) : app.selected ? (
+                <Conversation
+                  key={sessionKey}
+                  session={app.selected}
+                  saveView={(value) =>
+                    app.mutateSession(
+                      app.project!.path,
+                      app.provider,
+                      app.selectedId!,
+                      (current) => ({ ...current, ...value }),
+                    )
+                  }
+                  loadOlder={() =>
+                    app.loadHistory(
+                      app.project!.path,
+                      app.provider,
+                      app.selectedId!,
+                      true,
+                    )
+                  }
+                  retryHistory={() =>
+                    void app.loadHistory(
+                      app.project!.path,
+                      app.provider,
+                      app.selectedId!,
+                      Boolean(
+                        app.selected?.historyLoaded && app.selected.nextCursor,
+                      ),
+                    )
+                  }
+                  approvals={activeApprovals}
+                  resolving={Boolean(app.resolving)}
+                  resolve={(request, decision) =>
+                    void app.resolveApproval(request, decision)
+                  }
+                />
+              ) : (
+                <div className="session-empty">
+                  <h1>New session</h1>
+                  <p>What would you like to work on?</p>
+                </div>
+              )}
+              {app.project && (
+                <Composer
+                  key={`composer-${sessionKey}`}
+                  textareaRef={textareaRef}
+                  draft={
+                    app.selected?.draft ?? app.providerWorkspace?.draft ?? ""
+                  }
+                  setDraft={app.setDraft}
+                  provider={app.provider}
+                  changeProvider={app.changeProvider}
+                  isNew={!app.selectedId}
+                  working={app.selected?.isWorking ?? false}
+                  submitting={
+                    app.selected?.isSubmitting ||
+                    (!app.selectedId && app.providerWorkspace?.isCreating) ||
+                    false
+                  }
+                  disabled={
                     Boolean(
-                      app.selected?.historyLoaded && app.selected.nextCursor,
-                    ),
-                  )
-                }
-                approvals={activeApprovals}
-                resolving={Boolean(app.resolving)}
-                resolve={(request, decision) =>
-                  void app.resolveApproval(request, decision)
-                }
-              />
-            ) : (
-              <div className="session-empty">
-                <h1>New session</h1>
-                <p>What would you like to work on?</p>
-              </div>
-            )}
-            {app.project && (
-              <Composer
-                key={`composer-${sessionKey}`}
-                textareaRef={textareaRef}
-                draft={
-                  app.selected?.draft ?? app.providerWorkspace?.draft ?? ""
-                }
-                setDraft={app.setDraft}
-                provider={app.provider}
-                changeProvider={app.changeProvider}
-                isNew={!app.selectedId}
-                working={app.selected?.isWorking ?? false}
-                submitting={
-                  app.selected?.isSubmitting ||
-                  (!app.selectedId && app.providerWorkspace?.isCreating) ||
-                  false
-                }
-                disabled={
-                  Boolean(
-                    app.selectedId &&
-                    (!app.selected || app.selected.connection !== "connected"),
-                  ) ||
-                  Boolean(!app.selectedId && app.providerWorkspace?.isCreating)
-                }
-                submit={() => void app.submit()}
-                cancel={() => void app.cancel()}
-                choices={app.providerWorkspace?.choices ?? null}
-                choicesError={app.providerWorkspace?.choicesError ?? null}
-                model={app.providerWorkspace?.model ?? ""}
-                agent={app.providerWorkspace?.agent ?? ""}
-                setOption={app.setOption}
-                retryChoices={() =>
-                  void app.loadChoices(app.project!, app.provider)
-                }
-              />
+                      app.selectedId &&
+                      (!app.selected ||
+                        app.selected.connection !== "connected"),
+                    ) ||
+                    Boolean(
+                      !app.selectedId && app.providerWorkspace?.isCreating,
+                    )
+                  }
+                  submit={() => void app.submit()}
+                  cancel={() => void app.cancel()}
+                  choices={app.providerWorkspace?.choices ?? null}
+                  choicesError={app.providerWorkspace?.choicesError ?? null}
+                  model={app.providerWorkspace?.model ?? ""}
+                  agent={app.providerWorkspace?.agent ?? ""}
+                  setOption={app.setOption}
+                  retryChoices={() =>
+                    void app.loadChoices(app.project!, app.provider)
+                  }
+                />
+              )}
+            </div>
+            {changesOpen && app.project && (
+              <aside
+                id="changes-pane"
+                className="changes-pane"
+                aria-label="Project changes"
+              >
+                <GitReviewPanel
+                  key={app.project.path}
+                  project={app.project}
+                  working={Boolean(
+                    app.workspace && projectHasActiveTurn(app.workspace),
+                  )}
+                  close={() => setChangesOpen(false)}
+                />
+              </aside>
             )}
           </div>
         )}

@@ -9,11 +9,69 @@ import { displayValue } from "./conversationState.js";
 import type { ConversationEntry } from "./workspaceState.js";
 import { CopyButton } from "./MessageContent.js";
 import { useState } from "react";
+import { splitShellMessages } from "./shellMessages.js";
 
-function ToolValue({ label, value }: { label: string; value: unknown }) {
+function ShellIdentity({ id }: { id: string }) {
+  return (
+    <div className="tool-execution-id">
+      <span>Shell</span>
+      <code>{id}</code>
+      <CopyButton text={id} label="Copy shell ID" />
+    </div>
+  );
+}
+
+function ToolValue({
+  label,
+  value,
+  parseShell = true,
+}: {
+  label: string;
+  value: unknown;
+  parseShell?: boolean;
+}) {
   const [full, setFull] = useState(false);
   const text = displayValue(value);
   if (!text) return null;
+  const parts =
+    label === "Output" && parseShell ? splitShellMessages(text) : [];
+  if (parts.some((part) => part.type === "shell"))
+    return (
+      <div className="tool-value">
+        {parts.map((part, index) =>
+          part.type === "text" ? (
+            <ToolValue
+              key={index}
+              label="Output"
+              value={part.text}
+              parseShell={false}
+            />
+          ) : (
+            <section
+              key={index}
+              className="shell-output"
+              aria-label={`Shell ${part.id}`}
+            >
+              <div className="shell-output-heading">
+                <strong>Run</strong>
+                <span>{part.state}</span>
+              </div>
+              <ShellIdentity id={part.id} />
+              <ToolValue
+                label="Input"
+                value={part.command}
+                parseShell={false}
+              />
+              <ToolValue
+                label="Output"
+                value={part.output}
+                parseShell={false}
+              />
+            </section>
+          ),
+        )}
+      </div>
+    );
   return (
     <div className="tool-value">
       <div className="tool-value-heading">
@@ -96,6 +154,7 @@ export function ToolActivity({
       </button>
       {expanded && (
         <div className="tool-details">
+          {entry.executionId && <ShellIdentity id={entry.executionId} />}
           <ToolValue label="Input" value={entry.input} />
           <ToolValue label="Output" value={entry.output} />
           <ToolValue label="Error" value={entry.error} />

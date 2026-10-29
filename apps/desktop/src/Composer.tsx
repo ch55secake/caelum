@@ -1,6 +1,7 @@
 import { useLayoutEffect, type RefObject } from "react";
-import { ArrowUp, LoaderCircle, Square } from "lucide-react";
+import { ArrowUp, Bot, Cpu, Layers, LoaderCircle, Square } from "lucide-react";
 import type { ProviderKind, ProviderChoices } from "./workspaceState.js";
+import { ChoicePicker } from "./ChoicePicker.js";
 
 export function Composer({
   draft,
@@ -81,46 +82,50 @@ export function Composer({
           <div className="composer-controls">
             {isNew ? (
               <>
-                <select
-                  aria-label="Provider"
+                <ChoicePicker
+                  label="Provider"
+                  icon={<Layers size={13} />}
                   value={provider}
-                  onChange={(event) =>
-                    changeProvider(event.target.value as ProviderKind)
-                  }
+                  onChange={(value) => changeProvider(value as ProviderKind)}
                   disabled={submitting}
-                >
-                  <option value="codex">Codex</option>
-                  <option value="opencode">OpenCode</option>
-                </select>
+                  choices={[
+                    { id: "codex", name: "Codex" },
+                    { id: "opencode", name: "OpenCode" },
+                  ]}
+                />
                 {Boolean(choices?.models.length) && (
-                  <select
-                    aria-label="Model"
+                  <ChoicePicker
+                    label="Model"
+                    icon={<Cpu size={13} />}
                     value={model}
                     disabled={submitting}
-                    onChange={(event) => setOption("model", event.target.value)}
-                  >
-                    <option value="">Default model</option>
-                    {choices!.models.map((choice) => (
-                      <option key={choice.id} value={choice.id}>
-                        {choice.name}
-                      </option>
-                    ))}
-                  </select>
+                    searchable
+                    onChange={(value) => setOption("model", value)}
+                    choices={[
+                      {
+                        id: "",
+                        name: "Default model",
+                        description: "Use provider settings",
+                      },
+                      ...choices!.models.map((choice) => ({
+                        ...choice,
+                        description: choice.id,
+                      })),
+                    ]}
+                  />
                 )}
                 {Boolean(choices?.agents.length) && (
-                  <select
-                    aria-label="Agent"
+                  <ChoicePicker
+                    label="Agent"
+                    icon={<Bot size={13} />}
                     value={agent}
                     disabled={submitting}
-                    onChange={(event) => setOption("agent", event.target.value)}
-                  >
-                    <option value="">Default agent</option>
-                    {choices!.agents.map((choice) => (
-                      <option key={choice.id} value={choice.id}>
-                        {choice.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(value) => setOption("agent", value)}
+                    choices={[
+                      { id: "", name: "Default agent" },
+                      ...choices!.agents,
+                    ]}
+                  />
                 )}
                 {choicesError && (
                   <button

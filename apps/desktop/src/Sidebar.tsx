@@ -32,6 +32,8 @@ export function Sidebar({
   setSearch,
   searchRef,
   newSession,
+  changesOpen,
+  toggleChanges,
 }: {
   app: WorkspaceController;
   collapse: () => void;
@@ -39,6 +41,8 @@ export function Sidebar({
   setSearch: (text: string) => void;
   searchRef: RefObject<HTMLInputElement | null>;
   newSession: () => void;
+  changesOpen: boolean;
+  toggleChanges: () => void;
 }) {
   const sessions = (["codex", "opencode"] as ProviderKind[])
     .flatMap((provider) =>
@@ -144,9 +148,10 @@ export function Sidebar({
           Files
         </button>
         <button
-          className={`nav-item${app.view === "changes" ? " active" : ""}`}
+          className={`nav-item${changesOpen ? " active" : ""}`}
           disabled={!app.project}
-          onClick={() => app.setView("changes")}
+          onClick={toggleChanges}
+          aria-pressed={changesOpen}
         >
           <GitBranch size={15} />
           Changes

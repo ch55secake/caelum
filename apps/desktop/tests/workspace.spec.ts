@@ -26,6 +26,11 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
       let historyGate: Promise<void> | null = null;
       let startGate: Promise<void> | null = null;
       let releaseStart: () => void = () => {};
+      let gitFiles = [
+        { path: "src/App.tsx", indexStatus: " ", worktreeStatus: "M" },
+        { path: "src/styles.css", indexStatus: "M", worktreeStatus: " " },
+      ];
+      let diffVersion = 1;
       let openHistory: unknown[] = [
         {
           id: "msg-history",
@@ -43,6 +48,12 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         fixture: {
           calls,
           emit,
+          setGitFiles: (files: typeof gitFiles) => {
+            gitFiles = files;
+          },
+          setDiffVersion: (version: number) => {
+            diffVersion = version;
+          },
           failSend: () => {
             failNextSend = true;
           },
@@ -108,7 +119,10 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             if (command === "plugin:opener|open_url") return;
             if (command === "provider_choices")
               return {
-                models: [{ id: "provider/model", name: "Test model" }],
+                models: [
+                  { id: "provider/model", name: "Test model" },
+                  { id: "provider/fast", name: "Fast model" },
+                ],
                 agents:
                   args.provider === "opencode"
                     ? [{ id: "build", name: "Build" }]
@@ -226,12 +240,23 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               emit("approval-requests", []);
               return;
             }
-            if (command === "project_git_status")
+            if (command === "git_repository_status")
               return {
                 projectPath: project.path,
                 repositoryRoot: project.path,
                 branch: "main",
-                changes: [],
+                changes: gitFiles,
+              };
+            if (command === "git_file_diff")
+              return {
+                path: args.filePath,
+                staged: args.filePath.endsWith(".css")
+                  ? `diff --git a/${args.filePath} b/${args.filePath}\n@@ -1 +1 @@\n-background: white;\n+background: #0b0c0e; /* revision ${diffVersion} */`
+                  : "",
+                unstaged: args.filePath.endsWith(".tsx")
+                  ? `diff --git a/${args.filePath} b/${args.filePath}\n@@ -1 +1 @@\n-const layout = 'page';\n+const layout = 'split'; // revision ${diffVersion}`
+                  : "",
+                untracked: "",
               };
             if (
               [
@@ -273,6 +298,11 @@ async function emit(
       ),
     { method, params, provider },
   );
+}
+
+async function choose(page: Page, label: string, option: string) {
+  await page.getByRole("button", { name: label, exact: true }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
 }
 
 test("restores Markdown and tool details in a full-height dark workspace", async ({
@@ -323,9 +353,7 @@ test("first send creates one session; failure retains a retryable draft; generat
 }) => {
   await desktop(page, null);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
-  await page
-    .getByRole("combobox", { name: "Model", exact: true })
-    .selectOption("provider/model");
+  await choose(page, "Model", "Test model provider/model");
   await input.fill("Implement the redesign");
   await page.evaluate(() => (window as any).fixture.failSend());
   await input.press("Enter");
@@ -497,13 +525,9 @@ test("OpenCode uses provider choices, streams structured tools and reconciles ac
   await desktop(page, null);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("Codex draft");
-  await page
-    .getByRole("combobox", { name: "Provider", exact: true })
-    .selectOption("opencode");
+  await choose(page, "Provider", "OpenCode");
   await expect(input).toHaveValue("");
-  await page
-    .getByRole("combobox", { name: "Agent", exact: true })
-    .selectOption("build");
+  await choose(page, "Agent", "Build");
   await input.fill("Inspect this project");
   await input.press("Meta+Enter");
   await expect(
@@ -569,9 +593,7 @@ test("OpenCode uses provider choices, streams structured tools and reconciles ac
     page.getByText("Inspected the files", { exact: true }),
   ).toHaveCount(1);
   await page.keyboard.press("Meta+n");
-  await page
-    .getByRole("combobox", { name: "Provider", exact: true })
-    .selectOption("codex");
+  await choose(page, "Provider", "Codex");
   await expect(input).toHaveValue("Codex draft");
 });
 
@@ -599,4 +621,183 @@ test("navigating while first-send creation is pending does not steal the selecte
   await expect(
     page.locator(".session-item").filter({ hasText: "Background task" }),
   ).toContainText("Background task");
+});
+
+test("changes stay beside the conversation and refresh the selected diff during work", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page);
+  const pane = page.getByRole("complementary", { name: "Project changes" });
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await expect(
+    pane.getByRole("region", { name: "Unstaged diff" }),
+  ).toContainText("const layout = 'split'");
+  await input.fill("Keep this draft");
+  await pane
+    .getByRole("button", { name: "src/styles.css, Staged modified" })
+    .click();
+  await expect(pane.getByRole("region", { name: "Staged diff" })).toContainText(
+    "revision 1",
+  );
+  await emit(page, "turn/started", {
+    threadId: "thread-a",
+    turn: { id: "turn-live" },
+  });
+  await expect(
+    pane.getByRole("button", { name: "Refresh Git status" }),
+  ).toBeEnabled();
+  await page.evaluate(() => (window as any).fixture.setDiffVersion(2));
+  await page.clock.runFor(2600);
+  await expect(pane.getByRole("region", { name: "Staged diff" })).toContainText(
+    "revision 2",
+  );
+  await expect(
+    pane.getByRole("button", { name: "src/styles.css, Staged modified" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(input).toHaveValue("Keep this draft");
+  await expect(
+    page.getByRole("heading", { name: "A focused workspace" }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/session-changes.png" });
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(input).toBeInViewport({ ratio: 1 });
+  await expect(
+    page.getByRole("button", { name: "Stop generation" }),
+  ).toBeInViewport({ ratio: 1 });
+  await expect(pane).toBeInViewport({ ratio: 1 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
+  await page.screenshot({ path: "test-results/session-changes-minimum.png" });
+  await page.evaluate(() =>
+    (window as any).fixture.setGitFiles([
+      { path: "src/App.tsx", indexStatus: " ", worktreeStatus: "M" },
+    ]),
+  );
+  await emit(page, "turn/completed", {
+    threadId: "thread-a",
+    turn: { id: "turn-live", status: "completed" },
+  });
+  await expect(
+    pane.getByRole("region", { name: "Unstaged diff" }),
+  ).toContainText("revision 2");
+  await expect(
+    pane.getByRole("region", { name: "Staged diff", exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => (window as any).fixture.setGitFiles([]));
+  await pane.getByRole("button", { name: "Refresh Git status" }).click();
+  await expect(pane.getByText("Working tree clean")).toBeVisible();
+  await pane.getByRole("button", { name: "Close changes" }).click();
+  await expect(pane).toHaveCount(0);
+  await expect(input).toHaveValue("Keep this draft");
+  await page.getByRole("button", { name: "Show changes" }).click();
+  await expect(pane.getByText("Working tree clean")).toBeVisible();
+});
+
+test("model picker searches capabilities, supports keyboard selection and returns focus", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  const model = page.getByRole("button", { name: "Model", exact: true });
+  await model.focus();
+  await model.press("ArrowDown");
+  const search = page.getByRole("combobox", { name: "Search models" });
+  await expect(search).toBeFocused();
+  await search.fill("provider/fast");
+  await expect(page.getByRole("option")).toHaveCount(1);
+  await search.press("Enter");
+  await expect(model).toHaveText("Fast model");
+  await expect(model).toBeFocused();
+  await model.click();
+  await search.fill("missing");
+  await expect(page.getByText("No matching models")).toBeVisible();
+  await search.press("Escape");
+  await expect(model).toBeFocused();
+  await model.click();
+  await search.press("ArrowUp");
+  await search.press("Enter");
+  await expect(model).toHaveText("Test model");
+  await model.click();
+  await page.screenshot({ path: "test-results/model-picker.png" });
+  await page.getByRole("heading", { name: "New session", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Choose model" })).toHaveCount(
+    0,
+  );
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter((call: any) =>
+        call.command.endsWith("_start_session"),
+      ),
+    ),
+  ).toHaveLength(0);
+  await page.setViewportSize({ width: 800, height: 620 });
+  await model.click();
+  await expect(
+    page.getByRole("dialog", { name: "Choose model" }),
+  ).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: "test-results/model-picker-minimum.png" });
+});
+
+test("restored shell notifications and nested tool results display identity and output", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  const id = "sh_1894f7b4e001iOMXKwJMCx7VJX";
+  await page.evaluate(
+    ({ id }) =>
+      (window as any).fixture.setOpenHistory([
+        {
+          id: "shell-message",
+          type: "user",
+          text: `<shell id="${id}" state="completed" command="nix develop --command cargo test --workspace">\nCompiling caelum-core\ntest result: ok. 53 passed; 0 failed;\n</shell>`,
+        },
+        {
+          id: "tool-message",
+          type: "assistant",
+          content: [
+            {
+              id: "nested-shell",
+              type: "tool",
+              name: "shell",
+              state: {
+                status: "completed",
+                input: { command: "grep schema" },
+                content: [
+                  {
+                    type: "text",
+                    text: '<shell id="sh_nested" state="completed" command="grep schema">schema version 3</shell>',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+    { id },
+  );
+  await choose(page, "Provider", "OpenCode");
+  await page.getByRole("button", { name: /OpenCode session/ }).click();
+  const notification = page.getByRole("button", {
+    name: /Run nix develop --command cargo test --workspace/,
+  });
+  await notification.click();
+  await expect(page.getByText(id, { exact: true })).toBeVisible();
+  await expect(page.getByText(/test result: ok. 53 passed/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Copy shell ID" }),
+  ).toBeVisible();
+  await expect(page.locator(".conversation-entry.user")).toHaveCount(0);
+  await expect(page.locator(".tool-activity").first()).toHaveCSS(
+    "border-top-width",
+    "0px",
+  );
+  await page.mouse.move(0, 0);
+  await expect(notification).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.getByRole("button", { name: /shell grep schema/ }).click();
+  await expect(page.getByText("sh_nested", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("schema version 3", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/shell-results.png" });
 });

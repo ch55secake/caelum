@@ -70,7 +70,7 @@ export function useWorkspace() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMap>({});
   const state = useRef(workspaces);
-  const [view, setView] = useState<"session" | "files" | "changes">("session");
+  const [view, setView] = useState<"session" | "files">("session");
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(isTauri());
   const [ready, setReady] = useState(!isTauri());

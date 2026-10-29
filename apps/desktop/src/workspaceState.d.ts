@@ -17,6 +17,7 @@ export type ConversationEntry = {
   historyOutput?: string;
   streamOutput?: string;
   name?: string;
+  executionId?: string;
   status?: "running" | "completed" | "failed" | "interrupted";
   input?: unknown;
   output?: unknown;
