@@ -2,13 +2,15 @@ use std::{
     collections::HashSet,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         mpsc::{Receiver, RecvTimeoutError},
         Arc,
     },
     time::Duration,
 };
+
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use caelum_core::{
     approvals::ApprovalBroker, codex::CodexProvider, opencode::OpenCodeProvider,
