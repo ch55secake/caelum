@@ -16,6 +16,35 @@ pub struct ProjectInfo {
     pub path: String,
 }
 
+/// A changed path reported by Git's porcelain status format.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileStatus {
+    pub path: String,
+    pub index_status: String,
+    pub worktree_status: String,
+}
+
+/// Read-only Git status scoped to the selected project directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepositoryStatus {
+    pub project_path: String,
+    pub repository_root: Option<String>,
+    pub branch: Option<String>,
+    pub changes: Vec<GitFileStatus>,
+}
+
+/// Separate staged, unstaged, and untracked diffs for one changed path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileDiff {
+    pub path: String,
+    pub staged: String,
+    pub unstaged: String,
+    pub untracked: String,
+}
+
 /// Project and session metadata restored from Caelum's local workspace database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,7 +195,8 @@ pub struct OpenCodeEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApprovalPrompt, CodexEvent, OpenCodeEvent, PersistedProject, ProjectInfo, WorkspaceSnapshot,
+        ApprovalPrompt, CodexEvent, GitFileDiff, GitFileStatus, GitRepositoryStatus, OpenCodeEvent,
+        PersistedProject, ProjectInfo, WorkspaceSnapshot,
     };
     use serde_json::json;
 
@@ -261,6 +291,49 @@ mod tests {
                     "opencodeSessionIds": []
                 }],
                 "activeProjectPath": "/workspace/project"
+            })
+        );
+    }
+
+    #[test]
+    fn git_status_and_diff_use_the_frontend_camel_case_contract() {
+        let status = GitRepositoryStatus {
+            project_path: "/workspace/project".into(),
+            repository_root: Some("/workspace".into()),
+            branch: Some("main".into()),
+            changes: vec![GitFileStatus {
+                path: "src/main.rs".into(),
+                index_status: "M".into(),
+                worktree_status: " ".into(),
+            }],
+        };
+        let diff = GitFileDiff {
+            path: "src/main.rs".into(),
+            staged: "staged".into(),
+            unstaged: "unstaged".into(),
+            untracked: String::new(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(status).unwrap(),
+            json!({
+                "projectPath": "/workspace/project",
+                "repositoryRoot": "/workspace",
+                "branch": "main",
+                "changes": [{
+                    "path": "src/main.rs",
+                    "indexStatus": "M",
+                    "worktreeStatus": " "
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(diff).unwrap(),
+            json!({
+                "path": "src/main.rs",
+                "staged": "staged",
+                "unstaged": "unstaged",
+                "untracked": ""
             })
         );
     }
