@@ -3,13 +3,13 @@
 use std::{path::PathBuf, sync::Arc};
 
 use caelum_core::{
-    approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase,
+    approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase, git::GitClient,
     opencode::OpenCodeProvider, processes::ProcessRegistry, projects::Project,
 };
 use caelum_protocol::{
-    AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList,
-    OpenCodeConversationEntry, OpenCodeSessionInfo, OpenCodeSessionList, ProjectInfo,
-    WorkspaceSnapshot,
+    AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
+    GitRepositoryStatus, OpenCodeConversationEntry, OpenCodeSessionInfo, OpenCodeSessionList,
+    ProjectInfo, WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -64,6 +64,28 @@ fn open_project(path: String) -> Result<ProjectInfo, String> {
     Project::open(PathBuf::from(path))
         .map(|project| project.info())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn git_repository_status(project_path: String) -> Result<GitRepositoryStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        GitClient::new()
+            .repository_status(project_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn git_file_diff(project_path: String, file_path: String) -> Result<GitFileDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        GitClient::new()
+            .file_diff(project_path, &file_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -419,6 +441,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             open_project,
+            git_repository_status,
+            git_file_diff,
             restore_workspace,
             remember_project,
             close_project_record,
