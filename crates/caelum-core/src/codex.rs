@@ -15,7 +15,7 @@ use std::{
 
 use caelum_protocol::{
     ApprovalDecision, CodexEvent, CodexSessionInfo, CodexSessionList, CodexThreadInfo,
-    PermissionRequest, ProviderChoice, ProviderChoices, SessionHistoryPage,
+    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, SessionHistoryPage,
 };
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -180,6 +180,7 @@ impl CodexProvider {
         let project = Project::open(project_path)?;
         let connection = self.connection(&project)?;
         let mut models = Vec::new();
+        let mut default_model = None;
         let mut cursor: Option<String> = None;
         let mut seen = HashSet::new();
         loop {
@@ -190,9 +191,32 @@ impl CodexProvider {
                 .and_then(Value::as_array)
                 .ok_or_else(|| CodexError::Protocol("model/list has no data array".into()))?;
             models.extend(data.iter().filter_map(|model| {
-                Some(ProviderChoice {
+                if model.get("isDefault").and_then(Value::as_bool) == Some(true) {
+                    default_model = model
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                }
+                Some(ProviderModelChoice {
                     id: model.get("model")?.as_str()?.to_owned(),
                     name: model.get("displayName")?.as_str()?.to_owned(),
+                    efforts: model
+                        .get("supportedReasoningEfforts")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|effort| {
+                            let id = effort.get("reasoningEffort")?.as_str()?.to_owned();
+                            Some(ProviderChoice {
+                                name: id.clone(),
+                                id,
+                            })
+                        })
+                        .collect(),
+                    default_effort: model
+                        .get("defaultReasoningEffort")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
                 })
             }));
             cursor = response
@@ -205,9 +229,20 @@ impl CodexProvider {
                 None => break,
             }
         }
+        // Resolve project-specific defaults before offering effort options for
+        // the otherwise implicit model in a new session.
+        if let Ok(config) = connection.request(
+            "config/read",
+            json!({ "cwd": project.path().to_string_lossy(), "includeLayers": false }),
+        ) {
+            if let Some(model) = config.pointer("/config/model").and_then(Value::as_str) {
+                default_model = Some(model.to_owned());
+            }
+        }
         Ok(ProviderChoices {
             models,
             agents: Vec::new(),
+            default_model,
         })
     }
 
@@ -236,6 +271,10 @@ impl CodexProvider {
         Ok(CodexSessionInfo {
             project: project.info(),
             thread,
+            effort: response
+                .get("reasoningEffort")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             model: response
                 .get("model")
                 .and_then(Value::as_str)
@@ -265,6 +304,10 @@ impl CodexProvider {
         Ok(CodexSessionInfo {
             project: project.info(),
             thread,
+            effort: response
+                .get("reasoningEffort")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             model: response
                 .get("model")
                 .and_then(Value::as_str)
@@ -293,6 +336,7 @@ impl CodexProvider {
             .ok_or_else(|| CodexError::Protocol("thread/turns/list has no data array".into()))?;
         Ok(SessionHistoryPage {
             model: None,
+            effort: None,
             is_working: cursor.is_none().then(|| {
                 data.first().is_some_and(|turn| {
                     turn.get("status").and_then(Value::as_str) == Some("inProgress")
@@ -324,6 +368,17 @@ impl CodexProvider {
         prompt: &str,
         model: Option<&str>,
     ) -> Result<(), CodexError> {
+        self.send_prompt_with_options(project_path, thread_id, prompt, model, None)
+    }
+
+    pub fn send_prompt_with_options(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        prompt: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<(), CodexError> {
         if thread_id.trim().is_empty() {
             return Err(CodexError::InvalidThreadId);
         }
@@ -338,6 +393,7 @@ impl CodexProvider {
             json!({
                 "threadId": thread_id,
                 "model": model,
+                "effort": effort,
                 "input": [{ "type": "text", "text": prompt }]
             }),
         ) {
@@ -1171,6 +1227,7 @@ mod tests {
     const PYTHON_FAKE_SERVER: &str = r#"
 import json, os, sys
 models = {'thread-existing': 'saved-model'}
+efforts = {'thread-existing': 'low'}
 for raw in sys.stdin:
     request = json.loads(raw)
     method = request.get('method')
@@ -1187,11 +1244,15 @@ for raw in sys.stdin:
         result = {'data': [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123}], 'nextCursor': None}
     elif method == 'thread/start':
         models['thread-new'] = params.get('model') or 'default-model'
-        result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}, 'model': models['thread-new']}
+        efforts['thread-new'] = 'medium'
+        result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}, 'model': models['thread-new'], 'reasoningEffort': efforts['thread-new']}
     elif method == 'thread/resume':
-        result = {'thread': {'id': params['threadId'], 'name': 'Resumed', 'preview': 'History'}, 'model': models[params['threadId']]}
+        result = {'thread': {'id': params['threadId'], 'name': 'Resumed', 'preview': 'History'}, 'model': models[params['threadId']], 'reasoningEffort': efforts[params['threadId']]}
     elif method == 'model/list':
-        result = {'data': [{'model': 'test-model', 'displayName': 'Test model'}], 'nextCursor': None}
+        result = {'data': [{'model': 'test-model', 'displayName': 'Test model', 'isDefault': True, 'defaultReasoningEffort': 'medium', 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}, {'reasoningEffort': 'medium'}, {'reasoningEffort': 'high'}]}], 'nextCursor': None}
+    elif method == 'config/read':
+        assert params['cwd'] == os.getcwd()
+        result = {'config': {'model': 'configured-model'}}
     elif method == 'thread/turns/list':
         assert params['itemsView'] == 'full' and params['sortDirection'] == 'desc' and params['limit'] == 30
         if params.get('cursor'):
@@ -1206,6 +1267,8 @@ for raw in sys.stdin:
             continue
         if params.get('model'):
             models[params['threadId']] = params['model']
+        if params.get('effort'):
+            efforts[params['threadId']] = params['effort']
         if prompt == 'request-approval':
             print(json.dumps({'id': 'server-approval-1', 'method': 'item/commandExecution/requestApproval', 'params': {'threadId': params['threadId'], 'turnId': 'turn-approval', 'itemId': 'command-1', 'command': ['git', 'status'], 'cwd': '/project', 'availableDecisions': ['accept', 'decline']}}), flush=True)
         print(json.dumps({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}}), flush=True)
@@ -1249,15 +1312,25 @@ for raw in sys.stdin:
         let created = provider.start_session(&project_path).unwrap();
         assert_eq!(created.thread.id, "thread-new");
         assert_eq!(created.model.as_deref(), Some("default-model"));
+        assert_eq!(created.effort.as_deref(), Some("medium"));
         let resumed = provider
             .resume_session(&project_path, "thread-existing")
             .unwrap();
         assert_eq!(resumed.thread.name.as_deref(), Some("Resumed"));
         assert_eq!(resumed.model.as_deref(), Some("saved-model"));
+        assert_eq!(resumed.effort.as_deref(), Some("low"));
+        let choices = provider.choices(&project_path).unwrap();
+        assert_eq!(choices.models[0].id, "test-model");
         assert_eq!(
-            provider.choices(&project_path).unwrap().models[0].id,
-            "test-model"
+            choices.models[0]
+                .efforts
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect::<Vec<_>>(),
+            ["low", "medium", "high"]
         );
+        assert_eq!(choices.models[0].default_effort.as_deref(), Some("medium"));
+        assert_eq!(choices.default_model.as_deref(), Some("configured-model"));
         let history = provider
             .session_history(&project_path, "thread-existing", None)
             .unwrap();
@@ -1294,11 +1367,12 @@ for raw in sys.stdin:
             .cancel_turn(&project_path, "thread-existing")
             .unwrap();
         provider
-            .send_prompt_with_model(
+            .send_prompt_with_options(
                 &project_path,
                 "thread-existing",
                 "Use the selected model",
                 Some("test-model"),
+                Some("high"),
             )
             .unwrap();
         let resumed = provider
@@ -1306,6 +1380,7 @@ for raw in sys.stdin:
             .unwrap();
         assert_eq!(resumed.thread.id, "thread-existing");
         assert_eq!(resumed.model.as_deref(), Some("test-model"));
+        assert_eq!(resumed.effort.as_deref(), Some("high"));
         provider
             .send_prompt(&project_path, "thread-existing", "Keep this model")
             .unwrap();
@@ -1317,6 +1392,28 @@ for raw in sys.stdin:
                 .as_deref(),
             Some("test-model")
         );
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "thread-existing")
+                .unwrap()
+                .effort
+                .as_deref(),
+            Some("high")
+        );
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "thread-existing",
+                "Change only effort",
+                None,
+                Some("low"),
+            )
+            .unwrap();
+        let resumed = provider
+            .resume_session(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(resumed.model.as_deref(), Some("test-model"));
+        assert_eq!(resumed.effort.as_deref(), Some("low"));
         assert!(matches!(
             provider.send_prompt(&project_path, "thread-existing", "rpc-error"),
             Err(CodexError::Rpc(message)) if message == "fake request error"

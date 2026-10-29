@@ -36,11 +36,7 @@ function ThinkingTrace({
       }}
     >
       <summary aria-label="Thinking trace">
-        {active ? (
-          <LoaderCircle size={13} className="spinning" />
-        ) : (
-          <BrainCircuit size={13} />
-        )}
+        <BrainCircuit size={13} />
         <span>
           {entry.status === "interrupted"
             ? "Thinking interrupted"

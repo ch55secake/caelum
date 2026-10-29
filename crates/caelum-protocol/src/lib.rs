@@ -177,6 +177,8 @@ pub struct CodexSessionInfo {
     pub thread: CodexThreadInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Recent Codex-owned threads scoped to one project.
@@ -211,6 +213,8 @@ pub struct OpenCodeSession {
     pub is_working: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// The selected project and OpenCode session shown in the desktop workspace.
@@ -239,6 +243,8 @@ pub struct SessionHistoryPage {
     pub is_working: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,11 +253,22 @@ pub struct ProviderChoice {
     pub name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelChoice {
+    pub id: String,
+    pub name: String,
+    pub efforts: Vec<ProviderChoice>,
+    pub default_effort: Option<String>,
+}
+
 /// Choices reported by the installed provider, rather than hard-coded UI options.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderChoices {
-    pub models: Vec<ProviderChoice>,
+    pub models: Vec<ProviderModelChoice>,
     pub agents: Vec<ProviderChoice>,
+    pub default_model: Option<String>,
 }
 
 /// An event received from OpenCode's `/api/event` server-sent event stream.

@@ -1,14 +1,8 @@
-import {
-  Check,
-  ChevronRight,
-  CircleAlert,
-  LoaderCircle,
-  Wrench,
-} from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Wrench } from "lucide-react";
 import { displayValue } from "./conversationState.js";
 import type { ConversationEntry } from "./workspaceState.js";
 import { CopyButton } from "./MessageContent.js";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { splitShellMessages } from "./shellMessages.js";
 
 function ShellIdentity({ id }: { id: string }) {
@@ -98,6 +92,23 @@ export function ToolActivity({
   expanded: boolean;
   toggle: () => void;
 }) {
+  const running = entry.status === "running";
+  const [observedStart] = useState(Date.now);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  const seconds = Math.max(
+    0,
+    Math.floor((now - (entry.startedAt ?? observedStart)) / 1000),
+  );
+  const elapsed =
+    seconds >= 60
+      ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+      : `${seconds}s`;
   let input = entry.input;
   if (typeof input === "string") {
     try {
@@ -121,30 +132,28 @@ export function ToolActivity({
   const failed = entry.status === "failed" || Boolean(entry.error);
   const Icon = failed
     ? CircleAlert
-    : entry.status === "running"
-      ? LoaderCircle
-      : entry.status === "completed"
-        ? Check
-        : Wrench;
+    : entry.status === "completed"
+      ? Check
+      : Wrench;
   return (
-    <div className={`tool-activity${failed ? " failed" : ""}`}>
+    <div
+      className={`tool-activity${failed ? " failed" : ""}`}
+      data-running={running}
+    >
       <button
         className="tool-summary"
         onClick={toggle}
         aria-expanded={expanded}
       >
         <ChevronRight size={13} className={expanded ? "expanded" : ""} />
-        <Icon
-          size={14}
-          className={entry.status === "running" ? "spinning" : ""}
-        />
+        <Icon size={14} />
         <strong>{entry.name ?? "Tool"}</strong>
         <span className="tool-preview">{summary}</span>
         <span className="tool-status">
           {failed
             ? "Failed"
             : entry.status === "running"
-              ? "Running"
+              ? `Running · ${elapsed}`
               : entry.durationMs != null
                 ? `${(entry.durationMs / 1000).toFixed(1)}s`
                 : entry.status === "interrupted"

@@ -14,6 +14,7 @@ function emptyProviderWorkspace() {
     choices: null,
     choicesError: null,
     model: "",
+    effort: "",
     agent: "",
   };
 }
@@ -30,6 +31,7 @@ export function createSessionWorkspace(session) {
   return {
     session,
     model: null,
+    effort: null,
     conversation: [],
     draft: "",
     isWorking: session.thread.isWorking ?? false,

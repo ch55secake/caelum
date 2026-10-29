@@ -24,6 +24,9 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
       const models = new Map(
         ["thread-a", "thread-b", "ses-a"].map((id) => [id, "provider/model"]),
       );
+      const efforts = new Map(
+        ["thread-a", "thread-b", "ses-a"].map((id) => [id, "medium"]),
+      );
       let failNextSend = false;
       let sequence = 0;
       let historyGate: Promise<void> | null = null;
@@ -127,9 +130,25 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             if (command === "provider_choices")
               return {
                 models: [
-                  { id: "provider/model", name: "Test model" },
-                  { id: "provider/fast", name: "Fast model" },
+                  {
+                    id: "provider/model",
+                    name: "Test model",
+                    efforts: ["low", "medium", "high"].map((id) => ({
+                      id,
+                      name: id,
+                    })),
+                    defaultEffort:
+                      args.provider === "codex" ? "medium" : null,
+                  },
+                  {
+                    id: "provider/fast",
+                    name: "Fast model",
+                    efforts: [{ id: "low", name: "low" }],
+                    defaultEffort: args.provider === "codex" ? "low" : null,
+                  },
+                  { id: "provider/plain", name: "Simple model", efforts: [] },
                 ],
+                defaultModel: "provider/model",
                 agents:
                   args.provider === "opencode"
                     ? [{ id: "build", name: "Build" }]
@@ -148,6 +167,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               return {
                 project,
                 model: models.get(args.threadId),
+                effort: efforts.get(args.threadId),
                 thread: threads.find((item) => item.id === args.threadId) ?? {
                   id: args.threadId,
                   name: "Fresh session",
@@ -161,6 +181,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                   title: "OpenCode session",
                   isWorking: openWorking,
                   model: models.get(args.sessionId),
+                  effort: efforts.get(args.sessionId),
                 },
               };
             if (command === "codex_session_history") {
@@ -221,6 +242,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 data: openHistory,
                 isWorking: openWorking,
                 model: models.get(args.sessionId),
+                effort: efforts.get(args.sessionId),
               };
               if (historyGate) await historyGate;
               return snapshot;
@@ -245,8 +267,9 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 failNextSend = false;
                 throw new Error("Connection refused");
               }
-              if (args.model)
-                models.set(args.threadId ?? args.sessionId, args.model);
+              const id = args.threadId ?? args.sessionId;
+              if (args.model) models.set(id, args.model);
+              if (args.effort != null) efforts.set(id, args.effort);
               if (command.startsWith("codex"))
                 emit("codex-event", {
                   projectPath: project.path,
@@ -846,23 +869,23 @@ test("restored shell notifications and nested tool results display identity and 
   await page.screenshot({ path: "test-results/shell-results.png" });
 });
 
-test("sending from expanded tools or older history follows live output while activity stays above the composer", async ({
+test("sending from expanded tools or older history follows live output while the composer stays active", async ({
   page,
 }) => {
   await desktop(page);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
-  const activity = page.getByRole("status", { name: "Agent activity" });
+  const activity = page.getByRole("form", { name: "Message composer" });
   await page.getByRole("button", { name: /Run pnpm test/ }).click();
   await input.fill("Continue after expanding a tool");
   await input.press("Enter");
-  await expect(activity).toContainText("Working…");
+  await expect(activity).toHaveAttribute("data-working", "true");
   await emit(page, "item/reasoning/summaryTextDelta", {
     threadId: "thread-a",
     itemId: "thinking",
     summaryIndex: 0,
     delta: "Inspect the existing implementation",
   });
-  await expect(activity).toContainText("Thinking…");
+  await expect(activity).toHaveAttribute("data-working", "true");
   await expect(page.locator(".reasoning-preview")).toContainText(
     "Inspect the existing implementation",
   );
@@ -888,12 +911,12 @@ test("sending from expanded tools or older history follows live output while act
     await page.locator(".transcript").evaluate((node) => node.scrollTop),
   ).toBe(before);
   await expect(activity).toBeInViewport({ ratio: 1 });
-  await expect(activity).toContainText("Responding…");
+  await expect(activity).toHaveAttribute("data-working", "true");
   await page.setViewportSize({ width: 800, height: 620 });
   await expect(activity).toBeInViewport({ ratio: 1 });
   await expect(input).toBeInViewport({ ratio: 1 });
   await page.getByRole("button", { name: "Stop generation" }).click();
-  await expect(activity).toHaveCount(0);
+  await expect(activity).toHaveAttribute("data-working", "false");
   await input.fill("Continue from older history");
   await input.press("Enter");
   await emit(page, "item/agentMessage/delta", {
@@ -909,7 +932,7 @@ test("sending from expanded tools or older history follows live output while act
   ).toHaveCount(0);
 });
 
-test("OpenCode thinking streams into expandable previews with retry, approval and disconnect activity", async ({
+test("OpenCode keeps the composer active through thinking, retries and tools, with an approval cue", async ({
   page,
 }) => {
   await desktop(page, null);
@@ -918,7 +941,7 @@ test("OpenCode thinking streams into expandable previews with retry, approval an
   await expect(
     page.getByText("Restored OpenCode conversation"),
   ).toBeVisible();
-  const activity = page.getByRole("status", { name: "Agent activity" });
+  const activity = page.getByRole("form", { name: "Message composer" });
   const send = (method: string, data = {}) =>
     emit(
       page,
@@ -932,7 +955,7 @@ test("OpenCode thinking streams into expandable previews with retry, approval an
       "opencode",
     );
   await send("session.reasoning.started");
-  await expect(activity).toContainText("Thinking…");
+  await expect(activity).toHaveAttribute("data-working", "true");
   await send("session.reasoning.delta", {
     delta: "**Inspecting the event stream**\n\nCheck ",
   });
@@ -951,8 +974,10 @@ test("OpenCode thinking streams into expandable previews with retry, approval an
     attempt: 2,
     error: { message: "Provider temporarily unavailable" },
   });
-  await expect(activity).toContainText("Retrying · attempt 2");
-  await expect(activity).toContainText("Provider temporarily unavailable");
+  await expect(activity).toHaveAttribute("data-working", "true");
+  await expect(
+    page.getByRole("status", { name: "Agent activity" }),
+  ).toHaveText("Agent working");
   await page.evaluate(() =>
     (window as any).fixture.emit("approval-requests", [
       {
@@ -965,7 +990,9 @@ test("OpenCode thinking streams into expandable previews with retry, approval an
       },
     ]),
   );
-  await expect(activity).toContainText("Waiting for approval");
+  await expect(page.locator(".composer-approval")).toHaveText(
+    "Approval required",
+  );
   await page.getByRole("button", { name: "Allow once" }).click();
   await send("session.reasoning.ended", {
     text: "**Inspecting the event stream**\n\nCheck the subscription and snapshot.",
@@ -976,10 +1003,10 @@ test("OpenCode thinking streams into expandable previews with retry, approval an
     name: "read",
     input: { path: "src/App.tsx" },
   });
-  await expect(activity).toContainText("Running tool…");
+  await expect(activity).toHaveAttribute("data-working", "true");
   await page.screenshot({ path: "test-results/live-thinking.png" });
   await emit(page, "server.disconnected", {}, "opencode");
-  await expect(activity).toHaveCount(0);
+  await expect(activity).toHaveAttribute("data-working", "false");
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeDisabled();
@@ -1007,7 +1034,7 @@ test("OpenCode thinking streams into expandable previews with retry, approval an
   );
   await page.getByRole("button", { name: "Jump to latest" }).click();
   await expect(page.getByText("Recovered final response")).toBeVisible();
-  await expect(activity).toHaveCount(0);
+  await expect(activity).toHaveAttribute("data-working", "false");
 });
 
 test("snapshots recover missed live events on polling, focus and cached-session selection", async ({
@@ -1033,8 +1060,8 @@ test("snapshots recover missed live events on polling, focus and cached-session 
     ]);
   });
   await page.clock.runFor(15_100);
-  const activity = page.getByRole("status", { name: "Agent activity" });
-  await expect(activity).toBeVisible();
+  const activity = page.getByRole("form", { name: "Message composer" });
+  await expect(activity).toHaveAttribute("data-working", "true");
   await expect(page.locator(".reasoning-preview")).toContainText(
     "Thinking from another client",
   );
@@ -1059,7 +1086,7 @@ test("snapshots recover missed live events on polling, focus and cached-session 
   await expect(
     page.getByText("Finished while away", { exact: true }),
   ).toBeVisible();
-  await expect(activity).toHaveCount(0);
+  await expect(activity).toHaveAttribute("data-working", "false");
   await page
     .getByRole("button", { name: /Review the provider adapters/ })
     .click();
@@ -1122,6 +1149,226 @@ test("a completion during history loading queues a resync without restoring stal
 });
 
 for (const provider of ["codex", "opencode"]) {
+  test(`${provider} keeps a quiet composer animation and elapsed tool time through a long pause`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await desktop(page, provider === "codex" ? "thread-a" : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page.getByRole("button", { name: /OpenCode session/ }).click();
+    }
+    const composer = page.getByRole("form", { name: "Message composer" });
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Run a long command");
+    await input.press("Enter");
+    await emit(
+      page,
+      provider === "codex" ? "item/started" : "session.tool.called",
+      provider === "codex"
+        ? {
+            threadId: "thread-a",
+            item: {
+              id: "slow-command",
+              type: "commandExecution",
+              command: "cargo test",
+              status: "inProgress",
+            },
+          }
+        : {
+            sessionID: "ses-a",
+            id: "slow-command",
+            name: "shell",
+            input: { command: "cargo test" },
+          },
+      provider,
+    );
+    if (provider === "opencode")
+      await emit(
+        page,
+        "session.step.ended",
+        { sessionID: "ses-a" },
+        provider,
+      );
+    await page.clock.fastForward(125_000);
+    await expect(composer).toHaveAttribute("data-working", "true");
+    await expect(
+      page.getByRole("button", { name: /cargo test/ }),
+    ).toContainText("Running · 2m");
+    await expect(composer.locator(".spinning")).toHaveCount(0);
+    expect(
+      await composer.evaluate(
+        (node) => getComputedStyle(node, "::before").animationName,
+      ),
+    ).toBe("working-pulse");
+    await input.fill("Draft while the command runs");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect(
+      await composer.evaluate(
+        (node) => getComputedStyle(node, "::before").animationName,
+      ),
+    ).toBe("none");
+    await page.setViewportSize({ width: 800, height: 620 });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await page.screenshot({
+      path: `test-results/${provider}-working-composer.png`,
+    });
+    await emit(
+      page,
+      provider === "codex" ? "turn/completed" : "session.execution.succeeded",
+      provider === "codex"
+        ? {
+            threadId: "thread-a",
+            turn: { id: "turn-new", status: "completed" },
+          }
+        : { sessionID: "ses-a" },
+      provider,
+    );
+    await expect(composer).toHaveAttribute("data-working", "false");
+    await expect(
+      page.getByRole("button", { name: /cargo test/ }),
+    ).not.toContainText("Running");
+    await expect(input).toHaveValue("Draft while the command runs");
+  });
+
+  test(`${provider} keeps effort session-scoped through navigation, retries and reconnects and resets it for another model`, async ({
+    page,
+  }) => {
+    await desktop(page, provider === "codex" ? "thread-a" : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page.getByRole("button", { name: /OpenCode session/ }).click();
+    }
+    const sessionName =
+      provider === "codex"
+        ? /Refine the session workspace/
+        : /OpenCode session/;
+    const effort = page.getByRole("button", { name: "Effort", exact: true });
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(effort).toHaveText("Medium");
+    await choose(page, "Effort", "High");
+    await page
+      .getByRole("button", { name: /Review the provider adapters/ })
+      .click();
+    await expect(effort).toHaveText("Medium");
+    await page.keyboard.press("Meta+n");
+    await expect(effort).toHaveText("Default effort");
+    await page.getByRole("button", { name: sessionName }).click();
+    await expect(effort).toHaveText("High");
+    await input.fill("Think carefully");
+    await page.evaluate(() => (window as any).fixture.failSend());
+    await input.press("Enter");
+    await expect(page.getByRole("alert")).toContainText("Connection refused");
+    await expect(effort).toHaveText("High");
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    await choose(page, "Effort", "Low");
+    await emit(
+      page,
+      provider === "codex" ? "codex/processExited" : "server.disconnected",
+      {},
+      provider,
+    );
+    await page
+      .getByRole("button", { name: "Reconnect", exact: true })
+      .click();
+    await expect(input).toBeEnabled();
+    await expect(effort).toHaveText("Low");
+    await input.fill("Use less reasoning");
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    await choose(
+      page,
+      "Effort",
+      provider === "codex"
+        ? "Default effort Use medium effort"
+        : "Default effort Use model settings",
+    );
+    await emit(
+      page,
+      provider === "codex" ? "turn/completed" : "session.execution.succeeded",
+      provider === "codex"
+        ? {
+            threadId: "thread-a",
+            turn: { id: "turn-new", status: "completed" },
+          }
+        : { sessionID: "ses-a" },
+      provider,
+    );
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toHaveCount(0);
+    await input.fill("Restore default effort");
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    const calls = await page.evaluate(() => (window as any).fixture.calls);
+    const sends = calls.filter(
+      (call: any) => call.command === `${provider}_send_prompt`,
+    );
+    expect(
+      sends.map((call: any) => [call.args.model, call.args.effort]),
+    ).toEqual([
+      [null, "high"],
+      [null, "high"],
+      [null, "low"],
+      [null, provider === "codex" ? "medium" : ""],
+    ]);
+    await choose(page, "Effort", "High");
+    await choose(page, "Model", "Fast model provider/fast");
+    await expect(effort).toHaveText("Default effort");
+    await effort.click();
+    await expect(
+      page.getByRole("option", { name: "High", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("option", { name: "Low", exact: true }).click();
+    await page.setViewportSize({ width: 800, height: 620 });
+    await effort.click();
+    await expect(
+      page.getByRole("dialog", { name: "Choose effort" }),
+    ).toBeInViewport({ ratio: 1 });
+    await page.screenshot({
+      path: `test-results/${provider}-effort-picker.png`,
+    });
+    await page.keyboard.press("Escape");
+    await choose(page, "Model", "Simple model provider/plain");
+    await expect(effort).toHaveCount(0);
+  });
+
+  test(`${provider} applies effort on the first turn and preserves it if the first send fails`, async ({
+    page,
+  }) => {
+    await desktop(page, null);
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    await choose(page, "Effort", "High");
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Start with high effort");
+    await page.evaluate(() => (window as any).fixture.failSend());
+    await input.press("Enter");
+    await expect(page.getByRole("alert")).toContainText("Connection refused");
+    await expect(
+      page.getByRole("button", { name: "Effort", exact: true }),
+    ).toHaveText("High");
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    const calls = await page.evaluate(() => (window as any).fixture.calls);
+    expect(
+      calls.filter((call: any) => call.command.endsWith("_start_session")),
+    ).toHaveLength(1);
+    expect(
+      calls
+        .filter((call: any) => call.command === `${provider}_send_prompt`)
+        .map((call: any) => call.args.effort),
+    ).toEqual(["high", "high"]);
+  });
+
   test(`${provider} changes the model in an existing session and keeps pending choices through navigation and retries`, async ({
     page,
   }) => {

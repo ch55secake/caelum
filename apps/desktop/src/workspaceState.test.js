@@ -278,18 +278,20 @@ test("OpenCode model changes update native session metadata without replacing a 
     projectA.path,
     "opencode",
     "ses-a",
-    (current) => ({ ...current, model: "local/next-model" }),
+    (current) => ({ ...current, model: "local/next-model", effort: "high" }),
   );
   workspaces = applyOpenCodeEvent(workspaces, {
     projectPath: projectA.path,
     eventType: "session.model.selected",
     data: {
       sessionID: "ses-a",
-      model: { providerID: "other", id: "remote-model" },
+      model: { providerID: "other", id: "remote-model", variant: "low" },
     },
   });
   const session =
     workspaces[projectA.path].providers.opencode.sessionsById["ses-a"];
   assert.equal(session.session.model, "other/remote-model");
   assert.equal(session.model, "local/next-model");
+  assert.equal(session.session.effort, "low");
+  assert.equal(session.effort, "high");
 });

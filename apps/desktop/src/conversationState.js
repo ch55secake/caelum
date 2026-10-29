@@ -171,6 +171,7 @@ export function openCodeMessage(message) {
           error: state.error
             ? displayValue(state.error.message ?? state.error)
             : undefined,
+          startedAt: part.time?.ran,
           durationMs:
             part.time?.completed && part.time?.ran
               ? part.time.completed - part.time.ran
@@ -430,6 +431,14 @@ export function applyConversationEvent(session, provider, method, data) {
       return next;
     if (["item/started", "item/completed"].includes(method)) {
       const entry = codexItem(object(data.item), method === "item/completed");
+      if (entry?.kind === "tool") {
+        const previous = next.conversation.find(
+          (item) => item.id === entry.id,
+        );
+        entry.startedAt = previous?.startedAt ?? Date.now();
+        if (method === "item/completed")
+          entry.durationMs ??= Date.now() - entry.startedAt;
+      }
       if (entry && method === "item/started")
         next = {
           ...next,
@@ -523,6 +532,7 @@ export function applyConversationEvent(session, provider, method, data) {
         session: {
           ...next.session,
           model: `${data.model.providerID}/${data.model.id}`,
+          effort: data.model.variant ?? "",
         },
       };
     if (/^session\.(text|reasoning)\.(started|delta|ended)$/.test(method)) {

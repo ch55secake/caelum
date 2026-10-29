@@ -16,7 +16,7 @@ use std::{
 
 use caelum_protocol::{
     ApprovalDecision, OpenCodeEvent, OpenCodeSession, OpenCodeSessionInfo, OpenCodeSessionList,
-    PermissionRequest, ProviderChoice, ProviderChoices, SessionHistoryPage,
+    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, SessionHistoryPage,
 };
 use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -163,6 +163,10 @@ impl OpenCodeProvider {
         )];
         let models = server.request_json(Method::GET, "/api/model", &query, None)?;
         let agents = server.request_json(Method::GET, "/api/agent", &query, None)?;
+        let default_model = server
+            .request_json(Method::GET, "/api/model/default", &query, None)
+            .ok()
+            .and_then(|response| model_id(response.get("data")?));
         let models = models
             .get("data")
             .and_then(Value::as_array)
@@ -170,13 +174,27 @@ impl OpenCodeProvider {
             .iter()
             .filter(|model| model.get("enabled").and_then(Value::as_bool) == Some(true))
             .filter_map(|model| {
-                Some(ProviderChoice {
+                Some(ProviderModelChoice {
                     id: format!(
                         "{}/{}",
                         model.get("providerID")?.as_str()?,
                         model.get("id")?.as_str()?
                     ),
                     name: model.get("name")?.as_str()?.to_owned(),
+                    efforts: model
+                        .get("variants")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|variant| {
+                            let id = variant.get("id")?.as_str()?.to_owned();
+                            Some(ProviderChoice {
+                                name: id.clone(),
+                                id,
+                            })
+                        })
+                        .collect(),
+                    default_effort: None,
                 })
             })
             .collect();
@@ -196,7 +214,11 @@ impl OpenCodeProvider {
                 })
             })
             .collect();
-        Ok(ProviderChoices { models, agents })
+        Ok(ProviderChoices {
+            models,
+            agents,
+            default_model,
+        })
     }
 
     pub fn start_session_with_options(
@@ -207,7 +229,7 @@ impl OpenCodeProvider {
     ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
-        let model = model.map(model_ref).transpose()?;
+        let model = model.map(|model| model_ref(model, None)).transpose()?;
         let response = server.request_json(
             Method::POST,
             "/api/session",
@@ -274,6 +296,7 @@ impl OpenCodeProvider {
         Ok(SessionHistoryPage {
             is_working: Some(session.is_working),
             model: session.model,
+            effort: session.effort,
             data: messages.iter().rev().cloned().collect(),
             next_cursor: response
                 .pointer("/cursor/next")
@@ -300,7 +323,7 @@ impl OpenCodeProvider {
         prompt: &str,
         message_id: Option<&str>,
     ) -> Result<(), OpenCodeError> {
-        self.send_prompt_with_options(project_path, session_id, prompt, message_id, None)
+        self.send_prompt_with_options(project_path, session_id, prompt, message_id, None, None)
     }
 
     pub fn send_prompt_with_options(
@@ -310,6 +333,7 @@ impl OpenCodeProvider {
         prompt: &str,
         message_id: Option<&str>,
         model: Option<&str>,
+        effort: Option<&str>,
     ) -> Result<(), OpenCodeError> {
         if prompt.trim().is_empty() {
             return Err(OpenCodeError::EmptyPrompt);
@@ -317,13 +341,41 @@ impl OpenCodeProvider {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, session_id)?;
-        if let Some(model) = model.filter(|model| session.model.as_deref() != Some(*model)) {
-            server.request_json(
-                Method::POST,
-                &format!("/api/session/{session_id}/model"),
-                &[],
-                Some(json!({ "model": model_ref(model)? })),
-            )?;
+        if model.is_some() || effort.is_some() {
+            let selected_model = model.or(session.model.as_deref());
+            let fallback = if selected_model.is_none() {
+                let query = [(
+                    "location[directory]",
+                    project.path().to_string_lossy().into_owned(),
+                )];
+                let response =
+                    server.request_json(Method::GET, "/api/model/default", &query, None)?;
+                response.get("data").and_then(model_id)
+            } else {
+                None
+            };
+            let selected_model = selected_model.or(fallback.as_deref()).ok_or_else(|| {
+                OpenCodeError::Protocol("no model available for the selected effort".into())
+            })?;
+            // An explicit empty effort selects the base model. Changing models
+            // also resets the variant instead of leaking a model-specific ID.
+            let selected_effort = effort.unwrap_or_else(|| {
+                if model.is_some_and(|model| session.model.as_deref() != Some(model)) {
+                    ""
+                } else {
+                    session.effort.as_deref().unwrap_or("")
+                }
+            });
+            if session.model.as_deref() != Some(selected_model)
+                || session.effort.as_deref().unwrap_or("") != selected_effort
+            {
+                server.request_json(
+                    Method::POST,
+                    &format!("/api/session/{session_id}/model"),
+                    &[],
+                    Some(json!({ "model": model_ref(selected_model, Some(selected_effort))? })),
+                )?;
+            }
         }
         let path = format!("/api/session/{session_id}/prompt");
         server.request_json(
@@ -1058,23 +1110,38 @@ fn parse_event(payload: &str, project_path: &Path) -> Result<OpenCodeEvent, Open
     })
 }
 
-fn model_ref(model: &str) -> Result<Value, OpenCodeError> {
+fn model_ref(model: &str, effort: Option<&str>) -> Result<Value, OpenCodeError> {
     model
         .split_once('/')
         .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
-        .map(|(provider, id)| json!({ "providerID": provider, "id": id }))
+        .map(|(provider, id)| {
+            let mut model = json!({ "providerID": provider, "id": id });
+            if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
+                model["variant"] = json!(effort);
+            }
+            model
+        })
         .ok_or_else(|| OpenCodeError::Protocol("model must include its provider and ID".into()))
+}
+
+fn model_id(model: &Value) -> Option<String> {
+    Some(format!(
+        "{}/{}",
+        model.get("providerID")?.as_str()?,
+        model.get("id")?.as_str()?
+    ))
 }
 
 fn session_info(value: &Value) -> Option<OpenCodeSession> {
     Some(OpenCodeSession {
-        model: value.get("model").and_then(|model| {
-            Some(format!(
-                "{}/{}",
-                model.get("providerID")?.as_str()?,
-                model.get("id")?.as_str()?
-            ))
-        }),
+        model: value.get("model").and_then(model_id),
+        effort: Some(
+            value
+                .pointer("/model/variant")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        ),
         is_working: value
             .pointer("/time/busy")
             .and_then(Value::as_u64)
@@ -1525,7 +1592,9 @@ class Handler(BaseHTTPRequestHandler):
                 {"id": "msg_user", "type": "user", "text": "Earlier prompt"}
             ], "cursor": {"previous": None, "next": "older+opaque/=="}})
         elif path == "/api/model":
-            self.send_json({"data": [{"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True}, {"id": "disabled", "providerID": "local", "name": "Hidden", "enabled": False}]})
+            self.send_json({"data": [{"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True, "variants": [{"id": "low"}, {"id": "high"}]}, {"id": "disabled", "providerID": "local", "name": "Hidden", "enabled": False}]})
+        elif path == "/api/model/default":
+            self.send_json({"data": {"providerID": "local", "id": "model/a"}})
         elif path == "/api/agent":
             self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}]})
         else:
@@ -1546,7 +1615,7 @@ class Handler(BaseHTTPRequestHandler):
                 SESSION["model"] = body["model"]
             self.send_json({"data": SESSION})
         elif path == "/api/session/ses_fake/model":
-            if body["model"]["id"] == "missing":
+            if body["model"]["id"] == "missing" or body["model"].get("variant") == "invalid":
                 self.send_error(400)
                 return
             SESSION["model"] = body["model"]
@@ -1588,6 +1657,15 @@ server.serve_forever()
         let choices = provider.choices(&project_path).unwrap();
         assert_eq!(choices.models.len(), 1);
         assert_eq!(choices.agents.len(), 1);
+        assert_eq!(choices.default_model.as_deref(), Some("local/model/a"));
+        assert_eq!(
+            choices.models[0]
+                .efforts
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect::<Vec<_>>(),
+            ["low", "high"]
+        );
         let started = provider
             .start_session_with_options(&project_path, Some(&choices.models[0].id), Some("build"))
             .unwrap();
@@ -1617,6 +1695,7 @@ server.serve_forever()
                 "Switch model",
                 Some("msg_selected"),
                 Some("other/model/b"),
+                Some("high"),
             )
             .unwrap();
         assert_eq!(
@@ -1640,7 +1719,7 @@ server.serve_forever()
         assert_eq!(switch["path"], "/api/session/ses_fake/model");
         assert_eq!(
             switch["body"],
-            json!({ "model": { "providerID": "other", "id": "model/b" } })
+            json!({ "model": { "providerID": "other", "id": "model/b", "variant": "high" } })
         );
         assert_eq!(
             sent.last().unwrap()["body"],
@@ -1652,13 +1731,81 @@ server.serve_forever()
                 "ses_fake",
                 "Do not send with a rejected model",
                 None,
-                Some("other/missing")
+                Some("other/missing"),
+                None,
             )
             .is_err());
         assert_eq!(requests().len(), sent.len() + 1);
         assert_eq!(
             requests().last().unwrap()["path"],
             "/api/session/ses_fake/model"
+        );
+        assert_eq!(
+            provider
+                .session_history(&project_path, "ses_fake", None)
+                .unwrap()
+                .effort
+                .as_deref(),
+            Some("high")
+        );
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Change effort",
+                None,
+                None,
+                Some("low"),
+            )
+            .unwrap();
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .effort
+                .as_deref(),
+            Some("low")
+        );
+        let sent = requests();
+        assert_eq!(
+            sent[sent.len() - 2]["body"],
+            json!({ "model": { "providerID": "other", "id": "model/b", "variant": "low" } })
+        );
+        assert!(provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Rejected effort must not send",
+                None,
+                None,
+                Some("invalid")
+            )
+            .is_err());
+        assert_eq!(requests().len(), sent.len() + 1);
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Default effort",
+                None,
+                None,
+                Some(""),
+            )
+            .unwrap();
+        let sent = requests();
+        assert_eq!(
+            sent[sent.len() - 2]["body"],
+            json!({ "model": { "providerID": "other", "id": "model/b" } })
+        );
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .effort
+                .as_deref(),
+            Some("")
         );
         provider.cancel_turn(&project_path, "ses_fake").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);

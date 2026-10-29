@@ -357,11 +357,18 @@ async fn codex_send_prompt(
     thread_id: String,
     prompt: String,
     model: Option<String>,
+    effort: Option<String>,
 ) -> Result<(), String> {
     let codex = codex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         codex
-            .send_prompt_with_model(project_path, &thread_id, &prompt, model.as_deref())
+            .send_prompt_with_options(
+                project_path,
+                &thread_id,
+                &prompt,
+                model.as_deref(),
+                effort.as_deref(),
+            )
             .map_err(|error| error.to_string())
     })
     .await
@@ -457,6 +464,7 @@ async fn opencode_send_prompt(
     prompt: String,
     message_id: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
 ) -> Result<(), String> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -467,6 +475,7 @@ async fn opencode_send_prompt(
                 &prompt,
                 message_id.as_deref(),
                 model.as_deref(),
+                effort.as_deref(),
             )
             .map_err(|error| error.to_string())
     })

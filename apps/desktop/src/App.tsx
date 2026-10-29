@@ -314,13 +314,7 @@ export default function App() {
                   changeProvider={app.changeProvider}
                   isNew={!app.selectedId}
                   working={app.selected?.isWorking ?? false}
-                  activity={
-                    activeApprovals.length
-                      ? { label: "Waiting for approval" }
-                      : app.selected?.isWorking
-                        ? app.selected.activity
-                        : null
-                  }
+                  awaitingApproval={activeApprovals.length > 0}
                   submitting={
                     app.selected?.isSubmitting ||
                     (!app.selectedId && app.providerWorkspace?.isCreating) ||
@@ -340,14 +334,11 @@ export default function App() {
                   cancel={() => void app.cancel()}
                   choices={app.providerWorkspace?.choices ?? null}
                   choicesError={app.providerWorkspace?.choicesError ?? null}
-                  model={
-                    app.selected
-                      ? (app.selected.model ??
-                        app.selected.session.model ??
-                        "")
-                      : (app.providerWorkspace?.model ?? "")
-                  }
+                  model={app.options.model}
                   modelPending={Boolean(app.selected?.model)}
+                  effort={app.options.effort}
+                  modelChoice={app.options.modelChoice}
+                  effortPending={app.selected?.effort != null}
                   agent={app.providerWorkspace?.agent ?? ""}
                   setOption={app.setOption}
                   retryChoices={() =>

@@ -42,16 +42,26 @@ export type WorkspaceSessionInfo = {
   thread: SessionSummary;
   provider: ProviderKind;
   model?: string | null;
+  effort?: string | null;
+};
+export type ModelChoice = {
+  id: string;
+  name: string;
+  efforts: { id: string; name: string }[];
+  defaultEffort?: string | null;
 };
 export type ProviderChoices = {
-  models: { id: string; name: string }[];
+  models: ModelChoice[];
   agents: { id: string; name: string }[];
+  defaultModel?: string | null;
 };
 
 export type SessionWorkspaceState = {
   session: WorkspaceSessionInfo;
   /** Pending selection for the next prompt; null keeps the provider's session model. */
   model: string | null;
+  /** Null keeps the session effort; an empty string selects the model default. */
+  effort: string | null;
   conversation: ConversationEntry[];
   isWorking: boolean;
   isSubmitting: boolean;
@@ -85,6 +95,7 @@ export type ProviderWorkspaceState = {
   choices: ProviderChoices | null;
   choicesError: string | null;
   model: string;
+  effort: string;
   agent: string;
 };
 

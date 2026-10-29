@@ -81,9 +81,9 @@ Browser checks use a mocked desktop/provider boundary. Rust integration tests ex
 
 ## Sessions
 
-Open a project and send a message to create a session. Choose the provider and any available model/agent before sending. The model picker also works in existing sessions: a selection applies to the next message and is kept independently for each session. Each session keeps its own draft, reading position, and expanded tools while the app is open. Provider-owned history is restored in pages; use **Load earlier messages** to read further back.
+Open a project and send a message to create a session. Choose the provider and any available model/agent before sending. Model and effort pickers also work in existing sessions: selections apply to the next message and are kept independently for each session. Effort options come from the selected model’s supported reasoning levels or OpenCode variants; changing models resets effort to the new model’s default. Each session keeps its own draft, reading position, and expanded tools while the app is open. Provider-owned history is restored in pages; use **Load earlier messages** to read further back.
 
-Responses and thinking update live. Expand a thinking row to read the provider's summary or trace; activity stays visible above the composer while you browse history. Sending a message returns the transcript to the latest response. OpenCode connects to its existing local background service when available.
+Responses and thinking update live. Expand a thinking row to read the provider's summary or trace. A subtle composer outline pulses throughout work, including long-running commands and tool calls, which show elapsed time. Reduced-motion settings keep the outline static. Sending a message returns the transcript to the latest response. OpenCode connects to its existing local background service when available.
 
 The **Changes** pane shows project diffs beside the conversation and refreshes while the agent works. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
 

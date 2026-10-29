@@ -1,13 +1,10 @@
 import { useLayoutEffect, type RefObject } from "react";
-import {
-  ArrowUp,
-  Bot,
-  Cpu,
-  Layers,
-  LoaderCircle,
-  Square,
-} from "lucide-react";
-import type { ProviderKind, ProviderChoices } from "./workspaceState.js";
+import { ArrowUp, Bot, Cpu, Gauge, Layers, Square } from "lucide-react";
+import type {
+  ProviderKind,
+  ProviderChoices,
+  ModelChoice,
+} from "./workspaceState.js";
 import { ChoicePicker } from "./ChoicePicker.js";
 
 export function Composer({
@@ -25,11 +22,14 @@ export function Composer({
   choices,
   model,
   modelPending,
+  effort,
+  effortPending,
+  modelChoice,
   agent,
   setOption,
   choicesError,
   retryChoices,
-  activity,
+  awaitingApproval,
 }: {
   draft: string;
   setDraft: (text: string) => void;
@@ -45,12 +45,20 @@ export function Composer({
   choices: ProviderChoices | null;
   model: string;
   modelPending: boolean;
+  effort: string;
+  effortPending: boolean;
+  modelChoice?: ModelChoice;
   agent: string;
-  setOption: (key: "model" | "agent", value: string) => void;
+  setOption: (key: "model" | "agent" | "effort", value: string) => void;
   choicesError: string | null;
   retryChoices: () => void;
-  activity: { label: string; detail?: string } | null;
+  awaitingApproval: boolean;
 }) {
+  const busy = working || submitting || awaitingApproval;
+  const effortName = (name: string) =>
+    name === "xhigh"
+      ? "Extra high"
+      : name.charAt(0).toUpperCase() + name.slice(1);
   useLayoutEffect(() => {
     const area = textareaRef.current;
     if (area) {
@@ -60,26 +68,18 @@ export function Composer({
   }, [draft]);
   return (
     <div className="composer-wrap">
-      {(working || submitting || activity) && (
-        <div
-          className="working-indicator"
-          role="status"
-          aria-label="Agent activity"
-        >
-          <LoaderCircle className="spinning" size={14} aria-hidden="true" />
-          <span>
-            {activity?.label ??
-              (submitting && isNew ? "Starting session…" : "Working…")}
-          </span>
-          {activity?.detail && (
-            <span className="activity-detail" title={activity.detail}>
-              {activity.detail}
-            </span>
-          )}
-        </div>
+      {busy && (
+        <span className="sr-only" role="status" aria-label="Agent activity">
+          {awaitingApproval ? "Approval required" : "Agent working"}
+        </span>
+      )}
+      {awaitingApproval && (
+        <div className="composer-approval">Approval required</div>
       )}
       <form
         className="composer"
+        aria-label="Message composer"
+        data-working={busy}
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -159,6 +159,38 @@ export function Composer({
                 ]}
               />
             )}
+            {Boolean(modelChoice?.efforts.length) && (
+              <ChoicePicker
+                label="Effort"
+                icon={<Gauge size={13} />}
+                value={effort}
+                disabled={submitting || disabled}
+                onChange={(value) => setOption("effort", value)}
+                choices={[
+                  {
+                    id: "",
+                    name: "Default effort",
+                    description: modelChoice?.defaultEffort
+                      ? `Use ${effortName(modelChoice.defaultEffort).toLowerCase()} effort`
+                      : "Use model settings",
+                  },
+                  ...(effort &&
+                  !modelChoice!.efforts.some((choice) => choice.id === effort)
+                    ? [
+                        {
+                          id: effort,
+                          name: effortName(effort),
+                          description: "Current selection",
+                        },
+                      ]
+                    : []),
+                  ...modelChoice!.efforts.map((choice) => ({
+                    ...choice,
+                    name: effortName(choice.name),
+                  })),
+                ]}
+              />
+            )}
             {isNew && Boolean(choices?.agents.length) && (
               <ChoicePicker
                 label="Agent"
@@ -184,11 +216,13 @@ export function Composer({
             )}
           </div>
           <span className="composer-hint">
-            {modelPending
-              ? "Model applies to next message"
-              : working
-                ? "Draft while the agent works"
-                : "↵ Send · ⇧↵ Newline"}
+            {effortPending
+              ? "Settings apply to next message"
+              : modelPending
+                ? "Model applies to next message"
+                : working
+                  ? "Draft while the agent works"
+                  : "↵ Send · ⇧↵ Newline"}
           </span>
           {working ? (
             <button
@@ -214,11 +248,7 @@ export function Composer({
               aria-label="Send message"
               title="Send message"
             >
-              {submitting ? (
-                <LoaderCircle size={15} className="spinning" />
-              ) : (
-                <ArrowUp size={17} />
-              )}
+              <ArrowUp size={17} />
             </button>
           )}
         </div>

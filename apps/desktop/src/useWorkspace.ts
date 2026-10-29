@@ -16,6 +16,8 @@ import {
   type ProjectInfo,
   type ProviderKind,
   type ProviderChoices,
+  type ProviderWorkspaceState,
+  type SessionWorkspaceState,
   type SessionSummary,
   type WorkspaceMap,
   type WorkspaceSessionInfo,
@@ -37,6 +39,7 @@ type HistoryPage = {
   nextCursor: string | null;
   isWorking?: boolean | null;
   model?: string | null;
+  effort?: string | null;
 };
 type OpenCodeInfo = {
   project: ProjectInfo;
@@ -46,6 +49,7 @@ type OpenCodeInfo = {
     updatedAt: number | null;
     isWorking?: boolean;
     model?: string | null;
+    effort?: string | null;
   };
 };
 const providerInfo = (
@@ -58,6 +62,7 @@ const providerInfo = (
         project: value.project,
         provider,
         model: value.session.model,
+        effort: value.session.effort,
         thread: {
           id: value.session.id,
           name: value.session.title,
@@ -68,6 +73,35 @@ const providerInfo = (
       };
 const keyFor = (path: string, provider: ProviderKind, id = "") =>
   `${path}\0${provider}\0${id}`;
+
+function generationOptions(
+  provider: ProviderKind,
+  workspace?: ProviderWorkspaceState,
+  session?: SessionWorkspaceState | null,
+) {
+  const model = session
+    ? (session.model ?? session.session.model ?? "")
+    : (workspace?.model ?? "");
+  const modelChoice = workspace?.choices?.models.find(
+    (choice) => choice.id === (model || workspace.choices?.defaultModel),
+  );
+  const changedModel = Boolean(
+    session?.model && session.model !== session.session.model,
+  );
+  const pendingEffort = session ? session.effort : workspace?.effort || null;
+  const effort =
+    pendingEffort ?? (changedModel ? "" : (session?.session.effort ?? ""));
+  return {
+    model,
+    modelChoice,
+    effort,
+    requestedEffort:
+      pendingEffort !== null || changedModel
+        ? effort ||
+          (provider === "codex" ? (modelChoice?.defaultEffort ?? null) : "")
+        : null,
+  };
+}
 
 export function useWorkspace() {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -92,6 +126,7 @@ export function useWorkspace() {
   const selected = selectedId
     ? providerWorkspace?.sessionsById[selectedId]
     : undefined;
+  const options = generationOptions(provider, providerWorkspace, selected);
 
   function update(fn: (current: WorkspaceMap) => WorkspaceMap) {
     state.current = fn(state.current);
@@ -373,17 +408,27 @@ export function useWorkspace() {
       locks.current.delete(key);
     }
   }
-  function setOption(key: "model" | "agent", value: string) {
+  function setOption(key: "model" | "agent" | "effort", value: string) {
     if (!project) return;
-    if (key === "model" && selectedId)
+    if (key !== "agent" && selectedId)
       mutateSession(project.path, provider, selectedId, (current) => ({
         ...current,
-        model: value || null,
+        ...(key === "model"
+          ? {
+              model: value || null,
+              effort:
+                (value || current.session.model) ===
+                (current.model ?? current.session.model)
+                  ? current.effort
+                  : null,
+            }
+          : { effort: value }),
       }));
     else
       mutateProvider(project.path, provider, (current) => ({
         ...current,
         [key]: value,
+        ...(key === "model" && value !== current.model ? { effort: "" } : {}),
       }));
   }
   async function loadSessions(target: ProjectInfo, kind: ProviderKind) {
@@ -504,10 +549,13 @@ export function useWorkspace() {
           : value.isWorking;
         return {
           ...value,
-          session:
-            fresh && page.model
-              ? { ...value.session, model: page.model }
-              : value.session,
+          session: fresh
+            ? {
+                ...value.session,
+                ...(page.model ? { model: page.model } : {}),
+                ...(page.effort != null ? { effort: page.effort } : {}),
+              }
+            : value.session,
           isWorking,
           activity: isWorking ? value.activity : null,
           conversation: mergeHistory(
@@ -696,6 +744,11 @@ export function useWorkspace() {
     let id = snapshot.selectedSessionId;
     const cached = id ? snapshot.sessionsById[id] : null;
     const model = cached?.model ?? null;
+    const { requestedEffort: effort } = generationOptions(
+      kind,
+      snapshot,
+      cached,
+    );
     const text = (cached?.draft ?? snapshot.draft).trim();
     const key = `send:${keyFor(target.path, kind, id ?? "new")}`;
     if (
@@ -743,6 +796,7 @@ export function useWorkspace() {
             ...value.sessionsById,
             [started.thread.id]: {
               ...createSessionWorkspace(started),
+              effort,
               connection: "connected",
               historyLoaded: true,
               draft: text,
@@ -794,12 +848,19 @@ export function useWorkspace() {
         prompt: text,
         messageId,
         model,
+        effort,
       });
-      if (model)
+      if (model || effort !== null)
         mutateSession(target.path, kind, sessionId, (value) => ({
           ...value,
-          session: { ...value.session, model },
+          session: {
+            ...value.session,
+            ...(model ? { model } : {}),
+            ...(effort !== null ? { effort } : {}),
+          },
           model: value.model === model ? null : value.model,
+          effort:
+            value.effort === (cached?.effort ?? effort) ? null : value.effort,
         }));
     } catch (reason) {
       if (id)
@@ -921,6 +982,7 @@ export function useWorkspace() {
     workspace,
     provider,
     providerWorkspace,
+    options,
     selected,
     selectedId,
     view,
