@@ -7,7 +7,7 @@ Caelum is a local-first AI coding workspace for macOS, with a native Rust core s
 ## Project status
 
 - **Desktop:** Tauri 2 + React + TypeScript + Vite + Tailwind CSS v4; native folder picker and Rust-validated project paths.
-- **CLI:** Rust/clap executable scaffold sharing `caelum-core`; currently reports project information and clearly marks agent features as unavailable.
+- **CLI:** Standalone Rust/clap executable sharing `caelum-core`; can launch the desktop app or run Codex and OpenCode workflows in a terminal.
 - **Core:** independent Rust library for shared application behavior, project validation, and provider adapters.
 - **Providers:** Codex and OpenCode integrations use their local server protocols and share the desktop session and approval experience.
 
@@ -53,14 +53,17 @@ make app
 make frontend
 ```
 
-Build and run the CLI scaffold:
+Build and use the standalone CLI:
 
 ```bash
 make cli
 make cli-run PROJECT=.
+caelum chat [PROJECT] [--provider codex|opencode]
+caelum run "Fix the failing tests" --project .
+caelum sessions [PROJECT] --provider opencode
 ```
 
-The CLI currently validates and reports the project path; `chat` and `run` are not active until provider sessions exist. `sessions` reports that persistence is not available.
+With no subcommand, `caelum [PROJECT]` opens the project in the installed Caelum desktop app (macOS). Terminal workflows work without the desktop app. Use `--session ID` with `chat` or `run` to resume a provider-owned session; `/quit` exits interactive chat. Provider permissions are denied unless explicitly approved once in the terminal.
 
 ## Verification
 

@@ -19,6 +19,8 @@ struct PersistenceState {
     unavailable_reason: Option<String>,
 }
 
+struct StartupProject(Option<ProjectInfo>);
+
 impl PersistenceState {
     fn open(app_data_dir: Result<PathBuf, tauri::Error>) -> Self {
         match app_data_dir {
@@ -58,6 +60,11 @@ fn app_info() -> AppInfo {
         name: "Caelum".to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
     }
+}
+
+#[tauri::command]
+fn startup_project(project: State<'_, StartupProject>) -> Option<ProjectInfo> {
+    project.0.clone()
 }
 
 #[tauri::command]
@@ -439,6 +446,12 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir();
             app.manage(PersistenceState::open(app_data_dir));
+            let startup_project = std::env::args_os()
+                .skip(1)
+                .map(PathBuf::from)
+                .find(|path| path.is_dir())
+                .and_then(|path| Project::open(path).ok().map(|project| project.info()));
+            app.manage(StartupProject(startup_project));
 
             let approvals = app.state::<ApprovalBroker>().inner().clone();
             let processes = app.state::<Arc<ProcessRegistry>>().inner().clone();
@@ -481,6 +494,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            startup_project,
             open_project,
             git_repository_status,
             git_file_diff,

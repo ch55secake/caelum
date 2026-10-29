@@ -272,7 +272,9 @@ name = "caelum-cli"
 version = "0.1.0"
 dependencies = [
  "caelum-core",
+ "caelum-protocol",
  "clap",
+ "serde_json",
 ]
 
 [[package]]
