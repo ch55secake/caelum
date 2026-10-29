@@ -147,13 +147,13 @@ jobs:
           if [[ "$RELEASE_TAG" == *-* ]]; then
             gh release create "$RELEASE_TAG" dist/* \
               --verify-tag \
-              --title "Caelum $RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
               --generate-notes \
               --prerelease
           else
             gh release create "$RELEASE_TAG" dist/* \
               --verify-tag \
-              --title "Caelum $RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
               --generate-notes
           fi
 
