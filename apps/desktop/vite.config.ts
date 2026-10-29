@@ -11,6 +11,9 @@ export default defineConfig({
   resolve: {
     alias: [{ find: /^monaco-editor\/esm\//, replacement: `${monacoEsm}/` }],
   },
+  optimizeDeps: {
+    exclude: ["@monaco-editor/react", "monaco-editor"],
+  },
   server: {
     host: "127.0.0.1",
     port: 1420,
