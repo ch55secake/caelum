@@ -4,6 +4,20 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { addOpenProject, closeOpenProject, selectOpenProject } from "./projectWorkspace.js";
 import {
+  applyCodexEvent,
+  applyOpenCodeEvent,
+  createProjectWorkspace,
+  projectHasActiveTurn,
+  updateProjectWorkspace,
+  updateProviderWorkspace,
+  updateSessionWorkspace,
+  type ConversationEntry,
+  type ProviderKind,
+  type SessionSummary,
+  type WorkspaceMap,
+  type WorkspaceSessionInfo,
+} from "./workspaceState.js";
+import {
   Activity,
   ArrowUp,
   CircleHelp,
@@ -28,12 +42,12 @@ type AppInfo = { name: string; version: string };
 type ProjectInfo = { name: string; path: string };
 type ApprovalPrompt = {
   provider: string;
+  projectPath: string;
+  sessionId?: string | null;
   requestId: string;
   summary: string;
   description: string;
 };
-type ProviderKind = "codex" | "opencode";
-type SessionSummary = { id: string; name: string | null; preview: string; updatedAt: number | null };
 type CodexSessionInfo = { project: ProjectInfo; thread: SessionSummary };
 type CodexSessionList = { project: ProjectInfo; threads: SessionSummary[] };
 type CodexEvent = { projectPath: string; method: string; params: Record<string, unknown>; requestId: unknown };
@@ -42,75 +56,72 @@ type OpenCodeSessionInfo = { project: ProjectInfo; session: OpenCodeSession };
 type OpenCodeSessionList = { project: ProjectInfo; sessions: OpenCodeSession[] };
 type OpenCodeHistoryEntry = { id: string; kind: string; text: string };
 type OpenCodeEvent = { projectPath: string; eventType: string; data: Record<string, unknown>; location: unknown };
-type WorkspaceSessionInfo = { project: ProjectInfo; thread: SessionSummary; provider: ProviderKind };
-type ConversationEntry = { id: string; kind: "user" | "assistant" | "activity" | "status"; text: string };
-
-function valueString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function valueRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? value as Record<string, unknown> : {};
-}
-
-function openCodeToolInput(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    try {
-      return openCodeToolInput(JSON.parse(value) as unknown) ?? value;
-    } catch {
-      return value;
-    }
-  }
-  const input = valueRecord(value);
-  const command = valueString(input.command);
-  if (command) return command;
-  return Object.keys(input).length > 0 ? JSON.stringify(input) : undefined;
-}
-
-function itemActivity(item: unknown): string | undefined {
-  if (!item || typeof item !== "object") return undefined;
-  const value = item as Record<string, unknown>;
-  const type = valueString(value.type) ?? "tool";
-  if (type === "commandExecution") {
-    const command = Array.isArray(value.command) ? value.command.join(" ") : valueString(value.command);
-    return command ? `Running command: ${command}` : "Running a command";
-  }
-  if (type === "fileChange") return "Preparing file changes";
-  if (type === "mcpToolCall") return `Using tool: ${valueString(value.tool) ?? "MCP tool"}`;
-  if (type === "webSearch") return `Searching the web: ${valueString(value.query) ?? ""}`.trim();
-  if (type === "reasoning") return undefined;
-  return `Codex activity: ${type.replace(/([A-Z])/g, " $1").toLowerCase()}`;
-}
 
 export default function App() {
   const hasMacTitlebarOverlay = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [openProjects, setOpenProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
-  const [provider, setProvider] = useState<ProviderKind>("codex");
-  const [error, setError] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceMap>({});
+  const [appError, setAppError] = useState<string | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
   const [isResolvingApproval, setIsResolvingApproval] = useState(false);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [session, setSession] = useState<WorkspaceSessionInfo | null>(null);
-  const [conversation, setConversation] = useState<ConversationEntry[]>([]);
-  const [prompt, setPrompt] = useState("");
-  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isWorking, setIsWorking] = useState(false);
-  const projectRef = useRef(project);
-  const sessionRef = useRef(session);
-  const providerRef = useRef(provider);
-  const workspaceRequest = useRef(0);
-  projectRef.current = project;
-  sessionRef.current = session;
-  providerRef.current = provider;
+  const requestIds = useRef(new Map<string, number>());
+  const workspace = project ? workspaces[project.path] : undefined;
+  const provider = workspace?.provider ?? "codex";
+  const providerWorkspace = workspace?.providers[provider];
+  const selectedSessionId = providerWorkspace?.selectedSessionId ?? null;
+  const selectedSession = selectedSessionId ? providerWorkspace?.sessionsById[selectedSessionId] : undefined;
+  const session = selectedSession?.session ?? null;
+  const conversation = selectedSession?.conversation ?? [];
+  const sessions = providerWorkspace?.sessions ?? [];
+  const prompt = workspace?.prompt ?? "";
+  const isLoadingSessions = providerWorkspace?.isLoadingSessions ?? false;
+  const isSubmitting = selectedSession?.isSubmitting ?? false;
+  const isWorking = selectedSession?.isWorking ?? false;
+  const error = selectedSession?.error ?? providerWorkspace?.error ?? appError;
+
+  function mutateWorkspace(projectPath: string, update: Parameters<typeof updateProjectWorkspace>[2]) {
+    setWorkspaces((current) => updateProjectWorkspace(current, projectPath, update));
+  }
+
+  function mutateProvider(
+    projectPath: string,
+    selectedProvider: ProviderKind,
+    update: Parameters<typeof updateProviderWorkspace>[3],
+  ) {
+    setWorkspaces((current) => updateProviderWorkspace(current, projectPath, selectedProvider, update));
+  }
+
+  function mutateSession(
+    projectPath: string,
+    selectedProvider: ProviderKind,
+    sessionId: string,
+    update: Parameters<typeof updateSessionWorkspace>[4],
+  ) {
+    setWorkspaces((current) => updateSessionWorkspace(current, projectPath, selectedProvider, sessionId, update));
+  }
+
+  function requestKey(projectPath: string, selectedProvider: ProviderKind) {
+    return `${projectPath}\0${selectedProvider}`;
+  }
+
+  function beginWorkspaceRequest(projectPath: string, selectedProvider: ProviderKind) {
+    const key = requestKey(projectPath, selectedProvider);
+    const id = (requestIds.current.get(key) ?? 0) + 1;
+    requestIds.current.set(key, id);
+    return id;
+  }
+
+  function isCurrentWorkspaceRequest(projectPath: string, selectedProvider: ProviderKind, id: number) {
+    return requestIds.current.get(requestKey(projectPath, selectedProvider)) === id;
+  }
 
   useEffect(() => {
     if (!isTauri()) return;
     void invoke<AppInfo>("app_info").then(setAppInfo).catch((reason: unknown) => {
-      setError(String(reason));
+      setAppError(String(reason));
     });
   }, []);
 
@@ -129,7 +140,7 @@ export default function App() {
       if (disposed) stopListening();
       else unlisten = stopListening;
     }).catch((reason: unknown) => {
-      if (!disposed) setError(String(reason));
+      if (!disposed) setAppError(String(reason));
     });
     void invoke<ApprovalPrompt[]>("pending_approvals").then((snapshot) => {
       if (disposed) return;
@@ -139,7 +150,7 @@ export default function App() {
       if (disposed) return;
       if (deferredUpdates) setApprovals(deferredUpdates);
       snapshotLoaded = true;
-      setError(String(reason));
+      setAppError(String(reason));
     });
 
     return () => {
@@ -150,12 +161,12 @@ export default function App() {
 
   async function chooseProject() {
     if (!isTauri()) {
-      setError("Open Caelum as a desktop app to choose a local project.");
+      setAppError("Open Caelum as a desktop app to choose a local project.");
       return;
     }
 
     setIsSelecting(true);
-    setError(null);
+    setAppError(null);
     try {
       const selected = await open({ directory: true, multiple: false, title: "Open a project" });
       if (typeof selected !== "string") return;
@@ -163,7 +174,7 @@ export default function App() {
       setOpenProjects((current) => addOpenProject(current, opened));
       activateProject(opened);
     } catch (reason) {
-      setError(String(reason));
+      setAppError(String(reason));
     } finally {
       setIsSelecting(false);
     }
@@ -171,18 +182,15 @@ export default function App() {
 
   function activateProject(target: ProjectInfo | null) {
     if (target?.path === project?.path) return;
-    workspaceRequest.current += 1;
     setProject(target);
-    setSession(null);
-    setConversation([]);
-    setPrompt("");
-    setSessions([]);
-    setIsWorking(false);
-    setError(null);
-    if (target) {
-      void loadSessions(target);
-    } else {
-      setIsLoadingSessions(false);
+    setAppError(null);
+    if (!target) return;
+
+    const targetWorkspace = workspaces[target.path] ?? createProjectWorkspace();
+    const targetProvider = targetWorkspace.provider;
+    const targetProviderWorkspace = targetWorkspace.providers[targetProvider];
+    if (!targetProviderWorkspace.sessionsLoaded && !targetProviderWorkspace.isLoadingSessions) {
+      void loadSessions(target, targetProvider);
     }
   }
 
@@ -194,55 +202,64 @@ export default function App() {
     }
   }
 
-  async function loadSessions(target: ProjectInfo, selectedProvider = provider) {
-    const requestId = ++workspaceRequest.current;
-    setIsLoadingSessions(true);
-    setError(null);
+  async function loadSessions(target: ProjectInfo, selectedProvider: ProviderKind) {
+    const requestId = beginWorkspaceRequest(target.path, selectedProvider);
+    mutateProvider(target.path, selectedProvider, (current) => ({ ...current, isLoadingSessions: true, error: null }));
     try {
+      let sessions: SessionSummary[];
       if (selectedProvider === "codex") {
         const result = await invoke<CodexSessionList>("codex_list_sessions", {
           projectPath: target.path,
         });
-        if (requestId === workspaceRequest.current) setSessions(result.threads);
+        sessions = result.threads;
       } else {
         const result = await invoke<OpenCodeSessionList>("opencode_list_sessions", {
           projectPath: target.path,
         });
-        if (requestId === workspaceRequest.current) {
-          setSessions(result.sessions.map((item) => ({
-            id: item.id,
-            name: item.title,
-            preview: "",
-            updatedAt: item.updatedAt,
-          })));
-        }
+        sessions = result.sessions.map((item) => ({
+          id: item.id,
+          name: item.title,
+          preview: "",
+          updatedAt: item.updatedAt,
+        }));
+      }
+      if (isCurrentWorkspaceRequest(target.path, selectedProvider, requestId)) {
+        mutateProvider(target.path, selectedProvider, (current) => ({
+          ...current,
+          sessions,
+          sessionsLoaded: true,
+          error: null,
+        }));
       }
     } catch (reason) {
-      if (requestId === workspaceRequest.current) setError(String(reason));
+      if (isCurrentWorkspaceRequest(target.path, selectedProvider, requestId)) {
+        mutateProvider(target.path, selectedProvider, (current) => ({ ...current, error: String(reason) }));
+      }
     } finally {
-      if (requestId === workspaceRequest.current) setIsLoadingSessions(false);
+      if (isCurrentWorkspaceRequest(target.path, selectedProvider, requestId)) {
+        mutateProvider(target.path, selectedProvider, (current) => ({ ...current, isLoadingSessions: false }));
+      }
     }
   }
 
   async function changeProvider(nextProvider: ProviderKind) {
-    if (provider === nextProvider) return;
-    workspaceRequest.current += 1;
-    setProvider(nextProvider);
-    setSession(null);
-    setConversation([]);
-    setPrompt("");
-    setIsWorking(false);
-    setSessions([]);
-    if (project) await loadSessions(project, nextProvider);
+    if (!project || provider === nextProvider) return;
+    const target = project;
+    const targetWorkspace = workspaces[target.path] ?? createProjectWorkspace();
+    const targetProviderWorkspace = targetWorkspace.providers[nextProvider];
+    mutateWorkspace(target.path, (current) => ({ ...current, provider: nextProvider }));
+    setAppError(null);
+    if (!targetProviderWorkspace.sessionsLoaded && !targetProviderWorkspace.isLoadingSessions) {
+      await loadSessions(target, nextProvider);
+    }
   }
 
   async function startSession() {
     if (!project || isLoadingSessions) return;
-    const requestId = ++workspaceRequest.current;
+    const requestId = beginWorkspaceRequest(project.path, provider);
     const currentProject = project;
     const currentProvider = provider;
-    setError(null);
-    setIsLoadingSessions(true);
+    mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, isLoadingSessions: true, error: null }));
     try {
       let started: WorkspaceSessionInfo;
       if (currentProvider === "codex") {
@@ -260,36 +277,61 @@ export default function App() {
           provider: currentProvider,
         };
       }
-      if (requestId !== workspaceRequest.current) return;
-      setSession(started);
-      setConversation([]);
-      setIsWorking(false);
-      setSessions((current) => [started.thread, ...current.filter((item) => item.id !== started.thread.id)]);
+      if (!isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) return;
+      mutateProvider(currentProject.path, currentProvider, (current) => ({
+        ...current,
+        sessions: [started.thread, ...current.sessions.filter((item) => item.id !== started.thread.id)],
+        sessionsLoaded: true,
+        isLoadingSessions: false,
+        selectedSessionId: started.thread.id,
+        sessionsById: {
+          ...current.sessionsById,
+          [started.thread.id]: {
+            session: started,
+            conversation: [],
+            isWorking: false,
+            isSubmitting: false,
+            error: null,
+          },
+        },
+        error: null,
+      }));
     } catch (reason) {
-      if (requestId === workspaceRequest.current) setError(String(reason));
+      if (isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) {
+        mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, error: String(reason) }));
+      }
     } finally {
-      if (requestId === workspaceRequest.current) setIsLoadingSessions(false);
+      if (isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) {
+        mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, isLoadingSessions: false }));
+      }
     }
   }
 
   async function resumeSession(thread: SessionSummary) {
     if (!project || isLoadingSessions) return;
-    const requestId = ++workspaceRequest.current;
+    const currentWorkspace = workspaces[project.path] ?? createProjectWorkspace();
+    const currentProviderWorkspace = currentWorkspace.providers[provider];
+    if (currentProviderWorkspace.sessionsById[thread.id]) {
+      mutateProvider(project.path, provider, (current) => ({ ...current, selectedSessionId: thread.id, error: null }));
+      return;
+    }
+
+    const requestId = beginWorkspaceRequest(project.path, provider);
     const currentProject = project;
     const currentProvider = provider;
-    setError(null);
-    setIsLoadingSessions(true);
+    mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, isLoadingSessions: true, error: null }));
     try {
+      let resumed: WorkspaceSessionInfo;
+      let conversation: ConversationEntry[];
       if (currentProvider === "codex") {
-        const resumed = await invoke<CodexSessionInfo>("codex_resume_session", {
+        const result = await invoke<CodexSessionInfo>("codex_resume_session", {
           projectPath: currentProject.path,
           threadId: thread.id,
         });
-        if (requestId !== workspaceRequest.current) return;
-        setSession({ ...resumed, provider: currentProvider });
-        setConversation(thread.preview ? [{ id: `preview-${thread.id}`, kind: "status", text: thread.preview }] : []);
+        resumed = { ...result, provider: currentProvider };
+        conversation = thread.preview ? [{ id: `preview-${thread.id}`, kind: "status", text: thread.preview }] : [];
       } else {
-        const resumed = await invoke<OpenCodeSessionInfo>("opencode_resume_session", {
+        const result = await invoke<OpenCodeSessionInfo>("opencode_resume_session", {
           projectPath: currentProject.path,
           sessionId: thread.id,
         });
@@ -297,40 +339,67 @@ export default function App() {
           projectPath: currentProject.path,
           sessionId: thread.id,
         });
-        if (requestId !== workspaceRequest.current) return;
-        setSession({
-          project: resumed.project,
-          thread: { id: resumed.session.id, name: resumed.session.title, preview: "", updatedAt: resumed.session.updatedAt },
+        resumed = {
+          project: result.project,
+          thread: { id: result.session.id, name: result.session.title, preview: "", updatedAt: result.session.updatedAt },
           provider: currentProvider,
-        });
-        setConversation(history.map((entry) => ({
+        };
+        conversation = history.map((entry) => ({
           id: entry.id,
           kind: (["user", "assistant", "activity", "status"].includes(entry.kind) ? entry.kind : "status") as ConversationEntry["kind"],
           text: entry.text,
-        })));
+        }));
       }
-      setIsWorking(false);
+      if (!isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) return;
+      mutateProvider(currentProject.path, currentProvider, (current) => ({
+        ...current,
+        sessions: [resumed.thread, ...current.sessions.filter((item) => item.id !== resumed.thread.id)],
+        sessionsLoaded: true,
+        isLoadingSessions: false,
+        selectedSessionId: resumed.thread.id,
+        sessionsById: {
+          ...current.sessionsById,
+          [resumed.thread.id]: {
+            session: resumed,
+            conversation,
+            isWorking: false,
+            isSubmitting: false,
+            error: null,
+          },
+        },
+        error: null,
+      }));
     } catch (reason) {
-      if (requestId === workspaceRequest.current) setError(String(reason));
+      if (isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) {
+        mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, error: String(reason) }));
+      }
     } finally {
-      if (requestId === workspaceRequest.current) setIsLoadingSessions(false);
+      if (isCurrentWorkspaceRequest(currentProject.path, currentProvider, requestId)) {
+        mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, isLoadingSessions: false }));
+      }
     }
   }
 
   async function submitPrompt() {
     const currentProject = project;
+    const currentProvider = provider;
     const currentSession = session;
     const text = prompt.trim();
     if (!currentProject || !currentSession || !text || isSubmitting || isWorking) return;
-    setPrompt("");
-    setIsSubmitting(true);
-    setIsWorking(true);
-    setConversation((current) => [...current, {
-      id: `user-${Date.now()}`,
-      kind: "user",
-      text,
-    }]);
-    setError(null);
+    const sessionId = currentSession.thread.id;
+    mutateWorkspace(currentProject.path, (current) => ({ ...current, prompt: "" }));
+    mutateProvider(currentProject.path, currentProvider, (current) => ({ ...current, error: null }));
+    mutateSession(currentProject.path, currentProvider, sessionId, (current) => ({
+      ...current,
+      isSubmitting: true,
+      isWorking: true,
+      error: null,
+      conversation: [...current.conversation, {
+        id: `user-${Date.now()}`,
+        kind: "user" as const,
+        text,
+      }].slice(-300),
+    }));
     try {
       if (currentSession.provider === "codex") {
         await invoke("codex_send_prompt", {
@@ -346,30 +415,37 @@ export default function App() {
         });
       }
     } catch (reason) {
-      setIsWorking(false);
-      setError(String(reason));
+      mutateSession(currentProject.path, currentProvider, sessionId, (current) => ({
+        ...current,
+        isWorking: false,
+        isSubmitting: false,
+        error: String(reason),
+      }));
     } finally {
-      setIsSubmitting(false);
+      mutateSession(currentProject.path, currentProvider, sessionId, (current) => ({ ...current, isSubmitting: false }));
     }
   }
 
   async function cancelTurn() {
     if (!project || !session || !isWorking) return;
-    setError(null);
+    const currentProject = project;
+    const currentProvider = provider;
+    const sessionId = session.thread.id;
+    mutateSession(currentProject.path, currentProvider, sessionId, (current) => ({ ...current, error: null }));
     try {
-      if (session.provider === "codex") {
+      if (currentProvider === "codex") {
         await invoke("codex_cancel_turn", {
-          projectPath: project.path,
-          threadId: session.thread.id,
+          projectPath: currentProject.path,
+          threadId: sessionId,
         });
       } else {
         await invoke("opencode_cancel_turn", {
-          projectPath: project.path,
-          sessionId: session.thread.id,
+          projectPath: currentProject.path,
+          sessionId,
         });
       }
     } catch (reason) {
-      setError(String(reason));
+      mutateSession(currentProject.path, currentProvider, sessionId, (current) => ({ ...current, error: String(reason) }));
     }
   }
 
@@ -378,87 +454,12 @@ export default function App() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen<CodexEvent>("codex-event", (event) => {
-      const update = event.payload;
-      if (disposed) return;
-      const currentProject = projectRef.current;
-      const currentSession = sessionRef.current;
-      if (currentSession?.provider !== "codex" || !currentProject || update.projectPath !== currentProject.path) return;
-      const params = update.params && typeof update.params === "object" ? update.params : {};
-      if (update.method === "codex/processExited") {
-        if (currentSession) setIsWorking(false);
-        setError("The Codex app-server stopped. Start or resume a session to reconnect.");
-        return;
-      }
-      if (!currentSession) return;
-      const eventThreadId = valueString(params.threadId)
-        ?? valueString((params.thread as Record<string, unknown> | undefined)?.id);
-      if (!eventThreadId || eventThreadId !== currentSession.thread.id) return;
-
-      if (update.method === "turn/started") setIsWorking(true);
-      if (update.method === "turn/completed") {
-        setIsWorking(false);
-        const turn = params.turn as Record<string, unknown> | undefined;
-        const status = turn && typeof turn.status === "object" && turn.status
-          ? valueString((turn.status as Record<string, unknown>).type)
-          : valueString(turn?.status);
-        setConversation((current): ConversationEntry[] => [...current, {
-          id: `turn-${String(turn?.id ?? Date.now())}`,
-          kind: "status" as const,
-          text: status === "interrupted" ? "Turn cancelled" : status === "failed" ? "Codex could not complete this turn" : "Turn complete",
-        }].slice(-300));
-      }
-      if (update.method === "item/agentMessage/delta") {
-        const delta = valueString(params.delta);
-        if (!delta) return;
-        const itemId = valueString(params.itemId) ?? `stream-${currentSession.thread.id}`;
-        setConversation((current): ConversationEntry[] => {
-          const existing = current.findIndex((entry) => entry.id === `assistant-${itemId}`);
-          if (existing < 0) return [...current, { id: `assistant-${itemId}`, kind: "assistant" as const, text: delta }].slice(-300);
-          const next = [...current];
-          next[existing] = { ...next[existing], text: next[existing].text + delta };
-          return next;
-        });
-      }
-      if (update.method === "item/started") {
-        const item = params.item as Record<string, unknown> | undefined;
-        const activity = itemActivity(item);
-        if (activity) {
-          const id = valueString(item?.id) ?? `${Date.now()}`;
-          setConversation((current): ConversationEntry[] => [...current, { id: `activity-${id}`, kind: "activity" as const, text: activity }].slice(-300));
-        }
-      }
-      if (update.method === "item/commandExecution/outputDelta") {
-        const id = valueString(params.itemId);
-        const delta = valueString(params.delta);
-        if (!id || !delta) return;
-        setConversation((current): ConversationEntry[] => {
-          const entryId = `activity-${id}`;
-          const existing = current.findIndex((entry) => entry.id === entryId);
-          if (existing < 0) {
-            return [...current, { id: entryId, kind: "activity" as const, text: `Command output:\n${delta}`.slice(-12000) }].slice(-300);
-          }
-          const next = [...current];
-          next[existing] = { ...next[existing], text: `${next[existing].text}\n${delta}`.slice(-12000) };
-          return next;
-        });
-      }
-      if (update.method === "item/completed") {
-        const item = params.item as Record<string, unknown> | undefined;
-        const id = valueString(item?.id);
-        const status = valueString(item?.status);
-        if (id && status) {
-          setConversation((current) => current.map((entry) => {
-            if (entry.id !== `activity-${id}`) return entry;
-            const finalStatus = status === "completed" ? "complete" : status;
-            return { ...entry, text: `${entry.text} (${finalStatus})` };
-          }));
-        }
-      }
+      if (!disposed) setWorkspaces((current) => applyCodexEvent(current, event.payload));
     }).then((stopListening) => {
       if (disposed) stopListening();
       else unlisten = stopListening;
     }).catch((reason: unknown) => {
-      if (!disposed) setError(String(reason));
+      if (!disposed) setAppError(String(reason));
     });
     return () => {
       disposed = true;
@@ -471,100 +472,12 @@ export default function App() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen<OpenCodeEvent>("opencode-event", (event) => {
-      const update = event.payload;
-      if (disposed || providerRef.current !== "opencode") return;
-      const currentProject = projectRef.current;
-      const currentSession = sessionRef.current;
-      if (!currentProject || update.projectPath !== currentProject.path) return;
-      const data = update.data && typeof update.data === "object" ? update.data : {};
-      if (update.eventType === "server.disconnected") {
-        setIsWorking(false);
-        setError("The OpenCode server disconnected. Start or resume a session to reconnect.");
-        return;
-      }
-      if (update.eventType === "permission.reply.failed") {
-        setError(`OpenCode could not apply the permission decision: ${valueString(data.message) ?? "server request failed"}`);
-        return;
-      }
-      if (!currentSession || currentSession.provider !== "opencode") return;
-      if (valueString(data.sessionID) !== currentSession.thread.id) return;
-
-      if (update.eventType === "session.execution.started") setIsWorking(true);
-      if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(update.eventType)) {
-        setIsWorking(false);
-        const error = valueRecord(data.error);
-        const errorMessage = valueString(error.message) ?? valueString(data.error);
-        const outcome = update.eventType === "session.execution.interrupted"
-          ? "Turn cancelled"
-          : update.eventType === "session.execution.failed"
-            ? `OpenCode could not complete this turn${errorMessage ? `: ${errorMessage}` : ""}`
-            : "Turn complete";
-        setConversation((current): ConversationEntry[] => [...current, {
-          id: `opencode-turn-${valueString(data.messageID) ?? Date.now()}`,
-          kind: "status" as const,
-          text: outcome,
-        }].slice(-300));
-      }
-      if (update.eventType === "session.idle") setIsWorking(false);
-      if (update.eventType === "session.text.delta") {
-        const delta = valueString(data.delta) ?? valueString(data.text);
-        if (!delta) return;
-        const messageId = valueString(data.assistantMessageID) ?? valueString(data.messageID) ?? `stream-${currentSession.thread.id}`;
-        setConversation((current): ConversationEntry[] => {
-          const entryId = `opencode-assistant-${messageId}`;
-          const existing = current.findIndex((entry) => entry.id === entryId);
-          if (existing < 0) return [...current, { id: entryId, kind: "assistant" as const, text: delta }].slice(-300);
-          const next = [...current];
-          next[existing] = { ...next[existing], text: next[existing].text + delta };
-          return next;
-        });
-      }
-      if ([
-        "session.tool.input.started",
-        "session.tool.input.delta",
-        "session.tool.input.ended",
-        "session.tool.called",
-        "session.tool.progress",
-        "session.tool.success",
-        "session.tool.failed",
-      ].includes(update.eventType)) {
-        const toolId = valueString(data.id) ?? valueString(data.partID);
-        if (!toolId) return;
-        const existingEntryId = `opencode-tool-${toolId}`;
-        const input = valueRecord(data.input);
-        const eventInput = update.eventType === "session.tool.input.ended"
-          ? openCodeToolInput(data.text)
-          : openCodeToolInput(data.input);
-        const delta = valueString(data.delta);
-        const status = update.eventType === "session.tool.success"
-          ? "complete"
-          : update.eventType === "session.tool.failed"
-            ? "failed"
-            : update.eventType === "session.tool.progress" || update.eventType === "session.tool.called"
-              ? "running"
-              : "preparing";
-        setConversation((current): ConversationEntry[] => {
-          const existing = current.findIndex((entry) => entry.id === existingEntryId);
-          const existingText = existing < 0 ? "" : current[existing].text;
-          const existingName = existingText.match(/^Using tool: (.+?) \(/)?.[1];
-          const toolName = valueString(data.name) ?? valueString(data.tool) ?? existingName ?? "tool";
-          const existingCommand = existingText.split("\n").slice(1).join("\n");
-          const accumulated = delta ? `${existingCommand}${delta}` : existingCommand;
-          const command = eventInput ?? (accumulated || openCodeToolInput(input) || "");
-          const toolError = valueString(valueRecord(data.error).message);
-          const detail = command || (update.eventType === "session.tool.failed" ? toolError : undefined);
-          const nextText = `Using tool: ${toolName} (${status})${detail ? `\n${detail}` : ""}`;
-          if (existing < 0) return [...current, { id: existingEntryId, kind: "activity" as const, text: nextText }].slice(-300);
-          const next = [...current];
-          next[existing] = { ...next[existing], text: nextText };
-          return next;
-        });
-      }
+      if (!disposed) setWorkspaces((current) => applyOpenCodeEvent(current, event.payload));
     }).then((stopListening) => {
       if (disposed) stopListening();
       else unlisten = stopListening;
     }).catch((reason: unknown) => {
-      if (!disposed) setError(String(reason));
+      if (!disposed) setAppError(String(reason));
     });
     return () => {
       disposed = true;
@@ -577,15 +490,25 @@ export default function App() {
     if (!request || isResolvingApproval) return;
 
     setIsResolvingApproval(true);
-    setError(null);
+    setAppError(null);
     try {
       await invoke("resolve_approval", {
         provider: request.provider,
+        projectPath: request.projectPath,
         requestId: request.requestId,
         decision,
       });
     } catch (reason) {
-      setError(String(reason));
+      const message = String(reason);
+      if (request.provider === "codex" || request.provider === "opencode") {
+        if (request.sessionId && workspaces[request.projectPath]?.providers[request.provider].sessionsById[request.sessionId]) {
+          mutateSession(request.projectPath, request.provider, request.sessionId, (current) => ({ ...current, error: message }));
+        } else {
+          mutateProvider(request.projectPath, request.provider, (current) => ({ ...current, error: message }));
+        }
+      } else {
+        setAppError(message);
+      }
     } finally {
       setIsResolvingApproval(false);
     }
@@ -595,6 +518,9 @@ export default function App() {
   const providerDetails = provider === "codex"
     ? "Local Codex CLI · project-scoped sessions"
     : "OpenCode local server · HTTP/SSE sessions";
+  const approvalProject = approvals[0]
+    ? selectOpenProject(openProjects, approvals[0].projectPath)
+    : null;
 
   return (
     <main className={`app-shell${hasMacTitlebarOverlay ? " macos-titlebar-overlay" : ""}`}>
@@ -604,8 +530,16 @@ export default function App() {
             <span className="card-kicker">{approvals.length > 1 ? `APPROVAL 1 OF ${approvals.length}` : "APPROVAL REQUIRED"}</span>
             <h2 id="approval-title">{approvals[0].summary}</h2>
             <p>{approvals[0].description}</p>
-            <small>Requested by {approvals[0].provider}. Approval applies to this request only.</small>
+            <small>
+              Requested by {approvals[0].provider} · {approvalProject?.name ?? approvals[0].projectPath}
+              {approvals[0].sessionId ? ` · session ${approvals[0].sessionId}` : ""}. Approval applies to this request only.
+            </small>
             <div className="approval-actions">
+              {approvalProject && approvalProject.path !== project?.path && (
+                <button className="approval-project" onClick={() => activateProject(approvalProject)}>
+                  View project
+                </button>
+              )}
               <button className="approval-deny" onClick={() => void resolveApproval("deny")} disabled={isResolvingApproval}>
                 Deny
               </button>
@@ -646,6 +580,9 @@ export default function App() {
               >
                 <FolderGit2 size={14} />
                 <span><strong>{item.name}</strong><small>{item.path}</small></span>
+                {workspaces[item.path] && projectHasActiveTurn(workspaces[item.path]) && (
+                  <span className="project-turn-indicator" title="Agent turn active" aria-label="Agent turn active" />
+                )}
               </button>
               <button
                 className="project-close"
@@ -677,8 +614,9 @@ export default function App() {
           {project && isLoadingSessions && sessions.length === 0 && <div className="empty-sessions">Connecting to {providerName}…</div>}
           {project && !isLoadingSessions && sessions.length === 0 && <div className="empty-sessions">No {providerName} conversations yet.</div>}
           {sessions.map((item) => (
-            <button className={`session-item${session?.thread.id === item.id ? " selected" : ""}`} key={item.id} onClick={() => void resumeSession(item)} disabled={isLoadingSessions}>
-              <MessageSquarePlus size={13} /><span><strong>{item.name || item.preview || `New ${providerName} session`}</strong><small>{item.preview || "No messages yet"}</small></span>
+            <button className={`session-item${selectedSessionId === item.id ? " selected" : ""}`} key={item.id} onClick={() => void resumeSession(item)} disabled={isLoadingSessions}>
+              <MessageSquarePlus size={13} /><span><strong>{item.name || item.preview || `New ${providerName} session`}</strong><small>{providerWorkspace?.sessionsById[item.id]?.isWorking ? "Working…" : item.preview || "No messages yet"}</small></span>
+              {providerWorkspace?.sessionsById[item.id]?.isWorking && <span className="session-turn-indicator" title="Agent turn active" aria-label="Agent turn active" />}
             </button>
           ))}
         </div>
@@ -743,7 +681,7 @@ export default function App() {
           )}
 
           <div className="prompt-dock">
-            <textarea aria-label="Prompt" placeholder={session ? `Ask ${providerName} to work on your project…` : "Start or resume a session to send a prompt…"} value={prompt} disabled={!session || isWorking} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submitPrompt(); } }} />
+            <textarea aria-label="Prompt" placeholder={session ? `Ask ${providerName} to work on your project…` : "Start or resume a session to send a prompt…"} value={prompt} disabled={!session || isWorking} onChange={(event) => { if (project) mutateWorkspace(project.path, (current) => ({ ...current, prompt: event.target.value })); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submitPrompt(); } }} />
             <div className="prompt-footer"><span><span className={`tiny-agent-dot${session ? " connected" : ""}`} /> {session ? isWorking ? `${providerName} is working` : `${providerName} connected` : "No session selected"}</span>
               {isWorking ? <button onClick={() => void cancelTurn()} aria-label={`Cancel ${providerName} turn`} title="Cancel turn"><Square size={13} /></button> : <button onClick={() => void submitPrompt()} disabled={!session || !prompt.trim() || isSubmitting} aria-label="Send prompt"><ArrowUp size={16} /></button>}
             </div>

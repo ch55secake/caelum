@@ -25,6 +25,9 @@ pub struct ProjectInfo {
 #[serde(rename_all = "camelCase")]
 pub struct PermissionRequest {
     pub provider: String,
+    pub project_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub request_id: String,
     pub summary: String,
     pub description: String,
@@ -36,6 +39,9 @@ pub struct PermissionRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalPrompt {
     pub provider: String,
+    pub project_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub request_id: String,
     pub summary: String,
     pub description: String,
@@ -139,7 +145,7 @@ pub struct OpenCodeEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodexEvent, OpenCodeEvent};
+    use super::{ApprovalPrompt, CodexEvent, OpenCodeEvent};
     use serde_json::json;
 
     #[test]
@@ -176,6 +182,30 @@ mod tests {
                 "projectPath": "/workspace/project",
                 "eventType": "session.text.delta",
                 "data": { "sessionID": "ses_1", "delta": "hello" }
+            })
+        );
+    }
+
+    #[test]
+    fn approval_prompts_include_project_and_session_context() {
+        let prompt = ApprovalPrompt {
+            provider: "opencode".into(),
+            project_path: "/workspace/project".into(),
+            session_id: Some("ses_1".into()),
+            request_id: "ses_1:per_1".into(),
+            summary: "Approve command".into(),
+            description: "Run a command".into(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(prompt).unwrap(),
+            json!({
+                "provider": "opencode",
+                "projectPath": "/workspace/project",
+                "sessionId": "ses_1",
+                "requestId": "ses_1:per_1",
+                "summary": "Approve command",
+                "description": "Run a command"
             })
         );
     }

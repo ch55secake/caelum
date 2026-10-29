@@ -10,7 +10,7 @@ use std::{
 use caelum_protocol::{ApprovalDecision, ApprovalPrompt, PermissionRequest};
 use thiserror::Error;
 
-type RequestKey = (String, String);
+type RequestKey = (String, String, String);
 
 #[derive(Default)]
 struct BrokerState {
@@ -34,13 +34,18 @@ pub struct ApprovalBroker {
 impl ApprovalBroker {
     pub fn request(&self, request: PermissionRequest) -> Result<ApprovalWaiter, ApprovalError> {
         if request.provider.trim().is_empty()
+            || request.project_path.trim().is_empty()
             || request.request_id.trim().is_empty()
             || request.summary.trim().is_empty()
         {
             return Err(ApprovalError::InvalidRequest);
         }
 
-        let key = (request.provider.clone(), request.request_id.clone());
+        let key = (
+            request.provider.clone(),
+            request.project_path.clone(),
+            request.request_id.clone(),
+        );
         let (response, receiver) = mpsc::channel();
         let mut state = self.lock();
         if state.closed {
@@ -79,10 +84,15 @@ impl ApprovalBroker {
     pub fn resolve(
         &self,
         provider: &str,
+        project_path: &str,
         request_id: &str,
         decision: ApprovalDecision,
     ) -> Result<(), ApprovalError> {
-        let key = (provider.to_owned(), request_id.to_owned());
+        let key = (
+            provider.to_owned(),
+            project_path.to_owned(),
+            request_id.to_owned(),
+        );
         let mut state = self.lock();
         if state.closed {
             return Err(ApprovalError::Closed);
@@ -116,6 +126,8 @@ impl ApprovalBroker {
             .values()
             .map(|pending| ApprovalPrompt {
                 provider: pending.request.provider.clone(),
+                project_path: pending.request.project_path.clone(),
+                session_id: pending.request.session_id.clone(),
                 request_id: pending.request.request_id.clone(),
                 summary: pending.request.summary.clone(),
                 description: pending.request.description.clone(),
@@ -172,9 +184,9 @@ impl Drop for ApprovalWaiter {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ApprovalError {
-    #[error("approval request is missing a provider, request ID, or summary")]
+    #[error("approval request is missing a provider, project path, request ID, or summary")]
     InvalidRequest,
-    #[error("an approval request with this provider and ID is already pending")]
+    #[error("an approval request with this provider, project, and ID is already pending")]
     DuplicateRequest,
     #[error("approval request is no longer pending")]
     UnknownRequest,
@@ -190,6 +202,8 @@ mod tests {
     fn request(request_id: &str) -> PermissionRequest {
         PermissionRequest {
             provider: "test-provider".to_owned(),
+            project_path: "/workspace/test".to_owned(),
+            session_id: None,
             request_id: request_id.to_owned(),
             summary: "Run a tool".to_owned(),
             description: "The provider requested a tool operation.".to_owned(),
@@ -204,7 +218,12 @@ mod tests {
 
         assert_eq!(broker.pending().len(), 1);
         broker
-            .resolve("test-provider", "request-1", ApprovalDecision::AllowOnce)
+            .resolve(
+                "test-provider",
+                "/workspace/test",
+                "request-1",
+                ApprovalDecision::AllowOnce,
+            )
             .unwrap();
 
         assert_eq!(
@@ -225,7 +244,12 @@ mod tests {
         );
         assert!(broker.pending().is_empty());
         assert_eq!(
-            broker.resolve("test-provider", "request-2", ApprovalDecision::AllowOnce),
+            broker.resolve(
+                "test-provider",
+                "/workspace/test",
+                "request-2",
+                ApprovalDecision::AllowOnce,
+            ),
             Err(ApprovalError::UnknownRequest)
         );
     }
@@ -260,7 +284,12 @@ mod tests {
             Some(ApprovalError::DuplicateRequest)
         );
         assert_eq!(
-            broker.resolve("test-provider", "missing", ApprovalDecision::AllowOnce),
+            broker.resolve(
+                "test-provider",
+                "/workspace/test",
+                "missing",
+                ApprovalDecision::AllowOnce,
+            ),
             Err(ApprovalError::UnknownRequest)
         );
     }
@@ -276,5 +305,34 @@ mod tests {
         let encoded = serde_json::to_string(&prompt).unwrap();
         assert!(!encoded.contains("sensitive provider data"));
         assert_eq!(prompt.provider, "test-provider");
+        assert_eq!(prompt.project_path, "/workspace/test");
+        assert_eq!(prompt.session_id, None);
+    }
+
+    #[test]
+    fn approvals_with_same_provider_and_request_id_are_scoped_by_project() {
+        let broker = ApprovalBroker::default();
+        let mut first = request("same-id");
+        first.project_path = "/workspace/one".to_owned();
+        let mut second = request("same-id");
+        second.project_path = "/workspace/two".to_owned();
+        let first_waiter = broker.request(first).unwrap();
+        let second_waiter = broker.request(second).unwrap();
+
+        broker
+            .resolve(
+                "test-provider",
+                "/workspace/two",
+                "same-id",
+                ApprovalDecision::AllowOnce,
+            )
+            .unwrap();
+
+        assert_eq!(
+            second_waiter.wait(Duration::from_millis(10)),
+            ApprovalDecision::AllowOnce
+        );
+        assert_eq!(broker.pending()[0].project_path, "/workspace/one");
+        drop(first_waiter);
     }
 }

@@ -601,6 +601,7 @@ fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderContext) {
                             let opaque_id = format!("{}:{request_id}", project_key(&project_path));
                             let _ = approvals.resolve(
                                 PROVIDER_NAME,
+                                &project_path.to_string_lossy(),
                                 &opaque_id,
                                 ApprovalDecision::Deny,
                             );
@@ -768,6 +769,17 @@ fn handle_server_request(
 
     let request = PermissionRequest {
         provider: PROVIDER_NAME.to_owned(),
+        project_path: project_path.to_string_lossy().into_owned(),
+        session_id: params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                params
+                    .get("thread")
+                    .and_then(|thread| thread.get("id"))
+                    .and_then(Value::as_str)
+            })
+            .map(str::to_owned),
         request_id: opaque_id,
         summary: summary.to_owned(),
         description: details.join("\n"),
@@ -1195,10 +1207,16 @@ for raw in sys.stdin:
         let prompts = updates.recv_timeout(Duration::from_secs(2)).unwrap();
         let prompt = prompts.first().expect("Codex approval reaches the broker");
         assert_eq!(prompt.provider, PROVIDER_NAME);
+        assert_eq!(
+            prompt.project_path,
+            project_path.canonicalize().unwrap().to_string_lossy()
+        );
+        assert_eq!(prompt.session_id.as_deref(), Some("thread-existing"));
         assert!(prompt.description.contains("git status"));
         approvals
             .resolve(
                 PROVIDER_NAME,
+                &prompt.project_path,
                 &prompt.request_id,
                 ApprovalDecision::AllowOnce,
             )
