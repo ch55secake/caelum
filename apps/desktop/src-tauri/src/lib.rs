@@ -36,11 +36,12 @@ fn pending_approvals(approvals: State<'_, ApprovalBroker>) -> Vec<ApprovalPrompt
 fn resolve_approval(
     approvals: State<'_, ApprovalBroker>,
     provider: String,
+    project_path: String,
     request_id: String,
     decision: ApprovalDecision,
 ) -> Result<(), String> {
     approvals
-        .resolve(&provider, &request_id, decision)
+        .resolve(&provider, &project_path, &request_id, decision)
         .map_err(|error| error.to_string())
 }
 

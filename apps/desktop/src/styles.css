@@ -39,11 +39,14 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #7798d1; outli
 .project-item { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; padding: 5px 4px; border: 0; border-radius: 4px; color: #8c93a1; text-align: left; background: transparent; cursor: pointer; }
 .project-item:hover { color: #d7dbe5; }
 .project-item > svg { flex: 0 0 auto; color: #8b9fc5; }
-.project-item > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.project-item > span:not(.project-turn-indicator) { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .project-item strong, .project-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-item strong { color: #c3c8d3; font-size: 10px; font-weight: 550; }
 .project-item small { color: #707786; font-size: 8px; }
 .project-row.selected .project-item strong { color: #e0e4ed; }
+.project-item > .project-turn-indicator, .session-turn-indicator { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: #83c6a0; box-shadow: 0 0 7px #83c6a066; }
+.project-item > .project-turn-indicator { margin-left: auto; }
+.session-turn-indicator { align-self: center; margin-left: auto; }
 .project-close { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 5px; color: #747b89; background: transparent; cursor: pointer; opacity: .55; }
 .project-close:hover, .project-close:focus-visible { color: #e3b6bd; background: #33252a; opacity: 1; }
 .empty-projects { display: flex; flex-direction: column; gap: 8px; padding: 8px; color: #737987; font-size: 10px; }
@@ -151,6 +154,7 @@ h1 { margin: 17px 0 8px; color: #ebedf2; font-size: clamp(25px, 3vw, 34px); font
 .approval-actions button { min-width: 92px; padding: 8px 12px; border: 1px solid #383c47; border-radius: 7px; font-size: 11px; background: #20232b; cursor: pointer; }
 .approval-actions button:disabled { cursor: wait; opacity: .55; }
 .approval-actions .approval-deny { color: #d5d8df; }
+.approval-actions .approval-project { margin-right: auto; color: #bcc9e2; }
 .approval-actions .approval-allow { border-color: #526d9b; color: #e5ebf7; background: #283752; }
 
 @media (max-width: 980px) {

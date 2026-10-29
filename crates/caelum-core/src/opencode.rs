@@ -248,7 +248,7 @@ impl OpenCodeProvider {
         if self.inner.closed.swap(true, Ordering::AcqRel) {
             return;
         }
-        deny_pending_approvals(&self.inner.approvals, None);
+        deny_pending_approvals(&self.inner.approvals, None, None);
         let servers = {
             let mut servers = self.inner.lock_servers();
             std::mem::take(&mut *servers)
@@ -562,6 +562,8 @@ fn request_permission(
     let request_id = format!("{session_id}:{permission_id}");
     let request = PermissionRequest {
         provider: PROVIDER_NAME.to_owned(),
+        project_path: project_path.to_string_lossy().into_owned(),
+        session_id: Some(session_id.to_owned()),
         request_id,
         summary: format!("OpenCode requests permission for {action}"),
         description: if description.is_empty() {
@@ -669,14 +671,15 @@ fn publish_disconnected(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        deny_pending_approvals(approvals, Some(&pending_ids));
+        let project_path = project_path.to_string_lossy().into_owned();
+        deny_pending_approvals(approvals, Some(&project_path), Some(&pending_ids));
         publish_event(
             subscribers,
             OpenCodeEvent {
-                project_path: project_path.to_string_lossy().into_owned(),
+                project_path: project_path.clone(),
                 event_type: "server.disconnected".to_owned(),
                 data: Value::Null,
-                location: None,
+                location: Some(json!({ "directory": project_path })),
             },
         );
     }
@@ -689,17 +692,26 @@ fn permission_reply(decision: ApprovalDecision) -> &'static str {
     }
 }
 
-fn deny_pending_approvals(approvals: &ApprovalBroker, request_ids: Option<&HashSet<String>>) {
+fn deny_pending_approvals(
+    approvals: &ApprovalBroker,
+    project_path: Option<&str>,
+    request_ids: Option<&HashSet<String>>,
+) {
     for request in approvals.pending().into_iter().filter(|request| {
         if request.provider != PROVIDER_NAME {
             return false;
         }
-        match request_ids {
-            None => true,
-            Some(request_ids) => request_ids.contains(&request.request_id),
-        }
+        project_path.map_or(true, |path| request.project_path == path)
+            && request_ids.map_or(true, |request_ids| {
+                request_ids.contains(&request.request_id)
+            })
     }) {
-        let _ = approvals.resolve(PROVIDER_NAME, &request.request_id, ApprovalDecision::Deny);
+        let _ = approvals.resolve(
+            PROVIDER_NAME,
+            &request.project_path,
+            &request.request_id,
+            ApprovalDecision::Deny,
+        );
     }
 }
 
@@ -1071,7 +1083,7 @@ impl ProviderInner {
 impl Drop for ProviderInner {
     fn drop(&mut self) {
         self.closed.store(true, Ordering::Release);
-        deny_pending_approvals(&self.approvals, None);
+        deny_pending_approvals(&self.approvals, None, None);
         let servers = self
             .servers
             .get_mut()
@@ -1224,6 +1236,8 @@ mod tests {
         let disconnected_waiter = approvals
             .request(PermissionRequest {
                 provider: PROVIDER_NAME.to_owned(),
+                project_path: "/workspace/one".to_owned(),
+                session_id: Some("ses_1".to_owned()),
                 request_id: "ses_1:per_1".to_owned(),
                 summary: "Run a tool".to_owned(),
                 description: "OpenCode requested permission.".to_owned(),
@@ -1233,6 +1247,8 @@ mod tests {
         let other_project_waiter = approvals
             .request(PermissionRequest {
                 provider: PROVIDER_NAME.to_owned(),
+                project_path: "/workspace/two".to_owned(),
+                session_id: Some("ses_2".to_owned()),
                 request_id: "ses_2:per_2".to_owned(),
                 summary: "Run another tool".to_owned(),
                 description: "Another OpenCode project requested permission.".to_owned(),
@@ -1242,6 +1258,8 @@ mod tests {
         let other_waiter = approvals
             .request(PermissionRequest {
                 provider: "other".to_owned(),
+                project_path: "/workspace/other".to_owned(),
+                session_id: None,
                 request_id: "request-1".to_owned(),
                 summary: "Run another tool".to_owned(),
                 description: "Another provider requested permission.".to_owned(),
@@ -1250,7 +1268,7 @@ mod tests {
             .unwrap();
 
         let pending_ids = HashSet::from(["ses_1:per_1".to_owned()]);
-        deny_pending_approvals(&approvals, Some(&pending_ids));
+        deny_pending_approvals(&approvals, Some("/workspace/one"), Some(&pending_ids));
 
         assert_eq!(
             disconnected_waiter.wait(Duration::from_millis(10)),
@@ -1258,14 +1276,24 @@ mod tests {
         );
         assert_eq!(approvals.pending().len(), 2);
         approvals
-            .resolve(PROVIDER_NAME, "ses_2:per_2", ApprovalDecision::AllowOnce)
+            .resolve(
+                PROVIDER_NAME,
+                "/workspace/two",
+                "ses_2:per_2",
+                ApprovalDecision::AllowOnce,
+            )
             .unwrap();
         assert_eq!(
             other_project_waiter.wait(Duration::from_millis(10)),
             ApprovalDecision::AllowOnce
         );
         approvals
-            .resolve("other", "request-1", ApprovalDecision::AllowOnce)
+            .resolve(
+                "other",
+                "/workspace/other",
+                "request-1",
+                ApprovalDecision::AllowOnce,
+            )
             .unwrap();
         assert_eq!(
             other_waiter.wait(Duration::from_millis(10)),
@@ -1457,11 +1485,21 @@ server.serve_forever()
         while approvals.pending().is_empty() && Instant::now() < prompt_deadline {
             thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(approvals.pending()[0].provider, PROVIDER_NAME);
+        let prompt = approvals
+            .pending()
+            .pop()
+            .expect("permission prompt is pending");
+        assert_eq!(prompt.provider, PROVIDER_NAME);
+        assert_eq!(
+            prompt.project_path,
+            project_path.canonicalize().unwrap().to_string_lossy()
+        );
+        assert_eq!(prompt.session_id.as_deref(), Some("ses_fake"));
         approvals
             .resolve(
                 PROVIDER_NAME,
-                "ses_fake:per_fake",
+                &prompt.project_path,
+                &prompt.request_id,
                 ApprovalDecision::AllowOnce,
             )
             .unwrap();
