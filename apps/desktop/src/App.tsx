@@ -21,7 +21,6 @@ import {
   type WorkspaceSessionInfo,
 } from "./workspaceState.js";
 import {
-  Activity,
   ArrowUp,
   CircleHelp,
   Command,
@@ -764,7 +763,6 @@ export default function App() {
           <button className={`nav-item${workspaceView === "overview" ? " active" : ""}`} onClick={() => setWorkspaceView("overview")}><Layers3 size={16} /><span>Overview</span></button>
           <button className={`nav-item${workspaceView === "files" ? " active" : ""}`} onClick={() => setWorkspaceView("files")} disabled={!project} title={!project ? "Choose a project first" : "Browse project files"}><FileCode2 size={16} /><span>Files</span></button>
           <button className={`nav-item${workspaceView === "changes" ? " active" : ""}`} onClick={() => setWorkspaceView("changes")} disabled={!project} title={!project ? "Choose a project first" : "Inspect Git status and diffs"}><GitBranch size={16} /><span>Changes</span></button>
-          <button className="nav-item" disabled><Activity size={16} /><span>Terminal</span><span className="nav-soon">Soon</span></button>
         </nav>
 
         <div className="section-heading sessions-heading"><span>RECENT SESSIONS</span><button className="icon-button quiet" aria-label="Add session" onClick={() => void startSession()} disabled={!project || isLoadingSessions}><Plus size={14} /></button></div>

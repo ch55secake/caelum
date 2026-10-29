@@ -64,7 +64,6 @@ kbd { padding: 2px 5px; border: 1px solid #363a45; border-radius: 4px; color: #8
 .nav-item.active { color: #e0e4ed; background: #232630; }
 .nav-item:not(:disabled):hover { color: #e0e4ed; background: #20232b; }
 .nav-item:disabled { opacity: .57; }
-.nav-soon { margin-left: auto; color: #686e7c; font-size: 9px; }
 .sessions-heading { margin-top: 27px; }
 .sessions-heading .icon-button { margin: -5px -5px -5px 0; }
 .empty-sessions { padding: 9px 8px; color: #696f7c; font-size: 10px; line-height: 1.7; }
