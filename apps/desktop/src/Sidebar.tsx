@@ -15,11 +15,10 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, type RefObject } from "react";
-import {
-  projectHasActiveTurn,
-  type ProviderKind,
-  type SessionSummary,
-  type SessionDetails,
+import type {
+  ProviderKind,
+  SessionSummary,
+  SessionDetails,
 } from "./workspaceState.js";
 import type { useWorkspace } from "./useWorkspace.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
@@ -154,16 +153,13 @@ export function Sidebar({
               <span>{project.name}</span>
               {app.approvals.some(
                 (request) => request.projectPath === project.path,
-              ) ? (
+              ) && (
                 <ShieldAlert
                   size={13}
                   className="approval-indicator"
                   aria-label="Approval required"
                 />
-              ) : app.workspaces[project.path] &&
-                projectHasActiveTurn(app.workspaces[project.path]) ? (
-                <span className="running-dot" aria-label="Running" />
-              ) : null}
+              )}
             </button>
             <button
               className="icon-button project-close"
@@ -269,7 +265,7 @@ export function Sidebar({
             >
               <button
                 className="session-item"
-                title={sessionTitle(item)}
+                title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
                 aria-label={sessionTitle(item)}
                 aria-current={
                   app.provider === item.provider &&
@@ -282,30 +278,37 @@ export function Sidebar({
                 onClick={() => app.selectSession(item, item.provider)}
               >
                 <span className="session-heading">
-                  <span className="session-provider" title={item.provider}>
-                    {item.provider === "codex" ? "C" : "O"}
+                  <span
+                    className="session-status"
+                    title={approval ? "Approval required" : undefined}
+                  >
+                    {approval ? (
+                      <ShieldAlert
+                        size={13}
+                        className="approval-indicator"
+                        aria-label="Approval required"
+                      />
+                    ) : working ? (
+                      <span
+                        className="running-dot"
+                        aria-label="Running"
+                        title="Running"
+                      />
+                    ) : state?.unread ? (
+                      <span
+                        className="unread-dot"
+                        aria-label="Unread"
+                        title="Unread"
+                      />
+                    ) : state?.connection === "disconnected" ? (
+                      <span
+                        className="disconnected-dot"
+                        aria-label="Disconnected"
+                        title="Disconnected"
+                      />
+                    ) : null}
                   </span>
                   <span className="session-title">{sessionTitle(item)}</span>
-                  {approval ? (
-                    <ShieldAlert
-                      size={13}
-                      className="approval-indicator"
-                      aria-label="Approval required"
-                    />
-                  ) : working ? (
-                    <LoaderCircle
-                      size={13}
-                      className="spinning"
-                      aria-label="Running"
-                    />
-                  ) : state?.unread ? (
-                    <span className="unread-dot" aria-label="Unread" />
-                  ) : state?.connection === "disconnected" ? (
-                    <span
-                      className="disconnected-dot"
-                      aria-label="Disconnected"
-                    />
-                  ) : null}
                 </span>
                 <SessionContext
                   details={workspace?.sessionDetails[item.id]}
