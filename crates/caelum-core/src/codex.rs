@@ -1027,13 +1027,18 @@ mod tests {
 
     impl TestDirectory {
         fn new() -> Self {
-            let path = env::temp_dir().join(format!(
-                "caelum-codex-test-{}-{}",
-                std::process::id(),
-                NEXT_DIR.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir_all(&path).expect("create test directory");
-            Self(path)
+            loop {
+                let path = env::temp_dir().join(format!(
+                    "caelum-codex-test-{}-{}",
+                    std::process::id(),
+                    NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+                ));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("create test directory: {error}"),
+                }
+            }
         }
 
         fn project(&self) -> PathBuf {
