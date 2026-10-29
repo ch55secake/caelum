@@ -10,4 +10,6 @@ path = "src/main.rs"
 
 [dependencies]
 caelum-core = { path = "../../crates/caelum-core" }
+caelum-protocol = { path = "../../crates/caelum-protocol" }
 clap.workspace = true
+serde_json.workspace = true

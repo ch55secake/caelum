@@ -155,8 +155,46 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
-    void invoke<WorkspaceSnapshot>("restore_workspace").then(async (snapshot) => {
-      const restored = await Promise.all(snapshot.projects.map(async (entry) => {
+    const workspaceRestore = invoke<WorkspaceSnapshot>("restore_workspace").then(
+      (snapshot) => ({ snapshot, error: null as unknown }),
+      (reason: unknown) => ({
+        snapshot: { projects: [], activeProjectPath: null } satisfies WorkspaceSnapshot,
+        error: reason,
+      }),
+    );
+    void Promise.all([
+      workspaceRestore,
+      invoke<ProjectInfo | null>("startup_project"),
+    ]).then(async ([{ snapshot, error: restoreError }, startupProject]) => {
+      if (restoreError) {
+        setPersistenceError(`Local workspace persistence is unavailable: ${String(restoreError)}`);
+        if (!startupProject) {
+          setIsRestoringWorkspace(false);
+          return;
+        }
+      }
+      let entries = snapshot.projects;
+      if (startupProject) {
+        if (!entries.some((entry) => entry.project.path === startupProject.path)) {
+          entries = [{
+            project: startupProject,
+            provider: "codex",
+            codexSessionId: null,
+            opencodeSessionId: null,
+            codexSessionIds: [],
+            opencodeSessionIds: [],
+          }, ...entries];
+        }
+        if (!restoreError) {
+          try {
+            await persist("remember_project", { project: startupProject });
+            await persist("set_active_project", { projectPath: startupProject.path });
+          } catch {
+            // Keep the requested project open even when workspace persistence is unavailable.
+          }
+        }
+      }
+      const restored = await Promise.all(entries.map(async (entry) => {
         try {
           const opened = await invoke<ProjectInfo>("open_project", { path: entry.project.path });
           return { entry, project: opened };
@@ -173,16 +211,17 @@ export default function App() {
       }
 
       const projects = available.map(({ project: restoredProject }) => restoredProject);
-      const active = projects.find((item) => item.path === snapshot.activeProjectPath) ?? projects[0] ?? null;
+      const activePath = startupProject?.path ?? snapshot.activeProjectPath;
+      const active = projects.find((item) => item.path === activePath) ?? projects[0] ?? null;
       setWorkspaces(restoredWorkspaces);
       setOpenProjects(projects);
       setProject(active);
       setIsRestoringWorkspace(false);
 
-      if (active?.path !== snapshot.activeProjectPath) {
+      if (active?.path !== activePath) {
         persist("set_active_project", { projectPath: active?.path ?? null });
       }
-      if (available.length !== snapshot.projects.length) {
+      if (available.length !== entries.length) {
         setAppError("One or more saved projects are unavailable. Reopen them when their folders are accessible.");
       }
     }).catch((reason: unknown) => {
