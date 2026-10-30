@@ -437,19 +437,19 @@ export function Conversation({
                   resolve={(decision) => resolve(request, decision)}
                 />
               ))}
-              {!session.isWorking && session.lastOutcome && (
-                <div className="turn-status" role="status">
-                  {["completed", "succeeded", "idle"].includes(
-                    session.lastOutcome,
-                  )
-                    ? "Done"
-                    : session.lastOutcome === "interrupted"
+              {!session.isWorking &&
+                session.lastOutcome &&
+                !["completed", "succeeded", "idle"].includes(
+                  session.lastOutcome,
+                ) && (
+                  <div className="turn-status" role="status">
+                    {session.lastOutcome === "interrupted"
                       ? "Turn cancelled"
                       : session.lastOutcome === "paused"
                         ? "Execution paused"
                         : "Turn ended"}
-                </div>
-              )}
+                  </div>
+                )}
             </>
           )}
         </div>

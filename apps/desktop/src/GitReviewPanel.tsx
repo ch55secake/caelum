@@ -7,6 +7,7 @@ import {
 } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { GitBranch, RefreshCw, X } from "lucide-react";
+import { GitStatusIcon } from "./GitStatusIcon.js";
 import type { ProjectInfo } from "./workspaceState.js";
 import {
   changedDiffLines,
@@ -276,7 +277,6 @@ export function GitReviewPanel({
                 aria-label="Changed files"
               >
                 {status.changes.map((change) => {
-                  const code = `${change.indexStatus}${change.worktreeStatus}`;
                   const statusDescription = describeChange(change);
                   return (
                     <button
@@ -290,12 +290,7 @@ export function GitReviewPanel({
                       title={`${change.path} — ${statusDescription}${latestPath === change.path ? " — Latest change" : ""}`}
                       aria-label={`${change.path}, ${statusDescription}`}
                     >
-                      <span
-                        className={`git-status-code${code === "??" ? " untracked" : ""}`}
-                        aria-hidden="true"
-                      >
-                        {code.replaceAll(" ", "·")}
-                      </span>
+                      <GitStatusIcon change={change} />
                       <span className="git-file-path">{change.path}</span>
                     </button>
                   );

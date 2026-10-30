@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AccentColor } from "./accentColors.js";
+import { GitStatusIcon } from "./GitStatusIcon.js";
 import {
   ChevronDown,
   ChevronRight,
@@ -402,7 +403,7 @@ export function FilesPanel({ project, theme, accentColor }: { project: ProjectIn
               {status?.repositoryRoot && status.changes.length === 0 && <div className="file-browser-state">No changed files.</div>}
               {status?.changes.map((change) => (
                 <button key={change.path} className={`changed-file-item${selectedPath === change.path ? " selected" : ""}`} onClick={() => openDiff(change.path)} title={`${change.path}: ${describeStatus(change)}`} aria-label={`${change.path}, ${describeStatus(change)}`}>
-                  <span className="git-status-code" aria-hidden="true">{`${change.indexStatus}${change.worktreeStatus}`.replaceAll(" ", "·")}</span>
+                  <GitStatusIcon change={change} />
                   <span>{change.path}</span>
                 </button>
               ))}
