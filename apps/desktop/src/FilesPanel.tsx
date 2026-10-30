@@ -58,7 +58,7 @@ const EMPTY_DIRECTORY: DirectoryState = {
   error: null,
 };
 
-export function FilesPanel({ project }: { project: ProjectInfo | null }) {
+export function FilesPanel({ project, theme }: { project: ProjectInfo | null; theme: "dark" | "light" }) {
   const projectPath = project?.path;
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
@@ -428,7 +428,7 @@ export function FilesPanel({ project }: { project: ProjectInfo | null }) {
                 <Suspense fallback={<div className="file-editor-empty" role="status">Loading code editor…</div>}>
                   <MonacoEditor
                     height="100%"
-                    theme="caelum-dark"
+                    theme={`caelum-${theme}`}
                     language={languageForPath(editor.path)}
                     value={editor.content.content}
                     options={editorOptions(`Read-only preview of ${editor.path}`)}
@@ -448,7 +448,7 @@ export function FilesPanel({ project }: { project: ProjectInfo | null }) {
                 <Suspense fallback={<div className="file-editor-empty" role="status">Loading diff editor…</div>}>
                   <MonacoDiffEditor
                     height="100%"
-                    theme="caelum-dark"
+                    theme={`caelum-${theme}`}
                     language={languageForPath(editor.path)}
                     original={editor.content.original}
                     modified={editor.content.modified}

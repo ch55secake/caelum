@@ -16,9 +16,10 @@ function emptyProviderWorkspace() {
     error: null,
     choices: null,
     choicesError: null,
-    model: "",
-    effort: "",
-    agent: "",
+    isLoadingChoices: false,
+    model: null,
+    effort: null,
+    agent: null,
   };
 }
 export function createProjectWorkspace() {

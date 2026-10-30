@@ -5,6 +5,11 @@ import { listen } from "@tauri-apps/api/event";
 import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
 import {
+  newSessionOptions,
+  type AppSettings,
+  type ProviderDefaults,
+} from "./settingsState.js";
+import {
   applyCodexEvent,
   applyOpenCodeEvent,
   createProjectWorkspace,
@@ -85,25 +90,28 @@ const keyFor = (path: string, provider: ProviderKind, id = "") =>
 
 function generationOptions(
   provider: ProviderKind,
+  defaults: ProviderDefaults,
   workspace?: ProviderWorkspaceState,
   session?: SessionWorkspaceState | null,
 ) {
+  const draft = newSessionOptions(workspace, defaults);
   const model = session
     ? (session.model ?? session.session.model ?? "")
-    : (workspace?.model ?? "");
+    : draft.model;
   const modelChoice = workspace?.choices?.models.find(
     (choice) => choice.id === (model || workspace.choices?.defaultModel),
   );
   const changedModel = Boolean(
     session?.model && session.model !== session.session.model,
   );
-  const pendingEffort = session ? session.effort : workspace?.effort || null;
+  const pendingEffort = session ? session.effort : draft.effort || null;
   const effort =
     pendingEffort ?? (changedModel ? "" : (session?.session.effort ?? ""));
   return {
     model,
     modelChoice,
     effort,
+    agent: draft.agent,
     requestedEffort:
       pendingEffort !== null || changedModel
         ? effort ||
@@ -112,7 +120,7 @@ function generationOptions(
   };
 }
 
-export function useWorkspace() {
+export function useWorkspace(settings: AppSettings) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMap>({});
@@ -143,7 +151,14 @@ export function useWorkspace() {
   const selected = selectedId
     ? providerWorkspace?.sessionsById[selectedId]
     : undefined;
-  const options = generationOptions(provider, providerWorkspace, selected);
+  const options = generationOptions(
+    provider,
+    settings.providers[provider],
+    providerWorkspace,
+    selected,
+  );
+  const preferences = useRef(settings);
+  preferences.current = settings;
 
   function update(fn: (current: WorkspaceMap) => WorkspaceMap) {
     state.current = fn(state.current);
@@ -313,7 +328,7 @@ export function useWorkspace() {
         )
           entries.unshift({
             project: startup,
-            provider: "codex",
+            provider: preferences.current.defaultProvider,
             codexSessionId: null,
             opencodeSessionId: null,
             codexSessionIds: [],
@@ -355,7 +370,15 @@ export function useWorkspace() {
           nextProjects[0] ??
           null;
         setProject(active);
-        if (startup) void persist("remember_project", { project: startup });
+        if (startup) {
+          void persist("remember_project", { project: startup });
+          void persist("set_project_provider", {
+            projectPath: startup.path,
+            provider:
+              state.current[startup.path]?.provider ??
+              preferences.current.defaultProvider,
+          });
+        }
         void persist("set_active_project", {
           projectPath: active?.path ?? null,
         });
@@ -375,12 +398,24 @@ export function useWorkspace() {
 
   function activateProject(target: ProjectInfo | null) {
     navigation.current++;
+    const fresh = target && !state.current[target.path];
     if (target)
       update((current) =>
         current[target.path]
           ? current
-          : { ...current, [target.path]: createProjectWorkspace() },
+          : {
+              ...current,
+              [target.path]: {
+                ...createProjectWorkspace(),
+                provider: preferences.current.defaultProvider,
+              },
+            },
       );
+    if (target && fresh)
+      void persist("set_project_provider", {
+        projectPath: target.path,
+        provider: preferences.current.defaultProvider,
+      });
     setProject(target);
     setView("session");
     void persist("set_active_project", { projectPath: target?.path ?? null });
@@ -461,6 +496,11 @@ export function useWorkspace() {
     const key = `choices:${keyFor(target.path, kind)}`;
     if (locks.current.has(key) || !isTauri()) return;
     locks.current.add(key);
+    mutateProvider(target.path, kind, (value) => ({
+      ...value,
+      isLoadingChoices: true,
+      choicesError: null,
+    }));
     try {
       const choices = await invoke<ProviderChoices>("provider_choices", {
         projectPath: target.path,
@@ -478,6 +518,10 @@ export function useWorkspace() {
       }));
     } finally {
       locks.current.delete(key);
+      mutateProvider(target.path, kind, (value) => ({
+        ...value,
+        isLoadingChoices: false,
+      }));
     }
   }
   function setOption(key: "model" | "agent" | "effort", value: string) {
@@ -497,11 +541,19 @@ export function useWorkspace() {
           : { effort: value }),
       }));
     else
-      mutateProvider(project.path, provider, (current) => ({
-        ...current,
-        [key]: value,
-        ...(key === "model" && value !== current.model ? { effort: "" } : {}),
-      }));
+      mutateProvider(project.path, provider, (current) => {
+        const defaults = newSessionOptions(
+          current,
+          preferences.current.providers[provider],
+        );
+        return {
+          ...current,
+          [key]: value,
+          ...(key === "model"
+            ? { effort: value === defaults.model ? defaults.effort : "" }
+            : {}),
+        };
+      });
   }
   async function loadSessions(target: ProjectInfo, kind: ProviderKind) {
     const scope = keyFor(target.path, kind);
@@ -1063,8 +1115,13 @@ export function useWorkspace() {
     let id = snapshot.selectedSessionId;
     const cached = id ? snapshot.sessionsById[id] : null;
     const model = cached?.model ?? null;
-    const { requestedEffort: effort } = generationOptions(
+    const {
+      requestedEffort: effort,
+      model: initialModel,
+      agent,
+    } = generationOptions(
       kind,
+      preferences.current.providers[kind],
       snapshot,
       cached,
     );
@@ -1095,15 +1152,18 @@ export function useWorkspace() {
           Omit<WorkspaceSessionInfo, "provider"> | OpenCodeInfo
         >(`${kind}_start_session`, {
           projectPath: target.path,
-          model: snapshot.model || null,
-          agent: snapshot.agent || null,
+          model: initialModel || null,
+          agent: agent || null,
         });
         const started = providerInfo(kind, result);
-        started.model ??= snapshot.model || null;
+        started.model ??= initialModel || null;
         id = started.thread.id;
         mutateProvider(target.path, kind, (value) => ({
           ...value,
           draft: value.draft.trim() === text ? "" : value.draft,
+          model: value.model === snapshot.model ? null : value.model,
+          effort: value.effort === snapshot.effort ? null : value.effort,
+          agent: value.agent === snapshot.agent ? null : value.agent,
           selectedSessionId:
             navigation.current === nav
               ? started.thread.id

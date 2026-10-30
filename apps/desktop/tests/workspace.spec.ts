@@ -40,6 +40,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         ["thread-a", "thread-b", "ses-a"].map((id) => [id, "medium"]),
       );
       let failNextSend = false;
+      const choicesErrors = new Map<string, string>();
       let sequence = 0;
       let historyGate: Promise<void> | null = null;
       let startGate: Promise<void> | null = null;
@@ -96,6 +97,10 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         fixture: {
           calls,
           emit,
+          setChoicesError: (provider: string, error: string | null) => {
+            if (error) choicesErrors.set(provider, error);
+            else choicesErrors.delete(provider);
+          },
           hold: (command: string) => {
             let release = () => {};
             const promise = new Promise<void>((resolve) => {
@@ -171,6 +176,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             callbacks.delete(id),
         },
         __TAURI_INTERNALS__: {
+          metadata: { currentWindow: { label: "main" } },
           transformCallback: (callback: (event: unknown) => void) => {
             const id = ++sequence;
             callbacks.set(id, callback);
@@ -186,6 +192,13 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               return args.handler;
             }
             if (command === "plugin:event|unlisten") return;
+            if (
+              [
+                "plugin:window|set_theme",
+                "plugin:window|set_background_color",
+              ].includes(command)
+            )
+              return;
             if (command === "restore_workspace")
               return {
                 projects: [
@@ -261,7 +274,10 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             }
             if (command === "pending_approvals") return [];
             if (command === "plugin:opener|open_url") return;
-            if (command === "provider_choices")
+            if (command === "provider_choices") {
+              const error = choicesErrors.get(args.provider);
+              await gates.get(`${command}:${args.provider}`)?.promise;
+              if (error) throw new Error(error);
               return {
                 models: [
                   {
@@ -288,6 +304,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                     ? [{ id: "build", name: "Build" }]
                     : [],
               };
+            }
             if (command === "codex_list_sessions") {
               const snapshot = {
                 project,
@@ -470,6 +487,44 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               await gates.get(command)?.promise;
               return snapshot;
             }
+            if (command === "list_project_directory")
+              return {
+                path: args.path,
+                total: 1,
+                nextOffset: null,
+                entries:
+                  args.path === ""
+                    ? [
+                        {
+                          name: "src",
+                          path: "src",
+                          kind: "directory",
+                          sizeBytes: null,
+                        },
+                      ]
+                    : [
+                        {
+                          name: "App.tsx",
+                          path: "src/App.tsx",
+                          kind: "file",
+                          sizeBytes: 28,
+                        },
+                      ],
+              };
+            if (command === "read_project_file")
+              return {
+                path: args.path,
+                content: "export const ready = true;\n",
+                sizeBytes: 27,
+                truncated: false,
+              };
+            if (command === "git_file_versions")
+              return {
+                path: args.filePath,
+                original: "export const ready = false;\n",
+                modified: "export const ready = true;\n",
+                truncated: false,
+              };
             if (command === "git_file_diff") {
               const snapshot = {
                 path: args.filePath,
@@ -563,6 +618,357 @@ function sessionRow(page: Page, title: string) {
     .locator(".session-row")
     .filter({ has: page.getByRole("button", { name: title, exact: true }) });
 }
+
+async function openSettings(page: Page, section = "Appearance") {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: section, exact: true }).click();
+  return dialog;
+}
+
+test("settings switches and persists complete themes, follows the system and preserves live drafts", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await desktop(page);
+  const root = page.locator("html");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep this draft through settings");
+  await expect(root).toHaveAttribute("data-theme", "dark");
+  const dialog = await openSettings(page);
+  await page.screenshot({ path: "test-results/settings-dark.png" });
+  await dialog.getByRole("radio", { name: "Light", exact: true }).check();
+  await expect(root).toHaveAttribute("data-theme", "light");
+  await expect(root).toHaveCSS("background-color", "rgb(250, 250, 252)");
+  await expect(page.locator(".composer")).toHaveCSS(
+    "background-color",
+    "rgb(255, 255, 255)",
+  );
+  await expect(page.locator(".changes-pane")).toHaveCSS(
+    "background-color",
+    "rgb(245, 245, 249)",
+  );
+  await emit(page, "item/agentMessage/delta", {
+    threadId: "thread-a",
+    itemId: "settings-live",
+    delta: "Work continues while settings are open",
+  });
+  await page.keyboard.press("Meta+n");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(input).toHaveValue("Keep this draft through settings");
+  await expect(
+    page.getByText("Work continues while settings are open", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Settings", exact: true }),
+  ).toBeFocused();
+  await page.screenshot({ path: "test-results/workspace-light.png" });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter(
+              (call: any) =>
+                call.command === "plugin:window|set_background_color",
+            )
+            .at(-1)?.args.value,
+      ),
+    )
+    .toBe("#fafafc");
+
+  await page.reload();
+  await expect(root).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await openSettings(page);
+  await expect(
+    dialog.getByRole("radio", { name: "Light", exact: true }),
+  ).toBeChecked();
+  await dialog.getByRole("radio", { name: "System", exact: true }).check();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(root).toHaveAttribute("data-theme", "dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(root).toHaveAttribute("data-theme", "light");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter((call: any) => call.command === "plugin:window|set_theme")
+            .at(-1)?.args.value,
+      ),
+    )
+    .toBe(null);
+  await dialog.getByRole("radio", { name: "Dark", exact: true }).check();
+  await expect(root).toHaveAttribute("data-theme", "dark");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await page.keyboard.press("Meta+,");
+  await expect(dialog).toBeVisible();
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(dialog).toBeInViewport();
+  await expect(
+    dialog.getByRole("button", { name: "Done", exact: true }),
+  ).toBeInViewport();
+  await page.mouse.click(5, 5);
+  await expect(dialog).toHaveCount(0);
+});
+
+test("settings themes update mounted Monaco file previews and diffs", async ({
+  page,
+}) => {
+  await desktop(page);
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page
+    .getByRole("treeitem", { name: "src, folder, collapsed", exact: true })
+    .click();
+  await page
+    .getByRole("treeitem", { name: "App.tsx, file", exact: true })
+    .click();
+  const editor = page.locator(".monaco-editor").first();
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveCSS("background-color", "rgb(11, 12, 14)");
+  const dialog = await openSettings(page);
+  await dialog.getByRole("radio", { name: "Light", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(editor).toHaveCSS("background-color", "rgb(250, 250, 252)");
+  await page
+    .getByRole("button", { name: "Review changes", exact: true })
+    .click();
+  await expect(page.locator(".monaco-diff-editor")).toBeVisible();
+  await expect(editor).toHaveCSS("background-color", "rgb(250, 250, 252)");
+  await page.screenshot({ path: "test-results/files-light.png" });
+  await openSettings(page);
+  await dialog.getByRole("radio", { name: "Dark", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(editor).toHaveCSS("background-color", "rgb(11, 12, 14)");
+});
+
+for (const provider of ["codex", "opencode"]) {
+  test(`${provider} settings persist new-session defaults and keep existing sessions and draft overrides independent`, async ({
+    page,
+  }) => {
+    await desktop(page, provider === "codex" ? "thread-a" : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page
+        .getByRole("button", { name: "OpenCode session", exact: true })
+        .click();
+    }
+    const name = provider === "codex" ? "Codex" : "OpenCode";
+    const dialog = await openSettings(page, "Providers");
+    await dialog.getByRole("button", { name, exact: true }).click();
+    await expect(
+      dialog.getByRole("status", { name: `${name} connection status` }),
+    ).toHaveText("Available");
+    await choose(page, "Default model", "Fast model provider/fast");
+    await choose(page, "Default effort", "Low");
+    if (provider === "opencode") await choose(page, "Default agent", "Build");
+    await page.screenshot({ path: `test-results/${provider}-settings.png` });
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Model", exact: true }),
+    ).toHaveText("Test model");
+    await page.reload();
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    await openSettings(page, "Providers");
+    await dialog.getByRole("button", { name, exact: true }).click();
+    await expect(
+      dialog.getByRole("button", { name: "Default model", exact: true }),
+    ).toHaveText("Fast model");
+    await expect(
+      dialog.getByRole("button", { name: "Default effort", exact: true }),
+    ).toHaveText("Low");
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await page.keyboard.press("Meta+n");
+    await expect(
+      page.getByRole("button", { name: "Model", exact: true }),
+    ).toHaveText("Fast model");
+    await choose(page, "Model", "Fast model provider/fast");
+    await expect(
+      page.getByRole("button", { name: "Effort", exact: true }),
+    ).toHaveText("Low");
+    if (provider === "opencode")
+      await expect(
+        page.getByRole("button", { name: "Agent", exact: true }),
+      ).toHaveText("Build");
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Use my saved defaults");
+    await input.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    const calls = await page.evaluate(() => (window as any).fixture.calls);
+    expect(
+      calls.find((call: any) => call.command === `${provider}_start_session`)
+        .args,
+    ).toMatchObject({
+      model: "provider/fast",
+      agent: provider === "opencode" ? "build" : null,
+    });
+    expect(
+      calls.find((call: any) => call.command === `${provider}_send_prompt`)
+        .args.effort,
+    ).toBe("low");
+    await page.getByRole("button", { name: "Stop generation" }).click();
+    await page.keyboard.press("Meta+n");
+    await choose(page, "Model", "Test model provider/model");
+    await expect(
+      page.getByRole("button", { name: "Effort", exact: true }),
+    ).toHaveText("Default effort");
+    await input.fill("Keep this draft override");
+    await openSettings(page, "Providers");
+    await dialog.getByRole("button", { name, exact: true }).click();
+    await expect(
+      dialog.getByRole("button", { name: "Default model", exact: true }),
+    ).toHaveText("Fast model");
+    await choose(page, "Default model", "Simple model provider/plain");
+    await expect(
+      dialog.getByRole("button", { name: "Default effort", exact: true }),
+    ).toHaveText("Model default");
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(input).toHaveValue("Keep this draft override");
+    await expect(
+      page.getByRole("button", { name: "Model", exact: true }),
+    ).toHaveText("Test model");
+  });
+}
+
+test("provider settings recover connection errors and isolate delayed capability checks", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 800, height: 620 });
+  await desktop(page);
+  await page.evaluate(() =>
+    (window as any).fixture.setChoicesError(
+      "codex",
+      "Sign in with codex login",
+    ),
+  );
+  const dialog = await openSettings(page, "Providers");
+  await expect(
+    dialog.getByRole("status", { name: "Codex connection status" }),
+  ).toHaveText("Unavailable");
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "Error: Sign in with codex login",
+  );
+  await page.evaluate(() => {
+    (window as any).fixture.setChoicesError("codex", null);
+    (window as any).fixture.hold("provider_choices:codex");
+  });
+  await dialog.getByRole("button", { name: "Refresh Codex status" }).click();
+  await expect(
+    dialog.getByRole("status", { name: "Codex connection status" }),
+  ).toHaveText("Checking…");
+  await dialog.getByRole("button", { name: "OpenCode", exact: true }).click();
+  await expect(
+    dialog.getByRole("status", { name: "OpenCode connection status" }),
+  ).toHaveText("Available");
+  await page.evaluate(() =>
+    (window as any).fixture.release("provider_choices:codex"),
+  );
+  await expect(
+    dialog.getByRole("status", { name: "OpenCode connection status" }),
+  ).toHaveText("Available");
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Codex", exact: true }).click();
+  await expect(
+    dialog.getByRole("status", { name: "Codex connection status" }),
+  ).toHaveText("Available");
+  await dialog
+    .getByRole("button", { name: "Default model", exact: true })
+    .press("ArrowDown");
+  await expect(
+    page.getByRole("dialog", { name: "Choose default model", exact: true }),
+  ).toBeInViewport();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Default model", exact: true }),
+  ).toBeFocused();
+  await dialog
+    .getByRole("button", { name: "Default model", exact: true })
+    .press("ArrowDown");
+  await page
+    .getByRole("combobox", { name: "Search default models" })
+    .fill("fast");
+  await page.keyboard.press("Enter");
+  await expect(
+    dialog.getByRole("button", { name: "Default model", exact: true }),
+  ).toHaveText("Fast model");
+  await dialog.getByRole("button", { name: "Reset Codex defaults" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Default model", exact: true }),
+  ).toHaveText("Provider default");
+  await choose(page, "Default provider", "OpenCode");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close caelum", exact: true })
+    .click();
+  await openSettings(page, "Providers");
+  await expect(dialog.getByRole("status")).toHaveText("No project selected");
+  await expect(
+    dialog.getByRole("button", { name: "Default model", exact: true }),
+  ).toBeDisabled();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Open project", exact: true })
+    .last()
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Provider", exact: true }),
+  ).toHaveText("OpenCode");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter(
+              (call: any) =>
+                call.command === "set_project_provider" &&
+                call.args.projectPath === "/work/other",
+            )
+            .at(-1)?.args.provider,
+      ),
+    )
+    .toBe("opencode");
+});
+
+test("settings recover damaged preferences and report storage failures with a working retry", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("caelum.settings.v1", "{broken");
+    const setItem = Storage.prototype.setItem;
+    (window as any).restoreStorage = () => {
+      Storage.prototype.setItem = setItem;
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "caelum.settings.v1")
+        throw new Error("Storage unavailable");
+      setItem.call(this, key, value);
+    };
+  });
+  await desktop(page);
+  const dialog = await openSettings(page);
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Could not read saved settings",
+  );
+  await dialog.getByRole("radio", { name: "Light", exact: true }).check();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Could not save settings",
+  );
+  await page.evaluate(() => (window as any).restoreStorage());
+  await dialog.getByRole("button", { name: "Retry saving" }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem("caelum.settings.v1")!).theme,
+    ),
+  ).toBe("light");
+});
 
 for (const provider of ["codex", "opencode"]) {
   const title =

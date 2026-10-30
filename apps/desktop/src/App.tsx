@@ -7,6 +7,7 @@ import {
   PanelRight,
   Search,
   ShieldAlert,
+  Settings as SettingsIcon,
   X,
 } from "lucide-react";
 import { FilesPanel } from "./FilesPanel.js";
@@ -17,9 +18,13 @@ import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
 import { projectHasActiveTurn } from "./workspaceState.js";
 import { lastUserMessage } from "./shellMessages.js";
+import { Settings } from "./Settings.js";
+import { useSettings } from "./useSettings.js";
 
 export default function App() {
-  const app = useWorkspace();
+  const preferences = useSettings();
+  const app = useWorkspace(preferences.settings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [changesOpen, setChangesOpen] = useState(true);
   const [search, setSearch] = useState("");
@@ -57,6 +62,12 @@ export default function App() {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
+      if (settingsOpen) return;
       if (event.key.toLowerCase() === "n") {
         event.preventDefault();
         newSession();
@@ -102,6 +113,7 @@ export default function App() {
           newSession={newSession}
           changesOpen={changesOpen && app.view === "session"}
           toggleChanges={toggleChanges}
+          openSettings={() => setSettingsOpen(true)}
         />
       )}
       <section className="main-panel">
@@ -123,6 +135,19 @@ export default function App() {
             <strong title={title}>{title}</strong>
           </div>
           <div className="topbar-actions">
+            {collapsed && (
+              <button
+                className="icon-button"
+                aria-label="Settings"
+                title="Settings (⌘,)"
+                onClick={(event) => {
+                  event.currentTarget.focus({ preventScroll: true });
+                  setSettingsOpen(true);
+                }}
+              >
+                <SettingsIcon size={16} />
+              </button>
+            )}
             {app.selected && app.view === "session" && (
               <span className="connection-status">
                 {app.selected.connection === "connecting"
@@ -217,7 +242,10 @@ export default function App() {
         )}
         {app.view === "files" ? (
           <div className="panel-content">
-            <FilesPanel project={app.project} />
+            <FilesPanel
+              project={app.project}
+              theme={preferences.resolvedTheme}
+            />
           </div>
         ) : (
           <div
@@ -372,7 +400,7 @@ export default function App() {
                   effort={app.options.effort}
                   modelChoice={app.options.modelChoice}
                   effortPending={app.selected?.effort != null}
-                  agent={app.providerWorkspace?.agent ?? ""}
+                  agent={app.options.agent}
                   setOption={app.setOption}
                   retryChoices={() =>
                     void app.loadChoices(app.project!, app.provider)
@@ -399,6 +427,13 @@ export default function App() {
           </div>
         )}
       </section>
+      {settingsOpen && (
+        <Settings
+          app={app}
+          preferences={preferences}
+          close={() => setSettingsOpen(false)}
+        />
+      )}
     </main>
   );
 }

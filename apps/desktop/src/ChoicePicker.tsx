@@ -36,7 +36,13 @@ export function ChoicePicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const [position, setPosition] = useState({
+  const [position, setPosition] = useState<{
+    left: number;
+    top?: number;
+    bottom?: number;
+    width: number;
+    maxHeight: number;
+  }>({
     left: 0,
     bottom: 0,
     width: 320,
@@ -74,11 +80,21 @@ export function ChoicePicker({
     const place = () => {
       const rect = trigger.current!.getBoundingClientRect();
       const width = Math.min(searchable ? 340 : 240, window.innerWidth - 24);
+      const below =
+        rect.top < 300 && window.innerHeight - rect.bottom > rect.top;
       setPosition({
         width,
-        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
-        bottom: window.innerHeight - rect.top + 8,
-        maxHeight: Math.min(360, rect.top - 20),
+        left: Math.max(
+          12,
+          Math.min(rect.left, window.innerWidth - width - 12),
+        ),
+        ...(below
+          ? { top: rect.bottom + 8 }
+          : { bottom: window.innerHeight - rect.top + 8 }),
+        maxHeight: Math.min(
+          360,
+          below ? window.innerHeight - rect.bottom - 20 : rect.top - 20,
+        ),
       });
     };
     place();
@@ -96,8 +112,15 @@ export function ChoicePicker({
       )
         close();
     };
+    const scrolled = (event: Event) => {
+      if (!popup.current?.contains(event.target as Node)) close();
+    };
     document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
+    document.addEventListener("scroll", scrolled, true);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("scroll", scrolled, true);
+    };
   }, [open]);
   useEffect(() => {
     if (open && activeId)
@@ -216,7 +239,9 @@ export function ChoicePicker({
                 >
                   <span>
                     <strong>{choice.name}</strong>
-                    {choice.description && <small>{choice.description}</small>}
+                    {choice.description && (
+                      <small>{choice.description}</small>
+                    )}
                   </span>
                   {choice.id === value && <Check size={14} />}
                 </button>
@@ -228,7 +253,7 @@ export function ChoicePicker({
               )}
             </div>
           </div>,
-          document.body,
+          trigger.current?.closest("dialog") ?? document.body,
         )}
     </>
   );

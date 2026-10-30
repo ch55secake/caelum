@@ -23,6 +23,17 @@ monaco.editor.defineTheme("caelum-dark", {
     "diffEditor.removedTextBackground": "#C96A7926",
   },
 });
+monaco.editor.defineTheme("caelum-light", {
+  base: "vs", inherit: true, rules: [],
+  colors: {
+    "editor.background": "#FAFAFC", "editor.foreground": "#252630",
+    "editorLineNumber.foreground": "#767887", "editorLineNumber.activeForeground": "#6653A3",
+    "editor.selectionBackground": "#7669C433", "editor.lineHighlightBackground": "#F0F0F5",
+    "editorGutter.background": "#FAFAFC", "editorWidget.background": "#FFFFFF",
+    "editorWidget.border": "#DCDDE5", "diffEditor.insertedTextBackground": "#5DA77526",
+    "diffEditor.removedTextBackground": "#C96A7926",
+  },
+});
 
 const languageLoaders: Record<string, () => Promise<unknown>> = {
   cpp: () => import("monaco-editor/esm/vs/languages/definitions/cpp/register.js"),

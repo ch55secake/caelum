@@ -101,6 +101,14 @@ Session rows show a branch and added/deleted lines from the latest turn when ava
 - Approvals appear in the requesting conversation; the sidebar and header identify pending background requests.
 - A disconnected session offers **Reconnect**. A failed submission restores its text in the composer.
 
+## Settings
+
+Open **Settings** from the sidebar, the header when the sidebar is collapsed, or **⌘,** (**Ctrl+,** on other platforms). Changes save automatically on this device.
+
+- **Appearance:** choose Dark, Light, or System. System follows your device’s appearance; themes cover conversations, tools, Git review, Monaco file previews, and native window chrome.
+- **Providers:** choose a default provider for new projects and save independent Codex/OpenCode model and reasoning-effort defaults, plus an OpenCode agent. Defaults apply to new sessions; the composer can override them for an individual draft. Each existing session keeps its own configured model and effort.
+- Provider status and available choices are checked against the selected project. Use **Refresh** after updating your local provider setup, or **Reset defaults** to use the provider’s own settings.
+
 ## Releases
 
 See [docs/releasing.md](docs/releasing.md) for macOS release and Homebrew setup instructions.

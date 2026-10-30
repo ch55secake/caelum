@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Settings,
   X,
 } from "lucide-react";
 import { useEffect, useRef, type RefObject } from "react";
@@ -86,6 +87,7 @@ export function Sidebar({
   newSession,
   changesOpen,
   toggleChanges,
+  openSettings,
 }: {
   app: WorkspaceController;
   collapse: () => void;
@@ -95,6 +97,7 @@ export function Sidebar({
   newSession: () => void;
   changesOpen: boolean;
   toggleChanges: () => void;
+  openSettings: () => void;
 }) {
   const sessions = (["codex", "opencode"] as ProviderKind[])
     .flatMap((provider) =>
@@ -350,6 +353,17 @@ export function Sidebar({
           );
         })}
       </div>
+      <button
+        className="nav-item sidebar-settings"
+        aria-label="Settings"
+        onClick={(event) => {
+          event.currentTarget.focus({ preventScroll: true });
+          openSettings();
+        }}
+        title="Settings (⌘,)"
+      >
+        <Settings size={15} /> Settings <kbd>⌘,</kbd>
+      </button>
     </aside>
   );
 }

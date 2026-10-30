@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for the Caelum desktop window",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "opener:allow-open-url", "opener:allow-default-urls"]
+  "permissions": ["core:default", "core:window:allow-set-theme", "core:window:allow-set-background-color", "dialog:allow-open", "opener:allow-open-url", "opener:allow-default-urls"]
 }

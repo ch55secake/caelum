@@ -103,9 +103,11 @@ export type ProviderWorkspaceState = {
   isCreating: boolean;
   choices: ProviderChoices | null;
   choicesError: string | null;
-  model: string;
-  effort: string;
-  agent: string;
+  isLoadingChoices: boolean;
+  /** Null inherits app defaults; an empty string uses the provider default. */
+  model: string | null;
+  effort: string | null;
+  agent: string | null;
 };
 
 export type ProjectWorkspaceState = {
