@@ -112,7 +112,7 @@ Session rows show a branch and added/deleted lines from the latest turn when ava
 
 ## Files and prompt context
 
-**Files** and **Changes** share a resizable inspector beside the conversation. Drag its divider or use the arrow keys while the divider is focused; expand it for a larger preview and restore the conversation layout when finished. **Sessions** stays highlighted whenever the conversation is visible alongside either pane.
+**Files** and **Changes** share a resizable inspector beside the conversation. Drag its divider or use the arrow keys while the divider is focused; expand it for a larger preview and restore the conversation layout when finished. The file tree has its own draggable, keyboard-accessible divider, with its preferred width saved per project and fitted to the available space. **Sessions** stays highlighted whenever the conversation is visible alongside either pane.
 
 - **⌘P** finds filenames with fuzzy matching; **⌘⇧F** searches file contents. Use the arrow keys and Enter to open a result at its matching line. Search respects ignore rules unless **Include ignored** is checked. Ctrl works in place of ⌘.
 - Open multiple read-only file or diff tabs. Tabs, the active file, expanded folders, recent files, and reading positions restore per project on this device. The tree shows Git status and offers **All**, **Changes**, and **Recent** views. Visible files refresh automatically as the agent works.

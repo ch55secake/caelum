@@ -81,6 +81,8 @@ type EditorView =
   | { kind: "error"; path: string; mode: "file" | "diff"; message: string };
 
 const PAGE_SIZE = 200;
+const MIN_TREE_WIDTH = 110;
+const MIN_PREVIEW_WIDTH = 160;
 const EMPTY_DIRECTORY: DirectoryState = {
   path: "",
   entries: [],
@@ -106,6 +108,35 @@ export function FilesPanel({
   const contextMenu = useContextMenu();
   const projectPath = project.path;
   const saved = useFileWorkspace(projectPath);
+  const layout = useRef<HTMLDivElement>(null);
+  const [layoutWidth, setLayoutWidth] = useState(0);
+  const treeDrag = useRef<{ x: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const container = layout.current;
+    if (!container) return;
+    const measure = () => setLayoutWidth(container.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+  const maximumTreeWidth = Math.max(
+    MIN_TREE_WIDTH,
+    layoutWidth - MIN_PREVIEW_WIDTH,
+  );
+  const treeWidth = Math.min(
+    maximumTreeWidth,
+    Math.max(
+      MIN_TREE_WIDTH,
+      saved.value.treeWidth ?? (layoutWidth <= 380 ? 110 : 140),
+    ),
+  );
+  function resizeTree(width: number) {
+    saved.update((value) => ({
+      ...value,
+      treeWidth: Math.max(MIN_TREE_WIDTH, Math.min(maximumTreeWidth, width)),
+    }));
+  }
   const [directories, setDirectories] = useState<
     Record<string, DirectoryState>
   >({});
@@ -346,8 +377,10 @@ export function FilesPanel({
     };
   }, [projectPath, saved.value.active, refreshKey]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (request?.location) openFile(request.location.path, request.location);
+    // A new search owns focus even if the previous preview is still restoring.
+    else if (request?.search) setJump(undefined);
   }, [request?.id]);
 
   const treeNodes = useMemo(
@@ -530,8 +563,13 @@ export function FilesPanel({
         </div>
       )}
 
-      <div className="file-browser-layout">
+      <div
+        className="file-browser-layout"
+        ref={layout}
+        style={{ "--file-tree-width": `${treeWidth}px` } as CSSProperties}
+      >
         <aside
+          id="file-browser-sidebar"
           className="file-browser-sidebar"
           aria-label="Project files and changes"
         >
@@ -883,6 +921,51 @@ export function FilesPanel({
             </div>
           )}
         </aside>
+
+        <div
+          className="file-tree-resize"
+          role="separator"
+          aria-label="Resize file tree"
+          aria-orientation="vertical"
+          aria-controls="file-browser-sidebar"
+          aria-valuemin={MIN_TREE_WIDTH}
+          aria-valuemax={maximumTreeWidth}
+          aria-valuenow={Math.round(treeWidth)}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            treeDrag.current = { x: event.clientX, width: treeWidth };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.currentTarget.focus({ preventScroll: true });
+            event.preventDefault();
+          }}
+          onPointerMove={(event) => {
+            if (treeDrag.current)
+              resizeTree(
+                treeDrag.current.width + event.clientX - treeDrag.current.x,
+              );
+          }}
+          onPointerUp={() => {
+            treeDrag.current = null;
+          }}
+          onLostPointerCapture={() => {
+            treeDrag.current = null;
+          }}
+          onKeyDown={(event) => {
+            if (
+              ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+            ) {
+              event.preventDefault();
+              resizeTree(
+                event.key === "Home"
+                  ? MIN_TREE_WIDTH
+                  : event.key === "End"
+                    ? maximumTreeWidth
+                    : treeWidth + (event.key === "ArrowRight" ? 32 : -32),
+              );
+            }
+          }}
+        />
 
         <main
           className="file-editor-panel"

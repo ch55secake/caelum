@@ -1175,7 +1175,37 @@ test("Files inspector resizes and expands while keeping the conversation mounted
   await expect
     .poll(async () => (await pane.boundingBox())!.width)
     .toBeGreaterThan(width + 60);
+  const tree = pane.getByRole("complementary", {
+    name: "Project files and changes",
+  });
+  const treeResize = page.getByRole("separator", { name: "Resize file tree" });
+  const treeWidth = async () => (await tree.boundingBox())!.width;
+  const initialTreeWidth = await treeWidth();
+  const inspectorWidth = (await pane.boundingBox())!.width;
+  const preview = page.locator(".code-viewer");
+  await preview.evaluate((node) => node.setAttribute("data-mounted", "yes"));
+  await treeResize.focus();
+  await treeResize.press("ArrowRight");
+  await expect.poll(treeWidth).toBe(initialTreeWidth + 32);
+  const treeDivider = (await treeResize.boundingBox())!;
+  await page.mouse.move(
+    treeDivider.x + treeDivider.width / 2,
+    treeDivider.y + 100,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    treeDivider.x + treeDivider.width / 2 + 60,
+    treeDivider.y + 100,
+  );
+  await page.mouse.up();
+  await expect.poll(treeWidth).toBe(initialTreeWidth + 92);
+  const preferredTreeWidth = await treeWidth();
+  await expect
+    .poll(async () => (await pane.boundingBox())!.width)
+    .toBe(inspectorWidth);
+  await expect(preview).toHaveAttribute("data-mounted", "yes");
   await page.getByRole("button", { name: "Expand project inspector" }).click();
+  await expect.poll(treeWidth).toBe(preferredTreeWidth);
   await expect(input).toBeHidden();
   await expect(
     page.getByRole("button", { name: "Sessions", exact: true }),
@@ -1253,10 +1283,26 @@ test("Files inspector resizes and expands while keeping the conversation mounted
   await page.screenshot({ path: "test-results/files-inspector-light.png" });
   await page.setViewportSize({ width: 800, height: 620 });
   await expect(input).toBeVisible();
+  await expect.poll(treeWidth).toBeLessThan(preferredTreeWidth);
+  await expect
+    .poll(
+      async () =>
+        (await page.locator(".file-editor-panel").boundingBox())!.width,
+    )
+    .toBeGreaterThanOrEqual(160);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     800,
   );
   await page.screenshot({ path: "test-results/files-inspector-compact.png" });
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await expect.poll(treeWidth).toBe(preferredTreeWidth);
+  await page.reload();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect.poll(treeWidth).toBe(preferredTreeWidth);
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect.poll(treeWidth).toBe(initialTreeWidth);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect.poll(treeWidth).toBe(preferredTreeWidth);
 });
 
 for (const provider of ["codex", "opencode"]) {

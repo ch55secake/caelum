@@ -9,6 +9,7 @@ type FileWorkspace = {
   expanded: string[];
   recent: string[];
   views: Record<string, FileViewState | null>;
+  treeWidth: number | null;
   treeScroll: number;
   loaded: Record<string, number>;
 };
@@ -28,6 +29,7 @@ function restore(project: string): FileWorkspace {
     expanded: [],
     recent: [],
     views: {},
+    treeWidth: null,
     treeScroll: 0,
     loaded: {},
   };
@@ -65,6 +67,10 @@ function restore(project: string): FileWorkspace {
           .filter(([key]) => keys.has(key))
           .map(([key, view]) => [key, restoreFileView(view)]),
       ),
+      treeWidth:
+        Number.isFinite(stored.treeWidth) && stored.treeWidth > 0
+          ? stored.treeWidth
+          : null,
       treeScroll: Number.isFinite(stored.treeScroll)
         ? Math.max(0, stored.treeScroll)
         : 0,
