@@ -73,6 +73,12 @@ export function Composer({
   const measurement = useRef<HTMLTextAreaElement>(null);
   const recalled = useRef(false);
   const busy = working || submitting || awaitingApproval;
+  const agents = choices?.agents ?? [];
+  const canCycleAgent =
+    provider === "opencode" &&
+    !disabled &&
+    !submitting &&
+    agents.some((choice) => choice.id !== agent);
   const effortName = (name: string) =>
     name === "xhigh"
       ? "Extra high"
@@ -137,6 +143,7 @@ export function Composer({
         <textarea
           ref={textareaRef}
           aria-label="Message"
+          aria-keyshortcuts={canCycleAgent ? "Shift+Tab" : undefined}
           title={!draft && lastMessage ? "↑ Recall last message" : undefined}
           placeholder={
             working
@@ -147,6 +154,24 @@ export function Composer({
           disabled={disabled}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
+            if (
+              event.key === "Tab" &&
+              event.shiftKey &&
+              !event.altKey &&
+              !event.metaKey &&
+              !event.ctrlKey &&
+              !event.nativeEvent.isComposing &&
+              canCycleAgent
+            ) {
+              event.preventDefault();
+              if (!event.repeat) {
+                const index = agents.findIndex(
+                  (choice) => choice.id === agent,
+                );
+                setOption("agent", agents[(index + 1) % agents.length].id);
+              }
+              return;
+            }
             if (
               event.key === "ArrowUp" &&
               !event.nativeEvent.isComposing &&
@@ -177,7 +202,7 @@ export function Composer({
           <AgentPicker
             value={agent}
             current={currentAgent}
-            choices={choices?.agents ?? []}
+            choices={agents}
             isNew={isNew}
             working={working}
             disabled={disabled || submitting}

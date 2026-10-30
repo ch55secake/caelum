@@ -63,7 +63,7 @@ export function AgentPicker({
               className="agent-mode"
               aria-pressed={value === id}
               data-current={current === id}
-              title={`${current === id ? `${working ? "Running" : "Current"} agent · ` : ""}Use ${name(id)} for the next message`}
+              title={`${current === id ? `${working ? "Running" : "Current"} agent · ` : ""}Use ${name(id)} for the next message · Shift+Tab in the message box to cycle agents`}
               disabled={disabled}
               onClick={() => onChange(id)}
             >

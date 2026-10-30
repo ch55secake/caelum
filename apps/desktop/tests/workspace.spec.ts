@@ -2350,8 +2350,8 @@ test("Build and Plan are one-click session controls that distinguish the running
     { sessionID: "ses-a" },
     "opencode",
   );
-  await plan.focus();
-  await page.keyboard.press("Space");
+  await input.press("Shift+Tab");
+  await expect(input).toBeFocused();
   await expect(plan).toHaveAttribute("aria-pressed", "true");
   await expect(status).toHaveText("Running: Build · Next: Plan");
   const runningIcon = build.locator(".agent-icon");
@@ -2388,6 +2388,8 @@ test("Build and Plan are one-click session controls that distinguish the running
   await input.press("Enter");
   await expect(plan).toBeDisabled();
   await expect(build).toBeDisabled();
+  await input.press("Shift+Tab");
+  await expect(plan).toHaveAttribute("aria-pressed", "true");
   expect(
     await page.evaluate(() =>
       (window as any).fixture.calls.filter(
@@ -2440,6 +2442,89 @@ test("Build and Plan are one-click session controls that distinguish the running
     .click();
   await expect(status).toHaveText("Current: Plan");
   await expect(plan).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Shift+Tab cycles available agents without changing the draft or other keyboard navigation", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Codex draft");
+  await input.press("Shift+Tab");
+  await expect(input).not.toBeFocused();
+  await expect(input).toHaveValue("Codex draft");
+
+  await page.evaluate(() =>
+    (window as any).fixture.setChoicesError("opencode", "Provider unavailable"),
+  );
+  await choose(page, "Provider", "OpenCode");
+  const retry = page.getByRole("button", { name: "Load models", exact: true });
+  await expect(retry).toBeVisible();
+  await input.press("Shift+Tab");
+  await expect(input).not.toBeFocused();
+  await page.evaluate(() =>
+    (window as any).fixture.setChoicesError("opencode", null),
+  );
+  await retry.click();
+  const build = page.getByRole("button", { name: "Build", exact: true });
+  await expect(build).toBeVisible();
+
+  const status = page.getByRole("status", {
+    name: "Agent selection",
+    exact: true,
+  });
+  await expect(status).toHaveText("Uses provider settings");
+  await input.fill("Keep this draft and selection");
+  await input.evaluate((node: HTMLTextAreaElement) =>
+    node.setSelectionRange(5, 9),
+  );
+  for (const agent of ["Build", "Plan", "Reviewer", "Build"]) {
+    await input.press("Shift+Tab");
+    await expect(status).toHaveText(`Next: ${agent}`);
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("Keep this draft and selection");
+    expect(
+      await input.evaluate((node: HTMLTextAreaElement) =>
+        [node.selectionStart, node.selectionEnd],
+      ),
+    ).toEqual([5, 9]);
+  }
+  expect(
+    await page.evaluate(() => (window as any).fixture.calls.filter(
+      (call: any) => [
+        "opencode_select_agent",
+        "opencode_start_session",
+        "opencode_send_prompt",
+      ].includes(call.command),
+    )),
+  ).toHaveLength(0);
+
+  for (const modifier of ["altKey", "ctrlKey", "metaKey", "isComposing", "repeat"]) {
+    await input.dispatchEvent("keydown", {
+      key: "Tab", shiftKey: true, [modifier]: true,
+    });
+    await expect(status).toHaveText("Next: Build");
+  }
+  await input.press("Tab");
+  await expect(input).not.toBeFocused();
+  await expect(status).toHaveText("Next: Build");
+  const search = page.getByRole("textbox", {
+    name: "Search sessions",
+    exact: true,
+  });
+  await search.press("Shift+Tab");
+  await expect(search).not.toBeFocused();
+  await expect(status).toHaveText("Next: Build");
+
+  const dialog = await openSettings(page);
+  const done = dialog.getByRole("button", { name: "Done", exact: true });
+  await done.press("Shift+Tab");
+  await expect(done).not.toBeFocused();
+  await done.click();
+  await expect(status).toHaveText("Next: Build");
+  await expect(input).toHaveValue("Keep this draft and selection");
+  await choose(page, "Agent", "Provider default");
+  await expect(status).toHaveText("Uses provider settings");
 });
 
 test("agent choices survive stale history, navigation, reconnect and failed switches without sending with the wrong agent", async ({
