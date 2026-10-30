@@ -444,8 +444,10 @@ export function Conversation({
                   )
                     ? "Done"
                     : session.lastOutcome === "interrupted"
-                      ? "Interrupted"
-                      : "Turn ended"}
+                      ? "Turn cancelled"
+                      : session.lastOutcome === "paused"
+                        ? "Execution paused"
+                        : "Turn ended"}
                 </div>
               )}
             </>

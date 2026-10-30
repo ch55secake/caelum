@@ -239,8 +239,8 @@ test("concurrent turns remain independent and cancellation status is scoped", ()
   assert.equal(projectHasActiveTurn(updated[projectB.path]), true);
   assert.equal(
     updated[projectA.path].providers.codex.sessionsById["thread-a"]
-      .conversation[0].text,
-    "Turn cancelled",
+      .lastOutcome,
+    "interrupted",
   );
 });
 

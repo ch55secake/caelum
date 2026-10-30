@@ -1957,6 +1957,108 @@ for (const provider of ["codex", "opencode"]) {
       : "OpenCode session";
   const id = provider === "codex" ? "thread-a" : "ses-a";
 
+  test(`${provider} clears the cancellation notice on a new prompt, history refresh and reconnect`, async ({
+    page,
+  }) => {
+    await desktop(page, provider === "codex" ? id : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page.getByRole("button", { name: title, exact: true }).click();
+    }
+    const activity = page.getByRole("form", { name: "Message composer" });
+    const cancelled = page.getByText("Turn cancelled", { exact: true });
+    for (const resume of ["prompt", "snapshot", "reconnect"]) {
+      const history =
+        provider === "codex"
+          ? [{ id: `cancelled-${resume}`, status: "interrupted", items: [] }]
+          : [
+              {
+                id: `cancelled-${resume}`,
+                type: "idle",
+                outcome: "interrupted",
+              },
+            ];
+      await setHistory(page, provider, history, true);
+      await emit(
+        page,
+        provider === "codex" ? "turn/started" : "session.execution.started",
+        provider === "codex"
+          ? { threadId: id, turn: { id: `turn-${resume}` } }
+          : { sessionID: id },
+        provider,
+      );
+      await page.getByRole("button", { name: "Stop generation" }).click();
+      await setHistory(page, provider, history, false);
+      await expect(cancelled).toHaveCount(1);
+      await expect(activity).toHaveAttribute("data-working", "false");
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(cancelled).toHaveCount(1);
+
+      const response =
+        provider === "codex"
+          ? {
+              id: `resumed-${resume}`,
+              status: "inProgress",
+              items: [
+                {
+                  id: `answer-${resume}`,
+                  type: "agentMessage",
+                  text: "Resumed work",
+                },
+              ],
+            }
+          : {
+              id: `resumed-${resume}`,
+              type: "assistant",
+              content: [{ type: "text", text: "Resumed work" }],
+            };
+      await setHistory(page, provider, [...history, response], true);
+      if (resume === "prompt") {
+        const input = page.getByRole("textbox", {
+          name: "Message",
+          exact: true,
+        });
+        await input.fill("Continue the cancelled task");
+        await input.press("Enter");
+      } else if (resume === "reconnect") {
+        await emit(
+          page,
+          provider === "codex"
+            ? "codex/processExited"
+            : "server.disconnected",
+          {},
+          provider,
+        );
+        await page
+          .getByRole("button", { name: "Reconnect", exact: true })
+          .click();
+      } else
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(activity).toHaveAttribute("data-working", "true");
+      await expect(cancelled).toHaveCount(0);
+      const finished =
+        provider === "codex"
+          ? [...history, { ...response, status: "completed" }]
+          : [
+              ...history,
+              { ...response, time: { completed: 200 } },
+              { id: `done-${resume}`, type: "idle", outcome: "succeeded" },
+            ];
+      await setHistory(page, provider, finished, false);
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(activity).toHaveAttribute("data-working", "false");
+      await expect(cancelled).toHaveCount(0);
+      await page
+        .getByRole("button", {
+          name: "Review the provider adapters",
+          exact: true,
+        })
+        .click();
+      await page.getByRole("button", { name: title, exact: true }).click();
+      await expect(cancelled).toHaveCount(0);
+    }
+  });
+
   test(`${provider} restores compaction checkpoints and preserves drafts and reading position while work continues`, async ({
     page,
   }) => {
@@ -2466,6 +2568,187 @@ test("OpenCode reconciles manual compaction across stale snapshots, streamed sum
   await expect(
     page.getByRole("button", { name: "Stop generation" }),
   ).toHaveCount(0);
+});
+
+test("patch and execute rows describe restored and live work and retain full tool input", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  const tools = [
+    {
+      name: "patch",
+      input: {
+        patchText:
+          "*** Begin Patch\n*** Update File: src/App.tsx\n@@\n-old\n+new\n*** Add File: src/new file.ts\n+export {};\n*** End Patch",
+      },
+      preview: "src/App.tsx, src/new file.ts",
+    },
+    {
+      name: "execute",
+      input: {
+        code: '\nconst result = await tools.opencode.models({\n  provider: "openai"\n});\nreturn result;',
+      },
+      preview:
+        'const result = await tools.opencode.models({ provider: "openai" }); return result;',
+    },
+  ];
+  await setHistory(
+    page,
+    "opencode",
+    [
+      {
+        id: "msg_tools",
+        type: "assistant",
+        time: { completed: 100 },
+        content: tools.map((tool) => ({
+          id: `restored-${tool.name}`,
+          type: "tool",
+          name: tool.name,
+          state: {
+            status: "completed",
+            input: tool.input,
+            content: [{ type: "text", text: "Done" }],
+          },
+        })),
+      },
+    ],
+    false,
+  );
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  await page.evaluate(() => (window as any).fixture.setOpenWorking(true));
+  for (const tool of tools) {
+    const restored = page.locator(
+      `[data-entry-id="opencode-tool-restored-${tool.name}"]`,
+    );
+    await expect(restored.locator(".tool-preview")).toHaveText(tool.preview);
+    await restored
+      .getByRole("button", { name: new RegExp(`^${tool.name} `) })
+      .click();
+    await expect(restored.locator(".tool-value pre").first()).toHaveText(
+      JSON.stringify(tool.input, null, 2),
+    );
+    await emit(
+      page,
+      "session.tool.input.delta",
+      {
+        sessionID: "ses-a",
+        id: `live-${tool.name}`,
+        name: tool.name,
+        delta: JSON.stringify(tool.input),
+      },
+      "opencode",
+    );
+    const live = page.locator(
+      `[data-entry-id="opencode-tool-live-${tool.name}"]`,
+    );
+    await expect(live.locator(".tool-preview")).toHaveText(tool.preview);
+    await emit(
+      page,
+      "session.tool.called",
+      {
+        sessionID: "ses-a",
+        id: `live-${tool.name}`,
+        name: tool.name,
+        input: tool.input,
+      },
+      "opencode",
+    );
+    await expect(live.locator(".tool-preview")).toHaveAttribute(
+      "title",
+      tool.preview,
+    );
+    await emit(
+      page,
+      "session.tool.success",
+      {
+        sessionID: "ses-a",
+        id: `live-${tool.name}`,
+        content: [{ type: "text", text: "Done" }],
+      },
+      "opencode",
+    );
+    await expect(live.locator(".tool-preview")).toHaveText(tool.preview);
+  }
+  await page.screenshot({ path: "test-results/tool-previews.png" });
+});
+
+test("OpenCode stays active across quiet tool gaps and repeated history polls, then settles on completion", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  await expect(
+    page.getByText("Restored OpenCode conversation"),
+  ).toBeVisible();
+  await page.evaluate(() => (window as any).fixture.setOpenWorking(true));
+  await emit(
+    page,
+    "session.execution.started",
+    { sessionID: "ses-a" },
+    "opencode",
+  );
+  const activity = page.getByRole("form", { name: "Message composer" });
+  await expect(activity).toHaveAttribute("data-working", "true");
+  await activity.evaluate((node) => {
+    (window as any).fixture.activity = [];
+    new MutationObserver((records) => {
+      for (const record of records)
+        (window as any).fixture.activity.push(record.oldValue);
+    }).observe(node, {
+      attributes: true,
+      attributeFilter: ["data-working"],
+      attributeOldValue: true,
+    });
+  });
+  for (let index = 0; index < 3; index++) {
+    await emit(
+      page,
+      "session.tool.called",
+      {
+        sessionID: "ses-a",
+        id: `tool-${index}`,
+        name: "read",
+        input: { path: "src/App.tsx" },
+      },
+      "opencode",
+    );
+    await emit(
+      page,
+      "session.tool.success",
+      { sessionID: "ses-a", id: `tool-${index}`, content: [] },
+      "opencode",
+    );
+    await page.clock.runFor(10_100);
+    await expect(activity).toHaveAttribute("data-working", "true");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+  }
+  expect(await page.evaluate(() => (window as any).fixture.activity)).toEqual(
+    [],
+  );
+  await page.evaluate(() => (window as any).fixture.setOpenWorking(false));
+  await emit(
+    page,
+    "session.execution.succeeded",
+    { sessionID: "ses-a" },
+    "opencode",
+  );
+  await page.clock.runFor(15_100);
+  await expect(activity).toHaveAttribute("data-working", "false");
+  await expect(
+    page.getByRole("button", { name: "Stop generation" }),
+  ).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).fixture.activity)).toEqual(
+    ["true"],
+  );
 });
 
 test("snapshots recover missed live events on polling, focus and cached-session selection", async ({

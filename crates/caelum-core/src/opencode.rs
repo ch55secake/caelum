@@ -126,13 +126,15 @@ impl OpenCodeProvider {
             .get("data")
             .and_then(Value::as_array)
             .ok_or_else(|| OpenCodeError::Protocol("session list has no data array".into()))?;
+        let active = server.active_sessions()?;
 
         let mut sessions = Vec::with_capacity(values.len());
         for value in values {
             if session_directory(value)
                 .is_some_and(|directory| directory_matches(directory, project.path()))
             {
-                if let Some(session) = session_info(value) {
+                if let Some(mut session) = session_info(value) {
+                    session.is_working = active.contains(&session.id);
                     server.remember_session(&session.id);
                     sessions.push(session);
                 }
@@ -503,8 +505,9 @@ impl OpenCodeProvider {
         {
             return Err(OpenCodeError::SessionNotInProject);
         }
-        let session = session_info(value)
+        let mut session = session_info(value)
             .ok_or_else(|| OpenCodeError::Protocol("session response has no session ID".into()))?;
+        session.is_working = server.active_sessions()?.contains(&session.id);
         server.remember_session(&session.id);
         Ok(session)
     }
@@ -722,6 +725,17 @@ impl OpenCodeServer {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(session_id.to_owned());
+    }
+
+    fn active_sessions(&self) -> Result<HashSet<String>, OpenCodeError> {
+        // Activity belongs to the runtime drain, not persisted busy/idle times.
+        // A running session can have no busy timestamp (or a previous idle time).
+        let response = self.request_json(Method::GET, "/api/session/active", &[], None)?;
+        let active = response
+            .get("data")
+            .and_then(Value::as_object)
+            .ok_or_else(|| OpenCodeError::Protocol("active sessions has no data map".into()))?;
+        Ok(active.keys().cloned().collect())
     }
 
     fn owns_session(&self, session_id: &str) -> bool {
@@ -1216,14 +1230,7 @@ fn session_info(value: &Value) -> Option<OpenCodeSession> {
                 .unwrap_or("")
                 .to_owned(),
         ),
-        is_working: value
-            .pointer("/time/busy")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            > value
-                .pointer("/time/idle")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
+        is_working: false,
         id: value.get("id")?.as_str()?.to_owned(),
         title: value
             .get("title")
@@ -1655,9 +1662,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/session":
             assert parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["false"]
             self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
+        elif path == "/api/session/active":
+            self.send_json({"data": {"ses_fake": {"type": "running"}} if os.path.exists(os.path.join(PROJECT, "busy")) else {}})
         elif path == "/api/session/ses_fake":
             session = dict(SESSION)
-            if os.path.exists(os.path.join(PROJECT, "busy")): session["time"] = {"busy": 2, "idle": 1}
             self.send_json({"data": session})
         elif path == "/api/session/ses_foreign":
             self.send_json({"data": {"id": "ses_foreign", "location": {"directory": os.path.dirname(PROJECT)}}})
@@ -2058,7 +2066,7 @@ from urllib.parse import urlsplit
 events = queue.Queue()
 subscribed = False
 password = os.environ.get('TEST_PASSWORD')
-session = {'id': 'ses_shared', 'title': 'External work', 'location': {'directory': os.getcwd()}, 'time': {'busy': 2, 'idle': 1}}
+session = {'id': 'ses_shared', 'title': 'External work', 'location': {'directory': os.getcwd()}, 'time': {'idle': 1}}
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args): pass
     def authorized(self):
@@ -2097,6 +2105,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/session':
             assert subscribed
             self.reply({'data': [session]})
+        elif path == '/api/session/active':
+            if os.path.exists('activity-error'): self.send_error(503)
+            elif os.path.exists('activity-invalid'): self.reply({'data': []})
+            else: self.reply({'data': {} if os.path.exists('idle') else {'ses_shared': {'type': 'running'}}})
         elif path == '/api/session/ses_shared': self.reply({'data': session})
         elif path == '/api/session/ses_shared/message': self.reply({'data': [], 'cursor': {'next': None}})
         else: self.send_error(404)
@@ -2164,6 +2176,46 @@ server.serve_forever()
             assert_eq!(event.event_type, "session.reasoning.delta");
             assert_eq!(event.data["delta"], "External thinking");
             assert!(events.try_recv().is_err());
+            // Repeated history polls and resume must agree with the runtime,
+            // even though persisted session metadata has only an old idle time.
+            for _ in 0..3 {
+                assert!(
+                    provider
+                        .resume_session(&directory.0, "ses_shared")
+                        .unwrap()
+                        .session
+                        .is_working
+                );
+                assert_eq!(
+                    provider
+                        .session_history(&directory.0, "ses_shared", None)
+                        .unwrap()
+                        .is_working,
+                    Some(true)
+                );
+            }
+            // An unavailable or malformed activity response must not report idle.
+            fs::write(directory.0.join("activity-error"), "").unwrap();
+            assert!(matches!(
+                provider.session_history(&directory.0, "ses_shared", None),
+                Err(OpenCodeError::HttpStatus { status: 503, .. })
+            ));
+            fs::remove_file(directory.0.join("activity-error")).unwrap();
+            fs::write(directory.0.join("activity-invalid"), "").unwrap();
+            assert!(matches!(
+                provider.list_sessions(&directory.0),
+                Err(OpenCodeError::Protocol(_))
+            ));
+            fs::remove_file(directory.0.join("activity-invalid")).unwrap();
+            fs::write(directory.0.join("idle"), "").unwrap();
+            assert!(!provider.list_sessions(&directory.0).unwrap().sessions[0].is_working);
+            assert_eq!(
+                provider
+                    .session_history(&directory.0, "ses_shared", None)
+                    .unwrap()
+                    .is_working,
+                Some(false)
+            );
             provider.shutdown();
             assert!(external.0.try_wait().unwrap().is_none());
             assert!(server

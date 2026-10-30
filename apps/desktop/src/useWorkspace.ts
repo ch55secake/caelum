@@ -862,6 +862,7 @@ export function useWorkspace() {
               }
             : value.session,
           isWorking,
+          lastOutcome: isWorking ? null : value.lastOutcome,
           activity: !isWorking
             ? null
             : fresh && compacting
@@ -938,15 +939,19 @@ export function useWorkspace() {
       });
       if (revision(scope) !== version) return;
       const info = providerInfo(kind, result);
-      mutateSession(target.path, kind, thread.id, (value) => ({
-        ...value,
-        session: info,
-        connection: "connected",
-        isWorking:
+      mutateSession(target.path, kind, thread.id, (value) => {
+        const isWorking =
           value.eventRevision === (cached?.eventRevision ?? 0)
             ? (info.thread.isWorking ?? value.isWorking)
-            : value.isWorking,
-      }));
+            : value.isWorking;
+        return {
+          ...value,
+          session: info,
+          connection: "connected",
+          isWorking,
+          lastOutcome: isWorking ? null : value.lastOutcome,
+        };
+      });
       void loadHistory(target.path, kind, thread.id);
     } catch (reason) {
       if (revision(scope) === version)

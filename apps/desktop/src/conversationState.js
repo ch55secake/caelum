@@ -219,15 +219,12 @@ export function openCodeMessage(message) {
         output: message.output?.output,
       },
     ];
-  if (message.type === "idle" && message.outcome !== "succeeded")
+  if (message.type === "idle" && message.outcome === "failed")
     return [
       {
         id,
         kind: "status",
-        text:
-          message.outcome === "interrupted"
-            ? "Turn cancelled"
-            : displayValue(message.error?.message ?? "Turn failed"),
+        text: displayValue(message.error?.message ?? "Turn failed"),
       },
     ];
   if (["system", "synthetic"].includes(message.type))
@@ -440,7 +437,7 @@ export function applyConversationEvent(
       isWorking: false,
       isSubmitting: false,
       activity: null,
-      lastOutcome: outcome,
+      lastOutcome: resumable ? "paused" : outcome,
       conversation: next.conversation.map((entry) =>
         entry.kind === "compaction" && !entry.complete
           ? {
@@ -613,14 +610,11 @@ export function applyConversationEvent(
     if (method === "turn/completed") {
       const turnStatus = data.turn?.status?.type ?? data.turn?.status;
       settle(turnStatus, data.turn?.error?.message);
-      if (["interrupted", "failed"].includes(turnStatus))
+      if (turnStatus === "failed")
         put({
           id: `codex-turn-${data.turn.id}`,
           kind: "status",
-          text:
-            turnStatus === "interrupted"
-              ? "Turn cancelled"
-              : displayValue(data.turn.error?.message ?? "Turn failed"),
+          text: displayValue(data.turn.error?.message ?? "Turn failed"),
         });
     }
     if (method === "error")
@@ -823,15 +817,11 @@ export function applyConversationEvent(
         method === "session.execution.interrupted" &&
           data.reason === "shutdown",
       );
-      if (method.endsWith("failed") || method.endsWith("interrupted"))
+      if (method.endsWith("failed"))
         put({
           id: `opencode-outcome-${data.messageID ?? Date.now()}`,
           kind: "status",
-          text: method.endsWith("interrupted")
-            ? data.reason === "shutdown"
-              ? "Execution paused"
-              : "Turn cancelled"
-            : displayValue(data.error?.message ?? "Turn failed"),
+          text: displayValue(data.error?.message ?? "Turn failed"),
         });
     }
     if (method === "permission.reply.failed")

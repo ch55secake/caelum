@@ -430,6 +430,45 @@ test("retry, interruption, and missed final deltas settle activity and keep rest
   assert.equal(live.conversation[0].text, "Partial trace recovered");
 });
 
+test("cancellation is a current-turn outcome rather than a permanent transcript message", () => {
+  for (const provider of ["codex", "opencode"]) {
+    const started =
+      provider === "codex" ? "turn/started" : "session.execution.started";
+    const cancelled =
+      provider === "codex"
+        ? "turn/completed"
+        : "session.execution.interrupted";
+    let live = applyConversationEvent(session(), provider, started, {});
+    live = applyConversationEvent(live, provider, cancelled, {
+      turn: { id: "cancelled", status: "interrupted" },
+    });
+    assert.equal(live.lastOutcome, "interrupted");
+    assert.equal(live.isWorking, false);
+    assert.deepEqual(live.conversation, []);
+    live = applyConversationEvent(live, provider, started, {});
+    assert.equal(live.lastOutcome, null);
+    assert.equal(live.isWorking, true);
+  }
+  const restored = historyEntries("opencode", [
+    { id: "msg_cancelled", type: "idle", outcome: "interrupted" },
+    {
+      id: "msg_resumed",
+      type: "assistant",
+      content: [{ type: "text", text: "Continuing the work" }],
+    },
+    {
+      id: "msg_error",
+      type: "idle",
+      outcome: "failed",
+      error: { message: "Provider unavailable" },
+    },
+  ]);
+  assert.deepEqual(
+    restored.map((entry) => entry.text),
+    ["Continuing the work", "Provider unavailable"],
+  );
+});
+
 test("Codex compaction is a stable checkpoint that keeps execution active until the turn ends", () => {
   let live = session();
   const item = { id: "compact-1", type: "contextCompaction" };
@@ -667,6 +706,7 @@ test("OpenCode compaction failures, shutdown resumption and native checkpoints a
   );
   assert.equal(live.conversation[0].status, "interrupted");
   assert.equal(live.conversation[0].complete, false);
+  assert.equal(live.lastOutcome, "paused");
   live = applyConversationEvent(
     live,
     "opencode",

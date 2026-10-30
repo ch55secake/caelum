@@ -4,6 +4,7 @@ import type { ConversationEntry } from "./workspaceState.js";
 import { CopyButton } from "./MessageContent.js";
 import { useEffect, useState } from "react";
 import { splitShellMessages } from "./shellMessages.js";
+import { toolSummary } from "./toolSummary.js";
 
 function ShellIdentity({ id }: { id: string }) {
   return (
@@ -109,26 +110,7 @@ export function ToolActivity({
     seconds >= 60
       ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
       : `${seconds}s`;
-  let input = entry.input;
-  if (typeof input === "string") {
-    try {
-      input = JSON.parse(input);
-    } catch {
-      /* Input can still be streaming. */
-    }
-  }
-  const fields =
-    input && typeof input === "object"
-      ? (input as Record<string, unknown>)
-      : {};
-  const summary = displayValue(
-    fields.command ??
-      fields.filePath ??
-      fields.path ??
-      fields.pattern ??
-      fields.query ??
-      input,
-  ).split("\n")[0];
+  const summary = toolSummary(entry.input);
   const failed = entry.status === "failed" || Boolean(entry.error);
   const Icon = failed
     ? CircleAlert
@@ -148,7 +130,9 @@ export function ToolActivity({
         <ChevronRight size={13} className={expanded ? "expanded" : ""} />
         <Icon size={14} />
         <strong>{entry.name ?? "Tool"}</strong>
-        <span className="tool-preview">{summary}</span>
+        <span className="tool-preview" title={summary}>
+          {summary}
+        </span>
         <span className="tool-status">
           {failed
             ? "Failed"
