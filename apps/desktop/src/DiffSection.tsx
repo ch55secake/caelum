@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { languageForPath } from "./codeLanguages.js";
+import { useContextMenu, copyAction } from "./ContextMenu.js";
 import {
   diffLines,
   highlightDiff,
@@ -18,6 +19,7 @@ export function DiffSection({
   content: string;
   highlights?: number[];
 }) {
+  const contextMenu = useContextMenu();
   const lines = useMemo(() => diffLines(content), [content]);
   const language = languageForPath(path);
   const [highlighted, setHighlighted] = useState<{
@@ -52,7 +54,16 @@ export function DiffSection({
       ? highlighted.tokens
       : null;
   return (
-    <section className="git-diff-section" aria-label={`${title} diff`}>
+    <section
+      className="git-diff-section"
+      aria-label={`${title} diff`}
+      onContextMenu={(event) =>
+        contextMenu(event, [
+          copyAction(`Copy ${title.toLowerCase()} diff`, content),
+          copyAction("Copy relative path", path),
+        ])
+      }
+    >
       <h2>{title}</h2>
       <pre>
         {lines.map(({ text, kind }, index) => {

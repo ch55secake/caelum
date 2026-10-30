@@ -11,6 +11,7 @@ import { GitStatusIcon } from "./GitStatusIcon.js";
 import { DiffSection } from "./DiffSection.js";
 import { readGitStatus, type GitRepositoryStatus } from "./gitStatus.js";
 import type { ProjectInfo } from "./workspaceState.js";
+import { useContextMenu, fileActions } from "./ContextMenu.js";
 import {
   changedDiffLines,
   diffSections,
@@ -29,6 +30,7 @@ export function GitReviewPanel({
   working: boolean;
   close: () => void;
 }) {
+  const contextMenu = useContextMenu();
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
@@ -279,6 +281,17 @@ export function GitReviewPanel({
                         void selectFile(change.path);
                       }}
                       aria-pressed={selectedPath === change.path}
+                      onContextMenu={(event) =>
+                        contextMenu(event, fileActions(project.path, change.path, [
+                          {
+                            text: "Review changes",
+                            action: () => {
+                              manualSelection.current++;
+                              return selectFile(change.path);
+                            },
+                          },
+                        ]))
+                      }
                       title={`${change.path} — ${statusDescription}${latestPath === change.path ? " — Latest change" : ""}`}
                       aria-label={`${change.path}, ${statusDescription}`}
                     >

@@ -7,6 +7,7 @@ import {
   type GitRepositoryStatus,
 } from "./gitStatus.js";
 import type { ProjectInfo } from "./workspaceState.js";
+import { useContextMenu, copyAction, revealAction } from "./ContextMenu.js";
 
 export function ProjectItem({
   project,
@@ -24,6 +25,7 @@ export function ProjectItem({
   close: () => void;
 }) {
   const detailsId = useId();
+  const contextMenu = useContextMenu();
   const row = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +65,19 @@ export function ProjectItem({
   const branch = status?.branch ?? "Detached HEAD";
   const count = status?.changes.length ?? 0;
   return (
-    <div ref={row} className={`project-row${selected ? " selected" : ""}`}>
+    <div
+      ref={row}
+      className={`project-row${selected ? " selected" : ""}`}
+      onContextMenu={(event) =>
+        contextMenu(event, [
+          { text: "Open project", action: activate },
+          copyAction("Copy project path", project.path),
+          revealAction(project.path),
+          { item: "Separator" },
+          { text: "Close project", action: close },
+        ])
+      }
+    >
       <button
         className="project-item"
         title={project.path}

@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import EditorComponent, { DiffEditor as DiffEditorComponent, loader, type DiffEditorProps, type EditorProps } from "@monaco-editor/react";
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
+import "monaco-editor/esm/vs/editor/contrib/contextmenu/browser/contextmenu.js";
+import "monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard.js";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import { accentColors } from "./accentColors.js";

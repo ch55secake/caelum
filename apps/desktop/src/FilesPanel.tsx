@@ -4,6 +4,7 @@ import type { AccentColor } from "./accentColors.js";
 import { GitStatusIcon } from "./GitStatusIcon.js";
 import { languageForPath } from "./codeLanguages.js";
 import { readGitStatus, type GitRepositoryStatus } from "./gitStatus.js";
+import { useContextMenu, fileActions, copyAction } from "./ContextMenu.js";
 import {
   ChevronDown,
   ChevronRight,
@@ -57,6 +58,7 @@ const EMPTY_DIRECTORY: DirectoryState = {
 };
 
 export function FilesPanel({ project, theme, accentColor }: { project: ProjectInfo | null; theme: "dark" | "light"; accentColor: AccentColor }) {
+  const contextMenu = useContextMenu();
   const projectPath = project?.path;
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
@@ -366,6 +368,17 @@ export function FilesPanel({ project, theme, accentColor }: { project: ProjectIn
                         aria-label={`${entry.name}${isDirectory ? `, folder${expanded ? ", expanded" : ", collapsed"}${directoryState?.loading ? ", loading" : ""}${directoryState?.error ? ", failed to load" : ""}` : entry.kind === "symlink" ? ", symbolic link, not opened" : ", file"}`}
                         onFocus={() => setFocusedPath(entry.path)}
                         onClick={() => activateEntry(entry)}
+                        onContextMenu={(event) =>
+                          contextMenu(event, fileActions(project.path, entry.path, [
+                            {
+                              text: isDirectory ? (expanded ? "Collapse folder" : "Expand folder") : "Open file",
+                              enabled: entry.kind !== "symlink",
+                              action: () => activateEntry(entry),
+                            },
+                            ...(changedPaths.has(entry.path)
+                              ? [{ text: "Review changes", action: () => openDiff(entry.path) }] : []),
+                          ]))
+                        }
                       >
                         {isDirectory ? (expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="tree-chevron-space" />}
                         <Icon size={14} />
@@ -398,7 +411,18 @@ export function FilesPanel({ project, theme, accentColor }: { project: ProjectIn
               {status && status.repositoryRoot === null && <div className="file-browser-state">This project is not inside a Git repository.</div>}
               {status?.repositoryRoot && status.changes.length === 0 && <div className="file-browser-state">No changed files.</div>}
               {status?.changes.map((change) => (
-                <button key={change.path} className={`changed-file-item${selectedPath === change.path ? " selected" : ""}`} onClick={() => openDiff(change.path)} title={`${change.path}: ${describeStatus(change)}`} aria-label={`${change.path}, ${describeStatus(change)}`}>
+                <button
+                  key={change.path}
+                  className={`changed-file-item${selectedPath === change.path ? " selected" : ""}`}
+                  onClick={() => openDiff(change.path)}
+                  onContextMenu={(event) =>
+                    contextMenu(event, fileActions(project.path, change.path, [
+                      { text: "Review changes", action: () => openDiff(change.path) },
+                    ]))
+                  }
+                  title={`${change.path}: ${describeStatus(change)}`}
+                  aria-label={`${change.path}, ${describeStatus(change)}`}
+                >
                   <GitStatusIcon change={change} />
                   <span>{change.path}</span>
                 </button>
@@ -417,7 +441,17 @@ export function FilesPanel({ project, theme, accentColor }: { project: ProjectIn
           )}
           {editor.kind === "file" && (
             <>
-              <div className="file-editor-toolbar">
+              <div
+                className="file-editor-toolbar"
+                onContextMenu={(event) =>
+                  contextMenu(event, fileActions(project.path, editor.path, [
+                    copyAction(
+                      editor.content.truncated ? "Copy file preview" : "Copy file contents",
+                      editor.content.content,
+                    ),
+                  ]))
+                }
+              >
                 <div><span className="file-editor-path" title={editor.path}>{editor.path}</span><span className="file-editor-size">{formatBytes(editor.content.sizeBytes)}{editor.content.truncated ? " · preview truncated" : ""}</span></div>
                 {isChangedPath && <button className="review-file-button" onClick={() => openDiff(editor.path)}><GitBranch size={13} /> Review changes</button>}
               </div>
@@ -437,7 +471,10 @@ export function FilesPanel({ project, theme, accentColor }: { project: ProjectIn
           )}
           {editor.kind === "diff" && (
             <>
-              <div className="file-editor-toolbar">
+              <div
+                className="file-editor-toolbar"
+                onContextMenu={(event) => contextMenu(event, fileActions(project.path, editor.path))}
+              >
                 <div><span className="file-editor-path" title={editor.path}>{editor.path}</span><span className="file-editor-size">HEAD ↔ Working tree</span></div>
                 <span className="diff-badge">READ ONLY</span>
               </div>

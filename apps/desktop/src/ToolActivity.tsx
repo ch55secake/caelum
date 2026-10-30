@@ -5,6 +5,7 @@ import { CopyButton } from "./MessageContent.js";
 import { useEffect, useState } from "react";
 import { splitShellMessages } from "./shellMessages.js";
 import { toolSummary } from "./toolSummary.js";
+import { useContextMenu, copyAction } from "./ContextMenu.js";
 
 function ShellIdentity({ id }: { id: string }) {
   return (
@@ -26,6 +27,7 @@ function ToolValue({
   parseShell?: boolean;
 }) {
   const [full, setFull] = useState(false);
+  const contextMenu = useContextMenu();
   const text = displayValue(value);
   if (!text) return null;
   const parts =
@@ -68,7 +70,12 @@ function ToolValue({
       </div>
     );
   return (
-    <div className="tool-value">
+    <div
+      className="tool-value"
+      onContextMenu={(event) =>
+        contextMenu(event, [copyAction(`Copy ${label.toLowerCase()}`, text)])
+      }
+    >
       <div className="tool-value-heading">
         <span>{label}</span>
         <CopyButton text={text} label={`Copy ${label.toLowerCase()}`} />
@@ -93,6 +100,7 @@ export function ToolActivity({
   expanded: boolean;
   toggle: () => void;
 }) {
+  const contextMenu = useContextMenu();
   const running = entry.status === "running";
   const [observedStart] = useState(Date.now);
   const [now, setNow] = useState(Date.now);
@@ -121,6 +129,17 @@ export function ToolActivity({
     <div
       className={`tool-activity${failed ? " failed" : ""}`}
       data-running={running}
+      onContextMenu={(event) =>
+        contextMenu(event, [
+          { text: expanded ? "Collapse tool" : "Expand tool", action: toggle },
+          ...(entry.input != null
+            ? [copyAction("Copy input", displayValue(entry.input))] : []),
+          ...(entry.output != null
+            ? [copyAction("Copy output", displayValue(entry.output))] : []),
+          ...(entry.error
+            ? [copyAction("Copy error", displayValue(entry.error))] : []),
+        ])
+      }
     >
       <button
         className="tool-summary"

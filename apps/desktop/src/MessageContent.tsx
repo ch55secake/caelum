@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { copyText } from "./clipboard.js";
+import { useContextMenu, copyAction } from "./ContextMenu.js";
 
 export function CopyButton({
   text,
@@ -25,7 +27,7 @@ export function CopyButton({
             : label
       }
       onClick={() => {
-        void navigator.clipboard.writeText(text).then(
+        void copyText(text).then(
           () => setState("copied"),
           () => setState("failed"),
         );
@@ -37,6 +39,7 @@ export function CopyButton({
 }
 
 function CodeBlock({ children }: ComponentProps<"pre">) {
+  const contextMenu = useContextMenu();
   // React Markdown gives fenced blocks one code element. Read its plain text for copying.
   const code = children as {
     props?: { children?: string; className?: string };
@@ -44,7 +47,10 @@ function CodeBlock({ children }: ComponentProps<"pre">) {
   const text = String(code?.props?.children ?? "").replace(/\n$/, "");
   const language = code?.props?.className?.replace("language-", "") ?? "text";
   return (
-    <div className="code-block">
+    <div
+      className="code-block"
+      onContextMenu={(event) => contextMenu(event, [copyAction("Copy code", text)])}
+    >
       <div className="code-heading">
         <span>{language}</span>
         <CopyButton text={text} label="Copy code" />

@@ -16,6 +16,7 @@ import type { ApprovalPrompt } from "./useWorkspace.js";
 import { CopyButton, MessageContent } from "./MessageContent.js";
 import { ToolActivity } from "./ToolActivity.js";
 import { conversationPresentation } from "./shellMessages.js";
+import { useContextMenu, copyAction } from "./ContextMenu.js";
 
 function CompactionNotice({
   entry,
@@ -175,6 +176,7 @@ export function Conversation({
   approvals,
   resolving,
   resolve,
+  addToDraft,
 }: {
   session: SessionWorkspaceState;
   saveView: (value: Partial<SessionWorkspaceState>) => void;
@@ -183,7 +185,9 @@ export function Conversation({
   approvals: ApprovalPrompt[];
   resolving: boolean;
   resolve: (request: ApprovalPrompt, decision: "allowOnce" | "deny") => void;
+  addToDraft: (text: string) => void;
 }) {
+  const contextMenu = useContextMenu();
   const scroll = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(session.scrollTop === null);
@@ -328,6 +332,21 @@ export function Conversation({
               key={entry.id}
               data-entry-id={entry.id}
               className={`conversation-entry ${entry.kind}${entry.id === latestUserId ? " latest-user" : ""}`}
+              onContextMenu={
+                entry.kind === "tool"
+                  ? undefined
+                  : (event) => contextMenu(event, [
+                      copyAction(
+                        entry.kind === "reasoning" ? "Copy thinking" : "Copy message",
+                        entry.text,
+                      ),
+                      {
+                        text: "Add to draft",
+                        enabled: Boolean(entry.text) && session.connection === "connected",
+                        action: () => addToDraft(entry.text),
+                      },
+                    ])
+              }
             >
               {entry.kind === "tool" ? (
                 <ToolActivity

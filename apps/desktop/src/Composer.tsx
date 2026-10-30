@@ -126,17 +126,6 @@ export function Composer({
           submit();
         }}
       >
-        {provider === "opencode" && (
-          <AgentPicker
-            value={agent}
-            current={currentAgent}
-            choices={choices?.agents ?? []}
-            isNew={isNew}
-            working={working}
-            disabled={disabled || submitting}
-            onChange={(value) => setOption("agent", value)}
-          />
-        )}
         <textarea
           ref={measurement}
           className="composer-measure"
@@ -184,6 +173,17 @@ export function Composer({
             }
           }}
         />
+        {provider === "opencode" && (
+          <AgentPicker
+            value={agent}
+            current={currentAgent}
+            choices={choices?.agents ?? []}
+            isNew={isNew}
+            working={working}
+            disabled={disabled || submitting}
+            onChange={(value) => setOption("agent", value)}
+          />
+        )}
         <div className="composer-footer">
           <div className="composer-controls">
             {isNew ? (

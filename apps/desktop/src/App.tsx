@@ -20,6 +20,7 @@ import { projectHasActiveTurn } from "./workspaceState.js";
 import { lastUserMessage } from "./shellMessages.js";
 import { Settings } from "./Settings.js";
 import { useSettings } from "./useSettings.js";
+import { ContextMenuProvider } from "./ContextMenu.js";
 
 export default function App() {
   const preferences = useSettings();
@@ -100,8 +101,24 @@ export default function App() {
   const sessionError = app.selected?.error ?? app.providerWorkspace?.error;
   const mac = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   return (
-    <main
+    <ContextMenuProvider
       className={`app-shell${mac ? " macos-titlebar-overlay" : ""}${collapsed ? " sidebar-collapsed" : ""}`}
+      scope={`${sessionKey}\0${app.view}\0${settingsOpen}`}
+      reportError={app.setError}
+      actions={[
+        {
+          text: "New session",
+          enabled: Boolean(app.project),
+          action: newSession,
+        },
+        {
+          text: "Open project…",
+          enabled: !app.selecting && !app.restoring,
+          action: app.chooseProject,
+        },
+        { item: "Separator" },
+        { text: "Settings…", action: () => setSettingsOpen(true) },
+      ]}
     >
       {!collapsed && (
         <Sidebar
@@ -157,7 +174,12 @@ export default function App() {
                     : activeApprovals.length
                       ? "Approval required"
                       : app.selected.isWorking
-                        ? "Running"
+                        ? <LoaderCircle
+                            size={14}
+                            className="spinning"
+                            role="img"
+                            aria-label="Agent running"
+                          />
                         : ""}
               </span>
             )}
@@ -347,6 +369,11 @@ export default function App() {
                   }
                   approvals={activeApprovals}
                   resolving={Boolean(app.resolving)}
+                  addToDraft={(text) => {
+                    const draft = app.selected?.draft ?? "";
+                    app.setDraft(draft ? `${draft}\n\n${text}` : text);
+                    textareaRef.current?.focus();
+                  }}
                   resolve={(request, decision) =>
                     void app.resolveApproval(request, decision)
                   }
@@ -443,6 +470,6 @@ export default function App() {
           close={() => setSettingsOpen(false)}
         />
       )}
-    </main>
+    </ContextMenuProvider>
   );
 }

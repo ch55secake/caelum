@@ -22,6 +22,7 @@ import type {
 import type { useWorkspace } from "./useWorkspace.js";
 import { ProjectItem } from "./ProjectItem.js";
 import { projectHasActiveTurn } from "./workspaceState.js";
+import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
 export function sessionTitle(item: SessionSummary) {
   return item.name || item.preview || "Untitled session";
@@ -99,6 +100,7 @@ export function Sidebar({
   toggleChanges: () => void;
   openSettings: () => void;
 }) {
+  const contextMenu = useContextMenu();
   const sessions = (["codex", "opencode"] as ProviderKind[])
     .flatMap((provider) =>
       (app.workspace?.providers[provider].sessions ?? []).map((session) => ({
@@ -244,6 +246,26 @@ export function Sidebar({
             <div
               key={`${app.project?.path}-${item.provider}-${item.id}`}
               className={`session-row${app.provider === item.provider && app.selectedId === item.id && app.view === "session" ? " selected" : ""}`}
+              onContextMenu={(event) =>
+                contextMenu(event, [
+                  {
+                    text: "Open session",
+                    enabled: !archiving,
+                    action: () => app.selectSession(item, item.provider),
+                  },
+                  copyAction("Copy session title", sessionTitle(item)),
+                  copyAction("Copy session ID", item.id),
+                  { item: "Separator" },
+                  {
+                    text: "Archive session",
+                    enabled: !(
+                      archiving || working || state?.isSubmitting ||
+                      state?.connection === "connecting" || approval
+                    ),
+                    action: () => app.archiveSession(item, item.provider),
+                  },
+                ])
+              }
             >
               <button
                 className="session-item"

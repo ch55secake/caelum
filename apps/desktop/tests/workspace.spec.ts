@@ -33,6 +33,16 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         },
       ];
       const calls: { command: string; args: Record<string, unknown> }[] = [];
+      const menus = new Map<number, { items: any[] }>();
+      let menuId: number | null = null;
+      let clipboard = "";
+      let copyError = false;
+      let contextEvent: Event | null = null;
+      document.addEventListener(
+        "contextmenu",
+        (event) => { contextEvent = event; },
+        true,
+      );
       const models = new Map(
         ["thread-a", "thread-b", "ses-a"].map((id) => [id, "provider/model"]),
       );
@@ -121,6 +131,25 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         fixture: {
           calls,
           emit,
+          menu: () => ({
+            items: menus.get(menuId!)?.items.map(({ text, item, enabled }) => ({
+              text: text ?? item,
+              enabled: enabled !== false,
+            })) ?? [],
+            contextPrevented: contextEvent?.defaultPrevented ?? false,
+          }),
+          pickMenu: (text: string) => {
+            const item = menus.get(menuId!)?.items.find(
+              (item) => (item.text ?? item.item) === text,
+            );
+            if (!item || item.enabled === false)
+              throw new Error(`Menu item unavailable: ${text}`);
+            item.handler?.onmessage(text);
+          },
+          captureMenuAction: (text: string) =>
+            menus.get(menuId!)?.items.find((item) => item.text === text)?.handler?.onmessage,
+          clipboard: () => clipboard,
+          failCopy: () => { copyError = true; },
           setAgent,
           failAgent: () => {
             agentError = true;
@@ -233,6 +262,30 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           },
           invoke: async (command: string, args: Record<string, any> = {}) => {
             calls.push({ command, args });
+            if (command === "plugin:menu|new") {
+              await gates.get(command)?.promise;
+              const id = ++sequence;
+              menus.set(id, args.options);
+              return [id, `context-${id}`];
+            }
+            if (command === "plugin:menu|popup") {
+              if (!menus.has(args.rid))
+                throw new Error("Menu was already released");
+              menuId = args.rid;
+              return;
+            }
+            if (command === "plugin:resources|close") {
+              menus.delete(args.rid);
+              return;
+            }
+            if (command === "plugin:clipboard-manager|write_text") {
+              if (copyError) {
+                copyError = false;
+                throw new Error("Clipboard unavailable");
+              }
+              clipboard = args.text;
+              return;
+            }
             if (command === "plugin:event|listen") {
               listeners.set(args.event, [
                 ...(listeners.get(args.event) ?? []),
@@ -323,6 +376,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             }
             if (command === "pending_approvals") return [];
             if (command === "plugin:opener|open_url") return;
+            if (command === "plugin:opener|reveal_item_in_dir") return;
             if (command === "provider_choices") {
               const error = choicesErrors.get(args.provider);
               await gates.get(`${command}:${args.provider}`)?.promise;
@@ -1982,6 +2036,286 @@ test("history arriving during streaming preserves new live content", async ({
   ).toBeVisible();
 });
 
+async function nativeMenu(page: Page) {
+  const menu = await page.evaluate(() => (window as any).fixture.menu());
+  expect(menu.contextPrevented).toBe(true);
+  expect(
+    menu.items.some((item: any) =>
+      /inspect|reload|back|forward/i.test(item.text),
+    ),
+  ).toBe(false);
+  return menu.items as { text: string; enabled: boolean }[];
+}
+
+async function pickMenu(page: Page, text: string) {
+  await expect
+    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
+    .toContain(text);
+  await page.evaluate((text) => (window as any).fixture.pickMenu(text), text);
+}
+
+async function copiedText(page: Page) {
+  return page.evaluate(() => (window as any).fixture.clipboard());
+}
+
+test("context menus offer native editing and precise message, code, link and tool actions", async ({
+  page,
+}) => {
+  await desktop(page);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep this draft");
+  await input.evaluate((node: HTMLTextAreaElement) =>
+    node.setSelectionRange(5, 9),
+  );
+  await input.press("Shift+F10");
+  await expect
+    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
+    .toEqual([
+      "Undo",
+      "Redo",
+      "Separator",
+      "Cut",
+      "Copy",
+      "Paste",
+      "Separator",
+      "SelectAll",
+    ]);
+  await expect(input).toBeFocused();
+  expect(
+    await input.evaluate((node: HTMLTextAreaElement) => [
+      node.selectionStart,
+      node.selectionEnd,
+    ]),
+  ).toEqual([5, 9]);
+
+  const message = page.locator(".user-text").first();
+  const prompt = await message.innerText();
+  await message.click({ button: "right" });
+  await pickMenu(page, "Copy message");
+  await expect.poll(() => copiedText(page)).toBe(prompt);
+  await expect(input).toHaveValue("Keep this draft");
+  await message.click({ button: "right" });
+  await pickMenu(page, "Add to draft");
+  await expect(input).toHaveValue(`Keep this draft\n\n${prompt}`);
+  await expect(input).toBeFocused();
+
+  await page.locator(".code-block pre").click({ button: "right" });
+  await pickMenu(page, "Copy code");
+  await expect.poll(() => copiedText(page)).toBe("const theme = 'near-black';");
+  const link = page.getByRole("link", { name: "documentation", exact: true });
+  await link.click({ button: "right" });
+  await pickMenu(page, "Copy link address");
+  await expect.poll(() => copiedText(page)).toBe("https://example.com/docs");
+  await link.click({ button: "right" });
+  await pickMenu(page, "Open link");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter((call: any) => call.command === "plugin:opener|open_url")
+            .at(-1)?.args.url,
+      ),
+    )
+    .toBe("https://example.com/docs");
+
+  const selected = page.locator(".markdown strong").first();
+  await selected.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+  });
+  await selected.dispatchEvent("contextmenu", { bubbles: true });
+  await pickMenu(page, "Copy selection");
+  await expect.poll(() => copiedText(page)).toBe("more room");
+  await page.evaluate(() => window.getSelection()!.removeAllRanges());
+  await page
+    .getByRole("button", { name: /Run pnpm test/ })
+    .click({ button: "right" });
+  await pickMenu(page, "Expand tool");
+  await page
+    .getByText("14 tests passed", { exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Copy output");
+  await expect.poll(() => copiedText(page)).toBe("14 tests passed");
+});
+
+test("context menus act on the clicked project or session and reject stale actions after navigation", async ({
+  page,
+}) => {
+  await desktop(page);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Session A draft");
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  const project = page
+    .getByRole("navigation", { name: "Open projects" })
+    .getByRole("button", { name: "caelum", exact: true });
+  await project.click({ button: "right" });
+  await pickMenu(page, "Copy project path");
+  await expect.poll(() => copiedText(page)).toBe("/work/caelum");
+  await expect(page.locator(".breadcrumbs")).toContainText("other");
+  await project.click({ button: "right" });
+  await pickMenu(page, "Open project");
+  await expect(input).toHaveValue("Session A draft");
+  const other = page.getByRole("button", {
+    name: "Review the provider adapters",
+    exact: true,
+  });
+  await other.click({ button: "right" });
+  await pickMenu(page, "Copy session ID");
+  await expect.poll(() => copiedText(page)).toBe("thread-b");
+  await expect(input).toHaveValue("Session A draft");
+  await other.click({ button: "right" });
+  await pickMenu(page, "Archive session");
+  await expect(other).toHaveCount(0);
+  await expect(input).toHaveValue("Session A draft");
+  await input.press("Enter");
+  const current = page.getByRole("button", {
+    name: "Refine the session workspace",
+    exact: true,
+  });
+  await current.click({ button: "right" });
+  await expect
+    .poll(
+      async () =>
+        (await nativeMenu(page)).find((item) => item.text === "Archive session")
+          ?.enabled,
+    )
+    .toBe(false);
+  await page.getByRole("button", { name: "Stop generation" }).click();
+  await page.locator(".user-text").first().click({ button: "right" });
+  await expect
+    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
+    .toContain("Add to draft");
+  await page.evaluate(() => {
+    (window as any).fixture.stale = (window as any).fixture.captureMenuAction(
+      "Add to draft",
+    );
+  });
+  await page.keyboard.press("Meta+n");
+  await input.fill("New draft");
+  await page.evaluate(() => (window as any).fixture.stale());
+  await expect(input).toHaveValue("New draft");
+
+  const popups = await page.evaluate(
+    () =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "plugin:menu|popup",
+      ).length,
+  );
+  await page.evaluate(() => (window as any).fixture.hold("plugin:menu|new"));
+  await project.click({ button: "right" });
+  await current.click();
+  await page.evaluate(() => (window as any).fixture.release("plugin:menu|new"));
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).fixture.menu().items.length),
+    )
+    .toBe(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "plugin:menu|popup",
+        ).length,
+    ),
+  ).toBe(popups);
+});
+
+test("file and diff context menus copy exact content, reveal paths, and preserve Monaco's own menu", async ({
+  page,
+}) => {
+  await desktop(page);
+  const css = page.getByRole("button", {
+    name: "src/styles.css, Staged modified",
+    exact: true,
+  });
+  await css.click({ button: "right" });
+  await pickMenu(page, "Copy relative path");
+  await expect.poll(() => copiedText(page)).toBe("src/styles.css");
+  await expect(
+    page.getByRole("button", {
+      name: "src/App.tsx, Unstaged modified",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await css.click({ button: "right" });
+  await pickMenu(page, "Review changes");
+  const patch = page.getByRole("region", { name: "Staged diff", exact: true });
+  const text = await patch.locator("pre").textContent();
+  await patch.locator("pre").click({ button: "right" });
+  await pickMenu(page, "Copy staged diff");
+  await expect.poll(() => copiedText(page)).toBe(text);
+
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page
+    .getByRole("treeitem", { name: "src, folder, collapsed", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Expand folder");
+  const file = page.getByRole("treeitem", {
+    name: "App.tsx, file",
+    exact: true,
+  });
+  await file.click({ button: "right" });
+  await pickMenu(page, "Copy full path");
+  await expect.poll(() => copiedText(page)).toBe("/work/caelum/src/App.tsx");
+  await file.click({ button: "right" });
+  const reveal = (await nativeMenu(page)).find((item) =>
+    item.text.startsWith("Reveal in"),
+  )!.text;
+  await pickMenu(page, reveal);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter(
+              (call: any) =>
+                call.command === "plugin:opener|reveal_item_in_dir",
+            )
+            .at(-1)?.args.paths,
+      ),
+    )
+    .toEqual(["/work/caelum/src/App.tsx"]);
+  await file.click({ button: "right" });
+  await pickMenu(page, "Open file");
+  const toolbar = page.locator(".file-editor-toolbar");
+  await toolbar.click({ button: "right" });
+  await pickMenu(page, "Copy file contents");
+  await expect
+    .poll(() => copiedText(page))
+    .toBe("export const ready = true;\n");
+  const popups = await page.evaluate(
+    () =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "plugin:menu|popup",
+      ).length,
+  );
+  await page
+    .locator(".monaco-editor .view-lines")
+    .first()
+    .click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: /Copy/ }).first(),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "plugin:menu|popup",
+        ).length,
+    ),
+  ).toBe(popups);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => (window as any).fixture.failCopy());
+  await toolbar.click({ button: "right" });
+  await pickMenu(page, "Copy file contents");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Clipboard unavailable" }),
+  ).toBeVisible();
+});
+
 test("Build and Plan are one-click session controls that distinguish the running agent from the next message", async ({
   page,
 }) => {
@@ -2005,6 +2339,11 @@ test("Build and Plan are one-click session controls that distinguish the running
   });
   await expect(build).toHaveAttribute("aria-pressed", "true");
   await expect(status).toHaveText("Current: Build");
+  const toolbar = page.locator(".composer-agents");
+  const promptBounds = await input.boundingBox();
+  expect((await toolbar.boundingBox())!.y).toBeGreaterThanOrEqual(
+    promptBounds!.y + promptBounds!.height,
+  );
   await emit(
     page,
     "session.execution.started",
@@ -2015,6 +2354,17 @@ test("Build and Plan are one-click session controls that distinguish the running
   await page.keyboard.press("Space");
   await expect(plan).toHaveAttribute("aria-pressed", "true");
   await expect(status).toHaveText("Running: Build · Next: Plan");
+  const runningIcon = build.locator(".agent-icon");
+  await expect(runningIcon).toHaveAttribute("data-running", "true");
+  await expect(plan.locator(".agent-icon")).toHaveAttribute("data-running", "false");
+  expect(await runningIcon.evaluate(
+    (node) => getComputedStyle(node, "::after").animationName,
+  )).toBe("spin");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(await runningIcon.evaluate(
+    (node) => getComputedStyle(node, "::after").animationName,
+  )).toBe("none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await input.fill("Plan the next change");
   expect(
     await page.evaluate(() =>
@@ -2030,6 +2380,7 @@ test("Build and Plan are one-click session controls that distinguish the running
     .getByRole("button", { name: "Stop generation", exact: true })
     .click();
   await expect(status).toHaveText("Current: Build · Next: Plan");
+  await expect(toolbar.locator('[data-running="true"]')).toHaveCount(0);
   await page.evaluate(() => {
     (window as any).fixture.hold("opencode_select_agent");
     (window as any).fixture.setOpenWorking(true);
@@ -2065,7 +2416,7 @@ test("Build and Plan are one-click session controls that distinguish the running
   });
   await page.setViewportSize({ width: 800, height: 620 });
   await expect(plan).toBeInViewport({ ratio: 1 });
-  await expect(status).toBeInViewport({ ratio: 1 });
+  await expect(toolbar).toBeInViewport({ ratio: 1 });
   await expect(input).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     800,

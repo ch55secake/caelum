@@ -2,6 +2,28 @@ import { Bot, Hammer, ListChecks } from "lucide-react";
 import { ChoicePicker } from "./ChoicePicker.js";
 import type { ProviderChoices } from "./workspaceState.js";
 
+function AgentIcon({
+  agent,
+  current,
+  working,
+}: {
+  agent: string;
+  current: boolean;
+  working: boolean;
+}) {
+  const Icon = agent === "build" ? Hammer : agent === "plan" ? ListChecks : Bot;
+  return (
+    <span
+      className="agent-icon"
+      data-current={current}
+      data-running={current && working}
+      aria-hidden="true"
+    >
+      <Icon size={13} />
+    </span>
+  );
+}
+
 export function AgentPicker({
   value,
   current,
@@ -34,26 +56,47 @@ export function AgentPicker({
         aria-label="Agent for next message"
       >
         {quick.map((id) => {
-          const Icon = id === "build" ? Hammer : ListChecks;
           return (
             <button
               key={id}
               type="button"
               className="agent-mode"
               aria-pressed={value === id}
-              title={`Use ${name(id)} for the next message`}
+              data-current={current === id}
+              title={`${current === id ? `${working ? "Running" : "Current"} agent · ` : ""}Use ${name(id)} for the next message`}
               disabled={disabled}
               onClick={() => onChange(id)}
             >
-              <Icon size={13} aria-hidden="true" />
+              <AgentIcon
+                agent={id}
+                current={current === id}
+                working={working}
+              />
               {name(id)}
             </button>
           );
         })}
       </div>
+      {current && !quick.includes(current) && current !== value && (
+        <span
+          className="agent-custom-current"
+          title={`${working ? "Running" : "Current"}: ${name(current)}`}
+        >
+          <AgentIcon agent={current} current working={working} />
+          {name(current)}
+        </span>
+      )}
       <ChoicePicker
         label="Agent"
-        icon={<Bot size={13} />}
+        icon={
+          <AgentIcon
+            agent="custom"
+            current={Boolean(
+              current && current === value && !quick.includes(value),
+            )}
+            working={working}
+          />
+        }
         value={value}
         triggerName={quick.includes(value) ? "More" : undefined}
         disabled={disabled || !choices.length}
@@ -79,11 +122,7 @@ export function AgentPicker({
           ...choices,
         ]}
       />
-      <span
-        className="agent-selection"
-        role="status"
-        aria-label="Agent selection"
-      >
+      <span className="sr-only" role="status" aria-label="Agent selection">
         {isNew ? (
           value ? (
             `Next: ${name(value)}`
@@ -100,6 +139,11 @@ export function AgentPicker({
           </>
         )}
       </span>
+      {pending && (
+        <span className="agent-selection agent-pending" aria-hidden="true">
+          Next: {name(value)}
+        </span>
+      )}
     </div>
   );
 }
