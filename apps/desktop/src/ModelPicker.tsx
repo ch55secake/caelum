@@ -27,10 +27,22 @@ export function ModelPicker({
 }) {
   const source = (id: string, model?: ModelChoice) =>
     model?.provider?.name ||
+    (provider === "opencode"
+      ? models.find((choice) => choice.provider?.id === id.split("/")[0])
+          ?.provider?.name
+      : undefined) ||
     model?.provider?.id ||
     (provider === "opencode" && id.includes("/")
       ? id.split("/")[0]
       : undefined);
+  const group = (id: string, model?: ModelChoice) => ({
+    id:
+      model?.provider?.id ||
+      (provider === "opencode" && id.includes("/")
+        ? id.split("/")[0]
+        : provider),
+    name: source(id, model) || (provider === "codex" ? "Codex" : "OpenCode"),
+  });
 
   return (
     <ChoicePicker
@@ -50,6 +62,7 @@ export function ModelPicker({
                 id: value,
                 name: value,
                 source: source(value),
+                group: group(value),
                 description: unavailableDescription,
               },
             ]
@@ -58,6 +71,7 @@ export function ModelPicker({
           id: model.id,
           name: model.name,
           source: source(model.id, model),
+          group: group(model.id, model),
           description: model.id,
         })),
       ]}

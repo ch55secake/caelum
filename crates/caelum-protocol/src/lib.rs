@@ -282,6 +282,8 @@ pub struct ProviderModelChoice {
     /// The service supplying this model, which may differ from its original vendor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
     pub efforts: Vec<ProviderChoice>,
     pub default_effort: Option<String>,
 }

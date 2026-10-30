@@ -15,6 +15,7 @@ type Choice = {
   name: string;
   description?: string;
   source?: string;
+  group?: { id: string; name: string };
 };
 
 export function ChoicePicker({
@@ -62,10 +63,17 @@ export function ChoicePicker({
   const rank = (choice: Choice) =>
     !choice.id ? 0 : favourites.has(choice.id) ? 1 : 2;
   const ordered = onToggleFavourite
-    ? [...choices].sort((a, b) => rank(a) - rank(b))
+    ? [...choices].sort(
+        (a, b) =>
+          rank(a) - rank(b) ||
+          (rank(a) === 2
+            ? (a.group?.name ?? "").localeCompare(b.group?.name ?? "") ||
+              (a.group?.id ?? "").localeCompare(b.group?.id ?? "")
+            : 0),
+      )
     : choices;
   const filtered = ordered.filter((choice) =>
-    `${choice.name} ${choice.id} ${choice.source ?? ""}`
+    `${choice.name} ${choice.id} ${choice.source ?? ""} ${choice.group?.name ?? ""}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
@@ -75,7 +83,17 @@ export function ChoicePicker({
   const activeIndex = filtered.indexOf(current);
   const activeId = current ? `${id}-option-${activeIndex}` : undefined;
   const section = (choice: Choice) =>
-    !choice.id ? "" : favourites.has(choice.id) ? "Favourites" : "All models";
+    !choice.id
+      ? ""
+      : favourites.has(choice.id)
+        ? "Favourites"
+        : (choice.group?.name ?? "All models");
+  const sectionKey = (choice: Choice) =>
+    !choice.id
+      ? "default"
+      : favourites.has(choice.id)
+        ? "favourites"
+        : `provider:${choice.group?.id ?? ""}`;
 
   function show() {
     setQuery("");
@@ -300,7 +318,8 @@ export function ChoicePicker({
                   <Fragment key={choice.id}>
                     {section(choice) &&
                       (index === 0 ||
-                        section(choice) !== section(filtered[index - 1])) && (
+                        sectionKey(choice) !==
+                          sectionKey(filtered[index - 1])) && (
                         <div role="row" className="choice-section">
                           <div role="gridcell" aria-colspan={2}>
                             {section(choice)}

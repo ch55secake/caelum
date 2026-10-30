@@ -55,6 +55,9 @@ export function createSessionWorkspace(session) {
     followRevision: 0,
     activity: null,
     lastOutcome: null,
+    contextUsage: null,
+    contextResetAt: null,
+    contextStep: null,
   };
 }
 export function restoreProjectWorkspace(persisted) {

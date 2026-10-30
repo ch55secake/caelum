@@ -42,6 +42,9 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
       let failNextSend = false;
       const choicesErrors = new Map<string, string>();
       const choiceModels = new Map<string, any[]>();
+      const codexUsage = new Map<string, unknown>(
+        JSON.parse(sessionStorage.getItem("codex-context") ?? "[]"),
+      );
       let sequence = 0;
       let historyGate: Promise<void> | null = null;
       let startGate: Promise<void> | null = null;
@@ -98,6 +101,13 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         fixture: {
           calls,
           emit,
+          setCodexUsage: (id: string, usage: unknown) => {
+            codexUsage.set(id, usage);
+            sessionStorage.setItem(
+              "codex-context",
+              JSON.stringify([...codexUsage]),
+            );
+          },
           setModels: (provider: string, models: any[] | null) => {
             if (models) choiceModels.set(provider, models);
             else choiceModels.delete(provider);
@@ -311,7 +321,11 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                   ].map((model) => ({
                     ...model,
                     ...(args.provider === "opencode"
-                      ? { provider: { id: "provider", name: "Provider One" } }
+                      ? {
+                          provider: { id: "provider", name: "Provider One" },
+                          contextWindow:
+                            model.id === "provider/fast" ? 64000 : 200000,
+                        }
                       : {}),
                   })),
                 defaultModel: "provider/model",
@@ -349,7 +363,17 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               await gates.get(command)?.promise;
               return snapshot;
             }
-            if (command === "codex_resume_session")
+            if (command === "codex_resume_session") {
+              if (codexUsage.has(args.threadId))
+                emit("codex-event", {
+                  projectPath: args.projectPath,
+                  method: "thread/tokenUsage/updated",
+                  params: {
+                    threadId: args.threadId,
+                    turnId: "restored",
+                    tokenUsage: codexUsage.get(args.threadId),
+                  },
+                });
               return {
                 project,
                 model: models.get(args.threadId),
@@ -359,6 +383,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                   name: "Fresh session",
                 },
               };
+            }
             if (command === "opencode_resume_session")
               return {
                 project,
@@ -2416,6 +2441,12 @@ test("OpenCode model sources distinguish routed models, support provider search 
       efforts: [],
     },
     { id: "fallback/local", name: "Fallback model", efforts: [] },
+    {
+      id: "anthropic/fast",
+      name: "Fast direct model",
+      provider: { id: "anthropic", name: "Anthropic" },
+      efforts: [],
+    },
   ];
   await page.evaluate(
     (models) => (window as any).fixture.setModels("opencode", models),
@@ -2429,9 +2460,30 @@ test("OpenCode model sources distinguish routed models, support provider search 
     exact: true,
   });
   const search = popup.getByRole("combobox", { name: "Search models" });
-  await expect(popup.getByText("Anthropic", { exact: true })).toBeVisible();
-  await expect(popup.getByText("OpenRouter", { exact: true })).toBeVisible();
+  await expect(popup.locator(".choice-section")).toHaveText([
+    "Anthropic",
+    "Company gateway",
+    "fallback",
+    "OpenRouter",
+  ]);
+  expect(
+    await popup
+      .locator(".choice-option")
+      .evaluateAll((buttons) =>
+        buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+  ).toEqual([
+    "Default model Use provider settings",
+    "Shared model anthropic/shared",
+    "Fast direct model anthropic/fast",
+    "Local model work-gateway/local",
+    "Fallback model fallback/local",
+    "Shared model openrouter/anthropic/shared",
+  ]);
   await search.fill("Company gateway");
+  await expect(popup.locator(".choice-section")).toHaveText([
+    "Company gateway",
+  ]);
   await expect(
     popup.getByRole("button", {
       name: "Local model work-gateway/local",
@@ -2453,6 +2505,10 @@ test("OpenCode model sources distinguish routed models, support provider search 
       exact: true,
     })
     .click();
+  await expect(popup.locator(".choice-section")).toHaveText([
+    "Favourites",
+    "Anthropic",
+  ]);
   await expect(
     popup.getByRole("button", {
       name: "Add Shared model (anthropic/shared) to favourites",
@@ -2516,6 +2572,12 @@ test("OpenCode model sources distinguish routed models, support provider search 
       exact: true,
     }),
   ).toBeVisible();
+  await expect(defaults.locator(".choice-section")).toHaveText([
+    "Favourites",
+    "Anthropic",
+    "Company gateway",
+    "fallback",
+  ]);
   await page.screenshot({
     path: "test-results/model-providers-favourites.png",
   });
@@ -2535,6 +2597,240 @@ test("OpenCode model sources distinguish routed models, support provider search 
         ).args.model,
     ),
   ).toBe("openrouter/anthropic/shared");
+});
+
+test("Codex context usage restores native counts, stays session scoped and fits the compact composer", async ({
+  page,
+}) => {
+  await desktop(page);
+  await expect(
+    page.getByRole("group", { name: "Context usage", exact: true }),
+  ).toContainText("Context —");
+  await page.evaluate(() =>
+    (window as any).fixture.setCodexUsage("thread-a", {
+      total: { totalTokens: 900000 },
+      last: {
+        totalTokens: 50000,
+        inputTokens: 45000,
+        outputTokens: 5000,
+        cachedInputTokens: 30000,
+        reasoningOutputTokens: 1000,
+      },
+      modelContextWindow: 200000,
+    }),
+  );
+  await page.reload();
+  const meter = page.getByRole("meter", {
+    name: "Context usage",
+    exact: true,
+  });
+  await expect(meter).toContainText("Context 25%");
+  await meter.focus();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "50,000 / 200,000 tokens",
+  );
+  await choose(page, "Model", "Fast model provider/fast");
+  await expect(meter).toHaveAttribute("aria-valuenow", "50000");
+  await expect(meter).toHaveAttribute("aria-valuemax", "200000");
+  await page
+    .getByRole("button", {
+      name: "Review the provider adapters",
+      exact: true,
+    })
+    .click();
+  await expect(meter).toHaveCount(0);
+  await emit(page, "thread/tokenUsage/updated", {
+    threadId: "thread-b",
+    tokenUsage: { last: { totalTokens: 10000 }, modelContextWindow: 100000 },
+  });
+  await expect(meter).toContainText("Context 10%");
+  await page
+    .getByRole("button", {
+      name: "Refine the session workspace",
+      exact: true,
+    })
+    .click();
+  await expect(meter).toContainText("Context 25%");
+  await page.getByRole("button", { name: "Load earlier messages" }).click();
+  await expect(meter).toContainText("Context 25%");
+  await page.setViewportSize({ width: 800, height: 620 });
+  await meter.focus();
+  await expect(meter).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole("tooltip")).toBeInViewport({ ratio: 1 });
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBe(800);
+  await page.screenshot({ path: "test-results/context-usage-compact.png" });
+  await emit(page, "thread/tokenUsage/updated", {
+    threadId: "thread-a",
+    tokenUsage: { last: { totalTokens: 10000 }, modelContextWindow: null },
+  });
+  await expect(meter).toHaveCount(0);
+  const unknownLimit = page.getByRole("group", {
+    name: "Context usage",
+    exact: true,
+  });
+  await unknownLimit.focus();
+  await expect(unknownLimit).toContainText("Context 10K");
+  await expect(page.getByRole("tooltip")).toContainText(
+    "Context window size unavailable.",
+  );
+  await emit(page, "thread/tokenUsage/updated", {
+    threadId: "thread-a",
+    tokenUsage: { last: { totalTokens: -1 }, modelContextWindow: 0 },
+  });
+  await expect(unknownLimit).toContainText("Context 10K");
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(unknownLimit).toHaveCount(0);
+});
+
+test("OpenCode context usage follows live steps, rejects stale history and resets after compaction", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  const tokens = {
+    input: 80000,
+    output: 10000,
+    reasoning: 2000,
+    cache: { read: 9000, write: 1000 },
+  };
+  const history = [
+    {
+      id: "msg-usage",
+      type: "assistant",
+      time: { created: 100, completed: 200 },
+      model: { providerID: "provider", id: "model" },
+      tokens,
+      content: [{ type: "text", text: "Last measured response" }],
+    },
+  ];
+  await setHistory(page, "opencode", history, false);
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  const meter = page.getByRole("meter", {
+    name: "Context usage",
+    exact: true,
+  });
+  await expect(meter).toContainText("Context 50%");
+  await meter.focus();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "100,000 / 200,000 tokens",
+  );
+  await choose(page, "Model", "Fast model provider/fast");
+  await expect(meter).toHaveAttribute("aria-valuemax", "200000");
+  await page.evaluate(() => {
+    (window as any).fixture.holdHistory();
+    window.dispatchEvent(new Event("focus"));
+  });
+  await emit(
+    page,
+    "session.step.started",
+    {
+      sessionID: "ses-a",
+      assistantMessageID: "live",
+      started: 300,
+      model: { providerID: "provider", id: "fast" },
+    },
+    "opencode",
+    { created: 300 },
+  );
+  await emit(
+    page,
+    "session.step.ended",
+    {
+      sessionID: "ses-a",
+      assistantMessageID: "live",
+      tokens: {
+        input: 12000,
+        output: 2000,
+        reasoning: 1000,
+        cache: { read: 2000, write: 0 },
+      },
+    },
+    "opencode",
+    { created: 400 },
+  );
+  await expect(meter).toContainText("Context 25%");
+  await expect(meter).toHaveAttribute("aria-valuemax", "64000");
+  await page.evaluate(() => (window as any).fixture.releaseHistory());
+  await page.clock.runFor(100);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(100);
+  await expect(meter).toContainText("Context 25%");
+  await emit(
+    page,
+    "session.usage.updated",
+    { sessionID: "ses-a", tokens: { ...tokens, input: 900000 } },
+    "opencode",
+  );
+  await expect(meter).toContainText("Context 25%");
+  await emit(
+    page,
+    "session.compaction.started",
+    { sessionID: "ses-a", reason: "auto" },
+    "opencode",
+    { id: "evt_compact", created: 500 },
+  );
+  await emit(
+    page,
+    "session.compaction.ended",
+    { sessionID: "ses-a", text: "Compact summary", tokens },
+    "opencode",
+    { created: 600 },
+  );
+  const unknown = page.getByRole("group", {
+    name: "Context usage",
+    exact: true,
+  });
+  await expect(unknown).toContainText("Context —");
+  await page.clock.runFor(100);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(100);
+  await expect(unknown).toContainText("Context —");
+  await setHistory(
+    page,
+    "opencode",
+    [
+      ...history,
+      {
+        id: "msg_compact",
+        type: "compaction",
+        status: "completed",
+        time: { created: 500 },
+        reason: "auto",
+        summary: "Compact summary",
+        tokens,
+      },
+      {
+        id: "after",
+        type: "assistant",
+        time: { created: 700, completed: 800 },
+        model: { providerID: "provider", id: "fast" },
+        tokens: { ...tokens, input: 12000 },
+        content: [{ type: "text", text: "After compaction" }],
+      },
+    ],
+    false,
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(meter).toContainText("Context 50%");
+  await emit(page, "server.disconnected", {}, "opencode");
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect(meter).toContainText("Context 50%");
+  const dialog = await openSettings(page);
+  await dialog.getByRole("radio", { name: "Light", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await meter.focus();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "32,000 / 64,000 tokens",
+  );
+  await page.screenshot({ path: "test-results/context-usage-light.png" });
 });
 
 test("model picker searches capabilities, supports keyboard selection and returns focus", async ({

@@ -1,3 +1,10 @@
+import {
+  codexContextUsage,
+  contextUsageSince,
+  openCodeContextUsage,
+  openCodeModel,
+} from "./contextUsage.js";
+
 const object = (value) => (value && typeof value === "object" ? value : {});
 export const displayValue = (value) =>
   typeof value === "string"
@@ -514,6 +521,10 @@ export function applyConversationEvent(
     });
   };
   if (provider === "codex") {
+    if (method === "thread/tokenUsage/updated") {
+      const usage = codexContextUsage(data.tokenUsage);
+      if (usage) next = { ...next, contextUsage: usage };
+    }
     if (
       method === "item/started" &&
       next.conversation.some(
@@ -638,6 +649,17 @@ export function applyConversationEvent(
         event.created < latest.startedAt
       )
         return next;
+      if (
+        method === "session.compaction.ended" &&
+        (event.created == null ||
+          event.created >= (next.contextUsage?.timestamp ?? 0))
+      )
+        next = {
+          ...next,
+          contextUsage: null,
+          contextStep: null,
+          contextResetAt: event.created ?? null,
+        };
       if (method === "session.compaction.started") {
         const id = messageId ? `opencode-${messageId}` : null;
         const previous = next.conversation.find((entry) => entry.id === id);
@@ -778,6 +800,35 @@ export function applyConversationEvent(
     ) {
       working();
       next = { ...next, error: null };
+    }
+    if (
+      method === "session.step.started" &&
+      typeof data.assistantMessageID === "string"
+    )
+      next = {
+        ...next,
+        contextStep: {
+          id: data.assistantMessageID,
+          model: openCodeModel(data.model),
+          timestamp: data.started ?? event.created ?? null,
+        },
+      };
+    if (method === "session.step.ended") {
+      const step =
+        next.contextStep?.id === data.assistantMessageID
+          ? next.contextStep
+          : null;
+      const usage = openCodeContextUsage(
+        data.tokens,
+        step?.model ?? null,
+        step?.timestamp ?? event.created,
+      );
+      const since = Math.max(
+        next.contextResetAt ?? 0,
+        contextUsageSince(next.contextUsage, next.conversation),
+      );
+      if (usage && (usage.timestamp === null || usage.timestamp >= since))
+        next = { ...next, contextUsage: usage };
     }
     if (["session.step.ended", "session.step.failed"].includes(method))
       next = {

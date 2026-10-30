@@ -54,6 +54,7 @@ export type ModelChoice = {
   id: string;
   name: string;
   provider?: { id: string; name: string } | null;
+  contextWindow?: number | null;
   efforts: { id: string; name: string }[];
   defaultEffort?: string | null;
 };
@@ -88,6 +89,20 @@ export type SessionWorkspaceState = {
   followRevision: number;
   activity: { label: string; detail?: string } | null;
   lastOutcome: string | null;
+  contextUsage: ContextUsage | null;
+  contextResetAt: number | null;
+  contextStep: {
+    id: string;
+    model: string | null;
+    timestamp: number | null;
+  } | null;
+};
+
+export type ContextUsage = {
+  usedTokens: number;
+  contextWindow: number | null;
+  model: string | null;
+  timestamp: number | null;
 };
 
 export type ProviderWorkspaceState = {

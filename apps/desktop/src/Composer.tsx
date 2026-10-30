@@ -4,9 +4,11 @@ import type {
   ProviderKind,
   ProviderChoices,
   ModelChoice,
+  ContextUsage,
 } from "./workspaceState.js";
 import { ChoicePicker } from "./ChoicePicker.js";
 import { ModelPicker } from "./ModelPicker.js";
+import { ContextUsageIndicator } from "./ContextUsageIndicator.js";
 
 export function Composer({
   draft,
@@ -28,6 +30,7 @@ export function Composer({
   effort,
   effortPending,
   modelChoice,
+  contextUsage,
   favouriteModels,
   toggleFavouriteModel,
   agent,
@@ -55,6 +58,7 @@ export function Composer({
   effort: string;
   effortPending: boolean;
   modelChoice?: ModelChoice;
+  contextUsage: ContextUsage | null;
   favouriteModels: string[];
   toggleFavouriteModel: (id: string) => void;
   agent: string;
@@ -273,6 +277,9 @@ export function Composer({
                     ? "↑ Recall · ↵ Send"
                     : "↵ Send · ⇧↵ Newline"}
           </span>
+          {!isNew && (
+            <ContextUsageIndicator usage={contextUsage} choices={choices} />
+          )}
           {working ? (
             <button
               key="stop"

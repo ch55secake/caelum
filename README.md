@@ -85,6 +85,8 @@ Open a project and send a message to create a session. Choose the provider and a
 
 Responses and thinking update live. Expand a thinking row to read the provider's summary or trace. A subtle composer outline pulses throughout work, including long-running commands and tool calls, which show elapsed time. OpenCode activity follows its runtime active-session state, so quiet gaps and history refreshes keep the running indicator steady until execution ends. Reduced-motion settings keep the outline static. Sending a message returns the transcript to the latest response. OpenCode connects to its existing local background service when available.
 
+The composer’s **Context** meter shows the latest reported context usage. Hover or focus it for token counts and the model’s context-window size. Codex supplies usage and its effective limit directly; OpenCode uses the latest assistant step and that model’s reported limit, resetting after compaction. Missing usage or limits are shown as unavailable rather than guessed.
+
 Patch tool previews list affected files, including renames; execute previews show the JavaScript being run. Expand a tool row to inspect the complete original input and output. **Turn cancelled** describes the current turn and clears when work resumes, including after a history refresh or reconnect. A resumable OpenCode shutdown appears as **Execution paused**.
 
 The **Changes** pane follows and accents the latest edited file while the agent works and reveals newly changed diff hunks. Repeated edits to already-dirty files are detected; unchanged refreshes preserve your selection and reading position. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
@@ -107,7 +109,7 @@ Open **Settings** from the sidebar, the header when the sidebar is collapsed, or
 
 - **Appearance:** choose Dark, Light, or System, and a Violet, Blue, Teal, Green, Amber, or Rose accent. Accent shades adapt to the theme across highlights, links, controls, activity indicators, and Monaco selections. System follows your device’s appearance; themes also cover conversations, tools, Git review, and native window chrome.
 - **Providers:** choose a default provider for new projects and save independent Codex/OpenCode model and reasoning-effort defaults, plus an OpenCode agent. Defaults apply to new sessions; the composer can override them for an individual draft. Each existing session keeps its own configured model and effort.
-- Star models in the composer or Settings to pin favourites above the full model list. Favourites save per device, separately for Codex and OpenCode. OpenCode models show their supplying provider (including custom and routed services); search by model name, model ID, or provider name.
+- Star models in the composer or Settings to pin favourites above the provider-grouped model list. Favourites save per device, separately for Codex and OpenCode. OpenCode models are grouped by their supplying provider (including custom and routed services); search by model name, model ID, or provider name.
 - Provider status and available choices are checked against the selected project. Use **Refresh** after updating your local provider setup, or **Reset defaults** to use the provider’s own settings.
 
 ## Releases

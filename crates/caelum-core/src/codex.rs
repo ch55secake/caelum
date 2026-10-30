@@ -203,6 +203,8 @@ impl CodexProvider {
                     id: model.get("model")?.as_str()?.to_owned(),
                     name: model.get("displayName")?.as_str()?.to_owned(),
                     provider: None,
+                    // Codex reports the effective context limit with thread token usage.
+                    context_window: None,
                     efforts: model
                         .get("supportedReasoningEfforts")
                         .and_then(Value::as_array)

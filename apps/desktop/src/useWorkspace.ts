@@ -4,6 +4,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
+import { contextUsageSince, openCodeHistoryUsage } from "./contextUsage.js";
 import {
   newSessionOptions,
   type AppSettings,
@@ -904,8 +905,20 @@ export function useWorkspace(settings: AppSettings) {
             entry.status === "running" &&
             !entry.complete,
         );
+        const contextUsage =
+          fresh && kind === "opencode"
+            ? openCodeHistoryUsage(
+                page.data,
+                Math.max(
+                  value.contextResetAt ?? 0,
+                  contextUsageSince(value.contextUsage, conversation),
+                ),
+              )
+            : undefined;
         return {
           ...value,
+          contextUsage:
+            contextUsage === undefined ? value.contextUsage : contextUsage,
           session: fresh
             ? {
                 ...value.session,

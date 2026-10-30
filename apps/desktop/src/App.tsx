@@ -400,6 +400,7 @@ export default function App() {
                   modelPending={Boolean(app.selected?.model)}
                   effort={app.options.effort}
                   modelChoice={app.options.modelChoice}
+                  contextUsage={app.selected?.contextUsage ?? null}
                   favouriteModels={
                     preferences.settings.favoriteModels[app.provider]
                   }

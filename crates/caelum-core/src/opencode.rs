@@ -198,6 +198,10 @@ impl OpenCodeProvider {
                 Some(ProviderModelChoice {
                     id: format!("{}/{}", provider_id, model.get("id")?.as_str()?),
                     name: model.get("name")?.as_str()?.to_owned(),
+                    context_window: model
+                        .pointer("/limit/context")
+                        .and_then(Value::as_u64)
+                        .filter(|limit| *limit > 0),
                     provider: Some(ProviderChoice {
                         id: provider_id.to_owned(),
                         name: provider_names
@@ -1716,8 +1720,8 @@ class Handler(BaseHTTPRequestHandler):
             ], "cursor": {"previous": None, "next": "older+opaque/=="}})
         elif path == "/api/model":
             self.send_json({"data": [
-                {"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True, "variants": [{"id": "low"}, {"id": "high"}]},
-                {"id": "model/a", "providerID": "router", "canonical": "local", "name": "Model A", "enabled": True},
+                {"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True, "limit": {"context": 200000}, "variants": [{"id": "low"}, {"id": "high"}]},
+                {"id": "model/a", "providerID": "router", "canonical": "local", "name": "Model A", "enabled": True, "limit": {"context": 0}},
                 {"id": "model/a", "providerID": "custom", "name": "Model A", "enabled": True},
                 {"id": "disabled", "providerID": "local", "name": "Hidden", "enabled": False}
             ]})
@@ -1804,6 +1808,9 @@ server.serve_forever()
         assert_eq!(choices.models.len(), 3);
         assert_eq!(choices.models[0].id, "local/model/a");
         assert_eq!(choices.models[1].id, "router/model/a");
+        assert_eq!(choices.models[0].context_window, Some(200_000));
+        assert_eq!(choices.models[1].context_window, None);
+        assert_eq!(choices.models[2].context_window, None);
         assert_eq!(
             choices.models[0].provider.as_ref().unwrap().name,
             "Local gateway"
