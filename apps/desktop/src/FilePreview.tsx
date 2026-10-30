@@ -79,7 +79,7 @@ export default function FilePreview({
   original?: string;
   viewState: FileViewState | null;
   saveView: (view: FileViewState) => void;
-  jump?: FileLocation & { id: number };
+  jump?: FileLocation & { id: number; focusFrom: Element | null };
   attach: (file: FileContext, ask?: boolean) => void;
   canAttach: boolean;
 }) {
@@ -234,7 +234,12 @@ export default function FilePreview({
         effects: EditorView.scrollIntoView(at, { y: "center" }),
       });
     }
-    view.focus();
+    // A slow read or layout restore must not take focus from newer navigation.
+    if (
+      document.activeElement === jump.focusFrom ||
+      (!jump.focusFrom?.isConnected && document.activeElement === document.body)
+    )
+      view.focus();
   }
   const revealRef = useRef(reveal);
   revealRef.current = reveal;

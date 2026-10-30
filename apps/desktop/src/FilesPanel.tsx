@@ -118,7 +118,7 @@ export function FilesPanel({
   >("files");
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [jump, setJump] = useState<
-    (FileLocation & { id: number }) | undefined
+    (FileLocation & { id: number; focusFrom: Element | null }) | undefined
   >();
   const treeScroll = useRef<HTMLDivElement>(null);
   const treeRestored = useRef(false);
@@ -395,7 +395,11 @@ export function FilesPanel({
 
   function openFile(path: string, location?: FileLocation) {
     saved.open({ path, mode: "file" });
-    setJump(location ? { ...location, id: Date.now() } : undefined);
+    setJump(
+      location
+        ? { ...location, id: Date.now(), focusFrom: document.activeElement }
+        : undefined,
+    );
   }
 
   function openDiff(path: string) {

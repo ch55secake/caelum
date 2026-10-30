@@ -952,10 +952,38 @@ test("Files searches filenames and contents beside the conversation, handles ign
   ).toBeVisible();
   await contents.press("Enter");
   await expect(page.locator(".cm-activeLineGutter")).toHaveText("2");
-  await findProjectFile(page, "src/styles.css");
+  await page.evaluate(() =>
+    (window as any).fixture.hold("read_project_file:src/styles.css"),
+  );
+  await page.keyboard.press("Meta+p");
+  const filenames = page.getByRole("combobox", { name: "Find project file" });
+  await filenames.fill("src/styles.css");
+  await expect(
+    page.getByRole("option", { name: "src/styles.css", exact: true }),
+  ).toBeVisible();
+  await filenames.press("Enter");
+  await expect(
+    page.getByText("Loading file preview…", { exact: true }),
+  ).toBeVisible();
   const tabs = page.getByRole("tablist", { name: "Open files" });
   await expect(tabs.getByRole("tab")).toHaveCount(2);
   await tabs.getByRole("tab", { name: "styles.css", exact: true }).focus();
+  await page.evaluate(() =>
+    (window as any).fixture.release("read_project_file:src/styles.css"),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(
+            localStorage.getItem("caelum.files.v1:%2Fwork%2Fcaelum") ?? "{}",
+          ).views?.["file:src/styles.css"]?.main,
+      ),
+    )
+    .toBeTruthy();
+  await expect(
+    tabs.getByRole("tab", { name: "styles.css", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("ArrowLeft");
   await expect(
     tabs.getByRole("tab", { name: "App.tsx", exact: true }),
