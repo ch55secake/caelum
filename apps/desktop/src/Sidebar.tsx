@@ -13,7 +13,14 @@ import {
   ShieldAlert,
   Settings,
 } from "lucide-react";
-import { useEffect, useRef, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import type {
   ProviderKind,
   SessionSummary,
@@ -24,6 +31,8 @@ import { ProjectItem } from "./ProjectItem.js";
 import { projectHasActiveTurn } from "./workspaceState.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
+const MIN_SIDEBAR_WIDTH = 180;
+const MAX_SIDEBAR_WIDTH = 480;
 export function sessionTitle(item: SessionSummary) {
   return item.name || item.preview || "Untitled session";
 }
@@ -81,6 +90,8 @@ function SessionContext({
 
 export function Sidebar({
   app,
+  preferredWidth,
+  setPreferredWidth,
   collapse,
   search,
   setSearch,
@@ -95,6 +106,8 @@ export function Sidebar({
   openSettings,
 }: {
   app: WorkspaceController;
+  preferredWidth: number | null;
+  setPreferredWidth: (width: number) => void;
   collapse: () => void;
   search: string;
   setSearch: (text: string) => void;
@@ -109,6 +122,30 @@ export function Sidebar({
   openSettings: () => void;
 }) {
   const contextMenu = useContextMenu();
+  const sidebar = useRef<HTMLElement>(null);
+  const [layoutWidth, setLayoutWidth] = useState(window.innerWidth);
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const container = sidebar.current?.parentElement;
+    if (!container) return;
+    const measure = () => setLayoutWidth(container.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+  const minimumWorkspaceWidth =
+    app.project && sessionVisible && (filesOpen || changesOpen) ? 580 : 320;
+  const maximum = Math.min(
+    MAX_SIDEBAR_WIDTH,
+    Math.max(MIN_SIDEBAR_WIDTH, layoutWidth - minimumWorkspaceWidth),
+  );
+  const width = Math.max(
+    MIN_SIDEBAR_WIDTH,
+    Math.min(maximum, preferredWidth ?? (layoutWidth <= 980 ? 214 : 238)),
+  );
+  const resize = (value: number) =>
+    setPreferredWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(maximum, value)));
   const sessions = (["codex", "opencode"] as ProviderKind[])
     .flatMap((provider) =>
       (app.workspace?.providers[provider].sessions ?? []).map((session) => ({
@@ -123,7 +160,13 @@ export function Sidebar({
         .includes(search.toLowerCase()),
     );
   return (
-    <aside className="sidebar">
+    <aside
+      ref={sidebar}
+      id="workspace-sidebar"
+      className="sidebar"
+      aria-label="Projects and sessions"
+      style={{ "--sidebar-width": `${width}px` } as CSSProperties}
+    >
       <div className="brand-row">
         <Orbit size={18} />
         <strong>caelum</strong>
@@ -374,6 +417,46 @@ export function Sidebar({
       >
         <Settings size={15} /> Settings <kbd>⌘,</kbd>
       </button>
+      <div
+        className="sidebar-resize"
+        role="separator"
+        aria-label="Resize sidebar"
+        aria-orientation="vertical"
+        aria-controls="workspace-sidebar"
+        aria-valuemin={MIN_SIDEBAR_WIDTH}
+        aria-valuemax={maximum}
+        aria-valuenow={Math.round(width)}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          drag.current = { x: event.clientX, width };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.currentTarget.focus({ preventScroll: true });
+          event.preventDefault();
+        }}
+        onPointerMove={(event) => {
+          if (drag.current)
+            resize(drag.current.width + event.clientX - drag.current.x);
+        }}
+        onPointerUp={() => {
+          drag.current = null;
+        }}
+        onLostPointerCapture={() => {
+          drag.current = null;
+        }}
+        onKeyDown={(event) => {
+          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+            event.preventDefault();
+            resize(
+              event.key === "Home"
+                ? MIN_SIDEBAR_WIDTH
+                : event.key === "End"
+                  ? maximum
+                  : width + (event.key === "ArrowRight" ? 32 : -32),
+            );
+          }
+        }}
+      />
     </aside>
   );
 }

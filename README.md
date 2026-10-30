@@ -101,6 +101,8 @@ Context compaction appears as a checkpoint in live and restored Codex and OpenCo
 
 Project rows show the folder path, current branch, and changed-file count or clean status. Git details refresh while projects are visible, with running-session and approval indicators for background work. Detached HEAD, non-Git folders, and unavailable Git status are identified explicitly.
 
+Drag the left sidebar's right edge to resize it, or focus its divider and use **←/→**, **Home**, and **End**. Its preferred width is saved on this device and restored after collapsing or reopening the app. Narrow windows temporarily constrain the sidebar to leave room for the conversation and inspector.
+
 Session rows show a branch and added/deleted lines from the latest turn when available. Hover the branch to see whether it is recorded with the session (Codex) or the current working-directory branch (OpenCode). Search also matches branch names. Hover or focus a row to **Archive** an old session; **Undo** restores the most recently archived session, including its in-app draft and pending settings. Archiving uses the provider’s archive and keeps its conversation history. Stop an active turn before archiving.
 
 - **Enter** or **⌘Enter** sends; **Shift+Enter** inserts a newline.

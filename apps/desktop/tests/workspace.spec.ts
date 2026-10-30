@@ -2718,10 +2718,49 @@ test("sidebar metadata and archiving stay scoped when projects reuse a session I
   ]);
 });
 
-test("sidebar details refresh, allow branch search and fit at the minimum window size", async ({
+test("sidebar resizes, retains its preferred width and keeps session details usable at the minimum window size", async ({
   page,
 }) => {
   await desktop(page);
+  const sidebar = page.getByRole("complementary", {
+    name: "Projects and sessions",
+  });
+  const divider = page.getByRole("separator", { name: "Resize sidebar" });
+  const width = async () => (await sidebar.boundingBox())!.width;
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep my sidebar draft");
+  await page
+    .locator(".transcript")
+    .evaluate((node) => node.setAttribute("data-mounted", "yes"));
+  await divider.focus();
+  await divider.press("Home");
+  await expect.poll(width).toBe(180);
+  await divider.press("ArrowRight");
+  await expect.poll(width).toBe(212);
+  await divider.press("ArrowLeft");
+  await expect.poll(width).toBe(180);
+  await divider.press("End");
+  await expect.poll(width).toBe(480);
+  const handle = (await divider.boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2 - 100, handle.y + 100);
+  await page.mouse.up();
+  await expect.poll(width).toBe(380);
+  const preferredWidth = await width();
+  await expect(divider).toHaveAttribute(
+    "aria-valuenow",
+    String(preferredWidth),
+  );
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(divider).toHaveCount(0);
+  await page.keyboard.press("Meta+\\");
+  await expect.poll(width).toBe(preferredWidth);
+  await expect(input).toHaveValue("Keep my sidebar draft");
+  await expect(page.locator(".transcript")).toHaveAttribute(
+    "data-mounted",
+    "yes",
+  );
   const row = sessionRow(page, "Refine the session workspace");
   await expect(row.locator(".lines-added")).toHaveText("+42");
   await page
@@ -2741,7 +2780,32 @@ test("sidebar details refresh, allow branch search and fit at the minimum window
     turn: { id: "turn-new", status: "completed" },
   });
   await expect(row.locator(".lines-added")).toHaveText("+1,234");
+  await page.screenshot({ path: "test-results/session-sidebar-resized.png" });
   await page.setViewportSize({ width: 800, height: 620 });
+  await expect.poll(width).toBe(220);
+  await expect
+    .poll(
+      async () =>
+        (await page.locator(".session-workspace").boundingBox())!.width,
+    )
+    .toBeGreaterThanOrEqual(300);
+  await page
+    .getByRole("button", { name: "Close changes", exact: true })
+    .click();
+  await expect.poll(width).toBe(preferredWidth);
+  await page.getByRole("button", { name: "Show changes", exact: true }).click();
+  await expect.poll(width).toBe(220);
+  await page.getByRole("button", { name: "Expand project inspector" }).click();
+  await expect.poll(width).toBe(preferredWidth);
+  await page
+    .getByRole("button", { name: "Restore conversation layout" })
+    .click();
+  await expect.poll(width).toBe(220);
+  await expect(input).toHaveValue("Keep my sidebar draft");
+  await expect(page.locator(".transcript")).toHaveAttribute(
+    "data-mounted",
+    "yes",
+  );
   await row.hover();
   await expect(row.locator(".session-lines")).toBeInViewport({ ratio: 1 });
   await expect(
@@ -2751,6 +2815,8 @@ test("sidebar details refresh, allow branch search and fit at the minimum window
     800,
   );
   await page.screenshot({ path: "test-results/session-sidebar.png" });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect.poll(width).toBe(preferredWidth);
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     fixture.setSessionDetails("codex", "thread-a", {
@@ -2784,6 +2850,11 @@ test("sidebar details refresh, allow branch search and fit at the minimum window
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeEnabled();
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect.poll(width).toBe(preferredWidth);
+  await page.reload();
+  await expect.poll(width).toBe(preferredWidth);
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect.poll(width).toBe(preferredWidth);
 });
 
 test("restores Markdown and tool details in a full-height dark workspace", async ({

@@ -28,6 +28,22 @@ export default function App() {
   const app = useWorkspace(preferences.settings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(() => {
+    try {
+      const width = Number(localStorage.getItem("caelum.sidebar.width"));
+      return Number.isFinite(width) && width > 0 ? width : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (sidebarWidth === null) return;
+    try {
+      localStorage.setItem("caelum.sidebar.width", String(sidebarWidth));
+    } catch {
+      /* Keep the preferred width for this window, including after collapse. */
+    }
+  }, [sidebarWidth]);
   const [pane, setPane] = useState<"files" | "changes" | null>("changes");
   const [expanded, setExpanded] = useState(false);
   const [fileRequest, setFileRequest] = useState<InspectorRequest>();
@@ -163,6 +179,8 @@ export default function App() {
         {!collapsed && (
           <Sidebar
             app={app}
+            preferredWidth={sidebarWidth}
+            setPreferredWidth={setSidebarWidth}
             collapse={() => setCollapsed(true)}
             search={search}
             setSearch={setSearch}
