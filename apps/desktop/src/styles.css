@@ -270,6 +270,14 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .history-button { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 auto 20px; padding: 6px 12px; color: var(--muted); font-size: 11px; background: transparent; }
 .jump-latest { display: flex; align-items: center; gap: 7px; position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 7px 12px; white-space: nowrap; font-size: 12px; box-shadow: 0 4px 15px #0006; }
 .composer-wrap { width: min(856px, 100%); flex: 0 0 auto; align-self: center; padding: 0 32px 22px; }
+.slash-menu { position: absolute; z-index: 15; bottom: calc(100% + 8px); left: 0; right: 0; overflow: hidden; border: 1px solid var(--popover-border); border-radius: 6px; background: var(--popover-bg); box-shadow: 0 8px 24px #0003; }
+.slash-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; padding: 9px 10px; color: var(--secondary-text); font-size: 11px; border-bottom: 1px solid var(--border); }.slash-heading span { color: var(--muted); font-size: 10px; }
+.slash-list { max-height: min(260px, 35vh); overflow: auto; }.slash-list button { display: flex; flex-direction: column; gap: 4px; width: 100%; border: 0; border-radius: 0; padding: 9px 10px; background: transparent; text-align: left; font-size: 11px; }
+.slash-list strong { font-weight: 500; }.slash-list span { color: var(--muted); overflow-wrap: anywhere; }.slash-list [aria-selected="true"] { background: var(--option-hover); }
+.slash-note { padding: 9px 10px; color: var(--muted); font-size: 11px; }.composer-command-error { margin: 6px 0; color: var(--danger); font-size: 11px; }
+.settings-dialog.usage-dialog { width: min(520px, calc(100vw - 40px)); height: auto; max-height: calc(100dvh - 60px); }.usage-content { overflow: auto; }.usage-content section + section { margin-top: 22px; }.usage-content p { margin: 8px 0; font-size: 12px; }
+.usage-meter, .usage-budget { margin-top: 16px; font-size: 12px; }.usage-meter > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }.usage-meter strong, .usage-budget strong { font-weight: 500; }
+.usage-meter progress { width: 100%; height: 6px; margin: 8px 0; accent-color: var(--accent); }.usage-content small { color: var(--muted); font-size: 10px; }.usage-dialog .settings-footer button { display: flex; align-items: center; gap: 6px; }
 .composer { position: relative; padding: 12px 12px 10px; border: 1px solid var(--composer-border); border-radius: 8px; background: var(--composer-bg); box-shadow: 0 4px 20px #0002; }
 .composer:focus-within { border-color: var(--composer-focus); }
 .composer[data-working="true"]::before { content: ""; position: absolute; inset: -1px; pointer-events: none; border: 1px solid var(--accent); border-radius: inherit; box-shadow: 0 0 12px var(--accent-glow); animation: working-pulse 2.8s ease-in-out infinite; }

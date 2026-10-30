@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { ArrowUp, Gauge, Layers, Square } from "lucide-react";
 import type {
   ProviderKind,
@@ -12,8 +12,12 @@ import { ContextUsageIndicator } from "./ContextUsageIndicator.js";
 import { AgentPicker } from "./AgentPicker.js";
 import { FileContextChips } from "./FileNavigation.js";
 import type { FileContext } from "./fileContext.js";
+import { parseSlashCommand } from "./slashCommands.js";
+import { useSlashCommands } from "./SlashCommandPicker.js";
+import { UsageDialog } from "./UsageDialog.js";
 
 export function Composer({
+  projectPath,
   draft,
   setDraft,
   lastMessage,
@@ -45,6 +49,7 @@ export function Composer({
   fileContext,
   removeFileContext,
 }: {
+  projectPath: string;
   draft: string;
   setDraft: (text: string) => void;
   lastMessage: string | null;
@@ -78,6 +83,30 @@ export function Composer({
 }) {
   const measurement = useRef<HTMLTextAreaElement>(null);
   const recalled = useRef(false);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const command = provider === "opencode" ? parseSlashCommand(draft) : null;
+  const slash = useSlashCommands({
+    project: projectPath,
+    enabled: provider === "opencode" && !disabled && !submitting,
+    draft,
+    setDraft,
+    run: send,
+    input: textareaRef,
+  });
+  function send(text = draft) {
+    if (disabled || submitting) return;
+    const command = provider === "opencode" ? parseSlashCommand(text) : null;
+    if (command?.name === "usage") {
+      if (command.arguments.trim()) {
+        setCommandError("/usage does not take arguments.");
+        return;
+      }
+      setCommandError(null);
+      setDraft("");
+      setUsageOpen(true);
+    } else if (!working || command) submit();
+  }
   const busy = working || submitting || awaitingApproval;
   const agents = choices?.agents ?? [];
   const canCycleAgent =
@@ -135,9 +164,10 @@ export function Composer({
         data-working={busy}
         onSubmit={(event) => {
           event.preventDefault();
-          submit();
+          send();
         }}
       >
+        {slash.menu}
         <FileContextChips
           files={fileContext}
           remove={removeFileContext}
@@ -154,17 +184,30 @@ export function Composer({
         <textarea
           ref={textareaRef}
           aria-label="Message"
+          aria-autocomplete={provider === "opencode" ? "list" : undefined}
+          aria-haspopup={provider === "opencode" ? "listbox" : undefined}
+          aria-controls={slash.controls}
+          aria-activedescendant={slash.activeId}
           aria-keyshortcuts={canCycleAgent ? "Shift+Tab" : undefined}
           title={!draft && lastMessage ? "↑ Recall last message" : undefined}
           placeholder={
             working
               ? "Draft your next message…"
-              : "Ask anything, or describe a change…"
+              : provider === "opencode"
+                ? "Ask anything, or type / for commands…"
+                : "Ask anything, or describe a change…"
           }
           value={draft}
           disabled={disabled}
-          onChange={(event) => setDraft(event.target.value)}
+          onFocus={slash.focus}
+          onBlur={slash.blur}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setCommandError(null);
+            slash.changed();
+          }}
           onKeyDown={(event) => {
+            if (slash.keyDown(event)) return;
             if (
               event.key === "Tab" &&
               event.shiftKey &&
@@ -203,10 +246,15 @@ export function Composer({
               (!event.shiftKey || event.metaKey || event.ctrlKey)
             ) {
               event.preventDefault();
-              if (!working && !submitting) submit();
+              send();
             }
           }}
         />
+        {commandError && (
+          <p className="composer-command-error" role="alert">
+            {commandError}
+          </p>
+        )}
         {provider === "opencode" && (
           <AgentPicker
             value={agent}
@@ -329,21 +377,35 @@ export function Composer({
             >
               <Square size={13} />
             </button>
-          ) : (
+          ) : null}
+          {(!working || command) && (
             <button
               key="send"
               type="button"
               className="send-button"
-              onClick={submit}
-              disabled={disabled || submitting || !draft.trim()}
-              aria-label="Send message"
-              title="Send message"
+              onClick={() => send()}
+              disabled={
+                disabled ||
+                submitting ||
+                !draft.trim() ||
+                (provider === "opencode" && draft.trim() === "/")
+              }
+              aria-label={command ? "Run command" : "Send message"}
+              title={command ? "Run command" : "Send message"}
             >
               <ArrowUp size={17} />
             </button>
           )}
         </div>
       </form>
+      {usageOpen && (
+        <UsageDialog
+          project={projectPath}
+          usage={contextUsage}
+          choices={choices}
+          close={() => setUsageOpen(false)}
+        />
+      )}
     </div>
   );
 }

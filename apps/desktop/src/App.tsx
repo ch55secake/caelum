@@ -99,6 +99,7 @@ export default function App() {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (document.querySelector("dialog[open]")) return;
       if (event.key === ",") {
         event.preventDefault();
         setSettingsOpen(true);
@@ -447,6 +448,7 @@ export default function App() {
               {app.project && (
                 <Composer
                   key={`composer-${sessionKey}`}
+                  projectPath={app.project.path}
                   textareaRef={textareaRef}
                   draft={
                     app.selected?.draft ?? app.providerWorkspace?.draft ?? ""

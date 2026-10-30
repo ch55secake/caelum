@@ -15,9 +15,9 @@ use std::{
 };
 
 use caelum_protocol::{
-    ApprovalDecision, LineChanges, OpenCodeEvent, OpenCodeSession, OpenCodeSessionInfo,
-    OpenCodeSessionList, PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice,
-    SessionDetails, SessionHistoryPage,
+    ApprovalDecision, LineChanges, OpenCodeCommandInfo, OpenCodeCommandInput, OpenCodeEvent,
+    OpenCodeSession, OpenCodeSessionInfo, OpenCodeSessionList, PermissionRequest, ProviderChoice,
+    ProviderChoices, ProviderModelChoice, SessionDetails, SessionHistoryPage,
 };
 use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -287,6 +287,65 @@ impl OpenCodeProvider {
         })
     }
 
+    pub fn commands(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<Vec<OpenCodeCommandInfo>, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let response = server.request_json(Method::GET, "/api/command", &query, None)?;
+        serde_json::from_value(response.get("data").cloned().unwrap_or(Value::Null))
+            .map_err(|error| OpenCodeError::Protocol(format!("invalid command list: {error}")))
+    }
+
+    pub fn usage_limits(&self, project_path: impl AsRef<Path>) -> Result<Value, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let response =
+            server.request_json(Method::GET, "/api/experimental/usage/limits", &query, None)?;
+        response
+            .get("data")
+            .cloned()
+            .ok_or_else(|| OpenCodeError::Protocol("usage response has no data".into()))
+    }
+
+    pub fn run_command(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        command: &OpenCodeCommandInput,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<(), OpenCodeError> {
+        if command.name.trim().is_empty() {
+            return Err(OpenCodeError::Protocol(
+                "command name must not be empty".into(),
+            ));
+        }
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let session = self.session(&server, &project, session_id)?;
+        select_model(&server, &project, &session, model, effort)?;
+        server.request_json(
+            Method::POST,
+            &format!("/api/session/{session_id}/command"),
+            &[],
+            Some(
+                serde_json::to_value(command)
+                    .map_err(|error| OpenCodeError::Protocol(error.to_string()))?,
+            ),
+        )?;
+        Ok(())
+    }
+
     pub fn resume_session(
         &self,
         project_path: impl AsRef<Path>,
@@ -394,42 +453,7 @@ impl OpenCodeProvider {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, session_id)?;
-        if model.is_some() || effort.is_some() {
-            let selected_model = model.or(session.model.as_deref());
-            let fallback = if selected_model.is_none() {
-                let query = [(
-                    "location[directory]",
-                    project.path().to_string_lossy().into_owned(),
-                )];
-                let response =
-                    server.request_json(Method::GET, "/api/model/default", &query, None)?;
-                response.get("data").and_then(model_id)
-            } else {
-                None
-            };
-            let selected_model = selected_model.or(fallback.as_deref()).ok_or_else(|| {
-                OpenCodeError::Protocol("no model available for the selected effort".into())
-            })?;
-            // An explicit empty effort selects the base model. Changing models
-            // also resets the variant instead of leaking a model-specific ID.
-            let selected_effort = effort.unwrap_or_else(|| {
-                if model.is_some_and(|model| session.model.as_deref() != Some(model)) {
-                    ""
-                } else {
-                    session.effort.as_deref().unwrap_or("")
-                }
-            });
-            if session.model.as_deref() != Some(selected_model)
-                || session.effort.as_deref().unwrap_or("") != selected_effort
-            {
-                server.request_json(
-                    Method::POST,
-                    &format!("/api/session/{session_id}/model"),
-                    &[],
-                    Some(json!({ "model": model_ref(selected_model, Some(selected_effort))? })),
-                )?;
-            }
-        }
+        select_model(&server, &project, &session, model, effort)?;
         let path = format!("/api/session/{session_id}/prompt");
         server.request_json(
             Method::POST,
@@ -701,6 +725,51 @@ impl OpenCodeProvider {
         }
         result
     }
+}
+
+fn select_model(
+    server: &OpenCodeServer,
+    project: &Project,
+    session: &OpenCodeSession,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Result<(), OpenCodeError> {
+    if model.is_none() && effort.is_none() {
+        return Ok(());
+    }
+    let selected_model = model.or(session.model.as_deref());
+    let fallback = if selected_model.is_none() {
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let response = server.request_json(Method::GET, "/api/model/default", &query, None)?;
+        response.get("data").and_then(model_id)
+    } else {
+        None
+    };
+    let selected_model = selected_model.or(fallback.as_deref()).ok_or_else(|| {
+        OpenCodeError::Protocol("no model available for the selected effort".into())
+    })?;
+    // Changing models resets the variant; an empty effort explicitly selects the base model.
+    let selected_effort = effort.unwrap_or_else(|| {
+        if model.is_some_and(|model| session.model.as_deref() != Some(model)) {
+            ""
+        } else {
+            session.effort.as_deref().unwrap_or("")
+        }
+    });
+    if session.model.as_deref() != Some(selected_model)
+        || session.effort.as_deref().unwrap_or("") != selected_effort
+    {
+        server.request_json(
+            Method::POST,
+            &format!("/api/session/{}/model", session.id),
+            &[],
+            Some(json!({ "model": model_ref(selected_model, Some(selected_effort))? })),
+        )?;
+    }
+    Ok(())
 }
 
 impl OpenCodeServer {
@@ -1763,6 +1832,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": {"providerID": "local", "id": "model/a"}})
         elif path == "/api/agent":
             self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "plan", "name": "Plan", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}, {"id": "hidden", "name": "Hidden", "mode": "primary", "hidden": True}]})
+        elif path in ["/api/command", "/api/experimental/usage/limits"]:
+            assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
+            if os.path.exists(os.path.join(PROJECT, "command-api-error")):
+                self.send_error(503)
+                return
+            if path == "/api/command":
+                data = [{"name": "goal", "description": "Set or control an objective"}, {"name": "team/review"}]
+            else:
+                usage = os.path.join(PROJECT, "usage.json")
+                with open(usage) as source:
+                    data = json.load(source)
+            self.send_json({"location": {"directory": PROJECT}, "data": data})
         else:
             self.send_error(404)
 
@@ -1809,6 +1890,13 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
         elif path == "/api/session/ses_fake/prompt":
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
+        elif path == "/api/session/ses_fake/command":
+            assert set(body) == {"name", "text", "files"}
+            if body["name"] not in ["goal", "team/review"]:
+                self.send_error(404)
+                return
+            self.send_response(204)
+            self.end_headers()
         elif path == "/api/session/ses_fake/interrupt":
             self.send_json({"interrupted": True})
         elif path == "/api/session/ses_fake/permission/per_fake/reply":
@@ -1840,6 +1928,36 @@ server.serve_forever()
 
         let listed = provider.list_sessions(&project_path).unwrap();
         assert_eq!(listed.sessions[0].id, "ses_fake");
+        let commands = provider.commands(&project_path).unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].name, "goal");
+        assert_eq!(
+            commands[0].description.as_deref(),
+            Some("Set or control an objective")
+        );
+        assert_eq!(commands[1].name, "team/review");
+        assert_eq!(commands[1].description, None);
+        let limits = json!({
+            "workspace": { "id": "workspace", "usageURL": "https://opencode.ai/workspace/usage" },
+            "go": {
+                "rolling": { "percent": 42, "limited": false, "resetsAt": 1800000000000_u64 },
+                "weekly": { "percent": 20, "limited": false, "resetsAt": 1800100000000_u64 },
+                "monthly": { "percent": 100, "limited": true, "resetsAt": 1800200000000_u64 }
+            },
+            "budgets": []
+        });
+        fs::write(
+            project_path.join("usage.json"),
+            serde_json::to_vec(&limits).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(provider.usage_limits(&project_path).unwrap(), limits);
+        fs::write(project_path.join("usage.json"), "null").unwrap();
+        assert!(provider.usage_limits(&project_path).unwrap().is_null());
+        fs::write(project_path.join("command-api-error"), "").unwrap();
+        assert!(provider.commands(&project_path).is_err());
+        assert!(provider.usage_limits(&project_path).is_err());
+        fs::remove_file(project_path.join("command-api-error")).unwrap();
         let choices = provider.choices(&project_path).unwrap();
         assert_eq!(choices.models.len(), 3);
         assert_eq!(choices.models[0].id, "local/model/a");
@@ -2060,6 +2178,86 @@ server.serve_forever()
                 .as_deref(),
             Some("plan")
         );
+        let mut command: OpenCodeCommandInput = serde_json::from_value(json!({
+            "name": "team/review", "text": "src/main.rs\nKeep Unicode: 日本語 🚀\n",
+            "files": [{ "uri": "data:text/plain;base64,aGVsbG8K", "name": "src/main.rs", "description": "Lines 2–3 of src/main.rs" }]
+        })).unwrap();
+        let count = requests().len();
+        assert!(matches!(
+            provider.run_command(
+                &project_path,
+                "ses_foreign",
+                &command,
+                Some("local/model/a"),
+                Some("low")
+            ),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        assert_eq!(requests().len(), count);
+        assert!(provider
+            .run_command(
+                &project_path,
+                "ses_fake",
+                &command,
+                Some("other/missing"),
+                None
+            )
+            .is_err());
+        assert_eq!(requests().len(), count + 1);
+        assert_eq!(
+            requests().last().unwrap()["path"],
+            "/api/session/ses_fake/model"
+        );
+        provider
+            .run_command(
+                &project_path,
+                "ses_fake",
+                &command,
+                Some("local/model/a"),
+                Some("low"),
+            )
+            .unwrap();
+        let sent = requests();
+        assert_eq!(
+            sent[sent.len() - 2]["body"],
+            json!({ "model": { "providerID": "local", "id": "model/a", "variant": "low" } })
+        );
+        assert_eq!(
+            sent.last().unwrap(),
+            &json!({ "path": "/api/session/ses_fake/command", "body": command })
+        );
+        command.name = "goal".into();
+        command.files.clear();
+        fs::write(project_path.join("busy"), "").unwrap();
+        for text in [
+            "Finish the task\nThen summarize.",
+            "pause",
+            "resume",
+            "clear",
+            "",
+        ] {
+            command.text = text.into();
+            let count = requests().len();
+            provider
+                .run_command(&project_path, "ses_fake", &command, None, None)
+                .unwrap();
+            assert_eq!(requests().len(), count + 1);
+            assert_eq!(
+                requests().last().unwrap()["body"],
+                json!({ "name": "goal", "text": text, "files": [] })
+            );
+        }
+        fs::remove_file(project_path.join("busy")).unwrap();
+        command.name = "unknown".into();
+        assert!(provider
+            .run_command(&project_path, "ses_fake", &command, None, None)
+            .is_err());
+        command.name = " ".into();
+        let count = requests().len();
+        assert!(provider
+            .run_command(&project_path, "ses_fake", &command, None, None)
+            .is_err());
+        assert_eq!(requests().len(), count);
         provider.cancel_turn(&project_path, "ses_fake").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut received_text = false;

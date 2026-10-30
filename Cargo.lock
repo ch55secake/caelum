@@ -477,6 +477,7 @@ version = "0.1.4"
 dependencies = [
  "caelum-core",
  "caelum-protocol",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",

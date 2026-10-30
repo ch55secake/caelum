@@ -326,6 +326,27 @@ pub struct ProviderChoices {
     pub default_model: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenCodeCommandInfo {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenCodeCommandFile {
+    pub uri: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenCodeCommandInput {
+    pub name: String,
+    pub text: String,
+    #[serde(default)]
+    pub files: Vec<OpenCodeCommandFile>,
+}
+
 /// An event received from OpenCode's `/api/event` server-sent event stream.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

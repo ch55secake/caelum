@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 caelum-core = { path = "../../../crates/caelum-core" }
 caelum-protocol = { path = "../../../crates/caelum-protocol" }
+serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"

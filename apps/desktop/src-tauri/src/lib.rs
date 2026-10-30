@@ -595,6 +595,61 @@ async fn opencode_cancel_turn(
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn opencode_commands(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+) -> Result<Vec<caelum_protocol::OpenCodeCommandInfo>, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .commands(project_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_usage_limits(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+) -> Result<serde_json::Value, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .usage_limits(project_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_run_command(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+    command: caelum_protocol::OpenCodeCommandInput,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(), String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .run_command(
+                project_path,
+                &session_id,
+                &command,
+                model.as_deref(),
+                effort.as_deref(),
+            )
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(ApprovalBroker::default())
@@ -686,6 +741,9 @@ pub fn run() {
             opencode_session_history,
             opencode_send_prompt,
             opencode_select_agent,
+            opencode_commands,
+            opencode_run_command,
+            opencode_usage_limits,
             opencode_cancel_turn
         ])
         .build(tauri::generate_context!())

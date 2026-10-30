@@ -6,6 +6,11 @@ import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
 import { contextUsageSince, openCodeHistoryUsage } from "./contextUsage.js";
 import {
+  commandFiles,
+  parseSlashCommand,
+  type SlashCommand,
+} from "./slashCommands.js";
+import {
   MAX_FILE_CONTEXT,
   promptWithFileContext,
   type FileContext,
@@ -1190,32 +1195,51 @@ export function useWorkspace(settings: AppSettings) {
       snapshot,
       cached,
     );
-    const text = (cached?.draft ?? snapshot.draft).trim();
+    const rawText = cached?.draft ?? snapshot.draft;
+    const command = kind === "opencode" ? parseSlashCommand(rawText) : null;
+    const text = command ? rawText : rawText.trim();
     const fileContext = cached?.fileContext ?? snapshot.fileContext;
     const contextIds = new Set(fileContext.map((file) => file.id));
-    const prompt = promptWithFileContext(text, fileContext);
+    const prompt = command ? "" : promptWithFileContext(text, fileContext);
     const key = `send:${keyFor(target.path, kind, id ?? "new")}`;
     if (
       !text ||
+      (kind === "opencode" && text === "/") ||
       (id && unavailable(target.path, kind, id)) ||
       locks.current.has(key) ||
-      cached?.isWorking ||
+      (cached?.isWorking && !command) ||
       cached?.isSubmitting ||
       (id && (!cached || cached.connection !== "connected"))
     )
       return;
     locks.current.add(key);
     const nav = navigation.current;
+    const creating = !id;
+    let prepared = false;
     const messageId = `msg_${crypto.randomUUID().replaceAll("-", "")}`;
     const optimisticId =
       kind === "opencode" ? `opencode-${messageId}` : `local-${messageId}`;
+    if (id)
+      mutateSession(target.path, kind, id, (value) => ({
+        ...value,
+        isSubmitting: true,
+        error: null,
+      }));
+    else
+      mutateProvider(target.path, kind, (value) => ({
+        ...value,
+        isCreating: true,
+        error: null,
+      }));
     try {
+      if (command) {
+        const commands = await invoke<SlashCommand[]>("opencode_commands", {
+          projectPath: target.path,
+        });
+        if (!commands.some((item) => item.name === command.name))
+          throw new Error(`Unknown OpenCode command: /${command.name}`);
+      }
       if (!id) {
-        mutateProvider(target.path, kind, (value) => ({
-          ...value,
-          isCreating: true,
-          error: null,
-        }));
         const result = await invoke<
           Omit<WorkspaceSessionInfo, "provider"> | OpenCodeInfo
         >(`${kind}_start_session`, {
@@ -1229,7 +1253,7 @@ export function useWorkspace(settings: AppSettings) {
         id = started.thread.id;
         mutateProvider(target.path, kind, (value) => ({
           ...value,
-          draft: value.draft.trim() === text ? "" : value.draft,
+          draft: value.draft === rawText ? "" : value.draft,
           fileContext: value.fileContext.filter(
             (file) => !contextIds.has(file.id),
           ),
@@ -1251,7 +1275,7 @@ export function useWorkspace(settings: AppSettings) {
               effort,
               connection: "connected",
               historyLoaded: true,
-              draft: text,
+              draft: rawText,
               fileContext,
             },
           },
@@ -1264,24 +1288,32 @@ export function useWorkspace(settings: AppSettings) {
           });
       }
       const sessionId = id;
+      prepared = true;
       mutateSession(target.path, kind, sessionId, (value) => ({
         ...value,
-        draft: "",
+        draft: value.draft === rawText ? "" : value.draft,
         fileContext: value.fileContext.filter(
           (file) => !contextIds.has(file.id),
         ),
         error: null,
         isSubmitting: true,
-        isWorking: true,
-        activity: { label: "Working…" },
+        isWorking: command ? value.isWorking : true,
+        activity: command ? value.activity : { label: "Working…" },
         lastOutcome: null,
         scrollTop: null,
         windowEndId: null,
         followRevision: value.followRevision + 1,
-        conversation: [
-          ...value.conversation,
-          { id: optimisticId, kind: "user", text: prompt, optimistic: true },
-        ],
+        conversation: command
+          ? value.conversation
+          : [
+              ...value.conversation,
+              {
+                id: optimisticId,
+                kind: "user",
+                text: prompt,
+                optimistic: true,
+              },
+            ],
       }));
       mutateProvider(target.path, kind, (value) => ({
         ...value,
@@ -1316,23 +1348,38 @@ export function useWorkspace(settings: AppSettings) {
           eventRevision: value.eventRevision + 1,
         }));
       }
-      await invoke(`${kind}_send_prompt`, {
+      const options = {
         projectPath: target.path,
-        threadId: sessionId,
         sessionId,
-        prompt,
-        messageId,
         model,
         effort,
-      });
+      };
+      if (command)
+        await invoke("opencode_run_command", {
+          ...options,
+          command: {
+            name: command.name,
+            text: command.arguments,
+            files: commandFiles(fileContext),
+          },
+        });
+      else
+        await invoke(`${kind}_send_prompt`, {
+          ...options,
+          threadId: sessionId,
+          prompt,
+          messageId,
+        });
       if (model || effort !== null)
         mutateSession(target.path, kind, sessionId, (value) => ({
           ...value,
-          session: {
-            ...value.session,
-            ...(model ? { model } : {}),
-            ...(effort !== null ? { effort } : {}),
-          },
+          session: command
+            ? value.session
+            : {
+                ...value.session,
+                ...(model ? { model } : {}),
+                ...(effort !== null ? { effort } : {}),
+              },
           model: value.model === model ? null : value.model,
           effort:
             value.effort === (cached?.effort ?? effort) ? null : value.effort,
@@ -1341,15 +1388,23 @@ export function useWorkspace(settings: AppSettings) {
       if (id)
         mutateSession(target.path, kind, id, (value) => ({
           ...value,
-          draft: value.draft ? `${text}\n\n${value.draft}` : text,
-          fileContext: [
-            ...fileContext.filter(
-              (file) => !value.fileContext.some((item) => item.id === file.id),
-            ),
-            ...value.fileContext,
-          ],
-          isWorking: false,
-          activity: null,
+          draft:
+            !prepared || value.draft === text
+              ? value.draft
+              : value.draft
+                ? `${text}\n\n${value.draft}`
+                : text,
+          fileContext: !prepared
+            ? value.fileContext
+            : [
+                ...fileContext.filter(
+                  (file) =>
+                    !value.fileContext.some((item) => item.id === file.id),
+                ),
+                ...value.fileContext,
+              ],
+          isWorking: command ? value.isWorking : false,
+          activity: command ? value.activity : null,
           error: String(reason),
           conversation: value.conversation.filter(
             (entry) => entry.id !== optimisticId,
@@ -1367,10 +1422,12 @@ export function useWorkspace(settings: AppSettings) {
           ...value,
           isSubmitting: false,
         }));
-      mutateProvider(target.path, kind, (value) => ({
-        ...value,
-        isCreating: false,
-      }));
+      if (creating)
+        mutateProvider(target.path, kind, (value) => ({
+          ...value,
+          isCreating: false,
+        }));
+      if (command && id && prepared) void loadHistory(target.path, kind, id);
     }
   }
   async function cancel() {

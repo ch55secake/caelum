@@ -70,6 +70,18 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         ["thread-a", "thread-b", "ses-a"].map((id) => [id, "medium"]),
       );
       let failNextSend = false;
+      const commandErrors = new Map<string, string>();
+      const slashCommands = new Map<
+        string,
+        { name: string; description?: string }[]
+      >();
+      let usageLimits: unknown = null;
+      let commandResult: {
+        text: string;
+        working: boolean;
+        agent?: string;
+        model?: string;
+      } | null = null;
       const choicesErrors = new Map<string, string>();
       const choiceAgents = [
         { id: "build", name: "Build" },
@@ -258,6 +270,22 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           },
           failSend: () => {
             failNextSend = true;
+          },
+          setCommandError: (command: string, error: string | null) => {
+            if (error) commandErrors.set(command, error);
+            else commandErrors.delete(command);
+          },
+          setCommands: (
+            path: string,
+            commands: { name: string; description?: string }[],
+          ) => {
+            slashCommands.set(path, commands);
+          },
+          setUsageLimits: (value: unknown) => {
+            usageLimits = value;
+          },
+          setCommandResult: (value: typeof commandResult) => {
+            commandResult = value;
           },
           holdHistory: () => {
             historyGate = new Promise<void>((resolve) => {
@@ -456,6 +484,52 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 defaultModel: "provider/model",
                 agents: args.provider === "opencode" ? choiceAgents : [],
               };
+            }
+            if (
+              [
+                "opencode_commands",
+                "opencode_usage_limits",
+                "opencode_run_command",
+              ].includes(command)
+            ) {
+              const error = commandErrors.get(command);
+              const commands = slashCommands.get(args.projectPath) ?? [
+                { name: "init", description: "Set up project instructions" },
+                { name: "review", description: "Review changes" },
+                {
+                  name: "goal",
+                  description:
+                    "Work until an objective is met [pause|resume|clear]",
+                },
+                { name: "team/review", description: "Custom team review" },
+              ];
+              const limits = usageLimits;
+              await gates.get(command)?.promise;
+              if (error) throw new Error(error);
+              if (command === "opencode_commands") return commands;
+              if (command === "opencode_usage_limits") return limits;
+              if (args.model) models.set(args.sessionId, args.model);
+              if (args.effort != null) efforts.set(args.sessionId, args.effort);
+              if (commandResult) {
+                openWorking = commandResult.working;
+                openHistory = [
+                  ...openHistory,
+                  {
+                    id: `msg-command-${sequence++}`,
+                    type: "user",
+                    text: commandResult.text,
+                  },
+                ];
+                if (commandResult.agent)
+                  setAgent(
+                    args.projectPath,
+                    args.sessionId,
+                    commandResult.agent,
+                  );
+                if (commandResult.model)
+                  models.set(args.sessionId, commandResult.model);
+              }
+              return;
             }
             if (command === "codex_list_sessions") {
               const snapshot = {
@@ -3513,6 +3587,542 @@ test("file and diff context menus copy exact content, reveal paths, and use nati
   await expect(
     page.getByRole("alert").filter({ hasText: "Clipboard unavailable" }),
   ).toBeVisible();
+});
+
+test("slash picker discovers native commands, preserves agent shortcuts and submits one new goal", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("/");
+  await expect(
+    page.getByRole("listbox", { name: "Slash commands" }),
+  ).toHaveCount(0);
+  await choose(page, "Provider", "OpenCode");
+  await input.fill("/");
+  const list = page.getByRole("listbox", { name: "Slash commands" });
+  await expect(list.getByRole("option", { name: /^\/goal/ })).toBeVisible();
+  await expect(
+    list.getByRole("option", { name: /^\/team\/review/ }),
+  ).toBeVisible();
+  await input.press("ArrowDown");
+  await expect(list.getByRole("option", { name: /^\/init/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await input.press("Shift+Tab");
+  await expect(input).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Build", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await input.press("Escape");
+  await expect(list).toHaveCount(0);
+  await input.fill("/go");
+  await expect(list.getByRole("option")).toHaveCount(1);
+  await input.press("Tab");
+  await expect(input).toHaveValue("/goal ");
+  await expect(input).toBeFocused();
+  await expect(list).toHaveCount(0);
+  await choose(page, "Model", "Fast model provider/fast");
+  await choose(page, "Effort", "Low");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandResult({
+      text: "Native goal acknowledgement",
+      working: false,
+    }),
+  );
+  await input.fill("/goal Finish the task\n  Keep Unicode 🚀\n");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Native goal acknowledgement", { exact: true }),
+  ).toBeVisible();
+  await expect(input).toBeEmpty();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter((call: any) =>
+      [
+        "opencode_start_session",
+        "opencode_run_command",
+        "opencode_send_prompt",
+      ].includes(call.command),
+    ),
+  );
+  expect(calls.map((call: any) => call.command)).toEqual([
+    "opencode_start_session",
+    "opencode_run_command",
+  ]);
+  expect(calls[0].args).toMatchObject({
+    projectPath: "/work/caelum",
+    model: "provider/fast",
+    agent: "build",
+  });
+  expect(calls[1].args).toEqual({
+    projectPath: "/work/caelum",
+    sessionId: "ses-new",
+    model: null,
+    effort: "low",
+    command: {
+      name: "goal",
+      text: "Finish the task\n  Keep Unicode 🚀\n",
+      files: [],
+    },
+  });
+  await expect(page.locator(".conversation-entry.user")).toHaveCount(1);
+  await page.getByRole("button", { name: /New session/ }).click();
+  await expect(input).toBeEmpty();
+});
+
+test("slash lookup failures keep drafts intact and never create a session for unknown commands", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("/missing argument");
+  await input.press("Enter");
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Unknown OpenCode command: /missing" }),
+  ).toBeVisible();
+  await expect(input).toHaveValue("/missing argument");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "opencode_start_session",
+      ),
+    ),
+  ).toHaveLength(0);
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "opencode_commands",
+      "Command discovery unavailable",
+    ),
+  );
+  await input.fill("/goal pause");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await input.press("Enter");
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "Command discovery unavailable" }),
+    ).toBeVisible();
+    await expect(input).toHaveValue("/goal pause");
+    await expect(
+      page.getByRole("button", { name: "Run command", exact: true }),
+    ).toBeEnabled();
+  }
+  await input.fill("/");
+  await expect(
+    page.getByRole("button", { name: "Retry commands", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("opencode_commands", null),
+  );
+  await page
+    .getByRole("button", { name: "Retry commands", exact: true })
+    .click();
+  await expect(page.getByRole("option", { name: /^\/goal/ })).toBeVisible();
+  await input.fill("/goal clear");
+  await input.press("Enter");
+  await expect(input).toBeEmpty();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.command === "opencode_run_command",
+          ).length,
+      ),
+    )
+    .toBe(1);
+});
+
+test("slash goal controls run during execution and failed commands preserve the active Stop control", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await setHistory(page, "opencode", [], true);
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const stop = page.getByRole("button", {
+    name: "Stop generation",
+    exact: true,
+  });
+  await expect(stop).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("opencode_run_command", "Command failed");
+    fixture.hold("opencode_run_command");
+  });
+  await input.fill("/goal pause");
+  await input.press("Enter");
+  await expect(input).toBeEmpty();
+  await input.press("Enter");
+  await expect(stop).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "opencode_run_command",
+      ),
+    ),
+  ).toHaveLength(1);
+  await page.evaluate(() =>
+    (window as any).fixture.release("opencode_run_command"),
+  );
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Command failed" }),
+  ).toBeVisible();
+  await expect(stop).toBeVisible();
+  await expect(input).toHaveValue("/goal pause");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("opencode_run_command", null),
+  );
+  for (const [action, working] of [
+    ["pause", false],
+    ["resume", true],
+    ["clear", false],
+  ] as const) {
+    await page.evaluate(
+      ({ action, working }) =>
+        (window as any).fixture.setCommandResult({
+          text: `Goal ${action}`,
+          working,
+        }),
+      { action, working },
+    );
+    await input.fill(`/goal ${action}`);
+    await input.press("Enter");
+    await expect(
+      page.getByText(`Goal ${action}`, { exact: true }),
+    ).toBeVisible();
+    if (working) await expect(stop).toBeVisible();
+    else await expect(stop).toHaveCount(0);
+  }
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "opencode_send_prompt",
+      ),
+    ),
+  ).toHaveLength(0);
+});
+
+test("slash custom commands retain file snapshots on failure and reconcile native agent and model overrides", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.setProjectFile(
+      "src/App.tsx",
+      "// café 🚀\r\nexport const ready = true;\r\n",
+    ),
+  );
+  await findProjectFile(page, "src/App.tsx");
+  await page
+    .locator(".file-editor-toolbar")
+    .getByRole("button", { name: "Add to prompt", exact: true })
+    .click();
+  await choose(page, "Model", "Fast model provider/fast");
+  await choose(page, "Effort", "Low");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "opencode_run_command",
+      "Native command unavailable",
+    ),
+  );
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("/team");
+  await expect(
+    page.getByRole("option", { name: /^\/team\/review/ }),
+  ).toBeVisible();
+  await input.press("Enter");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Native command unavailable" }),
+  ).toBeVisible();
+  await expect(input).toHaveValue("/team/review");
+  await expect(attachedContext(page)).toContainText("src/App.tsx");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("opencode_run_command", null);
+    fixture.setCommandResult({
+      text: "Review the captured file",
+      working: false,
+      agent: "reviewer",
+      model: "provider/plain",
+    });
+  });
+  await input.press("Enter");
+  await expect(
+    page.getByText("Review the captured file", { exact: true }),
+  ).toBeVisible();
+  await expect(input).toBeEmpty();
+  await expect(attachedContext(page)).toHaveCount(0);
+  await expect(
+    page.getByRole("status", { name: "Agent selection", exact: true }),
+  ).toHaveText("Current: Reviewer");
+  await expect(
+    page.getByRole("button", { name: "Model", exact: true }),
+  ).toContainText("Simple model");
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter((call: any) =>
+      ["opencode_select_agent", "opencode_run_command"].includes(call.command),
+    ),
+  );
+  expect(calls.map((call: any) => call.command)).toEqual([
+    "opencode_select_agent",
+    "opencode_run_command",
+    "opencode_run_command",
+  ]);
+  expect(calls[1].args).toEqual(calls[2].args);
+  expect(calls[2].args).toMatchObject({
+    model: "provider/fast",
+    effort: "low",
+    command: { name: "team/review", text: "" },
+  });
+  const file = calls[2].args.command.files[0];
+  expect(file.name).toBe("src/App.tsx");
+  expect(Buffer.from(file.uri.split(",")[1], "base64").toString("utf8")).toBe(
+    "// café 🚀\r\nexport const ready = true;\r\n",
+  );
+});
+
+test("slash lookup locks submission, preserves newer drafts and stays scoped through project navigation", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.hold("opencode_commands");
+    fixture.setCommandResult({ text: "Background goal", working: false });
+    fixture.setCommands("/work/other", [
+      { name: "other-only", description: "Another project's command" },
+    ]);
+  });
+  await input.fill("/goal Background objective");
+  await input.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Run command", exact: true }),
+  ).toBeDisabled();
+  await input.press("Enter");
+  await input.fill("A newer draft");
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await choose(page, "Provider", "OpenCode");
+  await input.fill("/");
+  await expect(page.getByRole("option", { name: /^\/goal/ })).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("opencode_commands"),
+  );
+  await expect(
+    page.getByRole("option", { name: /^\/other-only/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("option", { name: /^\/goal/ })).toHaveCount(0);
+  await input.fill("Other project draft");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.command === "opencode_run_command",
+          ).length,
+      ),
+    )
+    .toBe(1);
+  await expect(input).toHaveValue("Other project draft");
+  await page
+    .getByRole("navigation", { name: "Open projects" })
+    .getByRole("button", { name: "caelum", exact: true })
+    .click();
+  await expect(input).toHaveValue("A newer draft");
+  await expect(
+    page.getByText("Background goal", { exact: true }),
+  ).toBeVisible();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "opencode_run_command",
+    ),
+  );
+  expect(calls[0].args).toMatchObject({
+    projectPath: "/work/caelum",
+    sessionId: "ses-a",
+    command: { name: "goal", text: "Background objective" },
+  });
+});
+
+test("slash usage opens without a session, keeps attachments and supports loading, retry, limits and modal shortcuts", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await findProjectFile(page, "src/App.tsx");
+  await page
+    .locator(".file-editor-toolbar")
+    .getByRole("button", { name: "Add to prompt", exact: true })
+    .click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("/usage unexpected");
+  await input.press("Enter");
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "/usage does not take arguments." }),
+  ).toBeVisible();
+  await expect(input).toHaveValue("/usage unexpected");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("opencode_usage_limits", "Usage unavailable");
+    fixture.hold("opencode_usage_limits");
+  });
+  await input.fill("/usage");
+  await input.press("Enter");
+  const dialog = page.getByRole("dialog", {
+    name: "OpenCode usage",
+    exact: true,
+  });
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByText("Loading usage…", { exact: true }),
+  ).toBeVisible();
+  await expect(dialog).toContainText("No context usage reported");
+  await page.keyboard.press("Meta+n");
+  await page.keyboard.press("Meta+p");
+  await expect(dialog).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "Find project file" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await page.evaluate(() =>
+    (window as any).fixture.release("opencode_usage_limits"),
+  );
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "Error: Usage unavailable",
+  );
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("opencode_usage_limits", null);
+    fixture.setUsageLimits({
+      workspace: {
+        id: "workspace",
+        name: "My workspace",
+        usageURL: "https://opencode.ai/usage",
+      },
+      go: {
+        rolling: { percent: 42, limited: false, resetsAt: 1800000000000 },
+        weekly: { percent: 20, limited: false, resetsAt: 1800100000000 },
+        monthly: { percent: 100, limited: true, resetsAt: 1800200000000 },
+      },
+      budgets: [
+        {
+          id: "budget",
+          limit: 25,
+          spent: 4.5,
+          scope: "combined",
+          per: "set",
+          coverage: "all",
+          models: [],
+          vendors: [],
+          shared: true,
+          picked: true,
+          resetsAt: 1800200000000,
+        },
+      ],
+    });
+  });
+  await dialog
+    .getByRole("button", { name: "Retry usage", exact: true })
+    .click();
+  await expect(dialog).toContainText("My workspace");
+  await expect(
+    dialog.getByRole("progressbar", {
+      name: "rolling allowance used",
+      exact: true,
+    }),
+  ).toHaveAttribute("value", "42");
+  await expect(dialog).toContainText("100% used · Limit reached");
+  await expect(dialog).toContainText("$4.50 / $25.00");
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(dialog).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: "test-results/slash-usage.png" });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(input).toBeFocused();
+  await expect(input).toBeEmpty();
+  await expect(attachedContext(page)).toContainText("src/App.tsx");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter((call: any) =>
+        [
+          "opencode_run_command",
+          "opencode_send_prompt",
+          "opencode_start_session",
+        ].includes(call.command),
+      ),
+    ),
+  ).toHaveLength(0);
+});
+
+test("slash usage reports the measured session model and handles missing provider allowances", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await setHistory(
+    page,
+    "opencode",
+    [
+      {
+        id: "usage",
+        type: "assistant",
+        time: { created: 100, completed: 200 },
+        model: { providerID: "provider", id: "model" },
+        tokens: {
+          input: 80000,
+          output: 10000,
+          reasoning: 2000,
+          cache: { read: 9000, write: 1000 },
+        },
+        content: [{ type: "text", text: "Measured response" }],
+      },
+    ],
+    false,
+  );
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  await choose(page, "Model", "Fast model provider/fast");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("/us");
+  await expect(page.getByRole("option", { name: /^\/usage/ })).toBeVisible();
+  await input.press("Enter");
+  const dialog = page.getByRole("dialog", {
+    name: "OpenCode usage",
+    exact: true,
+  });
+  await expect(dialog).toContainText("100,000 / 200,000 tokens");
+  await expect(dialog).toContainText("Test model");
+  await expect(dialog).toContainText("No OpenCode Console allowances reported");
+  await dialog
+    .getByRole("button", { name: "Refresh usage", exact: true })
+    .click();
+  await expect(dialog).toContainText("No OpenCode Console allowances reported");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Model", exact: true }),
+  ).toContainText("Fast model");
 });
 
 test("Build and Plan are one-click session controls that distinguish the running agent from the next message", async ({
