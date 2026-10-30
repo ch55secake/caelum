@@ -8,6 +8,8 @@ import {
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { GitBranch, RefreshCw, X } from "lucide-react";
 import { GitStatusIcon } from "./GitStatusIcon.js";
+import { DiffSection } from "./DiffSection.js";
+import { readGitStatus, type GitRepositoryStatus } from "./gitStatus.js";
 import type { ProjectInfo } from "./workspaceState.js";
 import {
   changedDiffLines,
@@ -17,13 +19,6 @@ import {
   type GitFileDiff,
   type GitFileStatus,
 } from "./gitReviewState.js";
-
-type GitRepositoryStatus = {
-  projectPath: string;
-  repositoryRoot: string | null;
-  branch: string | null;
-  changes: GitFileStatus[];
-};
 
 export function GitReviewPanel({
   project,
@@ -146,10 +141,7 @@ export function GitReviewPanel({
       const interaction = manualSelection.current;
       setIsLoadingStatus(true);
       try {
-        const snapshot = await invoke<GitRepositoryStatus>(
-          "git_repository_status",
-          { projectPath: project.path },
-        );
+        const snapshot = await readGitStatus(project.path);
         if (disposed) return;
         setStatus(snapshot);
         setStatusError(null);
@@ -325,6 +317,7 @@ export function GitReviewPanel({
                     {diffSections.map((section) => (
                       <DiffSection
                         key={section}
+                        path={diff.path}
                         title={
                           section.charAt(0).toUpperCase() + section.slice(1)
                         }
@@ -371,45 +364,4 @@ function describeChange(change: GitFileStatus) {
       `Unstaged ${label(change.worktreeStatus)}`,
   ].filter(Boolean);
   return states.join("; ") || "Changed";
-}
-
-function DiffSection({
-  title,
-  content,
-  highlights,
-}: {
-  title: string;
-  content: string;
-  highlights?: number[];
-}) {
-  if (!content) return null;
-  const lines = content.split("\n");
-  const marked = new Set(highlights);
-  return (
-    <section className="git-diff-section" aria-label={`${title} diff`}>
-      <h2>{title}</h2>
-      <pre>
-        {lines.map((line, index) => {
-          const lineClass =
-            line.startsWith("+") && !line.startsWith("+++")
-              ? "added"
-              : line.startsWith("-") && !line.startsWith("---")
-                ? "removed"
-                : line.startsWith("@@")
-                  ? "hunk"
-                  : "";
-          return (
-            <span
-              className={`${lineClass}${marked.has(index) ? " latest-change" : ""}`}
-              data-latest-change={marked.has(index) || undefined}
-              key={`${index}-${line}`}
-            >
-              {line}
-              {index < lines.length - 1 ? "\n" : ""}
-            </span>
-          );
-        })}
-      </pre>
-    </section>
-  );
 }

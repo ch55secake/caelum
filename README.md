@@ -89,11 +89,13 @@ The composer’s **Context** meter shows the latest reported context usage. Hove
 
 Patch tool previews list affected files, including renames; execute previews show the JavaScript being run. Expand a tool row to inspect the complete original input and output. **Turn cancelled** describes the current turn and clears when work resumes, including after a history refresh or reconnect. A resumable OpenCode shutdown appears as **Execution paused**.
 
-The **Changes** pane follows and accents the latest edited file while the agent works and reveals newly changed diff hunks. Repeated edits to already-dirty files are detected; unchanged refreshes preserve your selection and reading position. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
+The **Changes** pane follows and accents the latest edited file while the agent works and reveals newly changed diff hunks. Diffs use language-aware syntax colours with green/red backgrounds and `+`/`−` markers for additions and removals, across staged, unstaged, and untracked changes. Repeated edits to already-dirty files are detected; unchanged refreshes preserve your selection and reading position. Toggle it from the sidebar or header. Model selection is searchable by name or ID, with arrow-key navigation and Enter to select. Shell notifications display their command, execution ID, status, and output as expandable tool activity.
 
 Your newest message has an accent rail. Press **↑** in an empty composer to recall the last message sent in that session, ready to edit and resend.
 
 Context compaction appears as a checkpoint in live and restored Codex and OpenCode conversations, including running, completed, failed, and interrupted states. Expand an OpenCode checkpoint to read its summary or error when supplied. Earlier messages stay available, and the agent can keep working after compaction finishes.
+
+Project rows show the folder path, current branch, and changed-file count or clean status. Git details refresh while projects are visible, with running-session and approval indicators for background work. Detached HEAD, non-Git folders, and unavailable Git status are identified explicitly.
 
 Session rows show a branch and added/deleted lines from the latest turn when available. Hover the branch to see whether it is recorded with the session (Codex) or the current working-directory branch (OpenCode). Search also matches branch names. Hover or focus a row to **Archive** an old session; **Undo** restores the most recently archived session, including its in-app draft and pending settings. Archiving uses the provider’s archive and keeps its conversation history. Stop an active turn before archiving.
 

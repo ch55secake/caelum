@@ -2,6 +2,8 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AccentColor } from "./accentColors.js";
 import { GitStatusIcon } from "./GitStatusIcon.js";
+import { languageForPath } from "./codeLanguages.js";
+import { readGitStatus, type GitRepositoryStatus } from "./gitStatus.js";
 import {
   ChevronDown,
   ChevronRight,
@@ -35,12 +37,6 @@ type DirectoryListing = {
 type DirectoryState = DirectoryListing & { loading: boolean; error: string | null };
 type ProjectFileContent = { path: string; content: string; sizeBytes: number; truncated: boolean };
 type GitFileStatus = { path: string; indexStatus: string; worktreeStatus: string };
-type GitRepositoryStatus = {
-  projectPath: string;
-  repositoryRoot: string | null;
-  branch: string | null;
-  changes: GitFileStatus[];
-};
 type GitFileVersions = { path: string; original: string; modified: string; truncated: boolean };
 type TreeNode = { kind: "entry"; entry: ProjectFileEntry; depth: number } | { kind: "more"; path: string; depth: number };
 type EditorView =
@@ -169,7 +165,7 @@ export function FilesPanel({ project, theme, accentColor }: { project: ProjectIn
     }
 
     void loadDirectory("", 0, false, generation);
-    void invoke<GitRepositoryStatus>("git_repository_status", { projectPath })
+    void readGitStatus(projectPath)
       .then((snapshot) => {
         if (generation === requestGeneration.current) setStatus(snapshot);
       })
@@ -504,18 +500,6 @@ function editorOptions(ariaLabel: string) {
     scrollBeyondLastLine: false,
     wordWrap: "off" as const,
   };
-}
-
-function languageForPath(path: string): string {
-  const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
-  const languages: Record<string, string> = {
-    c: "c", cc: "cpp", cpp: "cpp", cs: "csharp", css: "css", go: "go", h: "cpp", hpp: "cpp",
-    html: "html", java: "java", js: "javascript", json: "json", jsx: "javascript", md: "markdown",
-    mjs: "javascript", mts: "typescript", php: "php", py: "python", rb: "ruby", rs: "rust",
-    sh: "shell", sql: "sql", toml: "ini", ts: "typescript", tsx: "typescript", xml: "xml", yaml: "yaml", yml: "yaml",
-  };
-  if (path.endsWith("Dockerfile")) return "dockerfile";
-  return languages[extension] ?? "plaintext";
 }
 
 function formatBytes(bytes: number): string {

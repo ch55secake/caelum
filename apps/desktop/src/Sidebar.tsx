@@ -1,7 +1,6 @@
 import {
   Archive,
   FileCode2,
-  FolderGit2,
   GitBranch,
   LoaderCircle,
   MessageSquare,
@@ -13,7 +12,6 @@ import {
   Search,
   ShieldAlert,
   Settings,
-  X,
 } from "lucide-react";
 import { useEffect, useRef, type RefObject } from "react";
 import type {
@@ -22,6 +20,8 @@ import type {
   SessionDetails,
 } from "./workspaceState.js";
 import type { useWorkspace } from "./useWorkspace.js";
+import { ProjectItem } from "./ProjectItem.js";
+import { projectHasActiveTurn } from "./workspaceState.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
 export function sessionTitle(item: SessionSummary) {
   return item.name || item.preview || "Untitled session";
@@ -140,38 +140,17 @@ export function Sidebar({
       <nav className="project-list" aria-label="Open projects">
         {app.restoring && <span className="empty-sessions">Restoring…</span>}
         {app.projects.map((project) => (
-          <div
+          <ProjectItem
             key={project.path}
-            className={`project-row${app.project?.path === project.path ? " selected" : ""}`}
-          >
-            <button
-              className="project-item"
-              title={project.path}
-              aria-current={
-                app.project?.path === project.path ? "page" : undefined
-              }
-              onClick={() => app.activateProject(project)}
-            >
-              <FolderGit2 size={14} />
-              <span>{project.name}</span>
-              {app.approvals.some(
-                (request) => request.projectPath === project.path,
-              ) && (
-                <ShieldAlert
-                  size={13}
-                  className="approval-indicator"
-                  aria-label="Approval required"
-                />
-              )}
-            </button>
-            <button
-              className="icon-button project-close"
-              aria-label={`Close ${project.name}`}
-              onClick={() => app.closeProject(project.path)}
-            >
-              <X size={12} />
-            </button>
-          </div>
+            project={project}
+            selected={app.project?.path === project.path}
+            working={projectHasActiveTurn(app.workspaces[project.path])}
+            approval={app.approvals.some(
+              (request) => request.projectPath === project.path,
+            )}
+            activate={() => app.activateProject(project)}
+            close={() => app.closeProject(project.path)}
+          />
         ))}
       </nav>
       <button

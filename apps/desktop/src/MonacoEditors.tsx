@@ -34,16 +34,21 @@ for (const [accentColor, palette] of Object.entries(accentColors)) {
 }
 
 const languageLoaders: Record<string, () => Promise<unknown>> = {
+  c: () => import("monaco-editor/esm/vs/languages/definitions/cpp/register.js"),
   cpp: () => import("monaco-editor/esm/vs/languages/definitions/cpp/register.js"),
   csharp: () => import("monaco-editor/esm/vs/languages/definitions/csharp/register.js"),
   css: () => import("monaco-editor/esm/vs/languages/definitions/css/register.js"),
+  dockerfile: () => import("monaco-editor/esm/vs/languages/definitions/dockerfile/register.js"),
   go: () => import("monaco-editor/esm/vs/languages/definitions/go/register.js"),
   html: () => import("monaco-editor/esm/vs/languages/definitions/html/register.js"),
+  ini: () => import("monaco-editor/esm/vs/languages/definitions/ini/register.js"),
   java: () => import("monaco-editor/esm/vs/languages/definitions/java/register.js"),
   javascript: () => import("monaco-editor/esm/vs/languages/definitions/javascript/register.js"),
   json: () => import("monaco-editor/esm/vs/language/json/monaco.contribution.js"),
   markdown: () => import("monaco-editor/esm/vs/languages/definitions/markdown/register.js"),
+  php: () => import("monaco-editor/esm/vs/languages/definitions/php/register.js"),
   python: () => import("monaco-editor/esm/vs/languages/definitions/python/register.js"),
+  ruby: () => import("monaco-editor/esm/vs/languages/definitions/ruby/register.js"),
   rust: () => import("monaco-editor/esm/vs/languages/definitions/rust/register.js"),
   shell: () => import("monaco-editor/esm/vs/languages/definitions/shell/register.js"),
   sql: () => import("monaco-editor/esm/vs/languages/definitions/sql/register.js"),
@@ -51,6 +56,27 @@ const languageLoaders: Record<string, () => Promise<unknown>> = {
   xml: () => import("monaco-editor/esm/vs/languages/definitions/xml/register.js"),
   yaml: () => import("monaco-editor/esm/vs/languages/definitions/yaml/register.js"),
 };
+
+export async function syntaxTokenizer(language: string) {
+  if (language === "json") {
+    // JSON's editor contribution only installs its tokenizer when an editor
+    // opens. Use the same tokenizer directly for read-only snippets.
+    const { createTokenizationSupport } = await import("monaco-editor/esm/vs/languages/features/json/tokenization.js");
+    const provider = createTokenizationSupport(true);
+    return (text: string) => {
+      let state = provider.getInitialState();
+      return text.split("\n").map((line) => {
+        const result = provider.tokenize(line, state);
+        state = result.endState;
+        return result.tokens.map((token) => ({ offset: token.startIndex, type: token.scopes }));
+      });
+    };
+  }
+  await languageLoaders[language]?.();
+  // Registration is lazy: wait for the grammar before synchronous tokenize.
+  await monaco.editor.colorize("", language, {});
+  return (text: string) => monaco.editor.tokenize(text, language);
+}
 
 function useLanguage(language: string | undefined) {
   useEffect(() => {
