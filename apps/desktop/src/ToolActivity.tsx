@@ -5,6 +5,7 @@ import { CopyButton } from "./MessageContent.js";
 import { useEffect, useMemo, useState } from "react";
 import { splitShellMessages } from "./shellMessages.js";
 import { toolSummary, toolFilePaths } from "./toolSummary.js";
+import { ToolPatchPreview } from "./ToolPatchPreview.js";
 import { useFileNavigation } from "./FileNavigation.js";
 import { fileReference } from "./fileContext.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
@@ -182,6 +183,11 @@ export function ToolActivity({
                   : ""}
         </span>
       </button>
+      <ToolPatchPreview
+        input={entry.input}
+        expanded={expanded}
+        toggle={toggle}
+      />
       {expanded && (
         <div className="tool-details">
           {paths.length > 0 && (

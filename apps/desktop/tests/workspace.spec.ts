@@ -1569,6 +1569,17 @@ test("Files opens local Markdown and tool references at their source line withou
     );
     window.dispatchEvent(new Event("focus"));
   });
+  const patch = page.locator('[data-entry-id="codex-refs-tool"]');
+  await expect(patch.locator(".tool-summary")).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await expect(
+    patch.locator(".tool-patch-preview .diff-line.removed"),
+  ).toHaveText("-old");
+  await expect(
+    patch.locator(".tool-patch-preview .diff-line.added"),
+  ).toHaveText("+new");
   await page
     .locator(".markdown")
     .getByRole("button", { name: "src/App.tsx:2", exact: true })
@@ -5863,10 +5874,27 @@ test("patch and execute rows describe restored and live work and retain full too
     {
       name: "patch",
       input: {
-        patchText:
-          "*** Begin Patch\n*** Update File: src/App.tsx\n@@\n-old\n+new\n*** Add File: src/new file.ts\n+export {};\n*** End Patch",
+        patchText: [
+          "*** Begin Patch",
+          "*** Update File: src/App.tsx",
+          "@@",
+          '-export const theme = "dark";',
+          "-export const ready = false;",
+          "-export const limit = 10;",
+          "-export const obsolete = true;",
+          '+export const theme = "light";',
+          "+export const ready = true;",
+          "+export const limit = 20;",
+          "+export const lastLine = true;",
+          "*** Add File: src/new file.rs",
+          "+pub fn answer() -> u32 {",
+          "+    42",
+          "+}",
+          "*** Delete File: src/unused.ts",
+          "*** End Patch",
+        ].join("\n"),
       },
-      preview: "src/App.tsx, src/new file.ts",
+      preview: "src/App.tsx, src/new file.rs, src/unused.ts",
     },
     {
       name: "execute",
@@ -5904,17 +5932,50 @@ test("patch and execute rows describe restored and live work and retain full too
     .getByRole("button", { name: "OpenCode session", exact: true })
     .click();
   await page.evaluate(() => (window as any).fixture.setOpenWorking(true));
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  await composer.fill("Keep my patch review draft");
   for (const tool of tools) {
     const restored = page.locator(
       `[data-entry-id="opencode-tool-restored-${tool.name}"]`,
     );
     await expect(restored.locator(".tool-preview")).toHaveText(tool.preview);
+    if (tool.name === "patch") {
+      await expect(restored.locator(".tool-summary")).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      const preview = restored.getByRole("group", { name: "Patch preview" });
+      await expect(preview.locator(".tool-patch-file")).toHaveCount(2);
+      await expect(preview.locator(".diff-line.removed")).toHaveCount(3);
+      await expect(preview.locator(".diff-line.added")).toHaveCount(6);
+      await expect(preview).toContainText("2 more changed lines");
+      await expect(preview).toContainText("1 more file");
+      await expect(preview).not.toContainText("lastLine");
+      await expect(
+        preview.locator(".syntax-keyword").filter({ hasText: /^pub$/ }),
+      ).toBeVisible();
+    } else await expect(restored.locator(".tool-patch-preview")).toHaveCount(0);
     await restored
       .getByRole("button", { name: new RegExp(`^${tool.name} `) })
       .click();
     await expect(restored.locator(".tool-value pre").first()).toHaveText(
       JSON.stringify(tool.input, null, 2),
     );
+    if (tool.name === "patch") {
+      await restored
+        .getByRole("button", { name: "Hide full patch input" })
+        .press("Enter");
+      await expect(restored.locator(".tool-details")).toHaveCount(0);
+      await restored
+        .getByRole("button", { name: "Show full patch input" })
+        .press("Enter");
+      await expect(restored.locator(".tool-value pre").first()).toContainText(
+        "lastLine",
+      );
+    }
+    await restored.locator(".tool-summary").click();
+    await composer.focus();
+    const serialized = JSON.stringify(tool.input);
     await emit(
       page,
       "session.tool.input.delta",
@@ -5922,14 +5983,34 @@ test("patch and execute rows describe restored and live work and retain full too
         sessionID: "ses-a",
         id: `live-${tool.name}`,
         name: tool.name,
-        delta: JSON.stringify(tool.input),
+        delta: serialized.slice(0, 30),
       },
       "opencode",
     );
     const live = page.locator(
       `[data-entry-id="opencode-tool-live-${tool.name}"]`,
     );
+    await expect(live.locator(".tool-patch-preview")).toHaveCount(0);
+    await emit(
+      page,
+      "session.tool.input.delta",
+      {
+        sessionID: "ses-a",
+        id: `live-${tool.name}`,
+        name: tool.name,
+        delta: serialized.slice(30),
+      },
+      "opencode",
+    );
     await expect(live.locator(".tool-preview")).toHaveText(tool.preview);
+    if (tool.name === "patch") {
+      await expect(
+        live
+          .locator(".tool-patch-preview .syntax-keyword")
+          .filter({ hasText: /^pub$/ }),
+      ).toBeVisible();
+      await expect(composer).toBeFocused();
+    }
     await emit(
       page,
       "session.tool.called",
@@ -5956,8 +6037,32 @@ test("patch and execute rows describe restored and live work and retain full too
       "opencode",
     );
     await expect(live.locator(".tool-preview")).toHaveText(tool.preview);
+    if (tool.name === "patch") {
+      await live.locator(".diff-line.added").first().click({ button: "right" });
+      await pickMenu(page, "Copy input");
+      await expect
+        .poll(() => copiedText(page))
+        .toBe(JSON.stringify(tool.input, null, 2));
+      await expect(live.locator(".tool-patch-preview")).toBeVisible();
+    }
   }
   await page.screenshot({ path: "test-results/tool-previews.png" });
+  await page.setViewportSize({ width: 800, height: 620 });
+  const livePatch = page.locator('[data-entry-id="opencode-tool-live-patch"]');
+  await livePatch.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
+  await page.screenshot({ path: "test-results/tool-patch-compact.png" });
+  const added = livePatch.locator(".diff-line.added").first();
+  await expect(added).toHaveCSS("background-color", "rgb(20, 35, 25)");
+  const dialog = await openSettings(page);
+  await dialog.getByRole("radio", { name: "Light", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(added).toHaveCSS("background-color", "rgb(232, 243, 233)");
+  await expect(composer).toHaveValue("Keep my patch review draft");
+  await livePatch.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/tool-patch-light.png" });
 });
 
 test("OpenCode stays active across quiet tool gaps and repeated history polls, then settles on completion", async ({
