@@ -7,6 +7,7 @@ export function defaultSettings() {
     theme: "dark",
     accentColor: "violet",
     defaultProvider: "codex",
+    favoriteModels: { codex: [], opencode: [] },
     providers: {
       codex: { model: "", effort: "", agent: "" },
       opencode: { model: "", effort: "", agent: "" },
@@ -25,10 +26,18 @@ export function normalizeSettings(value) {
     settings.accentColor = value.accentColor;
   if (["codex", "opencode"].includes(value?.defaultProvider))
     settings.defaultProvider = value.defaultProvider;
-  for (const provider of ["codex", "opencode"])
+  for (const provider of ["codex", "opencode"]) {
+    const favorites = value?.favoriteModels?.[provider];
+    if (Array.isArray(favorites))
+      settings.favoriteModels[provider] = [
+        ...new Set(
+          favorites.filter((id) => typeof id === "string" && id.trim()),
+        ),
+      ];
     for (const key of ["model", "effort", "agent"])
       if (typeof value?.providers?.[provider]?.[key] === "string")
         settings.providers[provider][key] = value.providers[provider][key];
+  }
   return settings;
 }
 

@@ -53,6 +53,7 @@ export type WorkspaceSessionInfo = {
 export type ModelChoice = {
   id: string;
   name: string;
+  provider?: { id: string; name: string } | null;
   efforts: { id: string; name: string }[];
   defaultEffort?: string | null;
 };

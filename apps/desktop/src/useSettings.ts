@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { accentColors } from "./accentColors.js";
+import type { ProviderKind } from "./workspaceState.js";
 import {
   defaultSettings,
   normalizeSettings,
@@ -80,6 +81,21 @@ export function useSettings() {
     setSettings(next);
     save(next);
   }
+  function toggleModelFavourite(provider: ProviderKind, id: string) {
+    if (!id) return;
+    update((value) => {
+      const favorites = value.favoriteModels[provider];
+      return {
+        ...value,
+        favoriteModels: {
+          ...value.favoriteModels,
+          [provider]: favorites.includes(id)
+            ? favorites.filter((model) => model !== id)
+            : [...favorites, id],
+        },
+      };
+    });
+  }
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -122,6 +138,7 @@ export function useSettings() {
     settings,
     resolvedTheme,
     update,
+    toggleModelFavourite,
     storageError,
     themeError,
     retrySave: () => save(current.current),

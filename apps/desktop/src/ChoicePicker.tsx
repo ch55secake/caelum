@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useId,
   useLayoutEffect,
@@ -7,9 +8,14 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Search, Star } from "lucide-react";
 
-type Choice = { id: string; name: string; description?: string };
+type Choice = {
+  id: string;
+  name: string;
+  description?: string;
+  source?: string;
+};
 
 export function ChoicePicker({
   label,
@@ -19,6 +25,8 @@ export function ChoicePicker({
   icon,
   disabled,
   searchable = false,
+  favouriteIds = [],
+  onToggleFavourite,
 }: {
   label: string;
   value: string;
@@ -27,6 +35,8 @@ export function ChoicePicker({
   icon: ReactNode;
   disabled?: boolean;
   searchable?: boolean;
+  favouriteIds?: string[];
+  onToggleFavourite?: (id: string) => void;
 }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -35,7 +45,7 @@ export function ChoicePicker({
   const list = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState<string | null>(null);
   const [position, setPosition] = useState<{
     left: number;
     top?: number;
@@ -48,22 +58,28 @@ export function ChoicePicker({
     width: 320,
     maxHeight: 360,
   });
-  const filtered = choices.filter((choice) =>
-    `${choice.name} ${choice.id}`.toLowerCase().includes(query.toLowerCase()),
+  const favourites = new Set(favouriteIds);
+  const rank = (choice: Choice) =>
+    !choice.id ? 0 : favourites.has(choice.id) ? 1 : 2;
+  const ordered = onToggleFavourite
+    ? [...choices].sort((a, b) => rank(a) - rank(b))
+    : choices;
+  const filtered = ordered.filter((choice) =>
+    `${choice.name} ${choice.id} ${choice.source ?? ""}`
+      .toLowerCase()
+      .includes(query.toLowerCase()),
   );
   const selected = choices.find((choice) => choice.id === value);
-  const activeIndex = Math.min(active, filtered.length - 1);
-  const current = filtered[activeIndex];
+  const current =
+    filtered.find((choice) => choice.id === active) ?? filtered[0];
+  const activeIndex = filtered.indexOf(current);
   const activeId = current ? `${id}-option-${activeIndex}` : undefined;
+  const section = (choice: Choice) =>
+    !choice.id ? "" : favourites.has(choice.id) ? "Favourites" : "All models";
 
   function show() {
     setQuery("");
-    setActive(
-      Math.max(
-        0,
-        choices.findIndex((choice) => choice.id === value),
-      ),
-    );
+    setActive(value);
     setOpen(true);
   }
   function close(restoreFocus = false) {
@@ -137,7 +153,7 @@ export function ChoicePicker({
         type="button"
         className="choice-trigger"
         aria-label={label}
-        title={`${label}: ${selected?.name ?? value}`}
+        title={`${label}: ${selected?.name ?? value}${selected?.source ? ` · ${selected.source} (${selected.id})` : ""}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? `${id}-popup` : undefined}
@@ -151,7 +167,10 @@ export function ChoicePicker({
         }}
       >
         {icon}
-        <span>{selected?.name ?? value}</span>
+        <span className="choice-trigger-name">{selected?.name ?? value}</span>
+        {selected?.source && (
+          <small className="choice-trigger-source">{selected.source}</small>
+        )}
         <ChevronDown size={11} />
       </button>
       {open &&
@@ -178,16 +197,23 @@ export function ChoicePicker({
               }
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
-                setActive((index) =>
+                setActive(
                   filtered.length
-                    ? (index +
-                        (event.key === "ArrowDown" ? 1 : -1) +
-                        filtered.length) %
-                      filtered.length
-                    : 0,
+                    ? filtered[
+                        (activeIndex +
+                          (event.key === "ArrowDown" ? 1 : -1) +
+                          filtered.length) %
+                          filtered.length
+                      ].id
+                    : null,
                 );
+                (search.current ?? list.current)?.focus();
               }
-              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              if (
+                event.key === "Enter" &&
+                !event.nativeEvent.isComposing &&
+                !(event.target as HTMLElement).closest(".choice-favourite")
+              ) {
                 event.preventDefault();
                 event.stopPropagation();
                 if (current) choose(current);
@@ -204,12 +230,13 @@ export function ChoicePicker({
                   aria-expanded="true"
                   aria-controls={`${id}-list`}
                   aria-autocomplete="list"
+                  aria-haspopup={onToggleFavourite ? "grid" : "listbox"}
                   aria-activedescendant={activeId}
                   placeholder={`Search ${label.toLowerCase()}s…`}
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value);
-                    setActive(0);
+                    setActive(null);
                   }}
                 />
               </label>
@@ -219,33 +246,103 @@ export function ChoicePicker({
             <div
               ref={list}
               id={`${id}-list`}
-              role="listbox"
+              role={onToggleFavourite ? "grid" : "listbox"}
               aria-label={label}
               aria-activedescendant={!searchable ? activeId : undefined}
               tabIndex={searchable ? -1 : 0}
               className="choice-options"
             >
-              {filtered.map((choice, index) => (
-                <button
-                  key={choice.id}
-                  id={`${id}-option-${index}`}
-                  type="button"
-                  role="option"
-                  tabIndex={-1}
-                  aria-selected={choice.id === value}
-                  className={`choice-option${current?.id === choice.id ? " highlighted" : ""}`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => choose(choice)}
-                >
-                  <span>
-                    <strong>{choice.name}</strong>
-                    {choice.description && (
-                      <small>{choice.description}</small>
-                    )}
-                  </span>
-                  {choice.id === value && <Check size={14} />}
-                </button>
-              ))}
+              {filtered.map((choice, index) => {
+                const optionId = `${id}-option-${index}`;
+                const button = (
+                  <button
+                    key={choice.id}
+                    id={onToggleFavourite ? undefined : optionId}
+                    type="button"
+                    role={onToggleFavourite ? undefined : "option"}
+                    tabIndex={-1}
+                    aria-selected={
+                      onToggleFavourite ? undefined : choice.id === value
+                    }
+                    aria-label={
+                      onToggleFavourite
+                        ? `${choice.name}${choice.description ? ` ${choice.description}` : ""}`
+                        : undefined
+                    }
+                    aria-description={
+                      choice.source ? `Provider: ${choice.source}` : undefined
+                    }
+                    className={`choice-option${current?.id === choice.id ? " highlighted" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onFocus={() => setActive(choice.id)}
+                    onClick={() => choose(choice)}
+                  >
+                    <span>
+                      <span className="choice-option-name">
+                        <strong>{choice.name}</strong>
+                        {choice.source && (
+                          <small className="choice-source">
+                            {choice.source}
+                          </small>
+                        )}
+                      </span>
+                      {choice.description && (
+                        <small>{choice.description}</small>
+                      )}
+                    </span>
+                    {choice.id === value && <Check size={14} />}
+                  </button>
+                );
+                if (!onToggleFavourite) return button;
+                const favourite = favourites.has(choice.id);
+                const favouriteLabel = `${favourite ? "Remove" : "Add"} ${choice.name} (${choice.id}) ${favourite ? "from" : "to"} favourites`;
+                return (
+                  <Fragment key={choice.id}>
+                    {section(choice) &&
+                      (index === 0 ||
+                        section(choice) !== section(filtered[index - 1])) && (
+                        <div role="row" className="choice-section">
+                          <div role="gridcell" aria-colspan={2}>
+                            {section(choice)}
+                          </div>
+                        </div>
+                      )}
+                    <div
+                      role="row"
+                      aria-selected={choice.id === value}
+                      className={`choice-model-row${current?.id === choice.id ? " highlighted" : ""}`}
+                    >
+                      <div role="gridcell" id={optionId}>
+                        {button}
+                      </div>
+                      <div role="gridcell">
+                        {choice.id && (
+                          <button
+                            type="button"
+                            className="choice-favourite"
+                            aria-label={favouriteLabel}
+                            title={favouriteLabel}
+                            aria-pressed={favourite}
+                            tabIndex={current?.id === choice.id ? 0 : -1}
+                            onFocus={() => setActive(choice.id)}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setActive(choice.id);
+                              onToggleFavourite(choice.id);
+                              (search.current ?? list.current)?.focus();
+                            }}
+                          >
+                            <Star
+                              size={14}
+                              fill={favourite ? "currentColor" : "none"}
+                            />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </Fragment>
+                );
+              })}
               {!filtered.length && (
                 <div className="choice-empty">
                   No matching {label.toLowerCase()}s

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Bot,
   Check,
-  Cpu,
   Gauge,
   Layers,
   Monitor,
@@ -13,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { ChoicePicker } from "./ChoicePicker.js";
+import { ModelPicker } from "./ModelPicker.js";
 import { accentColors, type AccentColor } from "./accentColors.js";
 import type { WorkspaceController } from "./Sidebar.js";
 import type { useSettings } from "./useSettings.js";
@@ -73,7 +73,8 @@ function ProviderSettings({
       <h2>Providers</h2>
       <p className="settings-description">
         Defaults for new sessions across your projects. Customize an
-        individual draft in the composer.
+        individual draft in the composer. Star models to keep favourites at
+        the top of both model pickers.
       </p>
       <div className="setting-row">
         <div>
@@ -158,36 +159,23 @@ function ProviderSettings({
           <strong>Model</strong>
           <p>Start new {name} sessions with this model.</p>
         </div>
-        <ChoicePicker
+        <ModelPicker
           label="Default model"
+          provider={provider}
           value={defaults.model}
-          icon={<Cpu size={14} />}
-          searchable
           disabled={!app.project || loading}
           onChange={(value) => setDefault("model", value)}
-          choices={[
-            {
-              id: "",
-              name: "Provider default",
-              description:
-                choices?.defaultModel ??
-                "Use the provider’s configured model",
-            },
-            ...(defaults.model &&
-            !choices?.models.some((choice) => choice.id === defaults.model)
-              ? [
-                  {
-                    id: defaults.model,
-                    name: defaults.model,
-                    description: "Saved selection · currently unavailable",
-                  },
-                ]
-              : []),
-            ...(choices?.models ?? []).map((choice) => ({
-              ...choice,
-              description: choice.id,
-            })),
-          ]}
+          models={choices?.models ?? []}
+          favouriteModels={settings.favoriteModels[provider]}
+          toggleFavourite={(id) =>
+            preferences.toggleModelFavourite(provider, id)
+          }
+          unavailableDescription="Saved selection · currently unavailable"
+          defaultChoice={{
+            name: "Provider default",
+            description:
+              choices?.defaultModel ?? "Use the provider’s configured model",
+          }}
         />
       </div>
       <div className="setting-row">

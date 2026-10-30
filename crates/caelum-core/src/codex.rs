@@ -202,6 +202,7 @@ impl CodexProvider {
                 Some(ProviderModelChoice {
                     id: model.get("model")?.as_str()?.to_owned(),
                     name: model.get("displayName")?.as_str()?.to_owned(),
+                    provider: None,
                     efforts: model
                         .get("supportedReasoningEfforts")
                         .and_then(Value::as_array)

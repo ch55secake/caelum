@@ -18,6 +18,20 @@ test("saved preferences recover missing and invalid fields without mixing provid
   assert.equal(settings.theme, "light");
   assert.equal(settings.accentColor, "violet");
   assert.equal(settings.defaultProvider, "opencode");
+  assert.deepEqual(settings.favoriteModels, { codex: [], opencode: [] });
+  assert.deepEqual(
+    normalizeSettings({
+      ...settings,
+      favoriteModels: {
+        codex: "bad",
+        opencode: ["one/model", "two/model", "one/model", null, 8, "", " "],
+      },
+    }),
+    {
+      ...settings,
+      favoriteModels: { codex: [], opencode: ["one/model", "two/model"] },
+    },
+  );
   assert.deepEqual(settings.providers.codex, {
     model: "model-a",
     effort: "",

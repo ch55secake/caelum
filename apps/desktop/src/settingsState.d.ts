@@ -14,6 +14,7 @@ export type AppSettings = {
   theme: Theme;
   accentColor: AccentColor;
   defaultProvider: ProviderKind;
+  favoriteModels: Record<ProviderKind, string[]>;
   providers: Record<ProviderKind, ProviderDefaults>;
 };
 export const SETTINGS_KEY: string;

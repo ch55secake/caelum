@@ -1,11 +1,12 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
-import { ArrowUp, Bot, Cpu, Gauge, Layers, Square } from "lucide-react";
+import { ArrowUp, Bot, Gauge, Layers, Square } from "lucide-react";
 import type {
   ProviderKind,
   ProviderChoices,
   ModelChoice,
 } from "./workspaceState.js";
 import { ChoicePicker } from "./ChoicePicker.js";
+import { ModelPicker } from "./ModelPicker.js";
 
 export function Composer({
   draft,
@@ -27,6 +28,8 @@ export function Composer({
   effort,
   effortPending,
   modelChoice,
+  favouriteModels,
+  toggleFavouriteModel,
   agent,
   setOption,
   choicesError,
@@ -52,6 +55,8 @@ export function Composer({
   effort: string;
   effortPending: boolean;
   modelChoice?: ModelChoice;
+  favouriteModels: string[];
+  toggleFavouriteModel: (id: string) => void;
   agent: string;
   setOption: (key: "model" | "agent" | "effort", value: string) => void;
   choicesError: string | null;
@@ -181,36 +186,22 @@ export function Composer({
               </span>
             )}
             {(Boolean(choices?.models.length) || Boolean(model)) && (
-              <ChoicePicker
+              <ModelPicker
                 label="Model"
-                icon={<Cpu size={13} />}
+                provider={provider}
                 value={model}
                 disabled={submitting || disabled}
-                searchable
                 onChange={(value) => setOption("model", value)}
-                choices={[
-                  {
-                    id: "",
-                    name: isNew ? "Default model" : "Session model",
-                    description: isNew
-                      ? "Use provider settings"
-                      : "Keep this session’s configured model",
-                  },
-                  ...(model &&
-                  !choices?.models.some((choice) => choice.id === model)
-                    ? [
-                        {
-                          id: model,
-                          name: model,
-                          description: "Current selection",
-                        },
-                      ]
-                    : []),
-                  ...(choices?.models ?? []).map((choice) => ({
-                    ...choice,
-                    description: choice.id,
-                  })),
-                ]}
+                models={choices?.models ?? []}
+                favouriteModels={favouriteModels}
+                toggleFavourite={toggleFavouriteModel}
+                unavailableDescription="Current selection · currently unavailable"
+                defaultChoice={{
+                  name: isNew ? "Default model" : "Session model",
+                  description: isNew
+                    ? "Use provider settings"
+                    : "Keep this session’s configured model",
+                }}
               />
             )}
             {Boolean(modelChoice?.efforts.length) && (

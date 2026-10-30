@@ -166,6 +166,23 @@ impl OpenCodeProvider {
         )];
         let models = server.request_json(Method::GET, "/api/model", &query, None)?;
         let agents = server.request_json(Method::GET, "/api/agent", &query, None)?;
+        // Provider names include custom endpoints and routed services. Keep the
+        // native provider ID as a fallback if this optional metadata is unavailable.
+        let providers = server
+            .request_json(Method::GET, "/api/provider", &query, None)
+            .ok();
+        let provider_names: HashMap<&str, &str> = providers
+            .as_ref()
+            .and_then(|response| response.get("data"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|provider| {
+                let id = provider.get("id")?.as_str()?;
+                let name = provider.get("name")?.as_str()?;
+                (!name.trim().is_empty()).then_some((id, name))
+            })
+            .collect();
         let default_model = server
             .request_json(Method::GET, "/api/model/default", &query, None)
             .ok()
@@ -177,13 +194,18 @@ impl OpenCodeProvider {
             .iter()
             .filter(|model| model.get("enabled").and_then(Value::as_bool) == Some(true))
             .filter_map(|model| {
+                let provider_id = model.get("providerID")?.as_str()?;
                 Some(ProviderModelChoice {
-                    id: format!(
-                        "{}/{}",
-                        model.get("providerID")?.as_str()?,
-                        model.get("id")?.as_str()?
-                    ),
+                    id: format!("{}/{}", provider_id, model.get("id")?.as_str()?),
                     name: model.get("name")?.as_str()?.to_owned(),
+                    provider: Some(ProviderChoice {
+                        id: provider_id.to_owned(),
+                        name: provider_names
+                            .get(provider_id)
+                            .copied()
+                            .unwrap_or(provider_id)
+                            .to_owned(),
+                    }),
                     efforts: model
                         .get("variants")
                         .and_then(Value::as_array)
@@ -1693,7 +1715,18 @@ class Handler(BaseHTTPRequestHandler):
                 {"id": "msg_user", "type": "user", "text": "Earlier prompt"}
             ], "cursor": {"previous": None, "next": "older+opaque/=="}})
         elif path == "/api/model":
-            self.send_json({"data": [{"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True, "variants": [{"id": "low"}, {"id": "high"}]}, {"id": "disabled", "providerID": "local", "name": "Hidden", "enabled": False}]})
+            self.send_json({"data": [
+                {"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True, "variants": [{"id": "low"}, {"id": "high"}]},
+                {"id": "model/a", "providerID": "router", "canonical": "local", "name": "Model A", "enabled": True},
+                {"id": "model/a", "providerID": "custom", "name": "Model A", "enabled": True},
+                {"id": "disabled", "providerID": "local", "name": "Hidden", "enabled": False}
+            ]})
+        elif path == "/api/provider":
+            assert parse_qs(urlsplit(self.path).query)["location[directory]"] == [PROJECT]
+            if os.path.exists(os.path.join(PROJECT, "no-providers")):
+                self.send_error(503)
+                return
+            self.send_json({"data": [{"id": "local", "name": "Local gateway"}, {"id": "router", "name": "OpenRouter"}]})
         elif path == "/api/model/default":
             self.send_json({"data": {"providerID": "local", "id": "model/a"}})
         elif path == "/api/agent":
@@ -1768,7 +1801,24 @@ server.serve_forever()
         let listed = provider.list_sessions(&project_path).unwrap();
         assert_eq!(listed.sessions[0].id, "ses_fake");
         let choices = provider.choices(&project_path).unwrap();
-        assert_eq!(choices.models.len(), 1);
+        assert_eq!(choices.models.len(), 3);
+        assert_eq!(choices.models[0].id, "local/model/a");
+        assert_eq!(choices.models[1].id, "router/model/a");
+        assert_eq!(
+            choices.models[0].provider.as_ref().unwrap().name,
+            "Local gateway"
+        );
+        assert_eq!(choices.models[1].provider.as_ref().unwrap().id, "router");
+        assert_eq!(
+            choices.models[1].provider.as_ref().unwrap().name,
+            "OpenRouter"
+        );
+        assert_eq!(choices.models[2].provider.as_ref().unwrap().name, "custom");
+        fs::write(project_path.join("no-providers"), "").unwrap();
+        let fallback = provider.choices(&project_path).unwrap();
+        assert_eq!(fallback.models.len(), 3);
+        assert_eq!(fallback.models[0].provider.as_ref().unwrap().name, "local");
+        assert_eq!(fallback.models[1].provider.as_ref().unwrap().name, "router");
         assert_eq!(choices.agents.len(), 1);
         assert_eq!(choices.default_model.as_deref(), Some("local/model/a"));
         assert_eq!(

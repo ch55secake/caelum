@@ -107,6 +107,7 @@ Open **Settings** from the sidebar, the header when the sidebar is collapsed, or
 
 - **Appearance:** choose Dark, Light, or System, and a Violet, Blue, Teal, Green, Amber, or Rose accent. Accent shades adapt to the theme across highlights, links, controls, activity indicators, and Monaco selections. System follows your device’s appearance; themes also cover conversations, tools, Git review, and native window chrome.
 - **Providers:** choose a default provider for new projects and save independent Codex/OpenCode model and reasoning-effort defaults, plus an OpenCode agent. Defaults apply to new sessions; the composer can override them for an individual draft. Each existing session keeps its own configured model and effort.
+- Star models in the composer or Settings to pin favourites above the full model list. Favourites save per device, separately for Codex and OpenCode. OpenCode models show their supplying provider (including custom and routed services); search by model name, model ID, or provider name.
 - Provider status and available choices are checked against the selected project. Use **Refresh** after updating your local provider setup, or **Reset defaults** to use the provider’s own settings.
 
 ## Releases

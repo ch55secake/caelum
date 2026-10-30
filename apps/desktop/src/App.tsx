@@ -400,6 +400,12 @@ export default function App() {
                   modelPending={Boolean(app.selected?.model)}
                   effort={app.options.effort}
                   modelChoice={app.options.modelChoice}
+                  favouriteModels={
+                    preferences.settings.favoriteModels[app.provider]
+                  }
+                  toggleFavouriteModel={(id) =>
+                    preferences.toggleModelFavourite(app.provider, id)
+                  }
                   effortPending={app.selected?.effort != null}
                   agent={app.options.agent}
                   setOption={app.setOption}
