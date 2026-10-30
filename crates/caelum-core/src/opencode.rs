@@ -326,6 +326,7 @@ impl OpenCodeProvider {
             is_working: Some(session.is_working),
             model: session.model,
             effort: session.effort,
+            agent: session.agent,
             data: messages.iter().rev().cloned().collect(),
             next_cursor: response
                 .pointer("/cursor/next")
@@ -343,6 +344,29 @@ impl OpenCodeProvider {
         prompt: &str,
     ) -> Result<(), OpenCodeError> {
         self.send_prompt_with_id(project_path, session_id, prompt, None)
+    }
+
+    pub fn select_agent(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        agent: &str,
+    ) -> Result<(), OpenCodeError> {
+        if agent.trim().is_empty() {
+            return Err(OpenCodeError::Protocol("agent ID must not be empty".into()));
+        }
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let session = self.session(&server, &project, session_id)?;
+        if session.agent.as_deref() != Some(agent) {
+            server.request_json(
+                Method::POST,
+                &format!("/api/session/{session_id}/agent"),
+                &[],
+                Some(json!({ "agent": agent })),
+            )?;
+        }
+        Ok(())
     }
 
     pub fn send_prompt_with_id(
@@ -1248,6 +1272,10 @@ fn model_id(model: &Value) -> Option<String> {
 
 fn session_info(value: &Value) -> Option<OpenCodeSession> {
     Some(OpenCodeSession {
+        agent: value
+            .get("agent")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         model: value.get("model").and_then(model_id),
         effort: Some(
             value
@@ -1641,7 +1669,7 @@ from urllib.parse import urlsplit, parse_qs
 
 PROJECT = os.getcwd()
 PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
-SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}, "model": {"providerID": "local", "id": "original"}}
+SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}, "model": {"providerID": "local", "id": "original"}, "agent": "build"}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
@@ -1734,7 +1762,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/model/default":
             self.send_json({"data": {"providerID": "local", "id": "model/a"}})
         elif path == "/api/agent":
-            self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}]})
+            self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "plan", "name": "Plan", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}, {"id": "hidden", "name": "Hidden", "mode": "primary", "hidden": True}]})
         else:
             self.send_error(404)
 
@@ -1769,6 +1797,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(400)
                 return
             SESSION["model"] = body["model"]
+            self.send_response(204)
+            self.end_headers()
+        elif path == "/api/session/ses_fake/agent":
+            assert set(body) == {"agent"}
+            if body["agent"] not in ["build", "plan"]:
+                self.send_error(400)
+                return
+            SESSION["agent"] = body["agent"]
             self.send_response(204)
             self.end_headers()
         elif path == "/api/session/ses_fake/prompt":
@@ -1826,7 +1862,7 @@ server.serve_forever()
         assert_eq!(fallback.models.len(), 3);
         assert_eq!(fallback.models[0].provider.as_ref().unwrap().name, "local");
         assert_eq!(fallback.models[1].provider.as_ref().unwrap().name, "router");
-        assert_eq!(choices.agents.len(), 1);
+        assert_eq!(choices.agents.len(), 2);
         assert_eq!(choices.default_model.as_deref(), Some("local/model/a"));
         assert_eq!(
             choices.models[0]
@@ -1841,11 +1877,13 @@ server.serve_forever()
             .unwrap();
         assert_eq!(started.session.id, "ses_fake");
         assert_eq!(started.session.model.as_deref(), Some("local/model/a"));
+        assert_eq!(started.session.agent.as_deref(), Some("build"));
         let history = provider
             .session_history(&project_path, "ses_fake", None)
             .unwrap();
         assert_eq!(history.data[0]["text"], "Earlier prompt");
         assert_eq!(history.model.as_deref(), Some("local/model/a"));
+        assert_eq!(history.agent.as_deref(), Some("build"));
         assert_eq!(
             history.data[1]["content"][1]["state"]["content"][0]["text"],
             "All passed"
@@ -1976,6 +2014,51 @@ server.serve_forever()
                 .effort
                 .as_deref(),
             Some("")
+        );
+        provider
+            .select_agent(&project_path, "ses_fake", "plan")
+            .unwrap();
+        assert_eq!(
+            requests().last().unwrap(),
+            &json!({
+                "path": "/api/session/ses_fake/agent", "body": { "agent": "plan" }
+            })
+        );
+        let resumed = provider.resume_session(&project_path, "ses_fake").unwrap();
+        assert_eq!(resumed.session.agent.as_deref(), Some("plan"));
+        assert_eq!(resumed.session.model.as_deref(), Some("other/model/b"));
+        assert_eq!(resumed.session.effort.as_deref(), Some(""));
+        assert_eq!(
+            provider
+                .session_history(&project_path, "ses_fake", None)
+                .unwrap()
+                .agent
+                .as_deref(),
+            Some("plan")
+        );
+        let count = requests().len();
+        provider
+            .select_agent(&project_path, "ses_fake", "plan")
+            .unwrap();
+        assert!(matches!(
+            provider.select_agent(&project_path, "ses_foreign", "build"),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        assert!(provider
+            .select_agent(&project_path, "ses_fake", "")
+            .is_err());
+        assert_eq!(requests().len(), count);
+        assert!(provider
+            .select_agent(&project_path, "ses_fake", "missing")
+            .is_err());
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .agent
+                .as_deref(),
+            Some("plan")
         );
         provider.cancel_turn(&project_path, "ses_fake").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);

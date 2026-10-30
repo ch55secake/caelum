@@ -36,6 +36,7 @@ export function createSessionWorkspace(session) {
     session,
     model: null,
     effort: null,
+    agent: null,
     conversation: [],
     draft: "",
     isWorking: session.thread.isWorking ?? false,

@@ -221,6 +221,8 @@ pub struct OpenCodeSession {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// The selected project and OpenCode session shown in the desktop workspace.
@@ -251,6 +253,8 @@ pub struct SessionHistoryPage {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// Compact provider-owned context for a session's sidebar entry.

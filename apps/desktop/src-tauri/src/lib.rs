@@ -521,6 +521,23 @@ async fn opencode_session_history(
 }
 
 #[tauri::command]
+async fn opencode_select_agent(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+    agent: String,
+) -> Result<(), String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .select_agent(project_path, &session_id, &agent)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn opencode_send_prompt(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,
@@ -651,6 +668,7 @@ pub fn run() {
             opencode_resume_session,
             opencode_session_history,
             opencode_send_prompt,
+            opencode_select_agent,
             opencode_cancel_turn
         ])
         .build(tauri::generate_context!())

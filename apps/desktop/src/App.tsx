@@ -409,6 +409,7 @@ export default function App() {
                   }
                   effortPending={app.selected?.effort != null}
                   agent={app.options.agent}
+                  currentAgent={app.selected?.session.agent ?? null}
                   setOption={app.setOption}
                   retryChoices={() =>
                     void app.loadChoices(app.project!, app.provider)

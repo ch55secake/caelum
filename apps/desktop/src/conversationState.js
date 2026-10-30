@@ -705,6 +705,11 @@ export function applyConversationEvent(
       // an identity that would duplicate the provider's persisted message.
       return next;
     }
+    if (method === "session.agent.selected" && typeof data.agent === "string")
+      next = {
+        ...next,
+        session: { ...next.session, agent: data.agent },
+      };
     if (
       method === "session.model.selected" &&
       data.model?.providerID &&

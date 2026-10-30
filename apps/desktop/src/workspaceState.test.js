@@ -326,3 +326,29 @@ test("compaction preserves native identity, stays session-scoped and survives a 
   assert.equal(interrupted.conversation[0].status, "interrupted");
   assert.equal(interrupted.conversation[0].complete, false);
 });
+
+test("native agent changes stay scoped and preserve an independently selected next agent", () => {
+  let workspaces = withSession({}, projectA, "opencode", "ses-a");
+  workspaces = withSession(workspaces, projectB, "opencode", "ses-a");
+  workspaces = updateSessionWorkspace(
+    workspaces,
+    projectA.path,
+    "opencode",
+    "ses-a",
+    (current) => ({ ...current, agent: "plan" }),
+  );
+  workspaces = applyOpenCodeEvent(workspaces, {
+    projectPath: projectA.path,
+    eventType: "session.agent.selected",
+    data: { sessionID: "ses-a", agent: "reviewer" },
+  });
+  const session =
+    workspaces[projectA.path].providers.opencode.sessionsById["ses-a"];
+  assert.equal(session.session.agent, "reviewer");
+  assert.equal(session.agent, "plan");
+  assert.equal(
+    workspaces[projectB.path].providers.opencode.sessionsById["ses-a"].session
+      .agent,
+    undefined,
+  );
+});

@@ -55,6 +55,7 @@ type HistoryPage = {
   isWorking?: boolean | null;
   model?: string | null;
   effort?: string | null;
+  agent?: string | null;
 };
 type OpenCodeInfo = {
   project: ProjectInfo;
@@ -65,6 +66,7 @@ type OpenCodeInfo = {
     isWorking?: boolean;
     model?: string | null;
     effort?: string | null;
+    agent?: string | null;
   };
 };
 const providerInfo = (
@@ -78,6 +80,7 @@ const providerInfo = (
         provider,
         model: value.session.model,
         effort: value.session.effort,
+        agent: value.session.agent,
         thread: {
           id: value.session.id,
           name: value.session.title,
@@ -112,7 +115,9 @@ function generationOptions(
     model,
     modelChoice,
     effort,
-    agent: draft.agent,
+    agent: session
+      ? (session.agent ?? session.session.agent ?? "")
+      : draft.agent,
     requestedEffort:
       pendingEffort !== null || changedModel
         ? effort ||
@@ -527,7 +532,7 @@ export function useWorkspace(settings: AppSettings) {
   }
   function setOption(key: "model" | "agent" | "effort", value: string) {
     if (!project) return;
-    if (key !== "agent" && selectedId)
+    if (selectedId)
       mutateSession(project.path, provider, selectedId, (current) => ({
         ...current,
         ...(key === "model"
@@ -539,7 +544,11 @@ export function useWorkspace(settings: AppSettings) {
                   ? current.effort
                   : null,
             }
-          : { effort: value }),
+          : key === "agent"
+            ? {
+                agent: !value || value === current.session.agent ? null : value,
+              }
+            : { effort: value }),
       }));
     else
       mutateProvider(project.path, provider, (current) => {
@@ -924,6 +933,7 @@ export function useWorkspace(settings: AppSettings) {
                 ...value.session,
                 ...(page.model ? { model: page.model } : {}),
                 ...(page.effort != null ? { effort: page.effort } : {}),
+                ...(page.agent ? { agent: page.agent } : {}),
               }
             : value.session,
           isWorking,
@@ -1011,7 +1021,10 @@ export function useWorkspace(settings: AppSettings) {
             : value.isWorking;
         return {
           ...value,
-          session: info,
+          session:
+            value.eventRevision === (cached?.eventRevision ?? 0)
+              ? info
+              : { ...info, agent: value.session.agent ?? info.agent },
           connection: "connected",
           isWorking,
           lastOutcome: isWorking ? null : value.lastOutcome,
@@ -1128,6 +1141,7 @@ export function useWorkspace(settings: AppSettings) {
     let id = snapshot.selectedSessionId;
     const cached = id ? snapshot.sessionsById[id] : null;
     const model = cached?.model ?? null;
+    const pendingAgent = kind === "opencode" ? (cached?.agent ?? null) : null;
     const {
       requestedEffort: effort,
       model: initialModel,
@@ -1170,6 +1184,7 @@ export function useWorkspace(settings: AppSettings) {
         });
         const started = providerInfo(kind, result);
         started.model ??= initialModel || null;
+        if (kind === "opencode") started.agent ??= agent || null;
         id = started.thread.id;
         mutateProvider(target.path, kind, (value) => ({
           ...value,
@@ -1234,6 +1249,25 @@ export function useWorkspace(settings: AppSettings) {
           )
           .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
       }));
+      if (pendingAgent) {
+        const previousAgent =
+          state.current[target.path].providers[kind].sessionsById[sessionId]
+            .session.agent;
+        await invoke("opencode_select_agent", {
+          projectPath: target.path,
+          sessionId,
+          agent: pendingAgent,
+        });
+        mutateSession(target.path, kind, sessionId, (value) => ({
+          ...value,
+          session:
+            value.session.agent === previousAgent
+              ? { ...value.session, agent: pendingAgent }
+              : value.session,
+          agent: value.agent === pendingAgent ? null : value.agent,
+          eventRevision: value.eventRevision + 1,
+        }));
+      }
       await invoke(`${kind}_send_prompt`, {
         projectPath: target.path,
         threadId: sessionId,

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
-import { ArrowUp, Bot, Gauge, Layers, Square } from "lucide-react";
+import { ArrowUp, Gauge, Layers, Square } from "lucide-react";
 import type {
   ProviderKind,
   ProviderChoices,
@@ -9,6 +9,7 @@ import type {
 import { ChoicePicker } from "./ChoicePicker.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { ContextUsageIndicator } from "./ContextUsageIndicator.js";
+import { AgentPicker } from "./AgentPicker.js";
 
 export function Composer({
   draft,
@@ -34,6 +35,7 @@ export function Composer({
   favouriteModels,
   toggleFavouriteModel,
   agent,
+  currentAgent,
   setOption,
   choicesError,
   retryChoices,
@@ -62,6 +64,7 @@ export function Composer({
   favouriteModels: string[];
   toggleFavouriteModel: (id: string) => void;
   agent: string;
+  currentAgent: string | null;
   setOption: (key: "model" | "agent" | "effort", value: string) => void;
   choicesError: string | null;
   retryChoices: () => void;
@@ -123,6 +126,17 @@ export function Composer({
           submit();
         }}
       >
+        {provider === "opencode" && (
+          <AgentPicker
+            value={agent}
+            current={currentAgent}
+            choices={choices?.agents ?? []}
+            isNew={isNew}
+            working={working}
+            disabled={disabled || submitting}
+            onChange={(value) => setOption("agent", value)}
+          />
+        )}
         <textarea
           ref={measurement}
           className="composer-measure"
@@ -237,19 +251,6 @@ export function Composer({
                     ...choice,
                     name: effortName(choice.name),
                   })),
-                ]}
-              />
-            )}
-            {isNew && Boolean(choices?.agents.length) && (
-              <ChoicePicker
-                label="Agent"
-                icon={<Bot size={13} />}
-                value={agent}
-                disabled={submitting}
-                onChange={(value) => setOption("agent", value)}
-                choices={[
-                  { id: "", name: "Default agent" },
-                  ...choices!.agents,
                 ]}
               />
             )}

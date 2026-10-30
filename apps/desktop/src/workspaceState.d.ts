@@ -49,6 +49,7 @@ export type WorkspaceSessionInfo = {
   provider: ProviderKind;
   model?: string | null;
   effort?: string | null;
+  agent?: string | null;
 };
 export type ModelChoice = {
   id: string;
@@ -70,6 +71,8 @@ export type SessionWorkspaceState = {
   model: string | null;
   /** Null keeps the session effort; an empty string selects the model default. */
   effort: string | null;
+  /** Pending agent for the next prompt; null keeps the native session agent. */
+  agent: string | null;
   conversation: ConversationEntry[];
   isWorking: boolean;
   isSubmitting: boolean;

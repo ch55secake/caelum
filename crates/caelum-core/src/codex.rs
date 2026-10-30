@@ -340,6 +340,7 @@ impl CodexProvider {
             .and_then(Value::as_array)
             .ok_or_else(|| CodexError::Protocol("thread/turns/list has no data array".into()))?;
         Ok(SessionHistoryPage {
+            agent: None,
             model: None,
             effort: None,
             is_working: cursor.is_none().then(|| {

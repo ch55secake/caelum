@@ -25,6 +25,7 @@ export function ChoicePicker({
   onChange,
   icon,
   disabled,
+  triggerName,
   searchable = false,
   favouriteIds = [],
   onToggleFavourite,
@@ -35,6 +36,7 @@ export function ChoicePicker({
   onChange: (value: string) => void;
   icon: ReactNode;
   disabled?: boolean;
+  triggerName?: string;
   searchable?: boolean;
   favouriteIds?: string[];
   onToggleFavourite?: (id: string) => void;
@@ -185,7 +187,9 @@ export function ChoicePicker({
         }}
       >
         {icon}
-        <span className="choice-trigger-name">{selected?.name ?? value}</span>
+        <span className="choice-trigger-name">
+          {triggerName ?? selected?.name ?? value}
+        </span>
         {selected?.source && (
           <small className="choice-trigger-source">{selected.source}</small>
         )}
