@@ -9,8 +9,8 @@ use caelum_core::{
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
     GitFileVersions, GitRepositoryStatus, OpenCodeSessionInfo, OpenCodeSessionList,
-    ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProviderChoices, SessionDetails,
-    SessionHistoryPage, WorkspaceSnapshot,
+    ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProjectSearchMode,
+    ProjectSearchResults, ProviderChoices, SessionDetails, SessionHistoryPage, WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -119,6 +119,21 @@ async fn list_project_directory(
 ) -> Result<ProjectDirectoryListing, String> {
     tauri::async_runtime::spawn_blocking(move || {
         files::list_directory(project_path, &path, offset, limit).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn search_project_files(
+    project_path: String,
+    query: String,
+    mode: ProjectSearchMode,
+    include_ignored: bool,
+) -> Result<ProjectSearchResults, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        files::search_project(project_path, &query, mode, include_ignored)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -645,6 +660,7 @@ pub fn run() {
             git_file_versions,
             list_project_directory,
             read_project_file,
+            search_project_files,
             restore_workspace,
             remember_project,
             close_project_record,

@@ -3,6 +3,7 @@ import EditorComponent, { DiffEditor as DiffEditorComponent, loader, type DiffEd
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
 import "monaco-editor/esm/vs/editor/contrib/contextmenu/browser/contextmenu.js";
 import "monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard.js";
+import "monaco-editor/esm/vs/editor/contrib/find/browser/findController.js";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import { accentColors } from "./accentColors.js";

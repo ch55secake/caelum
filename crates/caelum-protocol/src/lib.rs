@@ -100,6 +100,31 @@ pub struct ProjectFileContent {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectSearchMode {
+    Files,
+    Content,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSearchMatch {
+    pub path: String,
+    pub line: Option<usize>,
+    /// One-based UTF-16 column, matching Monaco's coordinate system.
+    pub column: Option<usize>,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSearchResults {
+    pub matches: Vec<ProjectSearchMatch>,
+    pub truncated: bool,
+    pub skipped: usize,
+}
+
 /// Project and session metadata restored from Caelum's local workspace database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

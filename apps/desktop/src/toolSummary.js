@@ -8,6 +8,43 @@ const compact = (value) =>
     .replace(/\s+/g, " ")
     .trim();
 
+export function toolFilePaths(value) {
+  let input = value;
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      /* Freeform patches are handled below. */
+    }
+  }
+  const paths = [];
+  function collect(value, depth = 0) {
+    if (!value || depth > 4 || paths.length >= 20) return;
+    if (typeof value === "string") {
+      for (const match of value.matchAll(
+        /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm,
+      ))
+        paths.push(match[1].trim());
+    } else if (Array.isArray(value))
+      value.slice(0, 20).forEach((item) => collect(item, depth + 1));
+    else if (typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        if (
+          ["path", "filePath", "file_path"].includes(key) &&
+          typeof item === "string"
+        )
+          paths.push(item);
+        else if (
+          ["changes", "files", "patch", "patchText", "input"].includes(key)
+        )
+          collect(item, depth + 1);
+      }
+    }
+  }
+  collect(input);
+  return [...new Set(paths)].slice(0, 20);
+}
+
 function patchFiles(text) {
   if (typeof text !== "string") return [];
   const files = [];

@@ -2,9 +2,11 @@ import { Check, ChevronRight, CircleAlert, Wrench } from "lucide-react";
 import { displayValue } from "./conversationState.js";
 import type { ConversationEntry } from "./workspaceState.js";
 import { CopyButton } from "./MessageContent.js";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { splitShellMessages } from "./shellMessages.js";
-import { toolSummary } from "./toolSummary.js";
+import { toolSummary, toolFilePaths } from "./toolSummary.js";
+import { useFileNavigation } from "./FileNavigation.js";
+import { fileReference } from "./fileContext.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 
 function ShellIdentity({ id }: { id: string }) {
@@ -101,6 +103,15 @@ export function ToolActivity({
   toggle: () => void;
 }) {
   const contextMenu = useContextMenu();
+  const navigation = useFileNavigation();
+  const paths = useMemo(
+    () =>
+      toolFilePaths(entry.input).flatMap((path) => {
+        const file = navigation && fileReference(path, navigation.projectPath);
+        return file ? [file] : [];
+      }),
+    [entry.input, navigation?.projectPath],
+  );
   const running = entry.status === "running";
   const [observedStart] = useState(Date.now);
   const [now, setNow] = useState(Date.now);
@@ -132,12 +143,19 @@ export function ToolActivity({
       onContextMenu={(event) =>
         contextMenu(event, [
           { text: expanded ? "Collapse tool" : "Expand tool", action: toggle },
+          ...paths.map((file) => ({
+            text: `Open ${file.path}`,
+            action: () => navigation?.open(file),
+          })),
           ...(entry.input != null
-            ? [copyAction("Copy input", displayValue(entry.input))] : []),
+            ? [copyAction("Copy input", displayValue(entry.input))]
+            : []),
           ...(entry.output != null
-            ? [copyAction("Copy output", displayValue(entry.output))] : []),
+            ? [copyAction("Copy output", displayValue(entry.output))]
+            : []),
           ...(entry.error
-            ? [copyAction("Copy error", displayValue(entry.error))] : []),
+            ? [copyAction("Copy error", displayValue(entry.error))]
+            : []),
         ])
       }
     >
@@ -166,6 +184,19 @@ export function ToolActivity({
       </button>
       {expanded && (
         <div className="tool-details">
+          {paths.length > 0 && (
+            <div className="tool-file-links">
+              {paths.map((file) => (
+                <button
+                  className="file-reference"
+                  key={file.path}
+                  onClick={() => navigation?.open(file)}
+                >
+                  {file.path}
+                </button>
+              ))}
+            </div>
+          )}
           {entry.executionId && <ShellIdentity id={entry.executionId} />}
           <ToolValue label="Input" value={entry.input} />
           <ToolValue label="Output" value={entry.output} />

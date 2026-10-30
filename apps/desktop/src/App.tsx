@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   FolderOpen,
@@ -10,8 +10,9 @@ import {
   Settings as SettingsIcon,
   X,
 } from "lucide-react";
-import { FilesPanel } from "./FilesPanel.js";
-import { GitReviewPanel } from "./GitReviewPanel.js";
+import { ProjectInspector, type InspectorRequest } from "./ProjectInspector.js";
+import { FileNavigation } from "./FileNavigation.js";
+import type { FileLocation } from "./fileContext.js";
 import { useWorkspace } from "./useWorkspace.js";
 import { Sidebar, sessionTitle } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
@@ -27,27 +28,46 @@ export default function App() {
   const app = useWorkspace(preferences.settings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [changesOpen, setChangesOpen] = useState(true);
+  const [pane, setPane] = useState<"files" | "changes" | null>("changes");
+  const [expanded, setExpanded] = useState(false);
+  const [fileRequest, setFileRequest] = useState<InspectorRequest>();
+  const fileRequestId = useRef(0);
+  const changesOpen = pane === "changes";
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
-  const title =
-    app.view === "files"
-      ? "Files"
-      : app.selected
-        ? sessionTitle(
-            app.providerWorkspace?.sessions.find(
-              (item) => item.id === app.selectedId,
-            ) ?? app.selected.session.thread,
-          )
-        : "New session";
+  const currentSessionKey = useRef(sessionKey);
+  currentSessionKey.current = sessionKey;
+  const title = app.selected
+    ? sessionTitle(
+        app.providerWorkspace?.sessions.find(
+          (item) => item.id === app.selectedId,
+        ) ?? app.selected.session.thread,
+      )
+    : "New session";
   function toggleChanges() {
-    if (app.view !== "session") {
-      app.setView("session");
-      setChangesOpen(true);
-    } else setChangesOpen((value) => !value);
+    setPane((value) => (value === "changes" ? null : "changes"));
+    setFileRequest(undefined);
+    setExpanded(false);
   }
+  const projectPath = app.project?.path;
+  const openFile = useCallback(
+    (location: FileLocation) => {
+      if (!projectPath) return;
+      setPane("files");
+      setFileRequest({
+        project: projectPath,
+        id: ++fileRequestId.current,
+        location,
+      });
+    },
+    [projectPath],
+  );
+  const fileNavigation = useMemo(
+    () => (projectPath ? { projectPath, open: openFile } : null),
+    [projectPath, openFile],
+  );
   function newSession() {
     app.newSession();
     setSearch("");
@@ -69,6 +89,23 @@ export default function App() {
         return;
       }
       if (settingsOpen) return;
+      if (
+        app.project &&
+        (event.key.toLowerCase() === "p" ||
+          (event.shiftKey && event.key.toLowerCase() === "f"))
+      ) {
+        event.preventDefault();
+        const id = ++fileRequestId.current;
+        setPane("files");
+        setFileRequest({
+          project: app.project.path,
+          id,
+          search: {
+            id,
+            mode: event.key.toLowerCase() === "p" ? "files" : "content",
+          },
+        });
+      }
       if (event.key.toLowerCase() === "n") {
         event.preventDefault();
         newSession();
@@ -86,8 +123,10 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   });
   useEffect(() => {
-    if (app.view === "session") textareaRef.current?.focus();
-  }, [sessionKey, app.view]);
+    setExpanded(false);
+    setFileRequest(undefined);
+    textareaRef.current?.focus();
+  }, [sessionKey]);
   const activeApprovals = app.approvals.filter(
     (request) =>
       request.projectPath === app.project?.path &&
@@ -101,180 +140,183 @@ export default function App() {
   const sessionError = app.selected?.error ?? app.providerWorkspace?.error;
   const mac = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   return (
-    <ContextMenuProvider
-      className={`app-shell${mac ? " macos-titlebar-overlay" : ""}${collapsed ? " sidebar-collapsed" : ""}`}
-      scope={`${sessionKey}\0${app.view}\0${settingsOpen}`}
-      reportError={app.setError}
-      actions={[
-        {
-          text: "New session",
-          enabled: Boolean(app.project),
-          action: newSession,
-        },
-        {
-          text: "Open project…",
-          enabled: !app.selecting && !app.restoring,
-          action: app.chooseProject,
-        },
-        { item: "Separator" },
-        { text: "Settings…", action: () => setSettingsOpen(true) },
-      ]}
-    >
-      {!collapsed && (
-        <Sidebar
-          app={app}
-          collapse={() => setCollapsed(true)}
-          search={search}
-          setSearch={setSearch}
-          searchRef={searchRef}
-          newSession={newSession}
-          changesOpen={changesOpen && app.view === "session"}
-          toggleChanges={toggleChanges}
-          openSettings={() => setSettingsOpen(true)}
-        />
-      )}
-      <section className="main-panel">
-        <header className="topbar" data-tauri-drag-region>
-          <div className="breadcrumbs">
-            {collapsed && (
-              <button
-                className="icon-button"
-                aria-label="Expand sidebar"
-                onClick={() => setCollapsed(false)}
-              >
-                <PanelLeftOpen size={16} />
-              </button>
-            )}
-            <span title={app.project?.path}>
-              {app.project?.name ?? "Caelum"}
-            </span>
-            <span className="crumb-divider">/</span>
-            <strong title={title}>{title}</strong>
-          </div>
-          <div className="topbar-actions">
-            {collapsed && (
-              <button
-                className="icon-button"
-                aria-label="Settings"
-                title="Settings (⌘,)"
-                onClick={(event) => {
-                  event.currentTarget.focus({ preventScroll: true });
-                  setSettingsOpen(true);
-                }}
-              >
-                <SettingsIcon size={16} />
-              </button>
-            )}
-            {app.selected && app.view === "session" && (
-              <span className="connection-status">
-                {app.selected.connection === "connecting"
-                  ? "Connecting…"
-                  : app.selected.connection === "disconnected"
-                    ? "Disconnected"
-                    : activeApprovals.length
-                      ? "Approval required"
-                      : app.selected.isWorking
-                        ? <LoaderCircle
-                            size={14}
-                            className="spinning"
-                            role="img"
-                            aria-label="Agent running"
-                          />
-                        : ""}
+    <FileNavigation.Provider value={fileNavigation}>
+      <ContextMenuProvider
+        className={`app-shell${mac ? " macos-titlebar-overlay" : ""}${collapsed ? " sidebar-collapsed" : ""}`}
+        scope={`${sessionKey}\0${pane}\0${expanded}\0${settingsOpen}`}
+        reportError={app.setError}
+        actions={[
+          {
+            text: "New session",
+            enabled: Boolean(app.project),
+            action: newSession,
+          },
+          {
+            text: "Open project…",
+            enabled: !app.selecting && !app.restoring,
+            action: app.chooseProject,
+          },
+          { item: "Separator" },
+          { text: "Settings…", action: () => setSettingsOpen(true) },
+        ]}
+      >
+        {!collapsed && (
+          <Sidebar
+            app={app}
+            collapse={() => setCollapsed(true)}
+            search={search}
+            setSearch={setSearch}
+            searchRef={searchRef}
+            newSession={newSession}
+            changesOpen={changesOpen}
+            filesOpen={pane === "files"}
+            openFiles={() => {
+              setPane("files");
+              setExpanded(false);
+              setFileRequest(undefined);
+            }}
+            showSession={() => {
+              setExpanded(false);
+              textareaRef.current?.focus();
+            }}
+            toggleChanges={toggleChanges}
+            openSettings={() => setSettingsOpen(true)}
+          />
+        )}
+        <section className="main-panel">
+          <header className="topbar" data-tauri-drag-region>
+            <div className="breadcrumbs">
+              {collapsed && (
+                <button
+                  className="icon-button"
+                  aria-label="Expand sidebar"
+                  onClick={() => setCollapsed(false)}
+                >
+                  <PanelLeftOpen size={16} />
+                </button>
+              )}
+              <span title={app.project?.path}>
+                {app.project?.name ?? "Caelum"}
               </span>
-            )}
-            {app.approvals.length > 0 && (
+              <span className="crumb-divider">/</span>
+              <strong title={title}>{title}</strong>
+            </div>
+            <div className="topbar-actions">
+              {collapsed && (
+                <button
+                  className="icon-button"
+                  aria-label="Settings"
+                  title="Settings (⌘,)"
+                  onClick={(event) => {
+                    event.currentTarget.focus({ preventScroll: true });
+                    setSettingsOpen(true);
+                  }}
+                >
+                  <SettingsIcon size={16} />
+                </button>
+              )}
+              {app.selected && (
+                <span className="connection-status">
+                  {app.selected.connection === "connecting" ? (
+                    "Connecting…"
+                  ) : app.selected.connection === "disconnected" ? (
+                    "Disconnected"
+                  ) : activeApprovals.length ? (
+                    "Approval required"
+                  ) : app.selected.isWorking ? (
+                    <LoaderCircle
+                      size={14}
+                      className="spinning"
+                      role="img"
+                      aria-label="Agent running"
+                    />
+                  ) : (
+                    ""
+                  )}
+                </span>
+              )}
+              {app.approvals.length > 0 && (
+                <button
+                  className="approval-shortcut"
+                  aria-label={`${app.approvals.length} pending approvals`}
+                  onClick={() =>
+                    app.viewApproval(
+                      app.approvals.find(
+                        (request) => !activeApprovals.includes(request),
+                      ) ?? app.approvals[0],
+                    )
+                  }
+                >
+                  <ShieldAlert size={14} />
+                  {app.approvals.length}
+                </button>
+              )}
               <button
-                className="approval-shortcut"
-                aria-label={`${app.approvals.length} pending approvals`}
-                onClick={() =>
-                  app.viewApproval(
-                    app.approvals.find(
-                      (request) => !activeApprovals.includes(request),
-                    ) ?? app.approvals[0],
-                  )
-                }
+                className="icon-button"
+                aria-label="Search sessions"
+                title="Search sessions (⌘K)"
+                onClick={focusSearch}
               >
-                <ShieldAlert size={14} />
-                {app.approvals.length}
+                <Search size={15} />
               </button>
-            )}
-            <button
-              className="icon-button"
-              aria-label="Search sessions"
-              title="Search sessions (⌘K)"
-              onClick={focusSearch}
-            >
-              <Search size={15} />
-            </button>
-            {app.project && (
+              {app.project && (
+                <button
+                  className="icon-button changes-toggle"
+                  aria-label={changesOpen ? "Hide changes" : "Show changes"}
+                  aria-expanded={changesOpen}
+                  aria-controls="changes-pane"
+                  title="Toggle changes pane"
+                  onClick={toggleChanges}
+                >
+                  <PanelRight size={16} />
+                </button>
+              )}
+            </div>
+          </header>
+          {app.error && (
+            <div className="error-banner" role="alert">
+              <span>{app.error}</span>
               <button
-                className="icon-button changes-toggle"
-                aria-label={
-                  changesOpen && app.view === "session"
-                    ? "Hide changes"
-                    : "Show changes"
-                }
-                aria-expanded={changesOpen && app.view === "session"}
-                aria-controls="changes-pane"
-                title="Toggle changes pane"
-                onClick={toggleChanges}
+                className="icon-button"
+                aria-label="Dismiss error"
+                onClick={() => app.setError(null)}
               >
-                <PanelRight size={16} />
+                <X size={13} />
               </button>
-            )}
-          </div>
-        </header>
-        {app.error && (
-          <div className="error-banner" role="alert">
-            <span>{app.error}</span>
-            <button
-              className="icon-button"
-              aria-label="Dismiss error"
-              onClick={() => app.setError(null)}
+            </div>
+          )}
+          {app.archivedSession && (
+            <div
+              className="archive-notice"
+              role="status"
+              aria-label="Session archived"
             >
-              <X size={13} />
-            </button>
-          </div>
-        )}
-        {app.archivedSession && (
+              <span title={sessionTitle(app.archivedSession.thread)}>
+                Archived{" "}
+                <strong>{sessionTitle(app.archivedSession.thread)}</strong>
+              </span>
+              <button
+                onClick={() => void app.undoArchive()}
+                disabled={app.undoingArchive}
+              >
+                {app.undoingArchive ? "Restoring…" : "Undo"}
+              </button>
+              <button
+                className="icon-button"
+                aria-label="Dismiss archived session notice"
+                onClick={app.dismissArchive}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )}
           <div
-            className="archive-notice"
-            role="status"
-            aria-label="Session archived"
+            className={`session-layout${pane && app.project ? " with-changes" : ""}`}
           >
-            <span title={sessionTitle(app.archivedSession.thread)}>
-              Archived{" "}
-              <strong>{sessionTitle(app.archivedSession.thread)}</strong>
-            </span>
-            <button
-              onClick={() => void app.undoArchive()}
-              disabled={app.undoingArchive}
+            <div
+              className="session-workspace"
+              hidden={expanded && Boolean(pane)}
             >
-              {app.undoingArchive ? "Restoring…" : "Undo"}
-            </button>
-            <button
-              className="icon-button"
-              aria-label="Dismiss archived session notice"
-              onClick={app.dismissArchive}
-            >
-              <X size={13} />
-            </button>
-          </div>
-        )}
-        {app.view === "files" ? (
-          <div className="panel-content">
-            <FilesPanel
-              project={app.project}
-              theme={preferences.resolvedTheme}
-              accentColor={preferences.settings.accentColor}
-            />
-          </div>
-        ) : (
-          <div
-            className={`session-layout${changesOpen && app.project ? " with-changes" : ""}`}
-          >
-            <div className="session-workspace">
               {sessionError && (
                 <div className="error-banner" role="alert">
                   <span>{sessionError}</span>
@@ -362,8 +404,7 @@ export default function App() {
                       app.provider,
                       app.selectedId!,
                       Boolean(
-                        app.selected?.historyLoaded &&
-                        app.selected.nextCursor,
+                        app.selected?.historyLoaded && app.selected.nextCursor,
                       ),
                     )
                   }
@@ -392,6 +433,12 @@ export default function App() {
                     app.selected?.draft ?? app.providerWorkspace?.draft ?? ""
                   }
                   setDraft={app.setDraft}
+                  fileContext={
+                    app.selected?.fileContext ??
+                    app.providerWorkspace?.fileContext ??
+                    []
+                  }
+                  removeFileContext={app.removeFileContext}
                   lastMessage={lastUserMessage(
                     app.selected?.conversation ?? [],
                   )}
@@ -409,11 +456,11 @@ export default function App() {
                   disabled={
                     Boolean(
                       app.selectedId &&
-                      (!app.selected ||
-                        app.providerWorkspace?.archivingSessionIds.includes(
-                          app.selectedId,
-                        ) ||
-                        app.selected.connection !== "connected"),
+                        (!app.selected ||
+                          app.providerWorkspace?.archivingSessionIds.includes(
+                            app.selectedId,
+                          ) ||
+                          app.selected.connection !== "connected"),
                     ) ||
                     Boolean(
                       !app.selectedId && app.providerWorkspace?.isCreating,
@@ -444,32 +491,52 @@ export default function App() {
                 />
               )}
             </div>
-            {changesOpen && app.project && (
-              <aside
-                id="changes-pane"
-                className="changes-pane"
-                aria-label="Project changes"
-              >
-                <GitReviewPanel
-                  key={app.project.path}
-                  project={app.project}
-                  working={Boolean(
-                    app.workspace && projectHasActiveTurn(app.workspace),
-                  )}
-                  close={() => setChangesOpen(false)}
-                />
-              </aside>
+            {pane && app.project && (
+              <ProjectInspector
+                key={app.project.path}
+                project={app.project}
+                mode={pane}
+                changeMode={(mode) => {
+                  setPane(mode);
+                  setFileRequest(undefined);
+                }}
+                expanded={expanded}
+                setExpanded={setExpanded}
+                theme={preferences.resolvedTheme}
+                accentColor={preferences.settings.accentColor}
+                request={fileRequest}
+                canAttach={
+                  !app.selected?.isSubmitting &&
+                  !(!app.selectedId && app.providerWorkspace?.isCreating)
+                }
+                attach={(file, ask) => {
+                  if (currentSessionKey.current !== sessionKey) return;
+                  app.addFileContext(file, ask);
+                  setExpanded(false);
+                  requestAnimationFrame(() => {
+                    if (currentSessionKey.current === sessionKey)
+                      textareaRef.current?.focus();
+                  });
+                }}
+                working={Boolean(
+                  app.workspace && projectHasActiveTurn(app.workspace),
+                )}
+                close={() => {
+                  setPane(null);
+                  setExpanded(false);
+                }}
+              />
             )}
           </div>
+        </section>
+        {settingsOpen && (
+          <Settings
+            app={app}
+            preferences={preferences}
+            close={() => setSettingsOpen(false)}
+          />
         )}
-      </section>
-      {settingsOpen && (
-        <Settings
-          app={app}
-          preferences={preferences}
-          close={() => setSettingsOpen(false)}
-        />
-      )}
-    </ContextMenuProvider>
+      </ContextMenuProvider>
+    </FileNavigation.Provider>
   );
 }

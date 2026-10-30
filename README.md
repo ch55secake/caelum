@@ -108,7 +108,19 @@ Session rows show a branch and added/deleted lines from the latest turn when ava
 - **⌘N** opens a new draft; **⌘K** searches sessions; **⌘\\** toggles the sidebar. Ctrl works in place of ⌘.
 - Draft the next message while a response runs. Stop interrupts the active turn.
 - Approvals appear in the requesting conversation; the sidebar and header identify pending background requests.
-- A disconnected session offers **Reconnect**. A failed submission restores its text in the composer.
+- A disconnected session offers **Reconnect**. A failed submission restores its text and attached context in the composer.
+
+## Files and prompt context
+
+**Files** and **Changes** share a resizable inspector beside the conversation. Drag its divider or use the arrow keys while the divider is focused; expand it for a larger preview and restore the conversation layout when finished.
+
+- **⌘P** finds filenames with fuzzy matching; **⌘⇧F** searches file contents. Use the arrow keys and Enter to open a result at its matching line. Search respects ignore rules unless **Include ignored** is checked. Ctrl works in place of ⌘.
+- Open multiple read-only file or diff tabs. Tabs, the active file, expanded folders, recent files, and reading positions restore per project on this device. The tree shows Git status and offers **All**, **Changes**, and **Recent** views. Visible files refresh automatically as the agent works.
+- **Add to prompt** attaches a file snapshot. Select code in a preview to **Add selection to prompt** or **Ask about selection**; these actions also appear in the editor’s right-click menu. Remove attachments using their chips in the composer.
+- Each message supports up to 16 snapshots, each capped at 64 KiB of UTF-8 text, with partial snapshots marked. Selections retain their path and line range. Attachments stay with their project, provider, and session draft while the app is open, and both Codex and OpenCode receive the captured text.
+- Sent messages show file-context chips. Click a chip, a local file reference in a response, or a file link in expanded tool details to open the current file. Right-click a chip to copy its original attached snapshot.
+
+File previews are capped at 1 MiB. Search results are bounded and identify when a narrower query is needed.
 
 ## Settings
 

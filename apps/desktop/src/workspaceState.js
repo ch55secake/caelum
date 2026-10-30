@@ -12,6 +12,7 @@ function emptyProviderWorkspace() {
     selectedSessionId: null,
     sessionsById: {},
     draft: "",
+    fileContext: [],
     isCreating: false,
     error: null,
     choices: null,
@@ -39,6 +40,7 @@ export function createSessionWorkspace(session) {
     agent: null,
     conversation: [],
     draft: "",
+    fileContext: [],
     isWorking: session.thread.isWorking ?? false,
     isSubmitting: false,
     connection: "connecting",
@@ -63,8 +65,7 @@ export function createSessionWorkspace(session) {
 }
 export function restoreProjectWorkspace(persisted) {
   const workspace = createProjectWorkspace();
-  workspace.provider =
-    persisted.provider === "opencode" ? "opencode" : "codex";
+  workspace.provider = persisted.provider === "opencode" ? "opencode" : "codex";
   for (const provider of PROVIDERS) {
     workspace.providers[provider].selectedSessionId =
       persisted[`${provider}SessionId`] ?? null;
@@ -77,9 +78,7 @@ export function restoreProjectWorkspace(persisted) {
 export function updateProjectWorkspace(workspaces, projectPath, update) {
   const current = workspaces[projectPath] ?? createProjectWorkspace();
   const next = update(current);
-  return next === current
-    ? workspaces
-    : { ...workspaces, [projectPath]: next };
+  return next === current ? workspaces : { ...workspaces, [projectPath]: next };
 }
 export function updateProviderWorkspace(
   workspaces,
@@ -211,8 +210,7 @@ function applyEvent(
               ...workspace.sessionsById,
               [id]: {
                 ...next,
-                eventRevision:
-                  (current.eventRevision ?? 0) + (changed ? 1 : 0),
+                eventRevision: (current.eventRevision ?? 0) + (changed ? 1 : 0),
                 unread: changed ? true : next.unread,
               },
             }

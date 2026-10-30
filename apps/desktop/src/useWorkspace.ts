@@ -6,6 +6,11 @@ import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
 import { contextUsageSince, openCodeHistoryUsage } from "./contextUsage.js";
 import {
+  MAX_FILE_CONTEXT,
+  promptWithFileContext,
+  type FileContext,
+} from "./fileContext.js";
+import {
   newSessionOptions,
   type AppSettings,
   type ProviderDefaults,
@@ -131,7 +136,6 @@ export function useWorkspace(settings: AppSettings) {
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceMap>({});
   const state = useRef(workspaces);
-  const [view, setView] = useState<"session" | "files">("session");
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(isTauri());
   const [ready, setReady] = useState(!isTauri());
@@ -234,11 +238,7 @@ export function useWorkspace(settings: AppSettings) {
               "contextCompaction" &&
             typeof event.params.threadId === "string"
           )
-            void loadHistory(
-              event.projectPath,
-              "codex",
-              event.params.threadId,
-            );
+            void loadHistory(event.projectPath, "codex", event.params.threadId);
           if (
             event.method === "turn/completed" &&
             typeof event.params.threadId === "string"
@@ -423,7 +423,6 @@ export function useWorkspace(settings: AppSettings) {
         provider: preferences.current.defaultProvider,
       });
     setProject(target);
-    setView("session");
     void persist("set_active_project", { projectPath: target?.path ?? null });
   }
   async function chooseProject() {
@@ -486,7 +485,6 @@ export function useWorkspace(settings: AppSettings) {
   function newSession() {
     if (!project) return;
     navigation.current++;
-    setView("session");
     mutateProvider(project.path, provider, (value) => ({
       ...value,
       selectedSessionId: null,
@@ -632,12 +630,9 @@ export function useWorkspace(settings: AppSettings) {
           (item) => item.id,
         ),
       });
-      for (const { id } of state.current[target.path].providers[kind]
-        .sessions)
+      for (const { id } of state.current[target.path].providers[kind].sessions)
         if (
-          detailsChecked.current.has(
-            `details:${keyFor(target.path, kind, id)}`,
-          )
+          detailsChecked.current.has(`details:${keyFor(target.path, kind, id)}`)
         )
           void loadSessionDetails(target.path, kind, id, true);
     } catch (reason) {
@@ -675,10 +670,7 @@ export function useWorkspace(settings: AppSettings) {
       if (force) detailsRefreshes.current.add(key);
       return;
     }
-    if (
-      !force &&
-      Date.now() - (detailsChecked.current.get(key) ?? 0) < 15_000
-    )
+    if (!force && Date.now() - (detailsChecked.current.get(key) ?? 0) < 15_000)
       return;
     const version = revision(scope);
     locks.current.add(key);
@@ -735,14 +727,11 @@ export function useWorkspace(settings: AppSettings) {
       const latest = state.current[target.path].providers[kind];
       const wasSelected = latest.selectedSessionId === thread.id;
       const restoreNavigation =
-        wasSelected && navigation.current === nav
-          ? ++navigation.current
-          : null;
+        wasSelected && navigation.current === nav ? ++navigation.current : null;
       const notice: ArchivedSession = {
         project: target,
         provider: kind,
-        thread:
-          latest.sessions.find((item) => item.id === thread.id) ?? thread,
+        thread: latest.sessions.find((item) => item.id === thread.id) ?? thread,
         cached: latest.sessionsById[thread.id],
         details: latest.sessionDetails[thread.id],
         restoreNavigation,
@@ -793,8 +782,7 @@ export function useWorkspace(settings: AppSettings) {
         archived: false,
       });
       invalidateSession(target.path, kind, thread.id);
-      const restoreSelection =
-        notice.restoreNavigation === navigation.current;
+      const restoreSelection = notice.restoreNavigation === navigation.current;
       mutateProvider(target.path, kind, (value) => ({
         ...value,
         archivedSessionIds: value.archivedSessionIds.filter(
@@ -1045,7 +1033,6 @@ export function useWorkspace(settings: AppSettings) {
   function selectSession(thread: SessionSummary, kind = provider) {
     if (!project || unavailable(project.path, kind, thread.id)) return;
     navigation.current++;
-    setView("session");
     if (kind !== provider) changeProvider(kind, false);
     mutateProvider(project.path, kind, (value) => ({
       ...value,
@@ -1081,12 +1068,12 @@ export function useWorkspace(settings: AppSettings) {
     restoring,
   ]);
   useEffect(() => {
-    if (project && selectedId && selected?.unread && view === "session")
+    if (project && selectedId && selected?.unread)
       mutateSession(project.path, provider, selectedId, (value) => ({
         ...value,
         unread: false,
       }));
-  }, [project?.path, provider, selectedId, selected?.unread, view]);
+  }, [project?.path, provider, selectedId, selected?.unread]);
 
   useEffect(() => {
     if (!project || !selectedId || !ready || !isTauri()) return;
@@ -1133,6 +1120,57 @@ export function useWorkspace(settings: AppSettings) {
         draft,
       }));
   }
+  function updateFileContext(
+    change: (files: FileContext[]) => FileContext[],
+    ask = false,
+  ) {
+    if (!project) return;
+    const updateDraft = <
+      T extends { fileContext: FileContext[]; draft: string },
+    >(
+      value: T,
+    ): T => {
+      const fileContext = change(value.fileContext);
+      return fileContext === value.fileContext
+        ? value
+        : {
+            ...value,
+            fileContext,
+            draft: ask
+              ? `${value.draft ? `${value.draft}\n\n` : ""}Explain the selected code.`
+              : value.draft,
+          };
+    };
+    if (selectedId) {
+      if (!unavailable(project.path, provider, selectedId))
+        mutateSession(project.path, provider, selectedId, updateDraft);
+    } else mutateProvider(project.path, provider, updateDraft);
+  }
+  function addFileContext(file: FileContext, ask = false) {
+    if (!project) return;
+    const current = state.current[project.path]?.providers[provider];
+    if (
+      selectedId
+        ? current?.sessionsById[selectedId]?.isSubmitting
+        : current?.isCreating
+    )
+      return;
+    updateFileContext((files) => {
+      const rest = files.filter(
+        (item) =>
+          item.path !== file.path ||
+          item.startLine !== file.startLine ||
+          item.endLine !== file.endLine,
+      );
+      if (rest.length >= MAX_FILE_CONTEXT) {
+        setError(
+          `Attach up to ${MAX_FILE_CONTEXT} files or selections per message.`,
+        );
+        return files;
+      }
+      return [...rest, file];
+    }, ask);
+  }
   async function submit() {
     if (!project) return;
     const target = project,
@@ -1153,6 +1191,9 @@ export function useWorkspace(settings: AppSettings) {
       cached,
     );
     const text = (cached?.draft ?? snapshot.draft).trim();
+    const fileContext = cached?.fileContext ?? snapshot.fileContext;
+    const contextIds = new Set(fileContext.map((file) => file.id));
+    const prompt = promptWithFileContext(text, fileContext);
     const key = `send:${keyFor(target.path, kind, id ?? "new")}`;
     if (
       !text ||
@@ -1189,6 +1230,9 @@ export function useWorkspace(settings: AppSettings) {
         mutateProvider(target.path, kind, (value) => ({
           ...value,
           draft: value.draft.trim() === text ? "" : value.draft,
+          fileContext: value.fileContext.filter(
+            (file) => !contextIds.has(file.id),
+          ),
           model: value.model === snapshot.model ? null : value.model,
           effort: value.effort === snapshot.effort ? null : value.effort,
           agent: value.agent === snapshot.agent ? null : value.agent,
@@ -1208,6 +1252,7 @@ export function useWorkspace(settings: AppSettings) {
               connection: "connected",
               historyLoaded: true,
               draft: text,
+              fileContext,
             },
           },
         }));
@@ -1222,6 +1267,9 @@ export function useWorkspace(settings: AppSettings) {
       mutateSession(target.path, kind, sessionId, (value) => ({
         ...value,
         draft: "",
+        fileContext: value.fileContext.filter(
+          (file) => !contextIds.has(file.id),
+        ),
         error: null,
         isSubmitting: true,
         isWorking: true,
@@ -1232,7 +1280,7 @@ export function useWorkspace(settings: AppSettings) {
         followRevision: value.followRevision + 1,
         conversation: [
           ...value.conversation,
-          { id: optimisticId, kind: "user", text, optimistic: true },
+          { id: optimisticId, kind: "user", text: prompt, optimistic: true },
         ],
       }));
       mutateProvider(target.path, kind, (value) => ({
@@ -1272,7 +1320,7 @@ export function useWorkspace(settings: AppSettings) {
         projectPath: target.path,
         threadId: sessionId,
         sessionId,
-        prompt: text,
+        prompt,
         messageId,
         model,
         effort,
@@ -1294,6 +1342,12 @@ export function useWorkspace(settings: AppSettings) {
         mutateSession(target.path, kind, id, (value) => ({
           ...value,
           draft: value.draft ? `${text}\n\n${value.draft}` : text,
+          fileContext: [
+            ...fileContext.filter(
+              (file) => !value.fileContext.some((item) => item.id === file.id),
+            ),
+            ...value.fileContext,
+          ],
           isWorking: false,
           activity: null,
           error: String(reason),
@@ -1357,8 +1411,7 @@ export function useWorkspace(settings: AppSettings) {
     }
   }
   function viewApproval(request: ApprovalPrompt) {
-    if (request.provider !== "codex" && request.provider !== "opencode")
-      return;
+    if (request.provider !== "codex" && request.provider !== "opencode") return;
     const target = projects.find(
       (item) => item.path === request.projectPath,
     ) ?? {
@@ -1413,8 +1466,6 @@ export function useWorkspace(settings: AppSettings) {
     options,
     selected,
     selectedId,
-    view,
-    setView,
     error,
     setError,
     restoring,
@@ -1437,6 +1488,9 @@ export function useWorkspace(settings: AppSettings) {
     loadHistory,
     connectSession,
     setDraft,
+    addFileContext,
+    removeFileContext: (id: string) =>
+      updateFileContext((files) => files.filter((file) => file.id !== id)),
     submit,
     cancel,
     resolveApproval,

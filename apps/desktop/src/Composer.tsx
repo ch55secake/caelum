@@ -10,6 +10,8 @@ import { ChoicePicker } from "./ChoicePicker.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { ContextUsageIndicator } from "./ContextUsageIndicator.js";
 import { AgentPicker } from "./AgentPicker.js";
+import { FileContextChips } from "./FileNavigation.js";
+import type { FileContext } from "./fileContext.js";
 
 export function Composer({
   draft,
@@ -40,6 +42,8 @@ export function Composer({
   choicesError,
   retryChoices,
   awaitingApproval,
+  fileContext,
+  removeFileContext,
 }: {
   draft: string;
   setDraft: (text: string) => void;
@@ -69,6 +73,8 @@ export function Composer({
   choicesError: string | null;
   retryChoices: () => void;
   awaitingApproval: boolean;
+  fileContext: FileContext[];
+  removeFileContext: (id: string) => void;
 }) {
   const measurement = useRef<HTMLTextAreaElement>(null);
   const recalled = useRef(false);
@@ -132,6 +138,11 @@ export function Composer({
           submit();
         }}
       >
+        <FileContextChips
+          files={fileContext}
+          remove={removeFileContext}
+          disabled={submitting}
+        />
         <textarea
           ref={measurement}
           className="composer-measure"
@@ -165,9 +176,7 @@ export function Composer({
             ) {
               event.preventDefault();
               if (!event.repeat) {
-                const index = agents.findIndex(
-                  (choice) => choice.id === agent,
-                );
+                const index = agents.findIndex((choice) => choice.id === agent);
                 setOption("agent", agents[(index + 1) % agents.length].id);
               }
               return;

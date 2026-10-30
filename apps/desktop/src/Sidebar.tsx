@@ -87,6 +87,9 @@ export function Sidebar({
   searchRef,
   newSession,
   changesOpen,
+  filesOpen,
+  openFiles,
+  showSession,
   toggleChanges,
   openSettings,
 }: {
@@ -97,6 +100,9 @@ export function Sidebar({
   searchRef: RefObject<HTMLInputElement | null>;
   newSession: () => void;
   changesOpen: boolean;
+  filesOpen: boolean;
+  openFiles: () => void;
+  showSession: () => void;
   toggleChanges: () => void;
   openSettings: () => void;
 }) {
@@ -166,16 +172,16 @@ export function Sidebar({
       </button>
       <nav className="side-nav" aria-label="Workspace">
         <button
-          className={`nav-item${app.view === "session" ? " active" : ""}`}
-          onClick={() => app.setView("session")}
+          className={`nav-item${!filesOpen ? " active" : ""}`}
+          onClick={showSession}
         >
           <MessageSquare size={15} />
           Sessions
         </button>
         <button
-          className={`nav-item${app.view === "files" ? " active" : ""}`}
+          className={`nav-item${filesOpen ? " active" : ""}`}
           disabled={!app.project}
-          onClick={() => app.setView("files")}
+          onClick={openFiles}
         >
           <FileCode2 size={15} />
           Files
@@ -221,16 +227,14 @@ export function Sidebar({
         <kbd>⌘K</kbd>
       </label>
       <div className="session-list">
-        {app.providerWorkspace?.isLoadingSessions &&
-          sessions.length === 0 && (
-            <div className="empty-sessions">Connecting…</div>
-          )}
-        {sessions.length === 0 &&
-          !app.providerWorkspace?.isLoadingSessions && (
-            <div className="empty-sessions">
-              {search ? "No matching sessions" : "No sessions yet"}
-            </div>
-          )}
+        {app.providerWorkspace?.isLoadingSessions && sessions.length === 0 && (
+          <div className="empty-sessions">Connecting…</div>
+        )}
+        {sessions.length === 0 && !app.providerWorkspace?.isLoadingSessions && (
+          <div className="empty-sessions">
+            {search ? "No matching sessions" : "No sessions yet"}
+          </div>
+        )}
         {sessions.map((item) => {
           const workspace = app.workspace?.providers[item.provider];
           const state = workspace?.sessionsById[item.id];
@@ -245,7 +249,7 @@ export function Sidebar({
           return (
             <div
               key={`${app.project?.path}-${item.provider}-${item.id}`}
-              className={`session-row${app.provider === item.provider && app.selectedId === item.id && app.view === "session" ? " selected" : ""}`}
+              className={`session-row${app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
               onContextMenu={(event) =>
                 contextMenu(event, [
                   {
@@ -259,8 +263,11 @@ export function Sidebar({
                   {
                     text: "Archive session",
                     enabled: !(
-                      archiving || working || state?.isSubmitting ||
-                      state?.connection === "connecting" || approval
+                      archiving ||
+                      working ||
+                      state?.isSubmitting ||
+                      state?.connection === "connecting" ||
+                      approval
                     ),
                     action: () => app.archiveSession(item, item.provider),
                   },
@@ -272,9 +279,7 @@ export function Sidebar({
                 title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
                 aria-label={sessionTitle(item)}
                 aria-current={
-                  app.provider === item.provider &&
-                  app.selectedId === item.id &&
-                  app.view === "session"
+                  app.provider === item.provider && app.selectedId === item.id
                     ? "page"
                     : undefined
                 }

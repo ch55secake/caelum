@@ -1,3 +1,5 @@
+import type { FileContext } from "./fileContext.js";
+
 export type ProviderKind = "codex" | "opencode";
 export type SessionSummary = {
   id: string;
@@ -12,6 +14,7 @@ export type SessionDetails = {
   changes: { additions: number; deletions: number } | null;
 };
 export type ConversationEntry = {
+  fileContext?: FileContext[];
   id: string;
   kind: "user" | "assistant" | "tool" | "status" | "reasoning" | "compaction";
   text: string;
@@ -78,6 +81,7 @@ export type SessionWorkspaceState = {
   isSubmitting: boolean;
   error: string | null;
   draft: string;
+  fileContext: FileContext[];
   connection: "connecting" | "connected" | "disconnected";
   historyError: string | null;
   historyLoaded: boolean;
@@ -119,6 +123,7 @@ export type ProviderWorkspaceState = {
   sessionsById: Record<string, SessionWorkspaceState>;
   error: string | null;
   draft: string;
+  fileContext: FileContext[];
   isCreating: boolean;
   choices: ProviderChoices | null;
   choicesError: string | null;
@@ -165,9 +170,7 @@ export function updateSessionWorkspace(
   sessionId: string,
   update: (session: SessionWorkspaceState) => SessionWorkspaceState,
 ): WorkspaceMap;
-export function projectHasActiveTurn(
-  workspace: ProjectWorkspaceState,
-): boolean;
+export function projectHasActiveTurn(workspace: ProjectWorkspaceState): boolean;
 export function applyCodexEvent(
   workspaces: WorkspaceMap,
   event: {

@@ -17,6 +17,7 @@ import { CopyButton, MessageContent } from "./MessageContent.js";
 import { ToolActivity } from "./ToolActivity.js";
 import { conversationPresentation } from "./shellMessages.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
+import { FileContextChips } from "./FileNavigation.js";
 
 function CompactionNotice({
   entry,
@@ -310,9 +311,7 @@ export function Conversation({
               onClick={() => void older()}
               disabled={session.isLoadingHistory}
             >
-              {session.isLoadingHistory
-                ? "Loading…"
-                : "Load earlier messages"}
+              {session.isLoadingHistory ? "Loading…" : "Load earlier messages"}
             </button>
           )}
           {session.historyError && (
@@ -335,25 +334,29 @@ export function Conversation({
               onContextMenu={
                 entry.kind === "tool"
                   ? undefined
-                  : (event) => contextMenu(event, [
-                      copyAction(
-                        entry.kind === "reasoning" ? "Copy thinking" : "Copy message",
-                        entry.text,
-                      ),
-                      {
-                        text: "Add to draft",
-                        enabled: Boolean(entry.text) && session.connection === "connected",
-                        action: () => addToDraft(entry.text),
-                      },
-                    ])
+                  : (event) =>
+                      contextMenu(event, [
+                        copyAction(
+                          entry.kind === "reasoning"
+                            ? "Copy thinking"
+                            : "Copy message",
+                          entry.text,
+                        ),
+                        {
+                          text: "Add to draft",
+                          enabled:
+                            Boolean(entry.text) &&
+                            session.connection === "connected",
+                          action: () => addToDraft(entry.text),
+                        },
+                      ])
               }
             >
               {entry.kind === "tool" ? (
                 <ToolActivity
                   entry={entry}
                   expanded={
-                    session.expandedTools[entry.id] ??
-                    entry.status === "failed"
+                    session.expandedTools[entry.id] ?? entry.status === "failed"
                   }
                   toggle={() => {
                     following.current = false;
@@ -389,8 +392,7 @@ export function Conversation({
                   entry={entry}
                   working={session.isWorking}
                   expanded={
-                    session.expandedTools[entry.id] ??
-                    entry.status === "failed"
+                    session.expandedTools[entry.id] ?? entry.status === "failed"
                   }
                   toggle={() => {
                     following.current = false;
@@ -425,7 +427,12 @@ export function Conversation({
                     </div>
                   )}
                   {entry.kind === "user" ? (
-                    <div className="user-text">{entry.text}</div>
+                    <>
+                      <div className="user-text">{entry.text}</div>
+                      {entry.fileContext && (
+                        <FileContextChips files={entry.fileContext} />
+                      )}
+                    </>
                   ) : (
                     <MessageContent text={entry.text} />
                   )}

@@ -25,10 +25,12 @@ export function GitReviewPanel({
   project,
   working,
   close,
+  embedded = false,
 }: {
   project: ProjectInfo;
   working: boolean;
   close: () => void;
+  embedded?: boolean;
 }) {
   const contextMenu = useContextMenu();
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
@@ -203,7 +205,7 @@ export function GitReviewPanel({
         <GitBranch size={17} />
         <div>
           <h1 id="git-review-title" title={project.path}>
-            Changes
+            {embedded ? project.name : "Changes"}
           </h1>
         </div>
         <button
@@ -218,14 +220,16 @@ export function GitReviewPanel({
             className={isLoadingStatus ? "spinning" : undefined}
           />
         </button>
-        <button
-          className="icon-button"
-          onClick={close}
-          aria-label="Close changes"
-          title="Close changes"
-        >
-          <X size={14} />
-        </button>
+        {!embedded && (
+          <button
+            className="icon-button"
+            onClick={close}
+            aria-label="Close changes"
+            title="Close changes"
+          >
+            <X size={14} />
+          </button>
+        )}
       </header>
 
       {statusError && (

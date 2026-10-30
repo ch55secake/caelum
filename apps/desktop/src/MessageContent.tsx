@@ -1,11 +1,13 @@
 import { memo, useState, type ComponentProps } from "react";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard.js";
-import { useContextMenu, copyAction } from "./ContextMenu.js";
+import { useContextMenu, copyAction, fileActions } from "./ContextMenu.js";
+import { useFileNavigation } from "./FileNavigation.js";
+import { fileReference } from "./fileContext.js";
 
 export function CopyButton({
   text,
@@ -49,18 +51,49 @@ function CodeBlock({ children }: ComponentProps<"pre">) {
   return (
     <div
       className="code-block"
-      onContextMenu={(event) => contextMenu(event, [copyAction("Copy code", text)])}
+      onContextMenu={(event) =>
+        contextMenu(event, [copyAction("Copy code", text)])
+      }
     >
       <div className="code-heading">
         <span>{language}</span>
         <CopyButton text={text} label="Copy code" />
       </div>
-      <pre>{children}</pre>
+      <pre>
+        <code className={code?.props?.className}>{code?.props?.children}</code>
+      </pre>
     </div>
   );
 }
 function MessageLink({ children, href }: ComponentProps<"a">) {
   const [failed, setFailed] = useState(false);
+  const contextMenu = useContextMenu();
+  const navigation = useFileNavigation();
+  let decoded = href ?? "";
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    /* Leave malformed links intact. */
+  }
+  const file = navigation && fileReference(decoded, navigation.projectPath);
+  if (file)
+    return (
+      <button
+        className="file-reference"
+        title={`Open ${file.path}`}
+        onClick={() => navigation.open(file)}
+        onContextMenu={(event) =>
+          contextMenu(
+            event,
+            fileActions(navigation.projectPath, file.path, [
+              { text: "Open file", action: () => navigation.open(file) },
+            ]),
+          )
+        }
+      >
+        {children}
+      </button>
+    );
   return (
     <a
       href={href}
@@ -82,9 +115,39 @@ function MessageLink({ children, href }: ComponentProps<"a">) {
   );
 }
 
+function InlineCode({ children, className }: ComponentProps<"code">) {
+  const navigation = useFileNavigation();
+  const contextMenu = useContextMenu();
+  const text = typeof children === "string" ? children : "";
+  const file =
+    navigation &&
+    /^[\w@./\\:#-]+$/.test(text) &&
+    fileReference(text, navigation.projectPath);
+  return file ? (
+    <button
+      className="file-reference"
+      title={`Open ${file.path}`}
+      onClick={() => navigation.open(file)}
+      onContextMenu={(event) =>
+        contextMenu(
+          event,
+          fileActions(navigation.projectPath, file.path, [
+            { text: "Open file", action: () => navigation.open(file) },
+          ]),
+        )
+      }
+    >
+      <code>{children}</code>
+    </button>
+  ) : (
+    <code className={className}>{children}</code>
+  );
+}
+
 const components: ComponentProps<typeof Markdown>["components"] = {
   pre: CodeBlock,
   a: MessageLink,
+  code: InlineCode,
   table: ({ children }) => (
     <div className="markdown-table">
       <table>{children}</table>
@@ -96,9 +159,18 @@ export const MessageContent = memo(function MessageContent({
 }: {
   text: string;
 }) {
+  const navigation = useFileNavigation();
   return (
     <div className="markdown">
-      <Markdown remarkPlugins={[remarkGfm]} components={components}>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={components}
+        urlTransform={(url) =>
+          navigation && fileReference(url, navigation.projectPath)
+            ? url
+            : defaultUrlTransform(url)
+        }
+      >
         {text}
       </Markdown>
     </div>

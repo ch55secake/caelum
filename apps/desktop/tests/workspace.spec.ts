@@ -7,6 +7,24 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
       const listeners = new Map<string, number[]>();
       const project = { name: "caelum", path: "/work/caelum" };
       const otherProject = { name: "other", path: "/work/other" };
+      const fileKey = (project: string, path: string) => `${project}\0${path}`;
+      const projectFiles = new Map<string, string | null>([
+        [fileKey(project.path, "src/App.tsx"), "export const ready = true;\n"],
+        [fileKey(project.path, "src/styles.css"), "body { color: violet; }\n"],
+        [
+          fileKey(project.path, "README.md"),
+          "# Caelum\nProject documentation.\n",
+        ],
+        [
+          fileKey(project.path, "vendor/generated.ts"),
+          "export const generated = true;\n",
+        ],
+        [
+          fileKey(otherProject.path, "src/App.tsx"),
+          "export const other = true;\n",
+        ],
+        ...JSON.parse(sessionStorage.getItem("project-files") ?? "[]"),
+      ]);
       const archived = new Set<string>(
         JSON.parse(sessionStorage.getItem("archived") ?? "[]"),
       );
@@ -40,7 +58,9 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
       let contextEvent: Event | null = null;
       document.addEventListener(
         "contextmenu",
-        (event) => { contextEvent = event; },
+        (event) => {
+          contextEvent = event;
+        },
         true,
       );
       const models = new Map(
@@ -132,25 +152,40 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           calls,
           emit,
           menu: () => ({
-            items: menus.get(menuId!)?.items.map(({ text, item, enabled }) => ({
-              text: text ?? item,
-              enabled: enabled !== false,
-            })) ?? [],
+            items:
+              menus.get(menuId!)?.items.map(({ text, item, enabled }) => ({
+                text: text ?? item,
+                enabled: enabled !== false,
+              })) ?? [],
             contextPrevented: contextEvent?.defaultPrevented ?? false,
           }),
           pickMenu: (text: string) => {
-            const item = menus.get(menuId!)?.items.find(
-              (item) => (item.text ?? item.item) === text,
-            );
+            const item = menus
+              .get(menuId!)
+              ?.items.find((item) => (item.text ?? item.item) === text);
             if (!item || item.enabled === false)
               throw new Error(`Menu item unavailable: ${text}`);
             item.handler?.onmessage(text);
           },
           captureMenuAction: (text: string) =>
-            menus.get(menuId!)?.items.find((item) => item.text === text)?.handler?.onmessage,
+            menus.get(menuId!)?.items.find((item) => item.text === text)
+              ?.handler?.onmessage,
           clipboard: () => clipboard,
-          failCopy: () => { copyError = true; },
+          failCopy: () => {
+            copyError = true;
+          },
           setAgent,
+          setProjectFile: (
+            path: string,
+            content: string | null,
+            projectPath = project.path,
+          ) => {
+            projectFiles.set(fileKey(projectPath, path), content);
+            sessionStorage.setItem(
+              "project-files",
+              JSON.stringify([...projectFiles]),
+            );
+          },
           failAgent: () => {
             agentError = true;
           },
@@ -184,11 +219,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           failArchive: () => {
             failNextArchive = true;
           },
-          setSessionDetails: (
-            provider: string,
-            id: string,
-            value: unknown,
-          ) => {
+          setSessionDetails: (provider: string, id: string, value: unknown) => {
             sessionDetails.set(`${provider}:${id}`, value);
           },
           setGitFiles: (files: GitChange[], path = project.path) => {
@@ -309,9 +340,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                     provider: "codex",
                     codexSessionId:
                       selected &&
-                      !archived.has(
-                        sessionKey(project.path, "codex", selected),
-                      )
+                      !archived.has(sessionKey(project.path, "codex", selected))
                         ? selected
                         : null,
                     opencodeSessionId: null,
@@ -368,10 +397,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               );
               if (args.archived) archived.add(key);
               else archived.delete(key);
-              sessionStorage.setItem(
-                "archived",
-                JSON.stringify([...archived]),
-              );
+              sessionStorage.setItem("archived", JSON.stringify([...archived]));
               return;
             }
             if (command === "pending_approvals") return [];
@@ -553,9 +579,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             }
             if (command.endsWith("_start_session")) {
               if (startGate) await startGate;
-              const id = command.startsWith("codex")
-                ? "thread-new"
-                : "ses-new";
+              const id = command.startsWith("codex") ? "thread-new" : "ses-new";
               const model = args.model || "provider/model";
               models.set(id, model);
               if (command.startsWith("opencode"))
@@ -591,6 +615,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               return;
             }
             if (command.endsWith("_send_prompt")) {
+              await gates.get(command)?.promise;
               if (failNextSend) {
                 failNextSend = false;
                 throw new Error("Connection refused");
@@ -648,37 +673,89 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               if (error) throw new Error(error);
               return snapshot;
             }
-            if (command === "list_project_directory")
+            if (command === "list_project_directory") {
+              const entries = new Map<string, any>();
+              const prefix = `${args.projectPath}\0${args.path ? `${args.path}/` : ""}`;
+              for (const [key, content] of projectFiles) {
+                if (content === null || !key.startsWith(prefix)) continue;
+                const rest = key.slice(prefix.length);
+                const name = rest.split("/")[0];
+                const path = args.path ? `${args.path}/${name}` : name;
+                entries.set(path, {
+                  name,
+                  path,
+                  kind: rest.includes("/") ? "directory" : "file",
+                  sizeBytes: rest.includes("/") ? null : content.length,
+                });
+              }
+              const sorted = [...entries.values()].sort(
+                (a, b) =>
+                  (a.kind === "directory" ? 0 : 1) -
+                    (b.kind === "directory" ? 0 : 1) ||
+                  a.name.localeCompare(b.name),
+              );
+              const end = args.offset + args.limit;
               return {
                 path: args.path,
-                total: 1,
-                nextOffset: null,
-                entries:
-                  args.path === ""
-                    ? [
-                        {
-                          name: "src",
-                          path: "src",
-                          kind: "directory",
-                          sizeBytes: null,
-                        },
-                      ]
-                    : [
-                        {
-                          name: "App.tsx",
-                          path: "src/App.tsx",
-                          kind: "file",
-                          sizeBytes: 28,
-                        },
-                      ],
+                entries: sorted.slice(args.offset, end),
+                total: entries.size,
+                nextOffset: end < entries.size ? end : null,
               };
-            if (command === "read_project_file")
+            }
+            if (command === "search_project_files") {
+              const matches: any[] = [];
+              for (const [key, content] of projectFiles) {
+                if (
+                  content === null ||
+                  !key.startsWith(`${args.projectPath}\0`)
+                )
+                  continue;
+                const path = key.slice(args.projectPath.length + 1);
+                if (!args.includeIgnored && path.startsWith("vendor/"))
+                  continue;
+                if (args.mode === "files") {
+                  if (path.toLowerCase().includes(args.query.toLowerCase()))
+                    matches.push({
+                      path,
+                      line: null,
+                      column: null,
+                      preview: null,
+                    });
+                } else if (args.query.trim()) {
+                  content.split("\n").forEach((line, index) => {
+                    const column = line
+                      .toLowerCase()
+                      .indexOf(args.query.toLowerCase());
+                    if (column >= 0)
+                      matches.push({
+                        path,
+                        line: index + 1,
+                        column: column + 1,
+                        preview: line,
+                      });
+                  });
+                }
+              }
+              await (
+                gates.get(`${command}:${args.query}`) ?? gates.get(command)
+              )?.promise;
+              return { matches, truncated: false, skipped: 0 };
+            }
+            if (command === "read_project_file") {
+              const content = projectFiles.get(
+                fileKey(args.projectPath, args.path),
+              );
+              if (content == null)
+                throw new Error(`File not found: ${args.path}`);
+              await (gates.get(`${command}:${args.path}`) ?? gates.get(command))
+                ?.promise;
               return {
                 path: args.path,
-                content: "export const ready = true;\n",
-                sizeBytes: 27,
+                content,
+                sizeBytes: content.length,
                 truncated: false,
               };
+            }
             if (command === "git_file_versions")
               return {
                 path: args.filePath,
@@ -792,6 +869,678 @@ async function openSettings(page: Page, section = "Appearance") {
   await dialog.getByRole("button", { name: section, exact: true }).click();
   return dialog;
 }
+
+async function findProjectFile(page: Page, path: string) {
+  await page.keyboard.press("Meta+p");
+  const search = page.getByRole("combobox", { name: "Find project file" });
+  await expect(search).toBeFocused();
+  await search.fill(path);
+  await expect(
+    page.getByRole("option", { name: path, exact: true }),
+  ).toBeVisible();
+  await search.press("Enter");
+  await expect(page.locator(".file-editor-path")).toHaveText(path);
+  await expect(
+    page.locator('.monaco-editor[role="code"]').first(),
+  ).toBeVisible();
+}
+
+const attachedContext = (page: Page) =>
+  page.locator('.composer [aria-label="Attached context"]');
+
+test("Files searches filenames and contents beside the conversation, handles ignored files and rejects stale results", async ({
+  page,
+}) => {
+  await desktop(page);
+  await page.evaluate(() =>
+    (window as any).fixture.setProjectFile(
+      "src/App.tsx",
+      "// header\nexport const ready = true;\n// footer\n",
+    ),
+  );
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep this draft visible");
+  await findProjectFile(page, "src/App.tsx");
+  await expect(input).toBeVisible();
+  await expect(input).toHaveValue("Keep this draft visible");
+  await expect(
+    page.getByRole("heading", { name: "A focused workspace" }),
+  ).toBeVisible();
+  await page.keyboard.press("Meta+Shift+f");
+  const contents = page.getByRole("combobox", {
+    name: "Search project contents",
+  });
+  await expect(contents).toBeFocused();
+  await contents.fill("ready");
+  await expect(
+    page.getByRole("option", { name: /src\/App.tsx:2/ }),
+  ).toBeVisible();
+  await contents.press("Enter");
+  await expect(page.locator(".active-line-number")).toHaveText("2");
+  await findProjectFile(page, "src/styles.css");
+  const tabs = page.getByRole("tablist", { name: "Open files" });
+  await expect(tabs.getByRole("tab")).toHaveCount(2);
+  await tabs.getByRole("tab", { name: "styles.css", exact: true }).focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    tabs.getByRole("tab", { name: "App.tsx", exact: true }),
+  ).toBeFocused();
+  await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
+
+  await page.keyboard.press("Meta+p");
+  const search = page.getByRole("combobox", { name: "Find project file" });
+  await search.fill("generated");
+  await expect(
+    page.getByText("No matching files.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("checkbox", { name: "Include ignored" }).check();
+  await expect(
+    page.getByRole("option", { name: "vendor/generated.ts" }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.hold("search_project_files:README"),
+  );
+  await search.fill("README");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).fixture.calls.some(
+          (call: any) =>
+            call.command === "search_project_files" &&
+            call.args.query === "README",
+        ),
+      ),
+    )
+    .toBe(true);
+  await search.fill("styles");
+  await expect(
+    page.getByRole("option", { name: "src/styles.css" }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.release("search_project_files:README"),
+  );
+  await expect(page.getByRole("option", { name: "README.md" })).toHaveCount(0);
+  await search.press("Escape");
+  await page.getByRole("button", { name: "Recent", exact: true }).click();
+  await expect(
+    page
+      .locator(".changed-files-scroll")
+      .getByRole("button", { name: "src/App.tsx", exact: true }),
+  ).toBeVisible();
+  await tabs
+    .getByRole("button", { name: "Close src/styles.css", exact: true })
+    .click();
+  await expect(tabs.getByRole("tab")).toHaveCount(1);
+});
+
+test("Files restores tabs, expanded folders and reading positions, refreshes in place and keeps project workspaces separate", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await desktop(page);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setProjectFile(
+      "src/App.tsx",
+      Array.from(
+        { length: 220 },
+        (_, index) => `export const line${index + 1} = ${index + 1};`,
+      ).join("\n"),
+    );
+    for (let index = 0; index < 260; index++)
+      fixture.setProjectFile(`src/extra-${index}.ts`, "export {};\n");
+  });
+  await findProjectFile(page, "src/App.tsx");
+  await page
+    .getByRole("treeitem", { name: "src, folder, collapsed", exact: true })
+    .click();
+  await page
+    .getByRole("treeitem", { name: "Load more files in src", exact: true })
+    .click();
+  await expect(
+    page.getByRole("treeitem", { name: /extra-.*file/ }),
+  ).toHaveCount(260);
+  const tree = page.locator(".file-tree-scroll");
+  await tree.evaluate((node) => {
+    node.scrollTop = 700;
+  });
+  const code = page.locator('.monaco-editor[role="code"]').first();
+  const editorInput = page.getByRole("textbox", {
+    name: "Read-only preview of src/App.tsx",
+    exact: true,
+  });
+  await editorInput.focus();
+  await editorInput.press("PageDown");
+  await editorInput.press("PageDown");
+  const stored = () =>
+    page.evaluate(() =>
+      JSON.parse(
+        localStorage.getItem("caelum.files.v1:%2Fwork%2Fcaelum") ?? "{}",
+      ),
+    );
+  await expect
+    .poll(
+      async () =>
+        (await stored()).views?.["file:src/App.tsx"]?.viewState?.firstPosition
+          ?.lineNumber ?? 0,
+    )
+    .toBeGreaterThan(20);
+  const view = (await stored()).views["file:src/App.tsx"].viewState;
+  const firstVisibleLine = () =>
+    code.locator(".view-line").evaluateAll((nodes) => {
+      const bounds = nodes[0]
+        ?.closest(".monaco-editor")
+        ?.getBoundingClientRect();
+      return nodes.find(
+        (node) => node.getBoundingClientRect().bottom > (bounds?.top ?? 0),
+      )?.textContent;
+    });
+  const line = await firstVisibleLine();
+  await findProjectFile(page, "README.md");
+  await page.getByRole("tab", { name: "App.tsx", exact: true }).click();
+  await expect.poll(firstVisibleLine).toBe(line);
+  const updated =
+    Array.from(
+      { length: 220 },
+      (_, index) => `export const line${index + 1} = ${index + 1};`,
+    ).join("\n") + `\n// refreshed ${"x".repeat(512)}\n`;
+  await page.evaluate((updated) => {
+    (window as any).fixture.setProjectFile("src/App.tsx", updated);
+    window.dispatchEvent(new Event("focus"));
+  }, updated);
+  await expect(page.locator(".file-editor-size")).toHaveText(
+    `${(updated.length / 1024).toFixed(1)} KiB`,
+  );
+  await expect(
+    page.getByRole("treeitem", { name: /extra-.*file/ }),
+  ).toHaveCount(260);
+  await expect
+    .poll(async () => (await stored()).views?.["file:src/App.tsx"]?.viewState)
+    .toEqual(view);
+  await expect.poll(firstVisibleLine).toBe(line);
+  await page.getByRole("button", { name: "Close files", exact: true }).click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect.poll(firstVisibleLine).toBe(line);
+  await expect.poll(() => tree.evaluate((node) => node.scrollTop)).toBe(700);
+  await page.reload();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(
+    page.getByRole("tablist", { name: "Open files" }).getByRole("tab"),
+  ).toHaveCount(2);
+  await expect(
+    page.getByRole("treeitem", { name: /extra-.*file/ }),
+  ).toHaveCount(260);
+  await expect.poll(firstVisibleLine).toBe(line);
+  await expect.poll(() => tree.evaluate((node) => node.scrollTop)).toBe(700);
+
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(page.locator(".file-tabs")).toHaveCount(0);
+  await findProjectFile(page, "src/App.tsx");
+  await expect(code).toContainText("other");
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(
+    page.getByRole("tablist", { name: "Open files" }).getByRole("tab"),
+  ).toHaveCount(2);
+  await expect.poll(firstVisibleLine).toBe(line);
+});
+
+test("Files inspector resizes and expands while keeping the conversation mounted and handles missing files and late reads", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await desktop(page);
+  await findProjectFile(page, "src/App.tsx");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep my place");
+  await page
+    .locator(".transcript")
+    .evaluate((node) => node.setAttribute("data-mounted", "yes"));
+  const pane = page.getByRole("complementary", {
+    name: "Project files",
+    exact: true,
+  });
+  const width = (await pane.boundingBox())!.width;
+  const resize = page.getByRole("separator", {
+    name: "Resize project inspector",
+  });
+  await resize.focus();
+  await resize.press("ArrowLeft");
+  await expect
+    .poll(async () => (await pane.boundingBox())!.width)
+    .toBeGreaterThan(width);
+  const divider = (await resize.boundingBox())!;
+  await page.mouse.move(divider.x + divider.width / 2, divider.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(divider.x - 80, divider.y + 100);
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await pane.boundingBox())!.width)
+    .toBeGreaterThan(width + 60);
+  await page.getByRole("button", { name: "Expand project inspector" }).click();
+  await expect(input).toBeHidden();
+  await expect(page.locator(".transcript")).toHaveAttribute(
+    "data-mounted",
+    "yes",
+  );
+  await page
+    .getByRole("button", { name: "Restore conversation layout" })
+    .click();
+  await expect(input).toHaveValue("Keep my place");
+  await expect(page.locator(".transcript")).toHaveAttribute(
+    "data-mounted",
+    "yes",
+  );
+  await page.screenshot({ path: "test-results/files-inspector-dark.png" });
+  await page
+    .getByRole("button", { name: "Load earlier messages", exact: true })
+    .click();
+  const transcript = page.locator(".transcript");
+  await transcript.evaluate((node) => {
+    node.scrollTop = 250;
+  });
+  await expect(
+    page.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Expand project inspector" }).click();
+  await page
+    .getByRole("button", { name: "Restore conversation layout" })
+    .click();
+  await expect
+    .poll(() => transcript.evaluate((node) => node.scrollTop))
+    .toBe(250);
+
+  await page.evaluate(() =>
+    (window as any).fixture.hold("read_project_file:README.md"),
+  );
+  await page.keyboard.press("Meta+p");
+  const search = page.getByRole("combobox", { name: "Find project file" });
+  await search.fill("README.md");
+  await page.getByRole("option", { name: "README.md", exact: true }).click();
+  await expect(
+    page.getByText("Loading file preview…", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "App.tsx", exact: true }).click();
+  await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
+  await page.evaluate(() =>
+    (window as any).fixture.release("read_project_file:README.md"),
+  );
+  await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
+  await page.evaluate(() => {
+    (window as any).fixture.setProjectFile("src/App.tsx", null);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(
+    page.getByRole("alert").filter({ hasText: "File not found: src/App.tsx" }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.setProjectFile("src/App.tsx", "// restored\n"),
+  );
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.locator('.monaco-editor[role="code"]').first(),
+  ).toContainText("restored");
+  const dialog = await openSettings(page);
+  await dialog.getByRole("radio", { name: "Light", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await page.screenshot({ path: "test-results/files-inspector-light.png" });
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(input).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
+  await page.screenshot({ path: "test-results/files-inspector-compact.png" });
+});
+
+for (const provider of ["codex", "opencode"]) {
+  test(`${provider} Files context sends exact file and selection snapshots, removes chips and restores failed sends`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await desktop(page, provider === "codex" ? "thread-a" : null);
+    if (provider === "opencode") {
+      await choose(page, "Provider", "OpenCode");
+      await page
+        .getByRole("button", { name: "OpenCode session", exact: true })
+        .click();
+    }
+    await page.evaluate(() =>
+      (window as any).fixture.setProjectFile(
+        "src/App.tsx",
+        "export const selected = true;\nexport const untouched = false;\n",
+      ),
+    );
+    await findProjectFile(page, "src/App.tsx");
+    await page
+      .locator(".file-editor-toolbar")
+      .getByRole("button", { name: "Add to prompt", exact: true })
+      .click();
+    await expect(attachedContext(page)).toContainText("src/App.tsx");
+    await attachedContext(page)
+      .getByRole("button", { name: "Remove src/App.tsx context", exact: true })
+      .click();
+    await expect(attachedContext(page)).toHaveCount(0);
+    const editorInput = page.getByRole("textbox", {
+      name: "Read-only preview of src/App.tsx",
+      exact: true,
+    });
+    await editorInput.focus();
+    await editorInput.press("Meta+ArrowUp");
+    await editorInput.press("Shift+ArrowDown");
+    await page
+      .getByRole("button", { name: "Ask about selection", exact: true })
+      .click();
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("Explain the selected code.");
+    await expect(attachedContext(page)).toContainText("src/App.tsx:1");
+    await findProjectFile(page, "README.md");
+    await page
+      .locator(".file-editor-toolbar")
+      .getByRole("button", { name: "Add to prompt", exact: true })
+      .click();
+    await page.evaluate(() => (window as any).fixture.failSend());
+    await input.press("Enter");
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Connection refused" }),
+    ).toBeVisible();
+    await expect(
+      attachedContext(page).locator(".file-context-chip"),
+    ).toHaveCount(2);
+    await expect(input).toHaveValue("Explain the selected code.");
+    await page.getByRole("button", { name: /New session/ }).click();
+    await expect(attachedContext(page)).toHaveCount(0);
+    await page
+      .getByRole("button", {
+        name:
+          provider === "codex"
+            ? "Refine the session workspace"
+            : "OpenCode session",
+        exact: true,
+      })
+      .click();
+    await expect(
+      attachedContext(page).locator(".file-context-chip"),
+    ).toHaveCount(2);
+    await input.press("Enter");
+    await expect(attachedContext(page)).toHaveCount(0);
+    await expect(
+      page.locator('[aria-label="Sent file context"] .file-context-chip'),
+    ).toHaveCount(2);
+    await expect(page.locator(".user-text").last()).toHaveText(
+      "Explain the selected code.",
+    );
+    const prompts = await page.evaluate(
+      (provider) =>
+        (window as any).fixture.calls
+          .filter((call: any) => call.command === `${provider}_send_prompt`)
+          .map((call: any) => call.args.prompt),
+      provider,
+    );
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toBe(prompts[0]);
+    const payload = JSON.parse(
+      prompts[1]
+        .split("<caelum-file-context>\n")[1]
+        .split("\n</caelum-file-context>")[0],
+    );
+    expect(payload.files).toEqual([
+      expect.objectContaining({
+        path: "src/App.tsx",
+        content: "export const selected = true;\n",
+        startLine: 1,
+        endLine: 1,
+        truncated: false,
+      }),
+      expect.objectContaining({
+        path: "README.md",
+        content: "# Caelum\nProject documentation.\n",
+        truncated: false,
+      }),
+    ]);
+    await input.press("ArrowUp");
+    await expect(input).toHaveValue("Explain the selected code.");
+    await page.screenshot({
+      path: `test-results/${provider}-file-context.png`,
+    });
+  });
+
+  test(`${provider} Files context transfers on first send and isolates new-session provider drafts`, async ({
+    page,
+  }) => {
+    await desktop(page, null);
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    await findProjectFile(page, "src/App.tsx");
+    await page
+      .locator(".file-editor-toolbar")
+      .getByRole("button", { name: "Add to prompt", exact: true })
+      .click();
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Use this snapshot");
+    await choose(page, "Provider", provider === "codex" ? "OpenCode" : "Codex");
+    await expect(attachedContext(page)).toHaveCount(0);
+    await choose(page, "Provider", provider === "codex" ? "Codex" : "OpenCode");
+    await expect(attachedContext(page)).toContainText("src/App.tsx");
+    await expect(input).toHaveValue("Use this snapshot");
+    await page.evaluate(() => {
+      (window as any).fixture.holdStart();
+      (window as any).fixture.failSend();
+    });
+    await input.press("Enter");
+    await expect(input).toBeDisabled();
+    await page
+      .getByRole("button", {
+        name: "Refine the session workspace",
+        exact: true,
+      })
+      .click();
+    await expect(attachedContext(page)).toHaveCount(0);
+    await page.evaluate(() => (window as any).fixture.releaseStart());
+    await expect(
+      page.getByRole("button", { name: "Use this snapshot", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".breadcrumbs strong")).toHaveText(
+      "Refine the session workspace",
+    );
+    await page
+      .getByRole("button", { name: "Use this snapshot", exact: true })
+      .click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Connection refused" }),
+    ).toBeVisible();
+    await expect(attachedContext(page)).toContainText("src/App.tsx");
+    await input.press("Enter");
+    await expect(
+      page.locator('[aria-label="Sent file context"]'),
+    ).toContainText("src/App.tsx");
+    await expect(attachedContext(page)).toHaveCount(0);
+    const calls = await page.evaluate(() => (window as any).fixture.calls);
+    expect(
+      calls.filter((call: any) => call.command === `${provider}_start_session`),
+    ).toHaveLength(1);
+    expect(
+      calls.filter((call: any) => call.command === `${provider}_send_prompt`),
+    ).toHaveLength(2);
+    await page.getByRole("button", { name: /New session/ }).click();
+    await expect(attachedContext(page)).toHaveCount(0);
+    await expect(input).toHaveValue("");
+  });
+}
+
+test("Files attachment callbacks and failed sends stay scoped across session and project navigation", async ({
+  page,
+}) => {
+  await desktop(page);
+  await findProjectFile(page, "src/App.tsx");
+  await page
+    .getByRole("treeitem", { name: "src, folder, collapsed", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.hold("read_project_file:src/App.tsx"),
+  );
+  await page
+    .getByRole("treeitem", { name: "App.tsx, file", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Add to prompt");
+  await page
+    .getByRole("button", { name: "Review the provider adapters", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.release("read_project_file:src/App.tsx"),
+  );
+  await expect(attachedContext(page)).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Refine the session workspace", exact: true })
+    .click();
+  await expect(attachedContext(page)).toHaveCount(0);
+  await page
+    .locator(".file-editor-toolbar")
+    .getByRole("button", { name: "Add to prompt", exact: true })
+    .click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Scoped retry");
+  await page.evaluate(() => {
+    (window as any).fixture.hold("codex_send_prompt");
+    (window as any).fixture.failSend();
+  });
+  await input.press("Enter");
+  await expect(attachedContext(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(attachedContext(page)).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("codex_send_prompt"),
+  );
+  await expect(input).toHaveValue("");
+  await expect(attachedContext(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(input).toHaveValue("Scoped retry");
+  await expect(attachedContext(page)).toContainText("src/App.tsx");
+});
+
+test("Files opens local Markdown and tool references at their source line without converting code blocks", async ({
+  page,
+}) => {
+  await desktop(page);
+  await page.evaluate(() => {
+    (window as any).fixture.setProjectFile(
+      "src/App.tsx",
+      "// one\n// two\n// three\n",
+    );
+    (window as any).fixture.setCodexHistory(
+      [
+        {
+          id: "refs",
+          status: "completed",
+          items: [
+            {
+              id: "refs-answer",
+              type: "agentMessage",
+              text: "See `src/App.tsx:2`, [the stylesheet](src/styles.css#L1) and [the last line](file:///work/caelum/src/App.tsx:3).\n\n```text\nsrc/App.tsx:3\n```",
+            },
+            {
+              id: "refs-tool",
+              type: "fileChange",
+              status: "completed",
+              changes: [
+                {
+                  path: "/work/caelum/src/App.tsx",
+                  kind: { type: "update" },
+                  diff: "@@ -1 +1 @@\n-old\n+new",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      false,
+    );
+    window.dispatchEvent(new Event("focus"));
+  });
+  await page
+    .locator(".markdown")
+    .getByRole("button", { name: "src/App.tsx:2", exact: true })
+    .click();
+  await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
+  await expect(page.locator(".active-line-number")).toHaveText("2");
+  await expect(page.locator(".code-block .file-reference")).toHaveCount(0);
+  await page
+    .locator(".markdown")
+    .getByRole("button", { name: "the last line", exact: true })
+    .click();
+  await expect(page.locator(".active-line-number")).toHaveText("3");
+  await page
+    .locator(".markdown")
+    .getByRole("button", { name: "src/App.tsx:2", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Copy relative path");
+  await expect.poll(() => copiedText(page)).toBe("src/App.tsx");
+  await page
+    .locator(".markdown")
+    .getByRole("button", { name: "the stylesheet", exact: true })
+    .click();
+  await expect(page.locator(".file-editor-path")).toHaveText("src/styles.css");
+  await page
+    .getByRole("button", { name: "Edit /work/caelum/src/App.tsx", exact: true })
+    .click();
+  await page
+    .locator(".tool-file-links")
+    .getByRole("button", { name: "src/App.tsx", exact: true })
+    .click();
+  await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
+});
+
+test("Files recovers damaged saved tabs and reports storage failures without losing the open preview", async ({
+  page,
+}) => {
+  await desktop(page);
+  await page.evaluate(() =>
+    localStorage.setItem(
+      "caelum.files.v1:%2Fwork%2Fcaelum",
+      JSON.stringify({
+        tabs: [
+          null,
+          { path: "../outside.txt", mode: "file" },
+          { path: "README.md", mode: "file" },
+          { path: "README.md", mode: "file" },
+        ],
+        active: "file:missing.ts",
+        expanded: [null, "../outside", "src"],
+        views: { "file:README.md": { invalid: true } },
+        treeScroll: -100,
+      }),
+    ),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(
+    page.getByRole("tablist", { name: "Open files" }).getByRole("tab"),
+  ).toHaveCount(1);
+  await expect(page.locator(".file-editor-path")).toHaveText("README.md");
+  await expect(
+    page.locator('.monaco-editor[role="code"]').first(),
+  ).toContainText("Project documentation.");
+  await page.evaluate(() => {
+    const setItem = Storage.prototype.setItem;
+    (window as any).restoreFileStorage = () => {
+      Storage.prototype.setItem = setItem;
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("caelum.files.v1:"))
+        throw new DOMException("Storage unavailable", "QuotaExceededError");
+      setItem.call(this, key, value);
+    };
+  });
+  await findProjectFile(page, "src/App.tsx");
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "Could not save file tabs" });
+  await expect(error).toBeVisible();
+  await page.evaluate(() => (window as any).restoreFileStorage());
+  await error.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(error).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
+});
 
 test("settings switches and persists complete themes, follows the system and preserves live drafts", async ({
   page,
@@ -1134,8 +1883,8 @@ for (const provider of ["codex", "opencode"]) {
       agent: provider === "opencode" ? "build" : null,
     });
     expect(
-      calls.find((call: any) => call.command === `${provider}_send_prompt`)
-        .args.effort,
+      calls.find((call: any) => call.command === `${provider}_send_prompt`).args
+        .effort,
     ).toBe("low");
     await page.getByRole("button", { name: "Stop generation" }).click();
     await page.keyboard.press("Meta+n");
@@ -1229,9 +1978,7 @@ test("provider settings recover connection errors and isolate delayed capability
   ).toHaveText("Provider default");
   await choose(page, "Default provider", "OpenCode");
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Close caelum", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Close caelum", exact: true }).click();
   await openSettings(page, "Providers");
   await expect(dialog.getByRole("status")).toHaveText("No project selected");
   await expect(
@@ -1271,8 +2018,7 @@ test("settings recover damaged preferences and report storage failures with a wo
       Storage.prototype.setItem = setItem;
     };
     Storage.prototype.setItem = function (key, value) {
-      if (key === "caelum.settings.v1")
-        throw new Error("Storage unavailable");
+      if (key === "caelum.settings.v1") throw new Error("Storage unavailable");
       setItem.call(this, key, value);
     };
   });
@@ -1298,9 +2044,7 @@ test("settings recover damaged preferences and report storage failures with a wo
 
 for (const provider of ["codex", "opencode"]) {
   const title =
-    provider === "codex"
-      ? "Refine the session workspace"
-      : "OpenCode session";
+    provider === "codex" ? "Refine the session workspace" : "OpenCode session";
   const id = provider === "codex" ? "thread-a" : "ses-a";
   test(`${provider} archives old sessions, restores drafts and settings with Undo, and stays removed after restart`, async ({
     page,
@@ -1540,13 +2284,9 @@ test("sidebar metadata and archiving stay scoped when projects reuse a session I
     threadId: "thread-a",
     turn: { id: "turn-1", status: "completed" },
   });
-  await page
-    .getByRole("button", { name: "Open project", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
   await expect(page.locator(".breadcrumbs")).toContainText("other");
-  await page.evaluate(() =>
-    (window as any).fixture.release("session_details"),
-  );
+  await page.evaluate(() => (window as any).fixture.release("session_details"));
   await expect(row.locator(".session-branch")).toHaveText("other-project");
   await row.hover();
   await row
@@ -1603,9 +2343,9 @@ test("sidebar details refresh, allow branch search and fit at the minimum window
   await expect(
     row.getByRole("button", { name: "Archive session", exact: true }),
   ).toBeInViewport({ ratio: 1 });
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBe(800);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
   await page.screenshot({ path: "test-results/session-sidebar.png" });
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
@@ -1624,9 +2364,7 @@ test("sidebar details refresh, allow branch search and fit at the minimum window
   await expect(row.locator(".session-branch")).toHaveCount(0);
   await expect(row.locator(".lines-added")).toHaveText("+0");
   await expect(
-    sessionRow(page, "Review the provider adapters").locator(
-      ".session-lines",
-    ),
+    sessionRow(page, "Review the provider adapters").locator(".session-lines"),
   ).toHaveCount(0);
   await page.evaluate(() =>
     (window as any).fixture.setSessionDetails("codex", "thread-b", null),
@@ -1682,9 +2420,9 @@ test("restores Markdown and tool details in a full-height dark workspace", async
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeInViewport();
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBe(800);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
 });
 
 test("typing and resizing a draft keep the latest response pinned without moving an older reading position", async ({
@@ -1731,14 +2469,10 @@ test("typing and resizing a draft keep the latest response pinned without moving
     "Keep the discussion visible as this draft wraps onto a few more lines while I review the response.",
   );
   await expect.poll(height).toBeGreaterThan(56);
-  await page
-    .getByRole("button", { name: "Hide changes", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Hide changes", exact: true }).click();
   await expect.poll(height).toBe(56);
   await expect.poll(gap).toBeLessThanOrEqual(1);
-  await page
-    .getByRole("button", { name: "Show changes", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Show changes", exact: true }).click();
   await expect.poll(height).toBeGreaterThan(56);
   await expect.poll(gap).toBeLessThanOrEqual(1);
 
@@ -1799,9 +2533,7 @@ for (const provider of ["codex", "opencode"]) {
     await input.press("ArrowUp");
     await expect(input).toHaveValue(oldPrompt);
     expect(
-      await input.evaluate(
-        (node: HTMLTextAreaElement) => node.selectionStart,
-      ),
+      await input.evaluate((node: HTMLTextAreaElement) => node.selectionStart),
     ).toBe(oldPrompt.length);
     await input.fill("An unsent draft\nSecond line");
     await input.press("ArrowUp");
@@ -1922,9 +2654,7 @@ test("session drafts, expanded tools, search, and navigation survive switching",
   await expect(
     page.getByRole("textbox", { name: "Search sessions" }),
   ).toBeFocused();
-  await page
-    .getByRole("textbox", { name: "Search sessions" })
-    .fill("adapters");
+  await page.getByRole("textbox", { name: "Search sessions" }).fill("adapters");
   await expect(page.locator(".session-item")).toHaveCount(1);
   await page.keyboard.press("Meta+n");
   await expect(input).toBeFocused();
@@ -2009,9 +2739,7 @@ test("paginated history keeps a bounded transcript and does not follow while rea
     await page.locator(".transcript").evaluate((node) => node.scrollTop),
   ).toBe(before);
   await page.getByRole("button", { name: "Jump to latest" }).click();
-  await expect(
-    page.getByText("New answer", { exact: true }),
-  ).toBeInViewport();
+  await expect(page.getByText("New answer", { exact: true })).toBeInViewport();
 });
 
 test("history arriving during streaming preserves new live content", async ({
@@ -2356,14 +3084,21 @@ test("Build and Plan are one-click session controls that distinguish the running
   await expect(status).toHaveText("Running: Build · Next: Plan");
   const runningIcon = build.locator(".agent-icon");
   await expect(runningIcon).toHaveAttribute("data-running", "true");
-  await expect(plan.locator(".agent-icon")).toHaveAttribute("data-running", "false");
-  expect(await runningIcon.evaluate(
-    (node) => getComputedStyle(node, "::after").animationName,
-  )).toBe("spin");
+  await expect(plan.locator(".agent-icon")).toHaveAttribute(
+    "data-running",
+    "false",
+  );
+  expect(
+    await runningIcon.evaluate(
+      (node) => getComputedStyle(node, "::after").animationName,
+    ),
+  ).toBe("spin");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  expect(await runningIcon.evaluate(
-    (node) => getComputedStyle(node, "::after").animationName,
-  )).toBe("none");
+  expect(
+    await runningIcon.evaluate(
+      (node) => getComputedStyle(node, "::after").animationName,
+    ),
+  ).toBe("none");
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await input.fill("Plan the next change");
   expect(
@@ -2484,24 +3219,35 @@ test("Shift+Tab cycles available agents without changing the draft or other keyb
     await expect(input).toBeFocused();
     await expect(input).toHaveValue("Keep this draft and selection");
     expect(
-      await input.evaluate((node: HTMLTextAreaElement) =>
-        [node.selectionStart, node.selectionEnd],
-      ),
+      await input.evaluate((node: HTMLTextAreaElement) => [
+        node.selectionStart,
+        node.selectionEnd,
+      ]),
     ).toEqual([5, 9]);
   }
   expect(
-    await page.evaluate(() => (window as any).fixture.calls.filter(
-      (call: any) => [
-        "opencode_select_agent",
-        "opencode_start_session",
-        "opencode_send_prompt",
-      ].includes(call.command),
-    )),
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter((call: any) =>
+        [
+          "opencode_select_agent",
+          "opencode_start_session",
+          "opencode_send_prompt",
+        ].includes(call.command),
+      ),
+    ),
   ).toHaveLength(0);
 
-  for (const modifier of ["altKey", "ctrlKey", "metaKey", "isComposing", "repeat"]) {
+  for (const modifier of [
+    "altKey",
+    "ctrlKey",
+    "metaKey",
+    "isComposing",
+    "repeat",
+  ]) {
     await input.dispatchEvent("keydown", {
-      key: "Tab", shiftKey: true, [modifier]: true,
+      key: "Tab",
+      shiftKey: true,
+      [modifier]: true,
     });
     await expect(status).toHaveText("Next: Build");
   }
@@ -2716,9 +3462,7 @@ test("OpenCode uses provider choices, streams structured tools and reconciles ac
     "opencode",
   );
   await page.getByRole("button", { name: /read src\/App.tsx/ }).click();
-  await expect(
-    page.getByText("File contents", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("File contents", { exact: true })).toBeVisible();
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     const sent = fixture.calls.find(
@@ -2801,9 +3545,7 @@ test("project rows show scoped live Git details and background activity, includi
     fixture.hold("git_repository_status:/work/other");
     fixture.setGitError("Folder unavailable", "/work/other");
   });
-  await page
-    .getByRole("button", { name: "Open project", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
   const other = projects.getByRole("button", { name: "other", exact: true });
   await expect(other).toHaveAttribute("aria-current", "page");
   await expect(other).toContainText("Checking Git…");
@@ -2861,9 +3603,9 @@ test("project rows show scoped live Git details and background activity, includi
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeInViewport({ ratio: 1 });
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBe(800);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
   await page.screenshot({ path: "test-results/project-details-compact.png" });
   await other.focus();
   await page.keyboard.press("Enter");
@@ -2908,9 +3650,7 @@ test("Changes syntax colours preserve patch text, independent old/new grammars a
     name: "Unstaged diff",
     exact: true,
   });
-  const added = unstaged
-    .locator(".added")
-    .filter({ hasText: "+const label" });
+  const added = unstaged.locator(".added").filter({ hasText: "+const label" });
   await expect(added.locator(".syntax-keyword")).toHaveText("const");
   expect(await unstaged.locator("pre").textContent()).toBe(patch);
   await expect(unstaged.locator("script")).toHaveCount(0);
@@ -2933,10 +3673,7 @@ test("Changes syntax colours preserve patch text, independent old/new grammars a
       .locator(".syntax-keyword"),
   ).toHaveText(["const", "true"]);
   await expect(added.locator(".diff-marker")).toHaveText("+");
-  await expect(added.locator(".syntax-string")).toHaveCSS(
-    "display",
-    "inline",
-  );
+  await expect(added.locator(".syntax-string")).toHaveCSS("display", "inline");
   await expect(added).toHaveCSS("box-shadow", "none");
   await expect(added).toHaveCSS("background-image", "none");
   await expect(added).toHaveCSS("background-color", "rgb(20, 35, 25)");
@@ -2974,9 +3711,7 @@ test("Changes syntax colours preserve patch text, independent old/new grammars a
     await page.evaluate(
       ({ path, content }) => {
         const fixture = (window as any).fixture;
-        fixture.setGitFiles([
-          { path, indexStatus: "?", worktreeStatus: "?" },
-        ]);
+        fixture.setGitFiles([{ path, indexStatus: "?", worktreeStatus: "?" }]);
         fixture.setGitDiff(path, {
           unstaged: "",
           staged: "",
@@ -2990,8 +3725,7 @@ test("Changes syntax colours preserve patch text, independent old/new grammars a
       name: "Untracked diff",
       exact: true,
     });
-    if (tokenClass)
-      await expect(section.locator(tokenClass)).toHaveText(text);
+    if (tokenClass) await expect(section.locator(tokenClass)).toHaveText(text);
     await expect(section.locator("pre")).toHaveText(content);
     expect(await section.locator("pre").textContent()).toBe(content);
     await expect(section.locator("img")).toHaveCount(0);
@@ -3072,9 +3806,9 @@ test("changes follow the most recently edited file during work and preserve manu
   await pane
     .getByRole("button", { name: "src/styles.css, Staged modified" })
     .click();
-  await expect(
-    pane.getByRole("region", { name: "Staged diff" }),
-  ).toContainText("revision 1");
+  await expect(pane.getByRole("region", { name: "Staged diff" })).toContainText(
+    "revision 1",
+  );
   await emit(page, "turn/started", {
     threadId: "thread-a",
     turn: { id: "turn-live" },
@@ -3132,9 +3866,9 @@ test("changes follow the most recently edited file during work and preserve manu
     page.getByRole("button", { name: "Stop generation" }),
   ).toBeInViewport({ ratio: 1 });
   await expect(pane).toBeInViewport({ ratio: 1 });
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBe(800);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
   await page.screenshot({ path: "test-results/session-changes-minimum.png" });
   await page.evaluate(() =>
     (window as any).fixture.setGitFiles([
@@ -3270,9 +4004,9 @@ test("late Git responses cannot replace a newer selection or another project's d
     .getByRole("button", { name: "src/styles.css, Staged modified" })
     .click();
   await page.evaluate(() => (window as any).fixture.release("git_file_diff"));
-  await expect(
-    pane.getByRole("region", { name: "Staged diff" }),
-  ).toContainText("background");
+  await expect(pane.getByRole("region", { name: "Staged diff" })).toContainText(
+    "background",
+  );
   await expect(
     pane.getByRole("region", { name: "Unstaged diff", exact: true }),
   ).toHaveCount(0);
@@ -3299,9 +4033,7 @@ test("late Git responses cannot replace a newer selection or another project's d
     );
   });
   await refresh.click();
-  await page
-    .getByRole("button", { name: "Open project", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
   await expect(page.locator(".project-row.selected")).toContainText("other");
   await page.evaluate(() =>
     (window as any).fixture.release("git_repository_status"),
@@ -3340,9 +4072,7 @@ for (const provider of ["codex", "opencode"] as const) {
       })
       .click();
     await expect(popup).toBeVisible();
-    await expect(
-      popup.getByText("Favourites", { exact: true }),
-    ).toBeVisible();
+    await expect(popup.getByText("Favourites", { exact: true })).toBeVisible();
     expect(
       await popup
         .locator(".choice-option")
@@ -3413,11 +4143,7 @@ for (const provider of ["codex", "opencode"] as const) {
     await search.press("ArrowDown");
     await search.press("Enter");
     await expect(model).toContainText("Fast model");
-    await choose(
-      page,
-      "Provider",
-      provider === "codex" ? "OpenCode" : "Codex",
-    );
+    await choose(page, "Provider", provider === "codex" ? "OpenCode" : "Codex");
     await model.click();
     await expect(
       popup.getByRole("button", {
@@ -3434,9 +4160,7 @@ for (const provider of ["codex", "opencode"] as const) {
         exact: true,
       })
       .click();
-    await expect(popup.getByText("Favourites", { exact: true })).toHaveCount(
-      0,
-    );
+    await expect(popup.getByText("Favourites", { exact: true })).toHaveCount(0);
     await search.press("Enter");
     await expect(model).toContainText("Fast model");
     expect(
@@ -3564,12 +4288,8 @@ test("OpenCode model sources distinguish routed models, support provider search 
       .getByRole("button", { name: "Default model", exact: true })
       .locator(".choice-trigger-source"),
   ).toHaveText("Anthropic");
-  await page.evaluate(() =>
-    (window as any).fixture.setModels("opencode", []),
-  );
-  await dialog
-    .getByRole("button", { name: "Refresh OpenCode status" })
-    .click();
+  await page.evaluate(() => (window as any).fixture.setModels("opencode", []));
+  await dialog.getByRole("button", { name: "Refresh OpenCode status" }).click();
   await dialog
     .getByRole("button", { name: "Default model", exact: true })
     .click();
@@ -3593,9 +4313,7 @@ test("OpenCode model sources distinguish routed models, support provider search 
     (models) => (window as any).fixture.setModels("opencode", models),
     models,
   );
-  await dialog
-    .getByRole("button", { name: "Refresh OpenCode status" })
-    .click();
+  await dialog.getByRole("button", { name: "Refresh OpenCode status" }).click();
   await dialog
     .getByRole("button", { name: "Default model", exact: true })
     .click();
@@ -3693,9 +4411,9 @@ test("Codex context usage restores native counts, stays session scoped and fits 
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeInViewport({ ratio: 1 });
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBe(800);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
   await page.screenshot({ path: "test-results/context-usage-compact.png" });
   await emit(page, "thread/tokenUsage/updated", {
     threadId: "thread-a",
@@ -3895,12 +4613,10 @@ test("model picker searches capabilities, supports keyboard selection and return
   await expect(model).toContainText("Test model");
   await model.click();
   await page.screenshot({ path: "test-results/model-picker.png" });
-  await page
-    .getByRole("heading", { name: "New session", exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Choose model" }),
-  ).toHaveCount(0);
+  await page.getByRole("heading", { name: "New session", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Choose model" })).toHaveCount(
+    0,
+  );
   expect(
     await page.evaluate(() =>
       (window as any).fixture.calls.filter((call: any) =>
@@ -3970,10 +4686,7 @@ test("restored shell notifications and nested tool results display identity and 
     "0px",
   );
   await page.mouse.move(0, 0);
-  await expect(notification).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
-  );
+  await expect(notification).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.getByRole("button", { name: /shell grep schema/ }).click();
   await expect(page.getByText("sh_nested", { exact: true })).toBeVisible();
   await expect(
@@ -4051,9 +4764,7 @@ test("OpenCode keeps the composer active through thinking, retries and tools, wi
   await desktop(page, null);
   await choose(page, "Provider", "OpenCode");
   await page.getByRole("button", { name: /OpenCode session/ }).click();
-  await expect(
-    page.getByText("Restored OpenCode conversation"),
-  ).toBeVisible();
+  await expect(page.getByText("Restored OpenCode conversation")).toBeVisible();
   const activity = page.getByRole("form", { name: "Message composer" });
   const send = (method: string, data = {}) =>
     emit(
@@ -4088,9 +4799,9 @@ test("OpenCode keeps the composer active through thinking, retries and tools, wi
     error: { message: "Provider temporarily unavailable" },
   });
   await expect(activity).toHaveAttribute("data-working", "true");
-  await expect(
-    page.getByRole("status", { name: "Agent activity" }),
-  ).toHaveText("Retrying · attempt 2");
+  await expect(page.getByRole("status", { name: "Agent activity" })).toHaveText(
+    "Retrying · attempt 2",
+  );
   await page.evaluate(() =>
     (window as any).fixture.emit("approval-requests", [
       {
@@ -4152,9 +4863,7 @@ test("OpenCode keeps the composer active through thinking, retries and tools, wi
 
 for (const provider of ["codex", "opencode"]) {
   const title =
-    provider === "codex"
-      ? "Refine the session workspace"
-      : "OpenCode session";
+    provider === "codex" ? "Refine the session workspace" : "OpenCode session";
   const id = provider === "codex" ? "thread-a" : "ses-a";
 
   test(`${provider} clears the cancellation notice on a new prompt, history refresh and reconnect`, async ({
@@ -4223,9 +4932,7 @@ for (const provider of ["codex", "opencode"]) {
       } else if (resume === "reconnect") {
         await emit(
           page,
-          provider === "codex"
-            ? "codex/processExited"
-            : "server.disconnected",
+          provider === "codex" ? "codex/processExited" : "server.disconnected",
           {},
           provider,
         );
@@ -4460,9 +5167,7 @@ for (const provider of ["codex", "opencode"]) {
       await expect(
         notices.last().getByRole("heading", { name: "Retained context" }),
       ).toBeVisible();
-      await expect(notices.last().locator("strong")).toHaveText(
-        "release plan",
-      );
+      await expect(notices.last().locator("strong")).toHaveText("release plan");
     } else await expect(notices.last().getByRole("button")).toHaveCount(0);
     await page.screenshot({
       path: `test-results/${provider}-compaction.png`,
@@ -4555,9 +5260,7 @@ for (const provider of ["codex", "opencode"]) {
           );
         await emit(
           page,
-          provider === "codex"
-            ? "turn/completed"
-            : "session.execution.failed",
+          provider === "codex" ? "turn/completed" : "session.execution.failed",
           provider === "codex"
             ? {
                 threadId: id,
@@ -4591,9 +5294,7 @@ for (const provider of ["codex", "opencode"]) {
       } else {
         await emit(
           page,
-          provider === "codex"
-            ? "codex/processExited"
-            : "server.disconnected",
+          provider === "codex" ? "codex/processExited" : "server.disconnected",
           {},
           provider,
         );
@@ -4626,13 +5327,10 @@ for (const provider of ["codex", "opencode"]) {
           "completed",
         );
         await expect(notices.last().getByRole("button")).toHaveCount(0);
-        await expect(
-          page.getByText("opaque-provider-checkpoint"),
-        ).toHaveCount(0);
-        await expect(notices.first()).toHaveAttribute(
-          "data-status",
-          "failed",
+        await expect(page.getByText("opaque-provider-checkpoint")).toHaveCount(
+          0,
         );
+        await expect(notices.first()).toHaveAttribute("data-status", "failed");
         await expect(notices.nth(1)).toHaveAttribute(
           "data-status",
           "interrupted",
@@ -4652,9 +5350,7 @@ test("OpenCode reconciles manual compaction across stale snapshots, streamed sum
   await page
     .getByRole("button", { name: "OpenCode session", exact: true })
     .click();
-  await expect(
-    page.getByText("Restored OpenCode conversation"),
-  ).toBeVisible();
+  await expect(page.getByText("Restored OpenCode conversation")).toBeVisible();
   const snapshot = {
     id: "msg_manual",
     type: "compaction",
@@ -4884,9 +5580,7 @@ test("OpenCode stays active across quiet tool gaps and repeated history polls, t
   await page
     .getByRole("button", { name: "OpenCode session", exact: true })
     .click();
-  await expect(
-    page.getByText("Restored OpenCode conversation"),
-  ).toBeVisible();
+  await expect(page.getByText("Restored OpenCode conversation")).toBeVisible();
   await page.evaluate(() => (window as any).fixture.setOpenWorking(true));
   await emit(
     page,
@@ -4946,9 +5640,9 @@ test("OpenCode stays active across quiet tool gaps and repeated history polls, t
   await expect(
     page.getByRole("button", { name: "Stop generation" }),
   ).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).fixture.activity)).toEqual(
-    ["true"],
-  );
+  expect(await page.evaluate(() => (window as any).fixture.activity)).toEqual([
+    "true",
+  ]);
 });
 
 test("snapshots recover missed live events on polling, focus and cached-session selection", async ({
@@ -4958,18 +5652,14 @@ test("snapshots recover missed live events on polling, focus and cached-session 
   await desktop(page, null);
   await choose(page, "Provider", "OpenCode");
   await page.getByRole("button", { name: /OpenCode session/ }).click();
-  await expect(
-    page.getByText("Restored OpenCode conversation"),
-  ).toBeVisible();
+  await expect(page.getByText("Restored OpenCode conversation")).toBeVisible();
   await page.evaluate(() => {
     (window as any).fixture.setOpenWorking(true);
     (window as any).fixture.setOpenHistory([
       {
         id: "missed",
         type: "assistant",
-        content: [
-          { type: "reasoning", text: "Thinking from another client" },
-        ],
+        content: [{ type: "reasoning", text: "Thinking from another client" }],
       },
     ]);
   });
@@ -5098,12 +5788,7 @@ for (const provider of ["codex", "opencode"]) {
       provider,
     );
     if (provider === "opencode")
-      await emit(
-        page,
-        "session.step.ended",
-        { sessionID: "ses-a" },
-        provider,
-      );
+      await emit(page, "session.step.ended", { sessionID: "ses-a" }, provider);
     await page.clock.fastForward(125_000);
     await expect(composer).toHaveAttribute("data-working", "true");
     await expect(
@@ -5185,9 +5870,7 @@ for (const provider of ["codex", "opencode"]) {
       {},
       provider,
     );
-    await page
-      .getByRole("button", { name: "Reconnect", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Reconnect", exact: true }).click();
     await expect(input).toBeEnabled();
     await expect(effort).toHaveText("Low");
     await input.fill("Use less reasoning");
@@ -5325,9 +6008,7 @@ for (const provider of ["codex", "opencode"]) {
     ).toBeVisible();
     await expect(model).toBeEnabled();
     await choose(page, "Model", "Test model provider/model");
-    await expect(
-      page.getByText("Model applies to next message"),
-    ).toBeVisible();
+    await expect(page.getByText("Model applies to next message")).toBeVisible();
     await choose(
       page,
       "Model",
@@ -5341,9 +6022,7 @@ for (const provider of ["codex", "opencode"]) {
       {},
       provider,
     );
-    await page
-      .getByRole("button", { name: "Reconnect", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Reconnect", exact: true }).click();
     await expect(input).toBeEnabled();
     await expect(model).toContainText("Test model");
     await input.fill("Use the next model");
