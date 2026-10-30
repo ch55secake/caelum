@@ -85,7 +85,7 @@ Open a project and send a message to create a session. Choose the provider and a
 
 OpenCode’s **Build** and **Plan** controls sit below the message box in new and existing sessions. Click either to choose the agent for your next message, or press **Shift+Tab** in the message box to cycle through available agents without moving the caret. **More** opens the full agent picker, including custom agents. A subtle animated underline marks the selected quick control, an animated ring identifies the running agent, an idle dot marks the current agent, and **Next** marks a pending change. Reduced-motion settings keep these indicators static, and screen readers announce the current and next agents. Pending selections stay with their session, and a failed agent switch keeps your draft ready to retry.
 
-Right-click for native, context-aware actions: edit text fields; copy messages, code, selections, links, tool input/output, and diffs; add messages to your draft; open or archive sessions; and copy paths, reveal files in Finder, or open and close projects. File previews keep Monaco’s code-aware menu. **Shift+F10** opens the menu for the focused item.
+Right-click for native, context-aware actions: edit text fields; copy messages, code, selections, links, tool input/output, and diffs; add messages or selected code to your draft; open or archive sessions; and copy paths, reveal files in Finder, or open and close projects. **Shift+F10** opens the menu for the focused item.
 
 Responses and thinking update live. Expand a thinking row to read the provider's summary or trace. A subtle composer outline pulses throughout work, including long-running commands and tool calls, which show elapsed time. OpenCode activity follows its runtime active-session state, so quiet gaps and history refreshes keep the running indicator steady until execution ends. Reduced-motion settings keep the outline static. Sending a message returns the transcript to the latest response. OpenCode connects to its existing local background service when available.
 
@@ -112,10 +112,11 @@ Session rows show a branch and added/deleted lines from the latest turn when ava
 
 ## Files and prompt context
 
-**Files** and **Changes** share a resizable inspector beside the conversation. Drag its divider or use the arrow keys while the divider is focused; expand it for a larger preview and restore the conversation layout when finished.
+**Files** and **Changes** share a resizable inspector beside the conversation. Drag its divider or use the arrow keys while the divider is focused; expand it for a larger preview and restore the conversation layout when finished. **Sessions** stays highlighted whenever the conversation is visible alongside either pane.
 
 - **⌘P** finds filenames with fuzzy matching; **⌘⇧F** searches file contents. Use the arrow keys and Enter to open a result at its matching line. Search respects ignore rules unless **Include ignored** is checked. Ctrl works in place of ⌘.
 - Open multiple read-only file or diff tabs. Tabs, the active file, expanded folders, recent files, and reading positions restore per project on this device. The tree shows Git status and offers **All**, **Changes**, and **Recent** views. Visible files refresh automatically as the agent works.
+- A lightweight CodeMirror viewer shares syntax colours with Changes, including Rust highlighting, and follows the app’s theme. **⌘F** searches the current preview; file comparisons show HEAD and the working tree side by side.
 - **Add to prompt** attaches a file snapshot. Select code in a preview to **Add selection to prompt** or **Ask about selection**; these actions also appear in the editor’s right-click menu. Remove attachments using their chips in the composer.
 - Each message supports up to 16 snapshots, each capped at 64 KiB of UTF-8 text, with partial snapshots marked. Selections retain their path and line range. Attachments stay with their project, provider, and session draft while the app is open, and both Codex and OpenCode receive the captured text.
 - Sent messages show file-context chips. Click a chip, a local file reference in a response, or a file link in expanded tool details to open the current file. Right-click a chip to copy its original attached snapshot.
@@ -126,7 +127,7 @@ File previews are capped at 1 MiB. Search results are bounded and identify when 
 
 Open **Settings** from the sidebar, the header when the sidebar is collapsed, or **⌘,** (**Ctrl+,** on other platforms). Changes save automatically on this device.
 
-- **Appearance:** choose Dark, Light, or System, and a Violet, Blue, Teal, Green, Amber, or Rose accent. Accent shades adapt to the theme across highlights, links, controls, activity indicators, and Monaco selections. System follows your device’s appearance; themes also cover conversations, tools, Git review, and native window chrome.
+- **Appearance:** choose Dark, Light, or System, and a Violet, Blue, Teal, Green, Amber, or Rose accent. Accent shades adapt to the theme across highlights, links, controls, activity indicators, and code selections. System follows your device’s appearance; themes also cover conversations, tools, Git review, and native window chrome.
 - **Providers:** choose a default provider for new projects and save independent Codex/OpenCode model and reasoning-effort defaults, plus an OpenCode agent. Defaults apply to new sessions; the composer can override them for an individual draft. Each existing session keeps its own configured model and effort.
 - Star models in the composer or Settings to pin favourites above the provider-grouped model list. Favourites save per device, separately for Codex and OpenCode. OpenCode models are grouped by their supplying provider (including custom and routed services); search by model name, model ID, or provider name.
 - Provider status and available choices are checked against the selected project. Use **Refresh** after updating your local provider setup, or **Reset defaults** to use the provider’s own settings.

@@ -11,7 +11,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { AccentColor } from "./accentColors.js";
 import { GitStatusIcon } from "./GitStatusIcon.js";
 import { readGitStatus, type GitRepositoryStatus } from "./gitStatus.js";
 import { useContextMenu, fileActions, copyAction } from "./ContextMenu.js";
@@ -93,16 +92,12 @@ const EMPTY_DIRECTORY: DirectoryState = {
 
 export function FilesPanel({
   project,
-  theme,
-  accentColor,
   working,
   request,
   attach,
   canAttach,
 }: {
   project: ProjectInfo;
-  theme: "dark" | "light";
-  accentColor: AccentColor;
   working: boolean;
   request?: { id: number; location?: FileLocation; search?: FileSearchRequest };
   attach: (file: FileContext, ask?: boolean) => void;
@@ -1067,16 +1062,14 @@ export function FilesPanel({
               <Suspense
                 fallback={
                   <div className="file-editor-empty" role="status">
-                    Loading code editor…
+                    Loading code preview…
                   </div>
                 }
               >
                 <FilePreview
                   key={`file:${editor.path}`}
-                  project={project.path}
                   path={editor.path}
                   content={editor.content.content}
-                  theme={`caelum-${theme}-${accentColor}`}
                   viewState={saved.value.views[`file:${editor.path}`] ?? null}
                   saveView={(view) =>
                     saved.update((value) => ({
@@ -1116,17 +1109,15 @@ export function FilesPanel({
               <Suspense
                 fallback={
                   <div className="file-editor-empty" role="status">
-                    Loading diff editor…
+                    Loading diff preview…
                   </div>
                 }
               >
                 <FilePreview
                   key={`diff:${editor.path}`}
-                  project={project.path}
                   path={editor.path}
                   content={editor.content.modified}
                   original={editor.content.original}
-                  theme={`caelum-${theme}-${accentColor}`}
                   viewState={saved.value.views[`diff:${editor.path}`] ?? null}
                   saveView={(view) =>
                     saved.update((value) => ({

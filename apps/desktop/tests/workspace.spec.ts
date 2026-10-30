@@ -123,6 +123,10 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         ],
       ]);
       const gitDiffs = new Map<string, Record<string, string>>();
+      const gitVersions = new Map<
+        string,
+        { original: string; modified: string }
+      >();
       const gitMetadata = new Map<
         string,
         { branch: string | null; repositoryRoot: string | null }
@@ -185,6 +189,13 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
               "project-files",
               JSON.stringify([...projectFiles]),
             );
+          },
+          setGitVersions: (
+            path: string,
+            original: string,
+            modified: string,
+          ) => {
+            gitVersions.set(path, { original, modified });
           },
           failAgent: () => {
             agentError = true;
@@ -762,6 +773,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
                 original: "export const ready = false;\n",
                 modified: "export const ready = true;\n",
                 truncated: false,
+                ...gitVersions.get(args.filePath),
               };
             if (command === "git_file_diff") {
               const snapshot = {
@@ -880,9 +892,7 @@ async function findProjectFile(page: Page, path: string) {
   ).toBeVisible();
   await search.press("Enter");
   await expect(page.locator(".file-editor-path")).toHaveText(path);
-  await expect(
-    page.locator('.monaco-editor[role="code"]').first(),
-  ).toBeVisible();
+  await expect(page.locator(".code-viewer .cm-editor").first()).toBeVisible();
 }
 
 const attachedContext = (page: Page) =>
@@ -892,6 +902,16 @@ test("Files searches filenames and contents beside the conversation, handles ign
   page,
 }) => {
   await desktop(page);
+  const navigation = page.getByRole("navigation", {
+    name: "Workspace",
+    exact: true,
+  });
+  await expect(
+    navigation.getByRole("button", { name: "Sessions", exact: true }),
+  ).toHaveClass(/active/);
+  await expect(
+    navigation.getByRole("button", { name: "Changes", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await page.evaluate(() =>
     (window as any).fixture.setProjectFile(
       "src/App.tsx",
@@ -901,6 +921,21 @@ test("Files searches filenames and contents beside the conversation, handles ign
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("Keep this draft visible");
   await findProjectFile(page, "src/App.tsx");
+  await expect(
+    navigation.getByRole("button", { name: "Sessions", exact: true }),
+  ).toHaveClass(/active/);
+  await expect(
+    navigation.getByRole("button", { name: "Sessions", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    navigation.getByRole("button", { name: "Files", exact: true }),
+  ).toHaveClass(/active/);
+  await expect(
+    navigation.getByRole("button", { name: "Files", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    navigation.getByRole("button", { name: "Changes", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
   await expect(input).toBeVisible();
   await expect(input).toHaveValue("Keep this draft visible");
   await expect(
@@ -916,7 +951,7 @@ test("Files searches filenames and contents beside the conversation, handles ign
     page.getByRole("option", { name: /src\/App.tsx:2/ }),
   ).toBeVisible();
   await contents.press("Enter");
-  await expect(page.locator(".active-line-number")).toHaveText("2");
+  await expect(page.locator(".cm-activeLineGutter")).toHaveText("2");
   await findProjectFile(page, "src/styles.css");
   const tabs = page.getByRole("tablist", { name: "Open files" });
   await expect(tabs.getByRole("tab")).toHaveCount(2);
@@ -1004,7 +1039,7 @@ test("Files restores tabs, expanded folders and reading positions, refreshes in 
   await tree.evaluate((node) => {
     node.scrollTop = 700;
   });
-  const code = page.locator('.monaco-editor[role="code"]').first();
+  const code = page.locator(".code-viewer .cm-editor").first();
   const editorInput = page.getByRole("textbox", {
     name: "Read-only preview of src/App.tsx",
     exact: true,
@@ -1020,17 +1055,13 @@ test("Files restores tabs, expanded folders and reading positions, refreshes in 
     );
   await expect
     .poll(
-      async () =>
-        (await stored()).views?.["file:src/App.tsx"]?.viewState?.firstPosition
-          ?.lineNumber ?? 0,
+      async () => (await stored()).views?.["file:src/App.tsx"]?.main?.line ?? 0,
     )
     .toBeGreaterThan(20);
-  const view = (await stored()).views["file:src/App.tsx"].viewState;
+  const view = (await stored()).views["file:src/App.tsx"].main;
   const firstVisibleLine = () =>
-    code.locator(".view-line").evaluateAll((nodes) => {
-      const bounds = nodes[0]
-        ?.closest(".monaco-editor")
-        ?.getBoundingClientRect();
+    code.locator(".cm-line").evaluateAll((nodes) => {
+      const bounds = nodes[0]?.closest(".cm-scroller")?.getBoundingClientRect();
       return nodes.find(
         (node) => node.getBoundingClientRect().bottom > (bounds?.top ?? 0),
       )?.textContent;
@@ -1055,7 +1086,7 @@ test("Files restores tabs, expanded folders and reading positions, refreshes in 
     page.getByRole("treeitem", { name: /extra-.*file/ }),
   ).toHaveCount(260);
   await expect
-    .poll(async () => (await stored()).views?.["file:src/App.tsx"]?.viewState)
+    .poll(async () => (await stored()).views?.["file:src/App.tsx"]?.main)
     .toEqual(view);
   await expect.poll(firstVisibleLine).toBe(line);
   await page.getByRole("button", { name: "Close files", exact: true }).click();
@@ -1118,6 +1149,12 @@ test("Files inspector resizes and expands while keeping the conversation mounted
     .toBeGreaterThan(width + 60);
   await page.getByRole("button", { name: "Expand project inspector" }).click();
   await expect(input).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Sessions", exact: true }),
+  ).not.toHaveClass(/active/);
+  await expect(
+    page.getByRole("button", { name: "Files", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".transcript")).toHaveAttribute(
     "data-mounted",
     "yes",
@@ -1126,6 +1163,9 @@ test("Files inspector resizes and expands while keeping the conversation mounted
     .getByRole("button", { name: "Restore conversation layout" })
     .click();
   await expect(input).toHaveValue("Keep my place");
+  await expect(
+    page.getByRole("button", { name: "Sessions", exact: true }),
+  ).toHaveClass(/active/);
   await expect(page.locator(".transcript")).toHaveAttribute(
     "data-mounted",
     "yes",
@@ -1176,9 +1216,9 @@ test("Files inspector resizes and expands while keeping the conversation mounted
     (window as any).fixture.setProjectFile("src/App.tsx", "// restored\n"),
   );
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(
-    page.locator('.monaco-editor[role="code"]').first(),
-  ).toContainText("restored");
+  await expect(page.locator(".code-viewer .cm-editor").first()).toContainText(
+    "restored",
+  );
   const dialog = await openSettings(page);
   await dialog.getByRole("radio", { name: "Light", exact: true }).check();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
@@ -1224,7 +1264,7 @@ for (const provider of ["codex", "opencode"]) {
       exact: true,
     });
     await editorInput.focus();
-    await editorInput.press("Meta+ArrowUp");
+    await editorInput.press("ControlOrMeta+Home");
     await editorInput.press("Shift+ArrowDown");
     await page
       .getByRole("button", { name: "Ask about selection", exact: true })
@@ -1460,13 +1500,13 @@ test("Files opens local Markdown and tool references at their source line withou
     .getByRole("button", { name: "src/App.tsx:2", exact: true })
     .click();
   await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
-  await expect(page.locator(".active-line-number")).toHaveText("2");
+  await expect(page.locator(".cm-activeLineGutter")).toHaveText("2");
   await expect(page.locator(".code-block .file-reference")).toHaveCount(0);
   await page
     .locator(".markdown")
     .getByRole("button", { name: "the last line", exact: true })
     .click();
-  await expect(page.locator(".active-line-number")).toHaveText("3");
+  await expect(page.locator(".cm-activeLineGutter")).toHaveText("3");
   await page
     .locator(".markdown")
     .getByRole("button", { name: "src/App.tsx:2", exact: true })
@@ -1486,6 +1526,285 @@ test("Files opens local Markdown and tool references at their source line withou
     .getByRole("button", { name: "src/App.tsx", exact: true })
     .click();
   await expect(page.locator(".file-editor-path")).toHaveText("src/App.tsx");
+});
+
+test("Files highlights Rust, stays read-only, searches locally and preserves exact Unicode selections", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await desktop(page);
+  const source =
+    '// Rust preview\r\npub fn main() {\r\n    let count: u32 = 42;\r\n    let label = r#"Caelum 🚀"#;\r\n    println!("{label}: {count}");\r\n}\r\n';
+  await page.evaluate(
+    (source) => (window as any).fixture.setProjectFile("src/main.rs", source),
+    source,
+  );
+  await findProjectFile(page, "src/main.rs");
+  const viewer = page.locator(".code-viewer");
+  const preview = viewer.getByRole("textbox", {
+    name: "Read-only preview of src/main.rs",
+    exact: true,
+  });
+  await expect(preview).toHaveAttribute("aria-readonly", "true");
+  await expect(preview).toHaveAttribute("contenteditable", "false");
+  await expect(viewer.locator(".syntax-keyword")).toHaveText([
+    "pub",
+    "fn",
+    "let",
+    "let",
+  ]);
+  await expect(viewer.locator(".syntax-type")).toContainText("u32");
+  await expect(viewer.locator(".syntax-number")).toHaveText("42");
+  await expect(viewer.locator(".syntax-comment")).toHaveText("// Rust preview");
+  const rendered = () =>
+    viewer
+      .locator(".cm-line")
+      .allTextContents()
+      .then((lines) => lines.join("\n"));
+  await expect.poll(rendered).toBe(source.replaceAll("\r\n", "\n"));
+  await preview.press("ControlOrMeta+a");
+  await preview.press("x");
+  await preview.press("Backspace");
+  await expect.poll(rendered).toBe(source.replaceAll("\r\n", "\n"));
+  await preview.press("ArrowLeft");
+  await preview.press("ControlOrMeta+f");
+  const search = viewer.getByRole("textbox", { name: "Find", exact: true });
+  await expect(search).toBeFocused();
+  await search.pressSequentially("Caelum");
+  await search.press("Enter");
+  await expect(viewer.locator(".cm-activeLineGutter")).toHaveText("4");
+  await expect(viewer.locator(".cm-searchMatch-selected")).toHaveText("Caelum");
+  await search.press("Escape");
+  await expect(preview).toBeFocused();
+  await preview.press("ControlOrMeta+Home");
+  await preview.press("Shift+ArrowDown");
+  await preview.press("Shift+ArrowDown");
+  await preview.press("Shift+ArrowDown");
+  await preview.press("Shift+ArrowDown");
+  await preview.press("Shift+F10");
+  await pickMenu(page, "Copy selection");
+  const selected = source.split("\r\n").slice(0, 4).join("\r\n") + "\r\n";
+  await expect.poll(() => copiedText(page)).toBe(selected);
+  await preview.press("Shift+F10");
+  await pickMenu(page, "Add selection to prompt");
+  const chip = attachedContext(page).getByRole("button", {
+    name: "src/main.rs:1-4",
+    exact: true,
+  });
+  await chip.click({ button: "right" });
+  await pickMenu(page, "Copy attached snapshot");
+  await expect.poll(() => copiedText(page)).toBe(selected);
+  await page.screenshot({ path: "test-results/rust-preview-dark.png" });
+  const dialog = await openSettings(page);
+  await dialog.getByRole("radio", { name: "Light", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(viewer.locator(".syntax-keyword").first()).toHaveCSS(
+    "color",
+    "rgb(123, 60, 171)",
+  );
+  await page.screenshot({ path: "test-results/rust-preview-light.png" });
+  expect(errors).toEqual([]);
+});
+
+test("Files migrates legacy reading positions while delayed Rust grammars preserve navigation and composer focus", async ({
+  page,
+}) => {
+  let release = () => {};
+  let requests = 0;
+  const loading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/node_modules/.vite/deps/dist-*.js*", async (route) => {
+    const response = await route.fetch();
+    if ((await response.text()).includes("function rust(")) {
+      requests++;
+      await loading;
+    }
+    await route.fulfill({ response });
+  });
+  try {
+    await desktop(page);
+    await page.evaluate(() => {
+      (window as any).fixture.setProjectFile(
+        "src/main.rs",
+        Array.from(
+          { length: 200 },
+          (_, index) => `pub fn line${index + 1}() -> u32 { ${index + 1} }`,
+        ).join("\n"),
+      );
+      localStorage.setItem(
+        "caelum.files.v1:%2Fwork%2Fcaelum",
+        JSON.stringify({
+          tabs: [{ path: "src/main.rs", mode: "file" }],
+          active: "file:src/main.rs",
+          views: {
+            "file:src/main.rs": {
+              viewState: {
+                firstPosition: { lineNumber: 40 },
+                firstPositionDeltaTop: -4,
+                scrollLeft: 0,
+              },
+              cursorState: [
+                {
+                  selectionStart: { lineNumber: 41, column: 1 },
+                  position: { lineNumber: 41, column: 1 },
+                },
+              ],
+            },
+          },
+        }),
+      );
+    });
+    await page.getByRole("button", { name: "Files", exact: true }).click();
+    const viewer = page.locator(".code-viewer");
+    await expect(viewer.getByRole("textbox")).toBeVisible();
+    await expect.poll(() => requests).toBeGreaterThan(0);
+    await expect(viewer.locator(".syntax-keyword")).toHaveCount(0);
+    const firstLine = () =>
+      viewer.locator(".cm-line").evaluateAll((lines) => {
+        const top =
+          lines[0]?.closest(".cm-scroller")!.getBoundingClientRect().top ?? 0;
+        return lines.find((line) => line.getBoundingClientRect().bottom > top)
+          ?.textContent;
+      });
+    await expect.poll(firstLine).toBe("pub fn line40() -> u32 { 40 }");
+    await expect(viewer.locator(".cm-activeLineGutter")).toHaveText("41");
+    await findProjectFile(page, "README.md");
+    await page.getByRole("tab", { name: "main.rs", exact: true }).click();
+    await expect.poll(firstLine).toBe("pub fn line40() -> u32 { 40 }");
+    const scroller = viewer.locator(".cm-scroller");
+    const top = await scroller.evaluate((node) => node.scrollTop);
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Keep this draft and focus");
+    release();
+    await expect(viewer.locator(".syntax-keyword").first()).toHaveText("pub");
+    await expect.poll(firstLine).toBe("pub fn line40() -> u32 { 40 }");
+    await expect
+      .poll(async () =>
+        Math.abs((await scroller.evaluate((node) => node.scrollTop)) - top),
+      )
+      .toBeLessThanOrEqual(1); // WebKit rounds fractional line heights after highlighting.
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("Keep this draft and focus");
+  } finally {
+    release();
+  }
+});
+
+test("Files diff panes preserve shared scrolling, separate selections and HEAD snapshots across refreshes", async ({
+  page,
+}) => {
+  await desktop(page);
+  const original =
+    'export const label = "before 🚀";\r\n' +
+    Array.from(
+      { length: 200 },
+      (_, index) => `export const line${index} = ${index};\r\n`,
+    ).join("");
+  const modified = original.replace("before", "after");
+  await page.evaluate(
+    ({ original, modified }) => {
+      (window as any).fixture.setGitVersions("src/App.tsx", original, modified);
+    },
+    { original, modified },
+  );
+  await findProjectFile(page, "src/App.tsx");
+  await page
+    .getByRole("button", { name: "Review changes", exact: true })
+    .click();
+  const merge = page.locator(".cm-mergeView");
+  const before = merge.getByRole("textbox", {
+    name: "Read-only HEAD version of src/App.tsx",
+    exact: true,
+  });
+  const after = merge.getByRole("textbox", {
+    name: "Read-only working tree version of src/App.tsx",
+    exact: true,
+  });
+  await expect(merge).toBeVisible();
+  await expect(merge.locator(".cm-merge-a .cm-changedLine").first()).toHaveCSS(
+    "background-color",
+    "rgb(44, 24, 29)",
+  );
+  await expect(merge.locator(".cm-merge-b .cm-changedLine").first()).toHaveCSS(
+    "background-color",
+    "rgb(20, 35, 25)",
+  );
+  await before.press("ControlOrMeta+Home");
+  await before.press("Shift+ArrowDown");
+  await before.press("Shift+F10");
+  await pickMenu(page, "Copy selection");
+  await expect
+    .poll(() => copiedText(page))
+    .toBe('export const label = "before 🚀";\r\n');
+  await after.press("ControlOrMeta+Home");
+  await after.press("Shift+ArrowDown");
+  await after.press("Shift+F10");
+  await pickMenu(page, "Copy selection");
+  await expect
+    .poll(() => copiedText(page))
+    .toBe('export const label = "after 🚀";\r\n');
+  await merge.evaluate((node) => {
+    node.scrollTop = 1200;
+  });
+  const firstLines = () =>
+    merge.locator(".cm-editor").evaluateAll((panes) =>
+      panes.map((pane) => {
+        const top = pane.closest(".cm-mergeView")!.getBoundingClientRect().top;
+        return Array.from(pane.querySelectorAll(".cm-line")).find(
+          (line) => line.getBoundingClientRect().bottom > top,
+        )?.textContent;
+      }),
+    );
+  await expect
+    .poll(firstLines)
+    .toEqual([
+      expect.stringMatching(/export const line\d/),
+      expect.stringMatching(/export const line\d/),
+    ]);
+  const lines = await firstLines();
+  expect(lines[0]).toBe(lines[1]);
+  await findProjectFile(page, "README.md");
+  await page.getByRole("tab", { name: "App.tsx · Diff", exact: true }).click();
+  await expect.poll(firstLines).toEqual(lines);
+  await expect.poll(() => merge.evaluate((node) => node.scrollTop)).toBe(1200);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep reviewing");
+  await page.evaluate(
+    ({ original, modified }) => {
+      (window as any).fixture.setGitVersions(
+        "src/App.tsx",
+        original,
+        modified + "// refreshed\r\n",
+      );
+      window.dispatchEvent(new Event("focus"));
+    },
+    { original, modified },
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.command === "git_file_versions",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(2);
+  await expect.poll(firstLines).toEqual(lines);
+  await expect(input).toBeFocused();
+  await before.press("Shift+F10");
+  await pickMenu(page, "Copy selection");
+  await expect
+    .poll(() => copiedText(page))
+    .toBe('export const label = "before 🚀";\r\n');
+  await after.press("Shift+F10");
+  await pickMenu(page, "Copy file preview");
+  await expect.poll(() => copiedText(page)).toBe(modified + "// refreshed\r\n");
 });
 
 test("Files recovers damaged saved tabs and reports storage failures without losing the open preview", async ({
@@ -1515,9 +1834,9 @@ test("Files recovers damaged saved tabs and reports storage failures without los
     page.getByRole("tablist", { name: "Open files" }).getByRole("tab"),
   ).toHaveCount(1);
   await expect(page.locator(".file-editor-path")).toHaveText("README.md");
-  await expect(
-    page.locator('.monaco-editor[role="code"]').first(),
-  ).toContainText("Project documentation.");
+  await expect(page.locator(".code-viewer .cm-editor").first()).toContainText(
+    "Project documentation.",
+  );
   await page.evaluate(() => {
     const setItem = Storage.prototype.setItem;
     (window as any).restoreFileStorage = () => {
@@ -1742,7 +2061,7 @@ test("accent colours support keyboard selection, persist and adapt to explicit a
   ).toBeInViewport();
 });
 
-test("settings themes and accents update mounted Monaco file previews and diffs", async ({
+test("settings themes and accents update mounted code previews and diffs", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
@@ -1757,43 +2076,43 @@ test("settings themes and accents update mounted Monaco file previews and diffs"
   await page
     .getByRole("treeitem", { name: "App.tsx, file", exact: true })
     .click();
-  const editor = page.locator('.monaco-editor[role="code"]').first();
+  const editor = page.locator(".code-viewer .cm-editor").first();
   await expect(editor).toBeVisible();
   await expect(editor).toHaveCSS("background-color", "rgb(11, 12, 14)");
-  await expect(editor.locator(".active-line-number")).toHaveCSS(
+  await expect(editor.locator(".cm-activeLineGutter")).toHaveCSS(
     "color",
     "rgb(130, 180, 244)",
   );
   await openSettings(page);
   await dialog.getByRole("radio", { name: "Teal", exact: true }).check();
-  await expect(editor.locator(".active-line-number")).toHaveCSS(
+  await expect(editor.locator(".cm-activeLineGutter")).toHaveCSS(
     "color",
     "rgb(114, 199, 191)",
   );
   await dialog.getByRole("radio", { name: "Light", exact: true }).check();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(editor).toHaveCSS("background-color", "rgb(250, 250, 252)");
-  await expect(editor.locator(".active-line-number")).toHaveCSS(
+  await expect(editor.locator(".cm-activeLineGutter")).toHaveCSS(
     "color",
     "rgb(33, 111, 104)",
   );
-  await editor.getByRole("textbox").press("Meta+a");
-  await expect(editor.locator(".selected-text").first()).toHaveCSS(
+  await editor.getByRole("textbox").press("ControlOrMeta+a");
+  await expect(editor.locator(".cm-selectionBackground").first()).toHaveCSS(
     "background-color",
-    "rgba(33, 111, 104, 0.2)",
+    "color(srgb 0.129412 0.435294 0.407843 / 0.2)",
   );
   await page
     .getByRole("button", { name: "Review changes", exact: true })
     .click();
-  await expect(page.locator(".monaco-diff-editor")).toBeVisible();
+  await expect(page.locator(".cm-mergeView")).toBeVisible();
   await expect(editor).toHaveCSS("background-color", "rgb(250, 250, 252)");
-  const diffPanes = page.locator(".monaco-diff-editor").getByRole("code");
+  const diffPanes = page.locator(".cm-mergeView .cm-editor");
   await expect(diffPanes).toHaveCount(2);
   for (const pane of await diffPanes.all()) {
-    await pane.getByRole("textbox").press("Meta+a");
-    await expect(pane.locator(".selected-text").first()).toHaveCSS(
+    await pane.getByRole("textbox").press("ControlOrMeta+a");
+    await expect(pane.locator(".cm-selectionBackground").first()).toHaveCSS(
       "background-color",
-      "rgba(33, 111, 104, 0.2)",
+      "color(srgb 0.129412 0.435294 0.407843 / 0.2)",
     );
   }
   await page.screenshot({ path: "test-results/files-light.png" });
@@ -1801,10 +2120,10 @@ test("settings themes and accents update mounted Monaco file previews and diffs"
   await dialog.getByRole("radio", { name: "Rose", exact: true }).check();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   for (const pane of await diffPanes.all()) {
-    await pane.getByRole("textbox").press("Meta+a");
-    await expect(pane.locator(".selected-text").first()).toHaveCSS(
+    await pane.getByRole("textbox").press("ControlOrMeta+a");
+    await expect(pane.locator(".cm-selectionBackground").first()).toHaveCSS(
       "background-color",
-      "rgba(165, 65, 99, 0.2)",
+      "color(srgb 0.647059 0.254902 0.388235 / 0.2)",
     );
   }
   await openSettings(page);
@@ -1812,10 +2131,10 @@ test("settings themes and accents update mounted Monaco file previews and diffs"
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(editor).toHaveCSS("background-color", "rgb(11, 12, 14)");
   for (const pane of await diffPanes.all()) {
-    await pane.getByRole("textbox").press("Meta+a");
-    await expect(pane.locator(".selected-text").first()).toHaveCSS(
+    await pane.getByRole("textbox").press("ControlOrMeta+a");
+    await expect(pane.locator(".cm-selectionBackground").first()).toHaveCSS(
       "background-color",
-      /^rgba\(231, 154, 176, 0\./,
+      "color(srgb 0.905882 0.603922 0.690196 / 0.28)",
     );
   }
 });
@@ -2951,7 +3270,7 @@ test("context menus act on the clicked project or session and reject stale actio
   ).toBe(popups);
 });
 
-test("file and diff context menus copy exact content, reveal paths, and preserve Monaco's own menu", async ({
+test("file and diff context menus copy exact content, reveal paths, and use native preview actions", async ({
   page,
 }) => {
   await desktop(page);
@@ -3014,28 +3333,24 @@ test("file and diff context menus copy exact content, reveal paths, and preserve
   await expect
     .poll(() => copiedText(page))
     .toBe("export const ready = true;\n");
-  const popups = await page.evaluate(
-    () =>
-      (window as any).fixture.calls.filter(
-        (call: any) => call.command === "plugin:menu|popup",
-      ).length,
-  );
-  await page
-    .locator(".monaco-editor .view-lines")
-    .first()
-    .click({ button: "right" });
-  await expect(
-    page.getByRole("menuitem", { name: /Copy/ }).first(),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        (window as any).fixture.calls.filter(
-          (call: any) => call.command === "plugin:menu|popup",
-        ).length,
-    ),
-  ).toBe(popups);
-  await page.keyboard.press("Escape");
+  const preview = page.getByRole("textbox", {
+    name: "Read-only preview of src/App.tsx",
+    exact: true,
+  });
+  await preview.click({ button: "right" });
+  await pickMenu(page, "Copy file preview");
+  await expect
+    .poll(() => copiedText(page))
+    .toBe("export const ready = true;\n");
+  await preview.press("ControlOrMeta+a");
+  await preview.press("Shift+F10");
+  await pickMenu(page, "Copy selection");
+  await expect
+    .poll(() => copiedText(page))
+    .toBe("export const ready = true;\n");
+  await preview.press("Shift+F10");
+  await pickMenu(page, "Add selection to prompt");
+  await expect(attachedContext(page)).toContainText("src/App.tsx:1");
   await page.evaluate(() => (window as any).fixture.failCopy());
   await toolbar.click({ button: "right" });
   await pickMenu(page, "Copy file contents");
@@ -3739,7 +4054,7 @@ test("delayed syntax loading preserves the current file, exact text and manual r
   const loading = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route("**/src/MonacoEditors.tsx", async (route) => {
+  await page.route("**/src/codeSyntax.ts", async (route) => {
     await loading;
     await route.continue();
   });

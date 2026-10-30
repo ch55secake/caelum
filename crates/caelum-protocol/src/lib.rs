@@ -51,7 +51,7 @@ pub struct GitFileDiff {
     pub untracked: String,
 }
 
-/// Bounded before/working-tree text for Monaco's side-by-side diff editor.
+/// Bounded before/working-tree text for the side-by-side diff viewer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitFileVersions {
@@ -112,7 +112,7 @@ pub enum ProjectSearchMode {
 pub struct ProjectSearchMatch {
     pub path: String,
     pub line: Option<usize>,
-    /// One-based UTF-16 column, matching Monaco's coordinate system.
+    /// One-based UTF-16 column, matching the code viewer's coordinate system.
     pub column: Option<usize>,
     pub preview: Option<String>,
 }

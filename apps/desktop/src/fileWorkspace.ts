@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { editor } from "monaco-editor";
+import { restoreFileView, type FileViewState } from "./codeViewState.js";
 
 export type FileTab = { path: string; mode: "file" | "diff" };
 export const fileTabKey = (tab: FileTab) => `${tab.mode}:${tab.path}`;
@@ -8,7 +8,7 @@ type FileWorkspace = {
   active: string | null;
   expanded: string[];
   recent: string[];
-  views: Record<string, editor.ICodeEditorViewState | null>;
+  views: Record<string, FileViewState | null>;
   treeScroll: number;
   loaded: Record<string, number>;
 };
@@ -61,10 +61,10 @@ function restore(project: string): FileWorkspace {
         ? stored.recent.filter(validPath).slice(0, 30)
         : [],
       views: Object.fromEntries(
-        Object.entries(stored.views ?? {}).filter(
-          ([key, view]) => keys.has(key) && view && typeof view === "object",
-        ),
-      ) as FileWorkspace["views"],
+        Object.entries(stored.views ?? {})
+          .filter(([key]) => keys.has(key))
+          .map(([key, view]) => [key, restoreFileView(view)]),
+      ),
       treeScroll: Number.isFinite(stored.treeScroll)
         ? Math.max(0, stored.treeScroll)
         : 0,

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { languageForPath } from "./codeLanguages.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 import {
   diffLines,
@@ -21,22 +20,21 @@ export function DiffSection({
 }) {
   const contextMenu = useContextMenu();
   const lines = useMemo(() => diffLines(content), [content]);
-  const language = languageForPath(path);
   const [highlighted, setHighlighted] = useState<{
     lines: typeof lines;
-    language: string;
+    path: string;
     tokens: Map<number, SyntaxToken[]>;
   } | null>(null);
   useEffect(() => {
-    if (!content || language === "plaintext") return;
+    if (!content) return;
     let disposed = false;
-    void import("./MonacoEditors.js")
-      .then(({ syntaxTokenizer }) => syntaxTokenizer(language))
+    void import("./codeSyntax.js")
+      .then(({ syntaxTokenizer }) => syntaxTokenizer(path))
       .then((tokenize) => {
         if (!disposed)
           setHighlighted({
             lines,
-            language,
+            path,
             tokens: highlightDiff(lines, tokenize),
           });
       })
@@ -46,11 +44,11 @@ export function DiffSection({
     return () => {
       disposed = true;
     };
-  }, [content, lines, language]);
+  }, [content, lines, path]);
   if (!content) return null;
   const marked = new Set(highlights);
   const tokens =
-    highlighted?.lines === lines && highlighted.language === language
+    highlighted?.lines === lines && highlighted.path === path
       ? highlighted.tokens
       : null;
   return (

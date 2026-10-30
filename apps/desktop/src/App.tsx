@@ -170,6 +170,7 @@ export default function App() {
             newSession={newSession}
             changesOpen={changesOpen}
             filesOpen={pane === "files"}
+            sessionVisible={!expanded || !pane}
             openFiles={() => {
               setPane("files");
               setExpanded(false);
@@ -502,8 +503,6 @@ export default function App() {
                 }}
                 expanded={expanded}
                 setExpanded={setExpanded}
-                theme={preferences.resolvedTheme}
-                accentColor={preferences.settings.accentColor}
                 request={fileRequest}
                 canAttach={
                   !app.selected?.isSubmitting &&

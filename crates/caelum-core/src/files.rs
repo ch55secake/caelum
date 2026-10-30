@@ -249,7 +249,7 @@ pub fn list_directory(
     })
 }
 
-/// Read a bounded text preview for Monaco without loading an arbitrarily large file into memory.
+/// Read a bounded text preview without loading an arbitrarily large file into memory.
 pub fn read_text_file(
     project_path: impl AsRef<Path>,
     relative_path: &str,

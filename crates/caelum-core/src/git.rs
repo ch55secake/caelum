@@ -126,7 +126,7 @@ impl GitClient {
         })
     }
 
-    /// Return bounded HEAD and working-tree text for Monaco's side-by-side diff editor.
+    /// Return bounded HEAD and working-tree text for the side-by-side diff viewer.
     pub fn file_versions(
         &self,
         project_path: impl AsRef<Path>,

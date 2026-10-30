@@ -55,12 +55,7 @@ export function highlightDiff(
 }
 
 export function syntaxClass(type: string): string | undefined {
-  if (/^comment/.test(type)) return "syntax-comment";
-  if (/^(string\.key|attribute|key(?:\.|$))/.test(type))
-    return "syntax-property";
-  if (/^(string|regexp)/.test(type)) return "syntax-string";
-  if (/^(keyword|annotation)/.test(type)) return "syntax-keyword";
-  if (/^(number|constant)/.test(type)) return "syntax-number";
-  if (/^(type|tag|delimiter\.tag)/.test(type)) return "syntax-type";
-  return undefined;
+  return /^syntax-(?:comment|keyword|string|number|property|type)$/.test(type)
+    ? type
+    : undefined;
 }

@@ -84,6 +84,7 @@ function contextualActions(
       { item: "SelectAll" },
     ];
   }
+  if (target.closest(".code-viewer")) return actions;
   const selection = window.getSelection();
   const selected =
     selection && !selection.isCollapsed && selection.containsNode(target, true)
@@ -138,8 +139,6 @@ export function ContextMenuProvider({
     if (!isTauri() || !(event.target instanceof Element)) return;
     event.preventDefault();
     event.stopPropagation();
-    // Monaco supplies its own code-aware menu; only suppress the webview fallback.
-    if (event.target.closest(".monaco-editor, .monaco-menu-container")) return;
     const items = contextualActions(event.target, actions);
     release();
     if (!items.length) return;
@@ -203,7 +202,6 @@ export function ContextMenuProvider({
         !(event.shiftKey && event.key === "F10")
       )
         return;
-      if (event.target.closest(".monaco-editor")) return;
       event.preventDefault();
       const rect = event.target.getBoundingClientRect();
       event.target.dispatchEvent(

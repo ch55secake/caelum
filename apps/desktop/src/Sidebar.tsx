@@ -88,6 +88,7 @@ export function Sidebar({
   newSession,
   changesOpen,
   filesOpen,
+  sessionVisible,
   openFiles,
   showSession,
   toggleChanges,
@@ -101,6 +102,7 @@ export function Sidebar({
   newSession: () => void;
   changesOpen: boolean;
   filesOpen: boolean;
+  sessionVisible: boolean;
   openFiles: () => void;
   showSession: () => void;
   toggleChanges: () => void;
@@ -172,7 +174,8 @@ export function Sidebar({
       </button>
       <nav className="side-nav" aria-label="Workspace">
         <button
-          className={`nav-item${!filesOpen ? " active" : ""}`}
+          className={`nav-item${sessionVisible ? " active" : ""}`}
+          aria-pressed={sessionVisible}
           onClick={showSession}
         >
           <MessageSquare size={15} />
@@ -180,6 +183,7 @@ export function Sidebar({
         </button>
         <button
           className={`nav-item${filesOpen ? " active" : ""}`}
+          aria-pressed={filesOpen}
           disabled={!app.project}
           onClick={openFiles}
         >

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Maximize2, Minimize2, X } from "lucide-react";
 import { FilesPanel } from "./FilesPanel.js";
 import { GitReviewPanel } from "./GitReviewPanel.js";
-import type { AccentColor } from "./accentColors.js";
 import type { ProjectInfo } from "./workspaceState.js";
 import type { FileContext, FileLocation } from "./fileContext.js";
 import type { FileSearchRequest } from "./FileSearch.js";
@@ -22,8 +21,6 @@ export function ProjectInspector({
   setExpanded,
   close,
   working,
-  theme,
-  accentColor,
   request,
   attach,
   canAttach,
@@ -35,8 +32,6 @@ export function ProjectInspector({
   setExpanded: (value: boolean) => void;
   close: () => void;
   working: boolean;
-  theme: "dark" | "light";
-  accentColor: AccentColor;
   request?: InspectorRequest;
   attach: (file: FileContext, ask?: boolean) => void;
   canAttach: boolean;
@@ -194,8 +189,6 @@ export function ProjectInspector({
         <FilesPanel
           key={project.path}
           project={project}
-          theme={theme}
-          accentColor={accentColor}
           working={working}
           request={request?.project === project.path ? request : undefined}
           attach={attach}
