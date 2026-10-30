@@ -1,8 +1,11 @@
+import { accentColors } from "./accentColors.js";
+
 export const SETTINGS_KEY = "caelum.settings.v1";
 
 export function defaultSettings() {
   return {
     theme: "dark",
+    accentColor: "violet",
     defaultProvider: "codex",
     providers: {
       codex: { model: "", effort: "", agent: "" },
@@ -15,6 +18,11 @@ export function normalizeSettings(value) {
   const settings = defaultSettings();
   if (["dark", "light", "system"].includes(value?.theme))
     settings.theme = value.theme;
+  if (
+    typeof value?.accentColor === "string" &&
+    Object.hasOwn(accentColors, value.accentColor)
+  )
+    settings.accentColor = value.accentColor;
   if (["codex", "opencode"].includes(value?.defaultProvider))
     settings.defaultProvider = value.defaultProvider;
   for (const provider of ["codex", "opencode"])

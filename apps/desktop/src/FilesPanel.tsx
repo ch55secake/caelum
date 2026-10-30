@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { AccentColor } from "./accentColors.js";
 import {
   ChevronDown,
   ChevronRight,
@@ -58,7 +59,7 @@ const EMPTY_DIRECTORY: DirectoryState = {
   error: null,
 };
 
-export function FilesPanel({ project, theme }: { project: ProjectInfo | null; theme: "dark" | "light" }) {
+export function FilesPanel({ project, theme, accentColor }: { project: ProjectInfo | null; theme: "dark" | "light"; accentColor: AccentColor }) {
   const projectPath = project?.path;
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
@@ -428,7 +429,7 @@ export function FilesPanel({ project, theme }: { project: ProjectInfo | null; th
                 <Suspense fallback={<div className="file-editor-empty" role="status">Loading code editor…</div>}>
                   <MonacoEditor
                     height="100%"
-                    theme={`caelum-${theme}`}
+                    theme={`caelum-${theme}-${accentColor}`}
                     language={languageForPath(editor.path)}
                     value={editor.content.content}
                     options={editorOptions(`Read-only preview of ${editor.path}`)}
@@ -448,7 +449,7 @@ export function FilesPanel({ project, theme }: { project: ProjectInfo | null; th
                 <Suspense fallback={<div className="file-editor-empty" role="status">Loading diff editor…</div>}>
                   <MonacoDiffEditor
                     height="100%"
-                    theme={`caelum-${theme}`}
+                    theme={`caelum-${theme}-${accentColor}`}
                     language={languageForPath(editor.path)}
                     original={editor.content.original}
                     modified={editor.content.modified}

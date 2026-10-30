@@ -1,3 +1,4 @@
+import type { AccentColor } from "./accentColors.js";
 import type {
   ProviderKind,
   ProviderWorkspaceState,
@@ -11,6 +12,7 @@ export type ProviderDefaults = {
 };
 export type AppSettings = {
   theme: Theme;
+  accentColor: AccentColor;
   defaultProvider: ProviderKind;
   providers: Record<ProviderKind, ProviderDefaults>;
 };

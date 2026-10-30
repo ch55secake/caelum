@@ -3,6 +3,7 @@ import EditorComponent, { DiffEditor as DiffEditorComponent, loader, type DiffEd
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
+import { accentColors } from "./accentColors.js";
 
 globalThis.MonacoEnvironment = {
   getWorker(_workerId, label) {
@@ -12,28 +13,25 @@ globalThis.MonacoEnvironment = {
 };
 
 loader.config({ monaco });
-monaco.editor.defineTheme("caelum-dark", {
-  base: "vs-dark", inherit: true, rules: [],
-  colors: {
-    "editor.background": "#0B0C0E", "editor.foreground": "#E7E8EC",
-    "editorLineNumber.foreground": "#737580", "editorLineNumber.activeForeground": "#B7B2D4",
-    "editor.selectionBackground": "#7669C44D", "editor.lineHighlightBackground": "#17181C",
-    "editorGutter.background": "#0B0C0E", "editorWidget.background": "#17181C",
-    "editorWidget.border": "#25262D", "diffEditor.insertedTextBackground": "#5DA77526",
-    "diffEditor.removedTextBackground": "#C96A7926",
-  },
-});
-monaco.editor.defineTheme("caelum-light", {
-  base: "vs", inherit: true, rules: [],
-  colors: {
-    "editor.background": "#FAFAFC", "editor.foreground": "#252630",
-    "editorLineNumber.foreground": "#767887", "editorLineNumber.activeForeground": "#6653A3",
-    "editor.selectionBackground": "#7669C433", "editor.lineHighlightBackground": "#F0F0F5",
-    "editorGutter.background": "#FAFAFC", "editorWidget.background": "#FFFFFF",
-    "editorWidget.border": "#DCDDE5", "diffEditor.insertedTextBackground": "#5DA77526",
-    "diffEditor.removedTextBackground": "#C96A7926",
-  },
-});
+for (const [accentColor, palette] of Object.entries(accentColors)) {
+  for (const theme of ["dark", "light"] as const) {
+    const dark = theme === "dark";
+    const accent = palette[theme];
+    monaco.editor.defineTheme(`caelum-${theme}-${accentColor}`, {
+      base: dark ? "vs-dark" : "vs", inherit: true, rules: [],
+      colors: {
+        "editor.background": dark ? "#0B0C0E" : "#FAFAFC", "editor.foreground": dark ? "#E7E8EC" : "#252630",
+        "editorLineNumber.foreground": dark ? "#737580" : "#767887", "editorLineNumber.activeForeground": accent,
+        "editor.selectionBackground": `${accent}${dark ? "47" : "33"}`, "editor.inactiveSelectionBackground": `${accent}26`,
+        "editor.selectionHighlightBackground": `${accent}1A`, "editor.lineHighlightBackground": dark ? "#17181C" : "#F0F0F5",
+        "editorGutter.background": dark ? "#0B0C0E" : "#FAFAFC", "editorWidget.background": dark ? "#17181C" : "#FFFFFF",
+        "editorWidget.border": dark ? "#25262D" : "#DCDDE5", "diffEditor.insertedTextBackground": "#5DA77526",
+        "diffEditor.removedTextBackground": "#C96A7926", "focusBorder": accent, "editorCursor.foreground": accent,
+        "textLink.foreground": accent, "textLink.activeForeground": accent, "editorLink.activeForeground": accent,
+      },
+    });
+  }
+}
 
 const languageLoaders: Record<string, () => Promise<unknown>> = {
   cpp: () => import("monaco-editor/esm/vs/languages/definitions/cpp/register.js"),

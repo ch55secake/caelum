@@ -16,6 +16,7 @@ test("saved preferences recover missing and invalid fields without mixing provid
     },
   });
   assert.equal(settings.theme, "light");
+  assert.equal(settings.accentColor, "violet");
   assert.equal(settings.defaultProvider, "opencode");
   assert.deepEqual(settings.providers.codex, {
     model: "model-a",
@@ -27,6 +28,15 @@ test("saved preferences recover missing and invalid fields without mixing provid
     effort: "high",
     agent: "build",
   });
+  assert.deepEqual(normalizeSettings({ ...settings, accentColor: "teal" }), {
+    ...settings,
+    accentColor: "teal",
+  });
+  for (const accentColor of [null, "unknown", "__proto__", {}, 7])
+    assert.deepEqual(
+      normalizeSettings({ ...settings, accentColor }),
+      settings,
+    );
   for (const value of [
     null,
     [],

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { accentColors } from "./accentColors.js";
 import {
   defaultSettings,
   normalizeSettings,
@@ -32,11 +33,22 @@ const resolveTheme = (theme: Theme) =>
       : "light"
     : theme;
 
+function applyAppearance(settings: AppSettings) {
+  const root = document.documentElement;
+  const theme = resolveTheme(settings.theme);
+  const palette = accentColors[settings.accentColor];
+  root.dataset.theme = theme;
+  root.dataset.accent = settings.accentColor;
+  root.style.setProperty("--accent-dark", palette.dark);
+  root.style.setProperty("--accent-light", palette.light);
+  root.style.setProperty("--accent-solid", palette.solid);
+  root.style.setProperty("--accent-solid-hover", palette.hover);
+  return theme;
+}
+
 // Apply the saved appearance before React's first paint.
-export function initializeTheme() {
-  document.documentElement.dataset.theme = resolveTheme(
-    readSettings().settings.theme,
-  );
+export function initializeAppearance() {
+  applyAppearance(readSettings().settings);
 }
 
 export function useSettings() {
@@ -72,14 +84,12 @@ export function useSettings() {
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      const theme = resolveTheme(settings.theme);
-      document.documentElement.dataset.theme = theme;
-      setResolvedTheme(theme);
+      setResolvedTheme(applyAppearance(settings));
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [settings.theme]);
+  }, [settings.theme, settings.accentColor]);
 
   useEffect(() => {
     if (!isTauri()) return;

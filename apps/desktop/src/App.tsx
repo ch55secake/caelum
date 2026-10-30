@@ -245,6 +245,7 @@ export default function App() {
             <FilesPanel
               project={app.project}
               theme={preferences.resolvedTheme}
+              accentColor={preferences.settings.accentColor}
             />
           </div>
         ) : (

@@ -715,10 +715,126 @@ test("settings switches and persists complete themes, follows the system and pre
   await expect(dialog).toHaveCount(0);
 });
 
-test("settings themes update mounted Monaco file previews and diffs", async ({
+test("accent colours support keyboard selection, persist and adapt to explicit and system themes", async ({
   page,
 }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("caelum.settings.v1"))
+      localStorage.setItem(
+        "caelum.settings.v1",
+        JSON.stringify({
+          theme: "light",
+          providers: { codex: { model: "provider/fast", effort: "low" } },
+        }),
+      );
+  });
   await desktop(page);
+  const root = page.locator("html");
+  const brand = page.locator(".brand-row");
+  await expect(root).toHaveAttribute("data-accent", "violet");
+  await expect(brand).toHaveCSS("color", "rgb(108, 86, 176)");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep my accent choice");
+  const dialog = await openSettings(page);
+  const colours = dialog.getByRole("group", {
+    name: "Accent colour",
+    exact: true,
+  });
+  await colours
+    .getByRole("radio", { name: "Violet", exact: true })
+    .press("ArrowRight");
+  await expect(
+    colours.getByRole("radio", { name: "Blue", exact: true }),
+  ).toBeChecked();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    colours.getByRole("radio", { name: "Teal", exact: true }),
+  ).toBeChecked();
+  await expect(
+    colours.getByRole("radio", { name: "Teal", exact: true }),
+  ).toBeFocused();
+  await expect(brand).toHaveCSS("color", "rgb(33, 111, 104)");
+  await expect(page.locator(".send-button")).toHaveCSS(
+    "background-color",
+    "rgb(35, 119, 111)",
+  );
+  await expect(page.locator(".latest-user")).toHaveCSS(
+    "border-left-color",
+    "rgb(33, 111, 104)",
+  );
+  await page.screenshot({ path: "test-results/settings-accent-light.png" });
+  await dialog.getByRole("radio", { name: "Dark", exact: true }).check();
+  await expect(brand).toHaveCSS("color", "rgb(114, 199, 191)");
+  await expect(page.locator(".send-button")).toHaveCSS(
+    "background-color",
+    "rgb(35, 119, 111)",
+  );
+  await page.screenshot({ path: "test-results/settings-accent-dark.png" });
+  await dialog.getByRole("radio", { name: "System", exact: true }).check();
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(brand).toHaveCSS("color", "rgb(33, 111, 104)");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(brand).toHaveCSS("color", "rgb(114, 199, 191)");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await input.press("Enter");
+  await expect(page.locator(".composer")).toHaveAttribute(
+    "data-working",
+    "true",
+  );
+  await openSettings(page);
+  await colours.getByRole("radio", { name: "Rose", exact: true }).check();
+  await expect
+    .poll(() =>
+      page
+        .locator(".composer")
+        .evaluate(
+          (element) => getComputedStyle(element, "::before").borderColor,
+        ),
+    )
+    .toBe("rgb(231, 154, 176)");
+  await colours.getByRole("radio", { name: "Teal", exact: true }).check();
+  await page.reload();
+  await expect(root).toHaveAttribute("data-accent", "teal");
+  await expect(brand).toHaveCSS("color", "rgb(114, 199, 191)");
+  expect(
+    await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("caelum.settings.v1")!),
+    ),
+  ).toMatchObject({
+    theme: "system",
+    accentColor: "teal",
+    providers: { codex: { model: "provider/fast", effort: "low" } },
+  });
+  await page.setViewportSize({ width: 800, height: 620 });
+  await openSettings(page);
+  await expect(
+    colours.getByRole("radio", { name: "Teal", exact: true }),
+  ).toBeChecked();
+  await colours.getByRole("radio", { name: "Rose", exact: true }).check();
+  await colours
+    .getByRole("radio", { name: "Rose", exact: true })
+    .press("ArrowLeft");
+  await expect(
+    colours.getByRole("radio", { name: "Amber", exact: true }),
+  ).toBeChecked();
+  await colours.getByRole("radio", { name: "Violet", exact: true }).check();
+  await expect(
+    colours.getByRole("radio", { name: "Violet", exact: true }),
+  ).toBeChecked();
+  await expect(brand).toHaveCSS("color", "rgb(163, 154, 246)");
+  await expect(
+    dialog.getByRole("button", { name: "Done", exact: true }),
+  ).toBeInViewport();
+});
+
+test("settings themes and accents update mounted Monaco file previews and diffs", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await desktop(page);
+  const dialog = await openSettings(page);
+  await dialog.getByRole("radio", { name: "Blue", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Files", exact: true }).click();
   await page
     .getByRole("treeitem", { name: "src, folder, collapsed", exact: true })
@@ -726,23 +842,67 @@ test("settings themes update mounted Monaco file previews and diffs", async ({
   await page
     .getByRole("treeitem", { name: "App.tsx, file", exact: true })
     .click();
-  const editor = page.locator(".monaco-editor").first();
+  const editor = page.locator('.monaco-editor[role="code"]').first();
   await expect(editor).toBeVisible();
   await expect(editor).toHaveCSS("background-color", "rgb(11, 12, 14)");
-  const dialog = await openSettings(page);
+  await expect(editor.locator(".active-line-number")).toHaveCSS(
+    "color",
+    "rgb(130, 180, 244)",
+  );
+  await openSettings(page);
+  await dialog.getByRole("radio", { name: "Teal", exact: true }).check();
+  await expect(editor.locator(".active-line-number")).toHaveCSS(
+    "color",
+    "rgb(114, 199, 191)",
+  );
   await dialog.getByRole("radio", { name: "Light", exact: true }).check();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(editor).toHaveCSS("background-color", "rgb(250, 250, 252)");
+  await expect(editor.locator(".active-line-number")).toHaveCSS(
+    "color",
+    "rgb(33, 111, 104)",
+  );
+  await editor.getByRole("textbox").press("Meta+a");
+  await expect(editor.locator(".selected-text").first()).toHaveCSS(
+    "background-color",
+    "rgba(33, 111, 104, 0.2)",
+  );
   await page
     .getByRole("button", { name: "Review changes", exact: true })
     .click();
   await expect(page.locator(".monaco-diff-editor")).toBeVisible();
   await expect(editor).toHaveCSS("background-color", "rgb(250, 250, 252)");
+  const diffPanes = page.locator(".monaco-diff-editor").getByRole("code");
+  await expect(diffPanes).toHaveCount(2);
+  for (const pane of await diffPanes.all()) {
+    await pane.getByRole("textbox").press("Meta+a");
+    await expect(pane.locator(".selected-text").first()).toHaveCSS(
+      "background-color",
+      "rgba(33, 111, 104, 0.2)",
+    );
+  }
   await page.screenshot({ path: "test-results/files-light.png" });
+  await openSettings(page);
+  await dialog.getByRole("radio", { name: "Rose", exact: true }).check();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  for (const pane of await diffPanes.all()) {
+    await pane.getByRole("textbox").press("Meta+a");
+    await expect(pane.locator(".selected-text").first()).toHaveCSS(
+      "background-color",
+      "rgba(165, 65, 99, 0.2)",
+    );
+  }
   await openSettings(page);
   await dialog.getByRole("radio", { name: "Dark", exact: true }).check();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(editor).toHaveCSS("background-color", "rgb(11, 12, 14)");
+  for (const pane of await diffPanes.all()) {
+    await pane.getByRole("textbox").press("Meta+a");
+    await expect(pane.locator(".selected-text").first()).toHaveCSS(
+      "background-color",
+      /^rgba\(231, 154, 176, 0\./,
+    );
+  }
 });
 
 for (const provider of ["codex", "opencode"]) {

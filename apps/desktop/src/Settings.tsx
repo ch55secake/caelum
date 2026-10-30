@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Bot,
   Check,
@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { ChoicePicker } from "./ChoicePicker.js";
+import { accentColors, type AccentColor } from "./accentColors.js";
 import type { WorkspaceController } from "./Sidebar.js";
 import type { useSettings } from "./useSettings.js";
 import type { ProviderKind } from "./workspaceState.js";
@@ -411,6 +412,43 @@ export function Settings({
               </fieldset>
               <p className="settings-note">
                 System follows your device’s appearance automatically.
+              </p>
+              <fieldset className="accent-options">
+                <legend>Accent colour</legend>
+                {Object.entries(accentColors).map(([id, palette]) => (
+                  <label className="accent-option" key={id}>
+                    <input
+                      type="radio"
+                      name="accent-color"
+                      value={id}
+                      checked={preferences.settings.accentColor === id}
+                      onChange={() =>
+                        preferences.update((current) => ({
+                          ...current,
+                          accentColor: id as AccentColor,
+                        }))
+                      }
+                    />
+                    <span
+                      className="accent-swatch"
+                      style={
+                        {
+                          "--swatch-color":
+                            palette[preferences.resolvedTheme],
+                        } as CSSProperties
+                      }
+                      aria-hidden="true"
+                    >
+                      {preferences.settings.accentColor === id && (
+                        <Check size={15} />
+                      )}
+                    </span>
+                    <span>{palette.name}</span>
+                  </label>
+                ))}
+              </fieldset>
+              <p className="settings-note">
+                Highlights, links, and controls adapt to your theme.
               </p>
               {preferences.themeError && (
                 <p className="settings-provider-error" role="alert">
