@@ -123,24 +123,24 @@ function ContextMenu({
     const outside = (event: Event) => {
       if (!popup.current?.contains(event.target as Node)) close();
     };
-    const scrolled = (event: Event) => {
-      if (event.target instanceof Node && event.target.contains(menu.target))
-        close();
-    };
     const dismiss = () => close();
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("focusin", outside);
-    document.addEventListener("scroll", scrolled, true);
+    // Editor focus/selection can scroll asynchronously after keyboard invocation.
+    // Dismiss for user scrolling, not those pending layout adjustments.
+    document.addEventListener("wheel", outside, { passive: true });
+    document.addEventListener("touchmove", outside, { passive: true });
     window.addEventListener("resize", dismiss);
     window.addEventListener("blur", dismiss);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("focusin", outside);
-      document.removeEventListener("scroll", scrolled, true);
+      document.removeEventListener("wheel", outside);
+      document.removeEventListener("touchmove", outside);
       window.removeEventListener("resize", dismiss);
       window.removeEventListener("blur", dismiss);
     };
-  }, [close, menu]);
+  }, [close]);
   return createPortal(
     <div
       ref={popup}

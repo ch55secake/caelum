@@ -4528,7 +4528,7 @@ test("context menus support keyboard navigation, viewport edges, themes and dism
   await project.press("Shift+F10");
   await page.locator(".transcript").dispatchEvent("scroll");
   await expect(menu).toBeVisible();
-  await page.locator(".project-list").dispatchEvent("scroll");
+  await page.locator(".project-list").dispatchEvent("wheel");
   await expect(menu).toHaveCount(0);
   await project.press("Shift+F10");
   await page.setViewportSize({ width: 1000, height: 700 });
