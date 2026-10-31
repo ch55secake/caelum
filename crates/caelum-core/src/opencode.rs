@@ -17,7 +17,7 @@ use std::{
 use caelum_protocol::{
     ApprovalDecision, LineChanges, OpenCodeCommandInfo, OpenCodeCommandInput, OpenCodeEvent,
     OpenCodeSession, OpenCodeSessionInfo, OpenCodeSessionList, PermissionRequest, ProviderChoice,
-    ProviderChoices, ProviderModelChoice, SessionDetails, SessionHistoryPage,
+    ProviderChoices, ProviderModelChoice, QuestionPrompt, SessionDetails, SessionHistoryPage,
 };
 use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -27,6 +27,7 @@ use crate::{
     approvals::ApprovalBroker,
     processes::{ProcessId, ProcessRegistry},
     projects::{Project, ProjectError},
+    questions::{QuestionBroker, Reply},
 };
 
 const PROVIDER_NAME: &str = "opencode";
@@ -51,6 +52,7 @@ struct ProviderInner {
     service_file: Option<PathBuf>,
     processes: Arc<ProcessRegistry>,
     approvals: ApprovalBroker,
+    questions: QuestionBroker,
     servers: Mutex<HashMap<PathBuf, Arc<OpenCodeServer>>>,
     subscribers: EventSubscribers,
     closed: AtomicBool,
@@ -68,8 +70,12 @@ struct OpenCodeServer {
 }
 
 impl OpenCodeProvider {
-    pub fn new(processes: Arc<ProcessRegistry>, approvals: ApprovalBroker) -> Self {
-        Self::with_optional_executable(processes, approvals, None)
+    pub fn new(
+        processes: Arc<ProcessRegistry>,
+        approvals: ApprovalBroker,
+        questions: QuestionBroker,
+    ) -> Self {
+        Self::with_optional_executable(processes, approvals, questions, None)
     }
 
     /// Construct a provider with an explicit OpenCode executable. This is
@@ -77,14 +83,16 @@ impl OpenCodeProvider {
     pub fn with_executable(
         processes: Arc<ProcessRegistry>,
         approvals: ApprovalBroker,
+        questions: QuestionBroker,
         executable: impl Into<PathBuf>,
     ) -> Self {
-        Self::with_optional_executable(processes, approvals, Some(executable.into()))
+        Self::with_optional_executable(processes, approvals, questions, Some(executable.into()))
     }
 
     fn with_optional_executable(
         processes: Arc<ProcessRegistry>,
         approvals: ApprovalBroker,
+        questions: QuestionBroker,
         executable: Option<PathBuf>,
     ) -> Self {
         Self {
@@ -93,6 +101,7 @@ impl OpenCodeProvider {
                 executable,
                 processes,
                 approvals,
+                questions,
                 servers: Mutex::new(HashMap::new()),
                 subscribers: Arc::new(Mutex::new(Vec::new())),
                 closed: AtomicBool::new(false),
@@ -528,6 +537,13 @@ impl OpenCodeProvider {
             &[],
             Some(json!({ "archived": archived })),
         )?;
+        if archived {
+            self.inner.questions.clear(
+                PROVIDER_NAME,
+                &project.path().to_string_lossy(),
+                Some(session_id),
+            );
+        }
         Ok(())
     }
 
@@ -541,7 +557,18 @@ impl OpenCodeProvider {
         self.session(&server, &project, session_id)?;
         let path = format!("/api/session/{session_id}/interrupt");
         server.request_json(Method::POST, &path, &[], None)?;
+        self.inner.questions.clear(
+            PROVIDER_NAME,
+            &project.path().to_string_lossy(),
+            Some(session_id),
+        );
         Ok(())
+    }
+
+    pub fn refresh_questions(&self, project_path: impl AsRef<Path>) -> Result<(), OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        sync_questions(&server, &self.inner.questions, project.path())
     }
 
     /// Terminate every OpenCode server owned by this provider.
@@ -554,8 +581,11 @@ impl OpenCodeProvider {
             let mut servers = self.inner.lock_servers();
             std::mem::take(&mut *servers)
         };
-        for (_, server) in servers {
+        for (path, server) in servers {
             server.close(&self.inner.processes);
+            self.inner
+                .questions
+                .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
         }
         self.inner.lock_subscribers().clear();
     }
@@ -717,11 +747,16 @@ impl OpenCodeProvider {
                 Arc::clone(server),
                 project.path().to_path_buf(),
                 self.inner.approvals.clone(),
+                self.inner.questions.clone(),
                 Arc::clone(&self.inner.subscribers),
             )
         };
         if result.is_err() {
             server.close(&self.inner.processes);
+        } else {
+            // The stream is live-only. Recover forms that predate this connection.
+            // A missing form API must not prevent older servers from connecting.
+            let _ = sync_questions(server, &self.inner.questions, project.path());
         }
         result
     }
@@ -865,10 +900,98 @@ impl OpenCodeServer {
     }
 }
 
+fn question_request(
+    server: &Arc<OpenCodeServer>,
+    project: &Path,
+    form: &Value,
+) -> Result<(QuestionPrompt, Reply), OpenCodeError> {
+    let session = form["sessionID"]
+        .as_str()
+        .filter(|id| valid_session_id(id))
+        .ok_or_else(|| OpenCodeError::Protocol("form has no valid session ID".into()))?;
+    let id = form["id"]
+        .as_str()
+        .filter(|id| {
+            id.starts_with("frm_")
+                && id.len() > 4
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        })
+        .ok_or_else(|| OpenCodeError::Protocol("form has no valid ID".into()))?;
+    let fields = form["fields"]
+        .as_array()
+        .ok_or_else(|| OpenCodeError::Protocol("form has no fields".into()))?;
+    let prompt = QuestionPrompt {
+        provider: PROVIDER_NAME.into(),
+        project_path: project.to_string_lossy().into_owned(),
+        session_id: session.into(),
+        request_id: id.into(),
+        title: form["title"].as_str().unwrap_or("Questions").into(),
+        fields: fields.clone(),
+    };
+    let path = format!("/api/session/{session}/form/{id}");
+    server.remember_session(session);
+    let server = Arc::clone(server);
+    let reply: Reply = Arc::new(move |answer| {
+        if !server.alive.load(Ordering::Acquire) {
+            return Err("OpenCode disconnected. Reconnect before answering.".into());
+        }
+        let result = match answer {
+            Some(answer) => server.request_json(
+                Method::POST,
+                &format!("{path}/reply"),
+                &[],
+                Some(json!({ "answer": answer })),
+            ),
+            None => server.request_json(Method::DELETE, &path, &[], None),
+        };
+        result.map(|_| ()).map_err(|error| error.to_string())
+    });
+    Ok((prompt, reply))
+}
+
+fn sync_questions(
+    server: &Arc<OpenCodeServer>,
+    questions: &QuestionBroker,
+    project: &Path,
+) -> Result<(), OpenCodeError> {
+    let project_path = project.to_string_lossy();
+    for _ in 0..2 {
+        let revision = questions.revision();
+        let response = server.request_json(
+            Method::GET,
+            "/api/form",
+            &[("location[directory]", project_path.to_string())],
+            None,
+        )?;
+        let forms = response["data"]
+            .as_array()
+            .ok_or_else(|| OpenCodeError::Protocol("form list has no data array".into()))?;
+        let requests = forms
+            .iter()
+            // Global MCP forms do not belong to a conversation.
+            .filter(|form| form["sessionID"].as_str().is_some_and(valid_session_id))
+            .map(|form| question_request(server, project, form))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !server.alive.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if questions
+            .sync(PROVIDER_NAME, &project_path, revision, requests)
+            .map_err(OpenCodeError::Protocol)?
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn spawn_event_listener(
     server: Arc<OpenCodeServer>,
     project_path: PathBuf,
     approvals: ApprovalBroker,
+    questions: QuestionBroker,
     subscribers: EventSubscribers,
 ) -> Result<(), OpenCodeError> {
     let (ready, receiver) = mpsc::channel();
@@ -880,11 +1003,11 @@ fn spawn_event_listener(
         let request = server.authenticate(server.event_client.get(url));
         let result = request.send();
         let Ok(response) = result else {
-            publish_disconnected(&server, &project_path, &approvals, &subscribers);
+            publish_disconnected(&server, &project_path, &approvals, &questions, &subscribers);
             return;
         };
         if !response.status().is_success() {
-            publish_disconnected(&server, &project_path, &approvals, &subscribers);
+            publish_disconnected(&server, &project_path, &approvals, &questions, &subscribers);
             return;
         }
 
@@ -905,9 +1028,32 @@ fn spawn_event_listener(
                 if !server.alive.load(Ordering::Acquire) {
                     return;
                 }
+                // A resolution can arrive during the first snapshot, before
+                // its session is known locally. Invalidate that snapshot even
+                // when a location-less event cannot otherwise be routed yet.
+                if matches!(event.event_type.as_str(), "form.replied" | "form.cancelled")
+                    && event
+                        .location
+                        .as_ref()
+                        .and_then(|location| location["directory"].as_str())
+                        .map_or(true, |directory| {
+                            directory_matches(directory, &project_path)
+                        })
+                {
+                    if let (Some(session), Some(id)) =
+                        (event.data["sessionID"].as_str(), event.data["id"].as_str())
+                    {
+                        questions.dismiss(
+                            PROVIDER_NAME,
+                            &project_path.to_string_lossy(),
+                            session,
+                            id,
+                        );
+                    }
+                }
                 if !event_belongs_to_project(
                     event.location.as_ref(),
-                    &event.data,
+                    event.data.get("form").unwrap_or(&event.data),
                     &project_path,
                     &server,
                 ) {
@@ -923,10 +1069,29 @@ fn spawn_event_listener(
                         &event.data,
                     );
                 }
+                match event.event_type.as_str() {
+                    "form.created" => {
+                        if let Ok((prompt, reply)) =
+                            question_request(&server, &project_path, &event.data["form"])
+                        {
+                            let _ = questions.insert(prompt, reply);
+                        }
+                    }
+                    "session.deleted" | "session.archived" | "session.execution.interrupted" => {
+                        if let Some(session) = event.data["sessionID"].as_str() {
+                            questions.clear(
+                                PROVIDER_NAME,
+                                &project_path.to_string_lossy(),
+                                Some(session),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
                 publish_event(&subscribers, event);
             },
         );
-        publish_disconnected(&server, &project_path, &approvals, &subscribers);
+        publish_disconnected(&server, &project_path, &approvals, &questions, &subscribers);
     });
     receiver
         .recv_timeout(SERVER_START_TIMEOUT)
@@ -1133,8 +1298,12 @@ fn publish_disconnected(
     server: &OpenCodeServer,
     project_path: &Path,
     approvals: &ApprovalBroker,
+    questions: &QuestionBroker,
     subscribers: &EventSubscribers,
 ) {
+    if server.alive.load(Ordering::Acquire) {
+        questions.clear(PROVIDER_NAME, &project_path.to_string_lossy(), None);
+    }
     if server.alive.swap(false, Ordering::AcqRel) {
         let pending_ids = server
             .pending_permission_ids
@@ -1484,8 +1653,10 @@ impl Drop for ProviderInner {
             .servers
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for (_, server) in std::mem::take(servers) {
+        for (path, server) in std::mem::take(servers) {
             server.close(&self.processes);
+            self.questions
+                .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
         }
     }
 }
@@ -1684,7 +1855,8 @@ mod tests {
     fn shutdown_terminates_and_unregisters_the_owned_server_process() {
         let processes = Arc::new(ProcessRegistry::default());
         let approvals = ApprovalBroker::default();
-        let provider = OpenCodeProvider::new(Arc::clone(&processes), approvals);
+        let provider =
+            OpenCodeProvider::new(Arc::clone(&processes), approvals, QuestionBroker::default());
         let child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
         let process_id = processes.register(child).unwrap();
         let client = Client::builder().build().unwrap();
@@ -1739,6 +1911,9 @@ from urllib.parse import urlsplit, parse_qs
 PROJECT = os.getcwd()
 PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
 SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}, "model": {"providerID": "local", "id": "original"}, "agent": "build"}
+FORMS = {name: {"id": name, "sessionID": "ses_fake", "title": "Questions", "fields": [
+    {"key": "q0", "type": "multiselect", "title": "Targets", "custom": True, "options": [{"label": "macOS", "value": "macOS"}], "required": True}
+]} for name in ["frm_live", "frm_saved", "frm_external", "frm_cancelled"]}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
@@ -1769,6 +1944,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             events = [
+                {"type": "form.created", "location": {"directory": PROJECT}, "data": {"form": FORMS["frm_live"]}},
+                {"type": "form.created", "location": {"directory": os.path.dirname(PROJECT)}, "data": {"form": dict(FORMS["frm_live"], id="frm_foreign")}},
                 {"id": "evt_fake", "type": "session.text.delta", "location": {"directory": PROJECT}, "data": {"sessionID": "ses_fake", "assistantMessageID": "msg_fake", "delta": "hello"}},
                 {"id": "evt_permission", "type": "permission.asked", "location": {"directory": PROJECT}, "data": {"id": "per_fake", "sessionID": "ses_fake", "action": "bash", "resources": ["echo hello"], "message": "Run a command?"}}
             ]
@@ -1777,11 +1954,22 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             try:
                 while True:
-                    time.sleep(1)
+                    time.sleep(0.05)
+                    marker = os.path.join(PROJECT, "external-form-resolution")
+                    if os.path.exists(marker):
+                        os.unlink(marker)
+                        for name, kind in [("frm_external", "form.replied"), ("frm_cancelled", "form.cancelled")]:
+                            FORMS.pop(name, None)
+                            # No location: snapshots/created events establish ownership.
+                            event = {"type": kind, "data": {"id": name, "sessionID": "ses_fake", "answer": {"q0": ["external"]}}}
+                            self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
                     self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 return
+        elif path == "/api/form":
+            assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
+            self.send_json({"data": list(FORMS.values()) + [{"id": "frm_global", "sessionID": "global", "fields": []}]})
         elif path == "/api/session":
             assert parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["false"]
             self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
@@ -1859,6 +2047,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.end_headers()
 
+    def do_DELETE(self):
+        if not self.authorized(): return
+        assert self.path == "/api/session/ses_fake/form/frm_live"
+        FORMS.pop("frm_live")
+        self.send_response(204)
+        self.end_headers()
+
     def do_POST(self):
         if not self.authorized():
             return
@@ -1867,7 +2062,15 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         with open(os.path.join(PROJECT, "requests.jsonl"), "a") as requests:
             requests.write(json.dumps({"path": path, "body": body}) + "\n")
-        if path == "/api/session":
+        if path == "/api/session/ses_fake/form/frm_saved/reply":
+            assert body == {"answer": {"q0": ["macOS", "custom target"]}}
+            if os.path.exists(os.path.join(PROJECT, "fail-form-reply")):
+                self.send_error(503)
+                return
+            FORMS.pop("frm_saved")
+            self.send_response(204)
+            self.end_headers()
+        elif path == "/api/session":
             if body.get("model"):
                 assert body["model"] == {"providerID": "local", "id": "model/a"}
                 assert body["agent"] == "build"
@@ -1919,15 +2122,64 @@ server.serve_forever()
 
         let processes = Arc::new(ProcessRegistry::default());
         let approvals = ApprovalBroker::default();
+        let questions = QuestionBroker::default();
         let provider = OpenCodeProvider::with_executable(
             Arc::clone(&processes),
             approvals.clone(),
+            questions.clone(),
             &executable,
         );
         let events = provider.subscribe();
 
         let listed = provider.list_sessions(&project_path).unwrap();
         assert_eq!(listed.sessions[0].id, "ses_fake");
+        let path = project_path
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(questions.pending().len(), 4);
+        assert!(questions
+            .pending()
+            .iter()
+            .all(|request| request.project_path == path));
+        assert_eq!(questions.pending()[0].fields[0]["type"], "multiselect");
+        let answer = json!({"q0": ["macOS", "custom target"]})
+            .as_object()
+            .unwrap()
+            .clone();
+        fs::write(project_path.join("fail-form-reply"), "").unwrap();
+        assert!(questions
+            .resolve(
+                PROVIDER_NAME,
+                &path,
+                "ses_fake",
+                "frm_saved",
+                Some(answer.clone())
+            )
+            .is_err());
+        assert_eq!(questions.pending().len(), 4);
+        fs::remove_file(project_path.join("fail-form-reply")).unwrap();
+        questions
+            .resolve(PROVIDER_NAME, &path, "ses_fake", "frm_saved", Some(answer))
+            .unwrap();
+        questions
+            .resolve(PROVIDER_NAME, &path, "ses_fake", "frm_live", None)
+            .unwrap();
+        assert_eq!(questions.pending().len(), 2);
+        // Rehydrate forms that predate a UI connection, without replaying SSE.
+        questions.clear(PROVIDER_NAME, &path, None);
+        provider.refresh_questions(&project_path).unwrap();
+        assert_eq!(questions.pending().len(), 2);
+        let updates = questions.subscribe();
+        fs::write(project_path.join("external-form-resolution"), "").unwrap();
+        while !updates
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .is_empty()
+        {}
+        provider.refresh_questions(&project_path).unwrap();
+        assert!(questions.pending().is_empty());
         let commands = provider.commands(&project_path).unwrap();
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name, "goal");
@@ -2492,6 +2744,7 @@ server.serve_forever()
             let mut provider = OpenCodeProvider::new(
                 Arc::new(ProcessRegistry::default()),
                 ApprovalBroker::default(),
+                QuestionBroker::default(),
             );
             Arc::get_mut(&mut provider.inner).unwrap().service_file = Some(registration);
             let events = provider.subscribe();

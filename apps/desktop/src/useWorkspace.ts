@@ -6,6 +6,13 @@ import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
 import { contextUsageSince, openCodeHistoryUsage } from "./contextUsage.js";
 import {
+  questionKey,
+  questionDraft,
+  type QuestionPrompt,
+  type QuestionDraft,
+  type QuestionAnswer,
+} from "./questionState.js";
+import {
   commandFiles,
   parseSlashCommand,
   type SlashCommand,
@@ -147,6 +154,20 @@ export function useWorkspace(settings: AppSettings) {
   const [selecting, setSelecting] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalPrompt[]>([]);
   const [resolving, setResolving] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<QuestionPrompt[]>([]);
+  const pendingQuestions = useRef(questions);
+  const questionRevision = useRef(0);
+  const questionLifetimes = useRef(new Map<string, symbol>());
+  const [questionEdits, setQuestionEdits] = useState<
+    Record<
+      string,
+      {
+        draft?: QuestionDraft;
+        submitting?: boolean;
+        error?: string;
+      }
+    >
+  >({});
   const [archivedSession, setArchivedSession] =
     useState<ArchivedSession | null>(null);
   const [undoingArchive, setUndoingArchive] = useState(false);
@@ -215,6 +236,84 @@ export function useWorkspace(settings: AppSettings) {
       current.archivingSessionIds.includes(id) ||
       current.archivedSessionIds.includes(id)
     );
+  }
+
+  function receiveQuestions(requests: QuestionPrompt[]) {
+    questionRevision.current++;
+    pendingQuestions.current = requests;
+    setQuestions(requests);
+    const keys = new Set(requests.map(questionKey));
+    questionLifetimes.current = new Map(
+      [...keys].map((key) => [
+        key,
+        questionLifetimes.current.get(key) ?? Symbol(),
+      ]),
+    );
+    setQuestionEdits((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([key]) => keys.has(key)),
+      ),
+    );
+  }
+  function setQuestionDraft(request: QuestionPrompt, draft: QuestionDraft) {
+    const key = questionKey(request);
+    setQuestionEdits((current) => ({
+      ...current,
+      [key]: { ...current[key], draft },
+    }));
+  }
+  async function resolveQuestion(
+    request: QuestionPrompt,
+    answer: QuestionAnswer | null,
+  ) {
+    const key = questionKey(request),
+      lock = `question:${key}`;
+    if (
+      locks.current.has(lock) ||
+      !pendingQuestions.current.some((item) => questionKey(item) === key)
+    )
+      return;
+    locks.current.add(lock);
+    const lifetime = questionLifetimes.current.get(key);
+    setQuestionEdits((current) => ({
+      ...current,
+      [key]: { ...current[key], submitting: true, error: undefined },
+    }));
+    try {
+      await invoke("resolve_question", {
+        provider: request.provider,
+        projectPath: request.projectPath,
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        answer,
+      });
+      if (questionLifetimes.current.get(key) === lifetime)
+        receiveQuestions(
+          pendingQuestions.current.filter((item) => questionKey(item) !== key),
+        );
+    } catch (reason) {
+      if (questionLifetimes.current.get(key) === lifetime)
+        setQuestionEdits((current) => ({
+          ...current,
+          [key]: { ...current[key], submitting: false, error: String(reason) },
+        }));
+      if (request.provider === "opencode")
+        void refreshQuestions(request.projectPath);
+    } finally {
+      locks.current.delete(lock);
+    }
+  }
+  async function refreshQuestions(path: string) {
+    const key = `questions:${path}`;
+    if (locks.current.has(key)) return;
+    locks.current.add(key);
+    try {
+      await invoke("refresh_questions", { projectPath: path });
+    } catch {
+      /* Older OpenCode servers may not expose forms. */
+    } finally {
+      locks.current.delete(key);
+    }
   }
 
   useEffect(() => {
@@ -299,14 +398,21 @@ export function useWorkspace(settings: AppSettings) {
         approvalRevision++;
         setApprovals(payload);
       }),
+      subscribe<QuestionPrompt[]>("question-requests", receiveQuestions),
     ])
       .then(async () => {
         if (disposed) return;
         setReady(true);
         const revision = approvalRevision;
-        const snapshot = await invoke<ApprovalPrompt[]>("pending_approvals");
+        const questionsVersion = questionRevision.current;
+        const [snapshot, pending] = await Promise.all([
+          invoke<ApprovalPrompt[]>("pending_approvals"),
+          invoke<QuestionPrompt[]>("pending_questions"),
+        ]);
         if (!disposed) {
           if (revision === approvalRevision) setApprovals(snapshot);
+          if (questionsVersion === questionRevision.current)
+            receiveQuestions(pending);
         }
       })
       .catch((reason: unknown) => {
@@ -977,6 +1083,7 @@ export function useWorkspace(settings: AppSettings) {
     const cached =
       state.current[target.path]?.providers[kind].sessionsById[thread.id];
     if (cached?.connection === "connected") {
+      if (kind === "opencode") void refreshQuestions(target.path);
       await loadHistory(target.path, kind, thread.id);
       return;
     }
@@ -1024,6 +1131,7 @@ export function useWorkspace(settings: AppSettings) {
         };
       });
       void loadHistory(target.path, kind, thread.id);
+      if (kind === "opencode") void refreshQuestions(target.path);
     } catch (reason) {
       if (revision(scope) === version)
         mutateSession(target.path, kind, thread.id, (value) => ({
@@ -1097,6 +1205,7 @@ export function useWorkspace(settings: AppSettings) {
         return;
       refreshed = Date.now();
       void loadHistory(path, kind, id);
+      if (kind === "opencode") void refreshQuestions(path);
     };
     refresh();
     const timer = window.setInterval(() => {
@@ -1177,6 +1286,15 @@ export function useWorkspace(settings: AppSettings) {
     }, ask);
   }
   async function submit() {
+    if (
+      pendingQuestions.current.some(
+        (request) =>
+          request.projectPath === project?.path &&
+          request.provider === provider &&
+          request.sessionId === selectedId,
+      )
+    )
+      return;
     if (!project) return;
     const target = project,
       kind = provider;
@@ -1467,7 +1585,11 @@ export function useWorkspace(settings: AppSettings) {
       setResolving(null);
     }
   }
-  function viewApproval(request: ApprovalPrompt) {
+  function viewRequest(
+    request: Pick<ApprovalPrompt, "provider" | "projectPath" | "sessionId"> & {
+      title?: string;
+    },
+  ) {
     if (request.provider !== "codex" && request.provider !== "opencode") return;
     const target = projects.find(
       (item) => item.path === request.projectPath,
@@ -1498,7 +1620,12 @@ export function useWorkspace(settings: AppSettings) {
     if (unavailable(target.path, kind, id)) return;
     const thread = state.current[target.path].providers[kind].sessions.find(
       (item) => item.id === id,
-    ) ?? { id, name: null, preview: "Approval required", updatedAt: null };
+    ) ?? {
+      id,
+      name: null,
+      preview: request.title ?? "Approval required",
+      updatedAt: null,
+    };
     mutateProvider(target.path, kind, (value) => ({
       ...value,
       selectedSessionId: id,
@@ -1529,6 +1656,12 @@ export function useWorkspace(settings: AppSettings) {
     selecting,
     approvals,
     resolving,
+    questions,
+    questionEdits,
+    questionDraft: (request: QuestionPrompt) =>
+      questionEdits[questionKey(request)]?.draft ?? questionDraft(request),
+    setQuestionDraft,
+    resolveQuestion,
     archivedSession,
     undoingArchive,
     dismissArchive: () => setArchivedSession(null),
@@ -1554,6 +1687,7 @@ export function useWorkspace(settings: AppSettings) {
     mutateSession,
     setOption,
     loadChoices,
-    viewApproval,
+    viewApproval: viewRequest,
+    viewQuestion: viewRequest,
   };
 }

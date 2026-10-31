@@ -195,6 +195,19 @@ pub enum ApprovalDecision {
     Deny,
 }
 
+/// An interactive provider request. Fields retain the OpenCode V2 form shape;
+/// Codex question options are adapted to the same presentation contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionPrompt {
+    pub provider: String,
+    pub project_path: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub title: String,
+    pub fields: Vec<serde_json::Value>,
+}
+
 /// A Codex thread as returned by the local app-server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

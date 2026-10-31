@@ -154,8 +154,16 @@ impl AgentProviders {
         let processes = Arc::new(ProcessRegistry::default());
         let approvals = ApprovalBroker::default();
         Self {
-            codex: CodexProvider::new(Arc::clone(&processes), approvals.clone()),
-            opencode: OpenCodeProvider::new(Arc::clone(&processes), approvals.clone()),
+            codex: CodexProvider::new(
+                Arc::clone(&processes),
+                approvals.clone(),
+                caelum_core::questions::QuestionBroker::disabled(),
+            ),
+            opencode: OpenCodeProvider::new(
+                Arc::clone(&processes),
+                approvals.clone(),
+                caelum_core::questions::QuestionBroker::disabled(),
+            ),
             approvals,
             processes,
         }

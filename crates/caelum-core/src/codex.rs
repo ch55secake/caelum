@@ -15,8 +15,8 @@ use std::{
 
 use caelum_protocol::{
     ApprovalDecision, CodexEvent, CodexSessionInfo, CodexSessionList, CodexThreadInfo, LineChanges,
-    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, SessionDetails,
-    SessionHistoryPage,
+    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, QuestionPrompt,
+    SessionDetails, SessionHistoryPage,
 };
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -25,6 +25,7 @@ use crate::{
     approvals::ApprovalBroker,
     processes::{ProcessId, ProcessRegistry},
     projects::{Project, ProjectError},
+    questions::QuestionBroker,
 };
 
 const PROVIDER_NAME: &str = "codex";
@@ -45,6 +46,7 @@ struct ProviderInner {
     executable: Option<PathBuf>,
     processes: Arc<ProcessRegistry>,
     approvals: ApprovalBroker,
+    questions: QuestionBroker,
     connections: Mutex<HashMap<PathBuf, Arc<CodexConnection>>>,
     subscribers: EventSubscribers,
     closed: AtomicBool,
@@ -67,14 +69,19 @@ struct ReaderContext {
     alive: Arc<AtomicBool>,
     subscribers: EventSubscribers,
     approvals: ApprovalBroker,
+    questions: QuestionBroker,
     project_path: PathBuf,
     pending_turns: Arc<Mutex<VecDeque<String>>>,
     turn_threads: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl CodexProvider {
-    pub fn new(processes: Arc<ProcessRegistry>, approvals: ApprovalBroker) -> Self {
-        Self::with_optional_executable(processes, approvals, None)
+    pub fn new(
+        processes: Arc<ProcessRegistry>,
+        approvals: ApprovalBroker,
+        questions: QuestionBroker,
+    ) -> Self {
+        Self::with_optional_executable(processes, approvals, questions, None)
     }
 
     /// Construct a provider with an explicit Codex executable. This is useful
@@ -82,14 +89,16 @@ impl CodexProvider {
     pub fn with_executable(
         processes: Arc<ProcessRegistry>,
         approvals: ApprovalBroker,
+        questions: QuestionBroker,
         executable: impl Into<PathBuf>,
     ) -> Self {
-        Self::with_optional_executable(processes, approvals, Some(executable.into()))
+        Self::with_optional_executable(processes, approvals, questions, Some(executable.into()))
     }
 
     fn with_optional_executable(
         processes: Arc<ProcessRegistry>,
         approvals: ApprovalBroker,
+        questions: QuestionBroker,
         executable: Option<PathBuf>,
     ) -> Self {
         Self {
@@ -97,6 +106,7 @@ impl CodexProvider {
                 executable,
                 processes,
                 approvals,
+                questions,
                 connections: Mutex::new(HashMap::new()),
                 subscribers: Arc::new(Mutex::new(Vec::new())),
                 closed: AtomicBool::new(false),
@@ -494,6 +504,13 @@ impl CodexProvider {
             },
             json!({ "threadId": thread_id }),
         )?;
+        if archived {
+            self.inner.questions.clear(
+                PROVIDER_NAME,
+                &project.path().to_string_lossy(),
+                Some(thread_id),
+            );
+        }
         Ok(())
     }
 
@@ -508,6 +525,11 @@ impl CodexProvider {
         let project = Project::open(project_path)?;
         let connection = self.connection_for_thread(&project, thread_id)?;
         connection.request("turn/interrupt", json!({ "threadId": thread_id }))?;
+        self.inner.questions.clear(
+            PROVIDER_NAME,
+            &project.path().to_string_lossy(),
+            Some(thread_id),
+        );
         Ok(())
     }
 
@@ -520,7 +542,10 @@ impl CodexProvider {
             let mut connections = self.inner.lock_connections();
             std::mem::take(&mut *connections)
         };
-        for (_, connection) in connections {
+        for (path, connection) in connections {
+            self.inner
+                .questions
+                .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
             let _ = self.inner.processes.terminate(connection.process_id);
         }
         self.inner.lock_subscribers().clear();
@@ -588,6 +613,7 @@ impl CodexProvider {
                 alive: Arc::clone(&connection.alive),
                 subscribers: Arc::clone(&self.inner.subscribers),
                 approvals: self.inner.approvals.clone(),
+                questions: self.inner.questions.clone(),
                 project_path: project.path().to_path_buf(),
                 pending_turns: Arc::clone(&connection.pending_turns),
                 turn_threads: Arc::clone(&connection.turn_threads),
@@ -598,6 +624,7 @@ impl CodexProvider {
             .request(
                 "initialize",
                 json!({
+                    "capabilities": { "experimentalApi": true },
                     "clientInfo": {
                         "name": "caelum",
                         "title": "Caelum",
@@ -643,8 +670,10 @@ impl Drop for ProviderInner {
             .connections
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for (_, connection) in std::mem::take(connections) {
+        for (path, connection) in std::mem::take(connections) {
             let _ = self.processes.terminate(connection.process_id);
+            self.questions
+                .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
         }
     }
 }
@@ -751,6 +780,7 @@ fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderContext) {
             alive,
             subscribers,
             approvals,
+            questions,
             project_path,
             pending_turns,
             turn_threads,
@@ -794,14 +824,31 @@ fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderContext) {
 
             if let Some(id) = message.get("id") {
                 if let Some(method) = message.get("method").and_then(Value::as_str) {
-                    handle_server_request(
-                        method,
-                        id.clone(),
-                        message.get("params").cloned().unwrap_or(Value::Null),
-                        &writer,
-                        &approvals,
-                        &project_path,
-                    );
+                    if method == "item/tool/requestUserInput" {
+                        let result = request_question(
+                            id,
+                            &message["params"],
+                            &writer,
+                            &alive,
+                            &questions,
+                            &project_path,
+                        );
+                        if let Err(error) = result {
+                            let _ = write_message(
+                                &writer,
+                                &json!({ "id": id, "error": { "code": -32602, "message": error } }),
+                            );
+                        }
+                    } else {
+                        handle_server_request(
+                            method,
+                            id.clone(),
+                            message.get("params").cloned().unwrap_or(Value::Null),
+                            &writer,
+                            &approvals,
+                            &project_path,
+                        );
+                    }
                     publish_event(
                         &subscribers,
                         codex_event(
@@ -841,6 +888,14 @@ fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderContext) {
                 let mut params = message.get("params").cloned().unwrap_or(Value::Null);
                 if method == "serverRequest/resolved" {
                     if let Some(request_id) = params.get("requestId") {
+                        if let Some(session_id) = params.get("threadId").and_then(Value::as_str) {
+                            questions.dismiss(
+                                PROVIDER_NAME,
+                                &project_path.to_string_lossy(),
+                                session_id,
+                                &request_id.to_string(),
+                            );
+                        }
                         if let Ok(request_id) = request_id_string(request_id) {
                             let opaque_id = format!("{}:{request_id}", project_key(&project_path));
                             let _ = approvals.resolve(
@@ -853,6 +908,18 @@ fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderContext) {
                     }
                 }
                 associate_turn_event(method, &mut params, &pending_turns, &turn_threads);
+                if matches!(
+                    method,
+                    "turn/completed" | "thread/closed" | "thread/archived"
+                ) {
+                    if let Some(session_id) = params.get("threadId").and_then(Value::as_str) {
+                        questions.clear(
+                            PROVIDER_NAME,
+                            &project_path.to_string_lossy(),
+                            Some(session_id),
+                        );
+                    }
+                }
                 publish_event(
                     &subscribers,
                     codex_event(&project_path, method, params, None),
@@ -860,6 +927,7 @@ fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderContext) {
             }
         }
 
+        questions.clear(PROVIDER_NAME, &project_path.to_string_lossy(), None);
         alive.store(false, Ordering::Release);
         let failed = std::mem::take(&mut *pending.lock().unwrap_or_else(|p| p.into_inner()));
         for (_, sender) in failed {
@@ -943,6 +1011,92 @@ fn codex_event(
         params,
         request_id,
     }
+}
+
+fn request_question(
+    id: &Value,
+    params: &Value,
+    writer: &Arc<Mutex<std::process::ChildStdin>>,
+    alive: &Arc<AtomicBool>,
+    questions: &QuestionBroker,
+    project: &Path,
+) -> Result<(), String> {
+    request_id_string(id).map_err(|_| "Invalid question request ID")?;
+    let session_id = params["threadId"]
+        .as_str()
+        .ok_or("Question has no thread ID")?;
+    let values = params["questions"]
+        .as_array()
+        .ok_or("Question request has no questions")?;
+    let fields: Vec<Value> = values.iter().map(|question| {
+        let key = question["id"].as_str().ok_or("Question has no ID")?;
+        let text = question["question"].as_str().ok_or("Question has no text")?;
+        let options: Vec<Value> = question["options"].as_array().into_iter().flatten().map(|option| {
+            let label = option["label"].as_str().ok_or("Question option has no label")?;
+            Ok(json!({ "value": label, "label": label, "description": option["description"].as_str().unwrap_or("") }))
+        }).collect::<Result<_, String>>()?;
+        Ok(json!({
+            "key": key, "type": "string", "title": question["header"].as_str().unwrap_or("Question"),
+            "description": text, "required": true,
+            "custom": options.is_empty() || question["isOther"].as_bool().unwrap_or(false),
+            "secret": question["isSecret"].as_bool().unwrap_or(false), "options": options,
+        }))
+    }).collect::<Result<_, String>>()?;
+    let prompt = QuestionPrompt {
+        provider: PROVIDER_NAME.into(),
+        project_path: project.to_string_lossy().into_owned(),
+        session_id: session_id.into(),
+        request_id: id.to_string(),
+        title: "Questions".into(),
+        fields: fields.clone(),
+    };
+    let id = id.clone();
+    let writer = Arc::clone(writer);
+    let alive = Arc::clone(alive);
+    questions.insert(
+        prompt,
+        Arc::new(move |answer| {
+            if !alive.load(Ordering::Acquire) {
+                return Err("Codex disconnected before the answer could be sent".into());
+            }
+            let mut answers = serde_json::Map::new();
+            if let Some(answer) = answer {
+                if answer
+                    .keys()
+                    .any(|key| !fields.iter().any(|field| field["key"] == *key))
+                {
+                    return Err("Answer contains an unknown question".into());
+                }
+                for field in &fields {
+                    let key = field["key"].as_str().expect("validated question key");
+                    let text = answer
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.trim().is_empty())
+                        .ok_or_else(|| {
+                            format!(
+                                "Answer {} before submitting",
+                                field["title"].as_str().unwrap_or(key)
+                            )
+                        })?;
+                    if field["custom"] != true
+                        && !field["options"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|option| option["value"] == text)
+                    {
+                        return Err("Choose one of the available answers".into());
+                    }
+                    answers.insert(key.into(), json!({ "answers": [text] }));
+                }
+            }
+            write_message(
+                &writer,
+                &json!({ "id": id, "result": { "answers": answers } }),
+            )
+        }),
+    )
 }
 
 fn handle_server_request(
@@ -1359,9 +1513,13 @@ for raw in sys.stdin:
     if method is None and request_id == 'server-approval-1':
         print(json.dumps({'method': 'test/approvalResolved', 'params': {'decision': request['result']['decision']}}), flush=True)
         continue
+    if method is None and request_id in [41, '41']:
+        print(json.dumps({'method': 'test/questionResolved', 'params': request}), flush=True)
+        continue
     if request_id is None:
         continue
     if method == 'initialize':
+        assert params['capabilities']['experimentalApi'] is True
         result = {'userAgent': 'fake-codex'}
     elif method == 'thread/list':
         assert params['archived'] is False
@@ -1414,6 +1572,17 @@ for raw in sys.stdin:
             efforts[params['threadId']] = params['effort']
         if prompt == 'request-approval':
             print(json.dumps({'id': 'server-approval-1', 'method': 'item/commandExecution/requestApproval', 'params': {'threadId': params['threadId'], 'turnId': 'turn-approval', 'itemId': 'command-1', 'command': ['git', 'status'], 'cwd': '/project', 'availableDecisions': ['accept', 'decline']}}), flush=True)
+        if prompt == 'request-question':
+            for question_id in [41, '41']:
+                print(json.dumps({'id': question_id, 'method': 'item/tool/requestUserInput', 'params': {'threadId': params['threadId'], 'turnId': 'turn-question', 'itemId': 'question-tool', 'questions': [
+                    {'id': 'choice', 'header': 'Approach', 'question': 'Which approach?', 'options': [{'label': 'Small', 'description': 'Focused change'}, {'label': 'Large', 'description': 'Full rewrite'}]},
+                    {'id': 'detail', 'header': 'Detail', 'question': 'Any details?', 'isOther': True, 'isSecret': True, 'options': None}
+                ]}}), flush=True)
+            print(json.dumps({'id': request_id, 'result': {'turn': {'id': 'turn-question', 'status': 'inProgress'}}}), flush=True)
+            continue
+        if prompt == 'resolve-question':
+            for question_id in [41, '41']:
+                print(json.dumps({'method': 'serverRequest/resolved', 'params': {'threadId': params['threadId'], 'requestId': question_id}}), flush=True)
         print(json.dumps({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}}), flush=True)
         print(json.dumps({'method': 'item/agentMessage/delta', 'params': {'threadId': params['threadId'], 'itemId': 'item-1', 'delta': 'Hello from Codex'}}), flush=True)
         print(json.dumps({'method': 'turn/completed', 'params': {'turn': {'id': 'turn-1', 'status': 'completed'}}}), flush=True)
@@ -1436,6 +1605,7 @@ for raw in sys.stdin:
         let provider = CodexProvider::with_executable(
             Arc::new(ProcessRegistry::default()),
             ApprovalBroker::default(),
+            QuestionBroker::default(),
             directory.fake_codex(true),
         );
         let details = provider
@@ -1520,6 +1690,7 @@ for raw in sys.stdin:
         let provider = CodexProvider::with_executable(
             Arc::clone(&processes),
             ApprovalBroker::default(),
+            QuestionBroker::default(),
             directory.fake_codex(true),
         );
 
@@ -1656,6 +1827,7 @@ for raw in sys.stdin:
         let provider = CodexProvider::with_executable(
             Arc::new(ProcessRegistry::default()),
             ApprovalBroker::default(),
+            QuestionBroker::default(),
             directory.fake_codex(true),
         );
         let events = provider.subscribe();
@@ -1683,6 +1855,7 @@ for raw in sys.stdin:
         let provider = CodexProvider::with_executable(
             Arc::new(ProcessRegistry::default()),
             approvals.clone(),
+            QuestionBroker::default(),
             directory.fake_codex(true),
         );
         provider.list_sessions(&project_path).unwrap();
@@ -1729,6 +1902,7 @@ for raw in sys.stdin:
         let missing = CodexProvider::with_executable(
             Arc::clone(&processes),
             approvals.clone(),
+            QuestionBroker::default(),
             directory.0.join("missing-codex"),
         );
         assert!(matches!(
@@ -1736,11 +1910,93 @@ for raw in sys.stdin:
             Err(CodexError::ExecutableNotFound(_))
         ));
 
-        let signed_out =
-            CodexProvider::with_executable(processes, approvals, directory.fake_codex(false));
+        let signed_out = CodexProvider::with_executable(
+            processes,
+            approvals,
+            QuestionBroker::default(),
+            directory.fake_codex(false),
+        );
         assert!(matches!(
             signed_out.list_sessions(&project_path),
             Err(CodexError::NotAuthenticated)
         ));
+    }
+
+    #[test]
+    fn questions_round_trip_original_rpc_ids_and_clear_on_resolution_or_interrupt() {
+        let directory = TestDirectory::new();
+        let project = directory.project();
+        let questions = QuestionBroker::default();
+        let provider = CodexProvider::with_executable(
+            Arc::new(ProcessRegistry::default()),
+            ApprovalBroker::default(),
+            questions.clone(),
+            directory.fake_codex(true),
+        );
+        provider.list_sessions(&project).unwrap();
+        let events = provider.subscribe();
+        let next = |method: &str| loop {
+            let event = events.recv_timeout(Duration::from_secs(3)).unwrap();
+            if event.method == method {
+                break event;
+            }
+        };
+        provider
+            .send_prompt(&project, "thread-existing", "request-question")
+            .unwrap();
+        assert_eq!(questions.pending().len(), 2);
+        let path = project
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let answer = json!({"choice": "Small", "detail": "Keep compatibility"})
+            .as_object()
+            .unwrap()
+            .clone();
+        assert!(questions
+            .resolve(
+                PROVIDER_NAME,
+                &path,
+                "thread-existing",
+                "41",
+                Some(serde_json::Map::new())
+            )
+            .is_err());
+        assert_eq!(questions.pending().len(), 2);
+        assert_eq!(questions.pending()[0].fields[1]["secret"], true);
+        questions
+            .resolve(PROVIDER_NAME, &path, "thread-existing", "41", Some(answer))
+            .unwrap();
+        assert_eq!(
+            next("test/questionResolved").params,
+            json!({ "id": 41, "result": {"answers": {
+                "choice": {"answers": ["Small"]}, "detail": {"answers": ["Keep compatibility"]}
+            }}})
+        );
+        questions
+            .resolve(PROVIDER_NAME, &path, "thread-existing", "\"41\"", None)
+            .unwrap();
+        assert_eq!(
+            next("test/questionResolved").params,
+            json!({ "id": "41", "result": { "answers": {} }})
+        );
+        provider
+            .send_prompt(&project, "thread-existing", "request-question")
+            .unwrap();
+        provider
+            .send_prompt(&project, "thread-existing", "resolve-question")
+            .unwrap();
+        assert!(questions.pending().is_empty());
+        provider
+            .send_prompt(&project, "thread-existing", "request-question")
+            .unwrap();
+        provider.cancel_turn(&project, "thread-existing").unwrap();
+        assert!(questions.pending().is_empty());
+        provider
+            .send_prompt(&project, "thread-existing", "request-question")
+            .unwrap();
+        provider.shutdown();
+        assert!(questions.pending().is_empty());
     }
 }
