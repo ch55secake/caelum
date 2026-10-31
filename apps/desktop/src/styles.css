@@ -272,7 +272,7 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .jump-latest { display: flex; align-items: center; gap: 7px; position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 7px 12px; white-space: nowrap; font-size: 12px; box-shadow: 0 4px 15px #0006; }
 .composer-wrap { width: min(856px, 100%); flex: 0 0 auto; align-self: center; padding: 0 32px 22px; }
 .question-shortcut { display: flex; align-items: center; gap: 5px; padding: 4px 7px; color: var(--accent); font-size: 11px; }
-.question-dock { width: min(856px, 100%); align-self: center; flex: 0 1 auto; min-height: 100px; max-height: 45vh; overflow: auto; padding: 0 32px 12px; }
+.question-dock { flex: 0 1 auto; min-height: 100px; max-height: 45vh; overflow: auto; }
 .question-card { padding: 16px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); font-size: 12px; }
 .question-card + .question-card { margin-top: 10px; }
 .question-title { display: flex; align-items: center; gap: 8px; color: var(--accent); }
@@ -296,7 +296,6 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .question-actions button { border-radius: 5px; padding: 7px 10px; }
 .question-submit { background: var(--accent-solid); color: var(--accent-contrast); }
 .question-card :disabled { opacity: .55; cursor: default; }
-@container (max-width: 600px) { .question-dock { padding-inline: 16px; } }
 .slash-menu { position: absolute; z-index: 15; bottom: calc(100% + 8px); left: 0; right: 0; overflow: hidden; border: 1px solid var(--popover-border); border-radius: 6px; background: var(--popover-bg); box-shadow: 0 8px 24px #0003; }
 .slash-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; padding: 9px 10px; color: var(--secondary-text); font-size: 11px; border-bottom: 1px solid var(--border); }.slash-heading span { color: var(--muted); font-size: 10px; }
 .slash-list { max-height: min(260px, 35vh); overflow: auto; }.slash-list button { display: flex; flex-direction: column; gap: 4px; width: 100%; border: 0; border-radius: 0; padding: 9px 10px; background: transparent; text-align: left; font-size: 11px; }

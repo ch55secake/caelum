@@ -951,7 +951,10 @@ async function desktop(
   );
   await page.goto("/");
   await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
+    page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .or(page.getByRole("button", { name: "Cancel questions", exact: true }))
+      .first(),
   ).toBeEnabled();
 }
 
@@ -1078,9 +1081,17 @@ test("Codex questions preserve drafts across sessions and retry the original req
   page,
 }) => {
   await desktop(page);
+  const message = page.getByRole("textbox", { name: "Message", exact: true });
+  await message.fill("Next message draft");
   await setQuestions(page, [question()]);
   const card = page.getByRole("form", { name: "Implementation choices" });
   await expect(card).toBeVisible();
+  await expect(
+    page.getByRole("form", { name: "Message composer" }),
+  ).toHaveCount(0);
+  await expect(
+    card.getByRole("radio", { name: "Small Focused change" }),
+  ).toBeFocused();
   await expect(page.locator(".connection-status")).toHaveText(
     "Waiting for your answer",
   );
@@ -1101,16 +1112,12 @@ test("Codex questions preserve drafts across sessions and retry the original req
     .getByRole("textbox", { name: "Details" })
     .fill("Keep compatibility");
   await page
-    .getByRole("textbox", { name: "Message", exact: true })
-    .fill("Next message draft");
-  await expect(
-    page.getByRole("button", { name: "Send message", exact: true }),
-  ).toBeDisabled();
-  await page
     .getByRole("button", { name: "Review the provider adapters", exact: true })
     .click();
   await expect(card).toHaveCount(0);
+  await expect(message).toBeVisible();
   await page.getByRole("button", { name: "1 pending questions" }).click();
+  await expect(message).toHaveCount(0);
   await expect(card.getByRole("textbox", { name: "Details" })).toHaveValue(
     "Keep compatibility",
   );
@@ -1131,6 +1138,7 @@ test("Codex questions preserve drafts across sessions and retry the original req
     (window as any).fixture.release("resolve_question"),
   );
   await expect(card.getByRole("alert")).toContainText("Connection unavailable");
+  await expect(message).toHaveCount(0);
   await page.evaluate(() =>
     (window as any).fixture.setCommandError("resolve_question", null),
   );
@@ -1140,6 +1148,7 @@ test("Codex questions preserve drafts across sessions and retry the original req
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toHaveValue("Next message draft");
+  await expect(message).toBeFocused();
   const calls = await page.evaluate(() =>
     (window as any).fixture.calls.filter(
       (call: any) => call.command === "resolve_question",
@@ -1160,6 +1169,10 @@ test("Codex questions preserve drafts across sessions and retry the original req
       ),
     ),
   ).toHaveLength(0);
+  await setQuestions(page, [question()]);
+  await card.getByRole("button", { name: "Cancel questions" }).click();
+  await expect(message).toHaveValue("Next message draft");
+  await expect(message).toBeFocused();
 });
 
 test("OpenCode questions submit multiple and custom answers with typed conditional fields", async ({
@@ -1208,6 +1221,9 @@ test("OpenCode questions submit multiple and custom answers with typed condition
     }),
   ]);
   const card = page.getByRole("form", { name: "Implementation choices" });
+  await expect(
+    page.getByRole("form", { name: "Message composer" }),
+  ).toHaveCount(0);
   await card.getByRole("checkbox", { name: "macOS" }).check();
   await card.getByRole("checkbox", { name: "Linux" }).focus();
   await page.keyboard.press("Space");
@@ -1221,6 +1237,9 @@ test("OpenCode questions submit multiple and custom answers with typed condition
   await card.getByRole("spinbutton", { name: "Batch size" }).fill("3");
   await card.getByRole("button", { name: "Submit answers" }).click();
   await expect(card).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
   expect(
     await page.evaluate(
       () =>
@@ -1254,10 +1273,13 @@ test("pending questions recover on reconnect and stay scoped across projects and
   await card.getByRole("button", { name: "Cancel questions" }).click();
   await expect(card).toHaveCount(0);
   await page.getByRole("button", { name: "2 pending questions" }).click();
-  await expect(page.locator(".provider-label")).toContainText("OpenCode");
+  await expect(page.locator(".breadcrumbs")).toContainText("OpenCode session");
   await expect(card).toHaveCount(1);
   await setQuestions(page, [third]); // answered by another client
   await expect(card).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
   await emit(page, "server.disconnected", {}, "opencode");
   await setQuestions(page, [second, third], false); // form predates the new connection
   await page.getByRole("button", { name: "Reconnect", exact: true }).click();

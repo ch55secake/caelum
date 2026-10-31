@@ -55,6 +55,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const questionDockRef = useRef<HTMLDivElement>(null);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
   const currentSessionKey = useRef(sessionKey);
   currentSessionKey.current = sessionKey;
@@ -145,7 +146,6 @@ export default function App() {
   useEffect(() => {
     setExpanded(false);
     setFileRequest(undefined);
-    textareaRef.current?.focus();
   }, [sessionKey]);
   const activeApprovals = app.approvals.filter(
     (request) =>
@@ -163,6 +163,21 @@ export default function App() {
       request.provider === app.provider &&
       request.sessionId === app.selectedId,
   );
+  const activeQuestionKey = activeQuestions[0]
+    ? questionKey(activeQuestions[0])
+    : null;
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (document.querySelector("dialog[open]")) return;
+      const input = activeQuestionKey
+        ? questionDockRef.current?.querySelector<HTMLElement>(
+            "input:not(:disabled), textarea:not(:disabled), button:not(:disabled)",
+          )
+        : textareaRef.current;
+      input?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [sessionKey, activeQuestionKey]);
   const sessionError = app.selected?.error ?? app.providerWorkspace?.error;
   const mac = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   return (
@@ -480,8 +495,19 @@ export default function App() {
                   <p>What would you like to work on?</p>
                 </div>
               )}
-              {activeQuestions.length > 0 && (
-                <div className="question-dock" aria-label="Agent questions">
+              {activeQuestions.length > 0 ? (
+                <div
+                  ref={questionDockRef}
+                  className="composer-wrap question-dock"
+                  aria-label="Agent questions"
+                >
+                  <span
+                    className="sr-only"
+                    role="status"
+                    aria-label="Agent activity"
+                  >
+                    Waiting for your answer
+                  </span>
                   {activeQuestions.map((request) => {
                     const key = questionKey(request);
                     return (
@@ -501,74 +527,74 @@ export default function App() {
                     );
                   })}
                 </div>
-              )}
-              {app.project && (
-                <Composer
-                  key={`composer-${sessionKey}`}
-                  projectPath={app.project.path}
-                  textareaRef={textareaRef}
-                  draft={
-                    app.selected?.draft ?? app.providerWorkspace?.draft ?? ""
-                  }
-                  setDraft={app.setDraft}
-                  fileContext={
-                    app.selected?.fileContext ??
-                    app.providerWorkspace?.fileContext ??
-                    []
-                  }
-                  removeFileContext={app.removeFileContext}
-                  lastMessage={lastUserMessage(
-                    app.selected?.conversation ?? [],
-                  )}
-                  provider={app.provider}
-                  changeProvider={app.changeProvider}
-                  isNew={!app.selectedId}
-                  working={app.selected?.isWorking ?? false}
-                  activity={app.selected?.activity?.label}
-                  awaitingApproval={activeApprovals.length > 0}
-                  awaitingQuestion={activeQuestions.length > 0}
-                  submitting={
-                    app.selected?.isSubmitting ||
-                    (!app.selectedId && app.providerWorkspace?.isCreating) ||
-                    false
-                  }
-                  disabled={
-                    Boolean(
-                      app.selectedId &&
-                        (!app.selected ||
-                          app.providerWorkspace?.archivingSessionIds.includes(
-                            app.selectedId,
-                          ) ||
-                          app.selected.connection !== "connected"),
-                    ) ||
-                    Boolean(
-                      !app.selectedId && app.providerWorkspace?.isCreating,
-                    )
-                  }
-                  submit={() => void app.submit()}
-                  newSession={newSession}
-                  cancel={() => void app.cancel()}
-                  choices={app.providerWorkspace?.choices ?? null}
-                  choicesError={app.providerWorkspace?.choicesError ?? null}
-                  model={app.options.model}
-                  modelPending={Boolean(app.selected?.model)}
-                  effort={app.options.effort}
-                  modelChoice={app.options.modelChoice}
-                  contextUsage={app.selected?.contextUsage ?? null}
-                  favouriteModels={
-                    preferences.settings.favoriteModels[app.provider]
-                  }
-                  toggleFavouriteModel={(id) =>
-                    preferences.toggleModelFavourite(app.provider, id)
-                  }
-                  effortPending={app.selected?.effort != null}
-                  agent={app.options.agent}
-                  currentAgent={app.selected?.session.agent ?? null}
-                  setOption={app.setOption}
-                  retryChoices={() =>
-                    void app.loadChoices(app.project!, app.provider)
-                  }
-                />
+              ) : (
+                app.project && (
+                  <Composer
+                    key={`composer-${sessionKey}`}
+                    projectPath={app.project.path}
+                    textareaRef={textareaRef}
+                    draft={
+                      app.selected?.draft ?? app.providerWorkspace?.draft ?? ""
+                    }
+                    setDraft={app.setDraft}
+                    fileContext={
+                      app.selected?.fileContext ??
+                      app.providerWorkspace?.fileContext ??
+                      []
+                    }
+                    removeFileContext={app.removeFileContext}
+                    lastMessage={lastUserMessage(
+                      app.selected?.conversation ?? [],
+                    )}
+                    provider={app.provider}
+                    changeProvider={app.changeProvider}
+                    isNew={!app.selectedId}
+                    working={app.selected?.isWorking ?? false}
+                    activity={app.selected?.activity?.label}
+                    awaitingApproval={activeApprovals.length > 0}
+                    submitting={
+                      app.selected?.isSubmitting ||
+                      (!app.selectedId && app.providerWorkspace?.isCreating) ||
+                      false
+                    }
+                    disabled={
+                      Boolean(
+                        app.selectedId &&
+                          (!app.selected ||
+                            app.providerWorkspace?.archivingSessionIds.includes(
+                              app.selectedId,
+                            ) ||
+                            app.selected.connection !== "connected"),
+                      ) ||
+                      Boolean(
+                        !app.selectedId && app.providerWorkspace?.isCreating,
+                      )
+                    }
+                    submit={() => void app.submit()}
+                    newSession={newSession}
+                    cancel={() => void app.cancel()}
+                    choices={app.providerWorkspace?.choices ?? null}
+                    choicesError={app.providerWorkspace?.choicesError ?? null}
+                    model={app.options.model}
+                    modelPending={Boolean(app.selected?.model)}
+                    effort={app.options.effort}
+                    modelChoice={app.options.modelChoice}
+                    contextUsage={app.selected?.contextUsage ?? null}
+                    favouriteModels={
+                      preferences.settings.favoriteModels[app.provider]
+                    }
+                    toggleFavouriteModel={(id) =>
+                      preferences.toggleModelFavourite(app.provider, id)
+                    }
+                    effortPending={app.selected?.effort != null}
+                    agent={app.options.agent}
+                    currentAgent={app.selected?.session.agent ?? null}
+                    setOption={app.setOption}
+                    retryChoices={() =>
+                      void app.loadChoices(app.project!, app.provider)
+                    }
+                  />
+                )
               )}
             </div>
             {pane && app.project && (
