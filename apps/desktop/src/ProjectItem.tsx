@@ -88,32 +88,34 @@ export function ProjectItem({
         ])
       }
     >
-      <button
-        className="project-item"
-        title={project.path}
-        aria-label={project.name}
-        aria-describedby={detailsId}
-        aria-current={selected ? "page" : undefined}
-        onClick={activate}
-      >
-        <span className="project-heading">
-          <FolderGit2 size={14} aria-hidden="true" />
-          <span className="project-name">{project.name}</span>
-          {working && (
-            <span
-              className="running-dot"
-              title="Running session"
-              aria-label="Running session"
-            />
-          )}
-          {approval && (
-            <ShieldAlert
-              size={13}
-              className="approval-indicator"
-              aria-label="Approval required"
-            />
-          )}
-        </span>
+      <div className="project-item">
+        <button
+          className="sidebar-row-select"
+          title={project.path}
+          aria-label={project.name}
+          aria-describedby={detailsId}
+          aria-current={selected ? "page" : undefined}
+          onClick={activate}
+        >
+          <span className="project-heading">
+            <FolderGit2 size={14} aria-hidden="true" />
+            <span className="project-name">{project.name}</span>
+            {working && (
+              <span
+                className="running-dot"
+                title="Running session"
+                aria-label="Running session"
+              />
+            )}
+            {approval && (
+              <ShieldAlert
+                size={13}
+                className="approval-indicator"
+                aria-label="Approval required"
+              />
+            )}
+          </span>
+        </button>
         <span id={detailsId} className="project-details">
           <span className="project-path">{project.path}</span>
           <span className="project-context">
@@ -154,7 +156,7 @@ export function ProjectItem({
           {working && <span className="sr-only">Running session</span>}
           {approval && <span className="sr-only">Approval required</span>}
         </span>
-      </button>
+      </div>
       <button
         className="icon-button project-close"
         aria-label={`Close ${project.name}`}

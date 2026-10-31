@@ -74,6 +74,44 @@ pub struct GitHubPullRequest {
     pub is_draft: bool,
 }
 
+/// On-demand GitHub metadata for a pull request, independent of the checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestDetails {
+    #[serde(flatten)]
+    pub pull_request: GitHubPullRequest,
+    pub body: String,
+    pub state: String,
+    pub author: Option<GitHubAuthor>,
+    pub base_ref_name: String,
+    pub head_ref_name: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub changed_files: u64,
+    pub review_decision: Option<String>,
+    pub status_check_rollup: Option<Vec<GitHubStatusCheck>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubAuthor {
+    pub login: String,
+}
+
+/// GitHub exposes both Actions check runs and legacy commit statuses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "__typename")]
+pub enum GitHubStatusCheck {
+    CheckRun {
+        name: String,
+        status: String,
+        conclusion: Option<String>,
+    },
+    StatusContext {
+        context: String,
+        state: String,
+    },
+}
+
 /// Separate staged, unstaged, and untracked diffs for one changed path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

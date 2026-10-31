@@ -17,10 +17,10 @@ use caelum_core::{
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
-    GitFileVersions, GitHubPullRequest, GitRepositoryStatus, GitWorktree, GitWorktrees,
-    OpenCodeSessionInfo, OpenCodeSessionList, ProjectDirectoryListing, ProjectFileContent,
-    ProjectInfo, ProjectSearchMode, ProjectSearchResults, ProviderChoices, QuestionPrompt,
-    SessionDetails, SessionHistoryPage, WorkspaceSnapshot,
+    GitFileVersions, GitHubPullRequest, GitHubPullRequestDetails, GitRepositoryStatus, GitWorktree,
+    GitWorktrees, OpenCodeSessionInfo, OpenCodeSessionList, ProjectDirectoryListing,
+    ProjectFileContent, ProjectInfo, ProjectSearchMode, ProjectSearchResults, ProviderChoices,
+    QuestionPrompt, SessionDetails, SessionHistoryPage, WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -242,6 +242,18 @@ async fn github_open_pull_request(
 ) -> Result<Option<GitHubPullRequest>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         github::open_pull_request(project_path, &branch).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_pull_request_details(
+    project_path: String,
+    url: String,
+) -> Result<GitHubPullRequestDetails, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::pull_request_details(project_path, &url).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -936,6 +948,7 @@ pub fn run() {
             remove_worktree,
             git_repository_status,
             github_open_pull_request,
+            github_pull_request_details,
             git_file_diff,
             git_file_versions,
             list_project_directory,

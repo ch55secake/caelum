@@ -108,7 +108,9 @@ Context compaction appears as a checkpoint in live and restored Codex and OpenCo
 
 Project rows show the folder path, current branch, and changed-file count or clean status. Git details refresh while projects are visible, with running-session and approval indicators for background work. Detached HEAD, non-Git folders, and unavailable Git status are identified explicitly.
 
-Project and session branches show a green pull-request symbol when they have an open GitHub PR, or a muted draft symbol for draft PRs. Hover for the PR number and title. This uses the installed, authenticated **GitHub CLI (`gh`)** and its repository selection; lookups are shared per project/branch and refresh about once a minute while visible. If GitHub is unavailable or no open PR exists, the symbol is hidden.
+Project, session, and worktree branches show a green pull-request symbol when they have an open GitHub PR, or a muted symbol for drafts. Hover or focus the symbol for a compact preview with the title, description, branches, added/deleted lines, changed-file count, checks, and review status. Move into the card to keep it open; **Tab** or **↓** enters its actions, and **Esc** dismisses it. **View pull request** opens an in-app overview with the full description and individual check results; **GitHub** opens the PR in your browser.
+
+This uses the installed, authenticated **GitHub CLI (`gh`)** and its repository selection. Branch discovery refreshes about once a minute while visible; richer details load on demand and are shared by PR URL across projects, sessions, and worktrees. A failed detail request offers **Retry**, and refresh failures retain the last loaded details. If GitHub is unavailable during discovery or no open PR exists, the symbol is hidden.
 
 Drag the left sidebar's right edge to resize it, or focus its divider and use **←/→**, **Home**, and **End**. Its preferred width is saved on this device and restored after collapsing or reopening the app. Narrow windows temporarily constrain the sidebar to leave room for the conversation and inspector.
 

@@ -319,51 +319,53 @@ export function Sidebar({
                 ])
               }
             >
-              <button
-                className="session-item"
-                title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
-                aria-label={sessionTitle(item)}
-                aria-current={
-                  app.provider === item.provider && app.selectedId === item.id
-                    ? "page"
-                    : undefined
-                }
-                disabled={archiving}
-                onClick={() => app.selectSession(item, item.provider)}
-              >
-                <span className="session-heading">
-                  <span
-                    className="session-status"
-                    title={approval ? "Approval required" : undefined}
-                  >
-                    {approval ? (
-                      <ShieldAlert
-                        size={13}
-                        className="approval-indicator"
-                        aria-label="Approval required"
-                      />
-                    ) : working ? (
-                      <span
-                        className="running-dot"
-                        aria-label="Running"
-                        title="Running"
-                      />
-                    ) : state?.unread ? (
-                      <span
-                        className="unread-dot"
-                        aria-label="Unread"
-                        title="Unread"
-                      />
-                    ) : state?.connection === "disconnected" ? (
-                      <span
-                        className="disconnected-dot"
-                        aria-label="Disconnected"
-                        title="Disconnected"
-                      />
-                    ) : null}
+              <div className="session-item">
+                <button
+                  className="sidebar-row-select"
+                  title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
+                  aria-label={sessionTitle(item)}
+                  aria-current={
+                    app.provider === item.provider && app.selectedId === item.id
+                      ? "page"
+                      : undefined
+                  }
+                  disabled={archiving}
+                  onClick={() => app.selectSession(item, item.provider)}
+                >
+                  <span className="session-heading">
+                    <span
+                      className="session-status"
+                      title={approval ? "Approval required" : undefined}
+                    >
+                      {approval ? (
+                        <ShieldAlert
+                          size={13}
+                          className="approval-indicator"
+                          aria-label="Approval required"
+                        />
+                      ) : working ? (
+                        <span
+                          className="running-dot"
+                          aria-label="Running"
+                          title="Running"
+                        />
+                      ) : state?.unread ? (
+                        <span
+                          className="unread-dot"
+                          aria-label="Unread"
+                          title="Unread"
+                        />
+                      ) : state?.connection === "disconnected" ? (
+                        <span
+                          className="disconnected-dot"
+                          aria-label="Disconnected"
+                          title="Disconnected"
+                        />
+                      ) : null}
+                    </span>
+                    <span className="session-title">{sessionTitle(item)}</span>
                   </span>
-                  <span className="session-title">{sessionTitle(item)}</span>
-                </span>
+                </button>
                 <SessionContext
                   projectPath={app.project!.path}
                   details={workspace?.sessionDetails[item.id]}
@@ -377,7 +379,7 @@ export function Sidebar({
                       );
                   }}
                 />
-              </button>
+              </div>
               <button
                 className="icon-button session-archive"
                 aria-label="Archive session"

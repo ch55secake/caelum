@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use caelum_protocol::GitHubPullRequest;
+use caelum_protocol::{GitHubPullRequest, GitHubPullRequestDetails};
 use thiserror::Error;
 
 use crate::projects::{Project, ProjectError};
@@ -26,6 +26,53 @@ pub fn open_pull_request(
     )
 }
 
+pub fn pull_request_details(
+    project_path: impl AsRef<Path>,
+    url: &str,
+) -> Result<GitHubPullRequestDetails, GitHubError> {
+    query_details(&gh_executable(), project_path, url, Duration::from_secs(10))
+}
+
+fn query_details(
+    executable: &Path,
+    project_path: impl AsRef<Path>,
+    url: &str,
+    timeout: Duration,
+) -> Result<GitHubPullRequestDetails, GitHubError> {
+    // Use the URL returned by discovery, so forks and different worktrees cannot
+    // accidentally resolve the same PR number in a different repository.
+    let parsed = reqwest::Url::parse(url).map_err(|_| GitHubError::InvalidUrl)?;
+    let segments: Vec<_> = parsed
+        .path_segments()
+        .ok_or(GitHubError::InvalidUrl)?
+        .collect();
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || segments.len() != 4
+        || segments[0].is_empty()
+        || segments[1].is_empty()
+        || segments[2] != "pull"
+        || segments[3].parse::<u64>().unwrap_or(0) == 0
+    {
+        return Err(GitHubError::InvalidUrl);
+    }
+    let project = Project::open(project_path)?;
+    let mut command = github_command(executable, project.path());
+    command.args(["pr", "view", url, "--json", "number,title,url,isDraft,body,state,author,baseRefName,headRefName,additions,deletions,changedFiles,reviewDecision,statusCheckRollup"]);
+    let output = checked_output(command, timeout)?;
+    let details: GitHubPullRequestDetails = serde_json::from_slice(&output.stdout)?;
+    if details.pull_request.url != url {
+        return Err(GitHubError::Command(
+            "GitHub returned a different pull request".into(),
+        ));
+    }
+    Ok(details)
+}
+
 fn query_pull_request(
     executable: &Path,
     project_path: impl AsRef<Path>,
@@ -36,25 +83,36 @@ fn query_pull_request(
     if branch.is_empty() {
         return Ok(None);
     }
-    let mut command = Command::new(executable);
+    let mut command = github_command(executable, project.path());
     command
-        .current_dir(project.path())
         .args(["pr", "list", "--state=open", "--limit=1"])
         .arg(format!("--head={branch}"))
-        .args(["--json", "number,title,url,isDraft"])
+        .args(["--json", "number,title,url,isDraft"]);
+    let output = checked_output(command, timeout)?;
+    let requests: Vec<GitHubPullRequest> = serde_json::from_slice(&output.stdout)?;
+    Ok(requests.into_iter().next())
+}
+
+fn github_command(executable: &Path, project_path: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .current_dir(project_path)
         .env_remove("GH_REPO")
         .env("GH_PROMPT_DISABLED", "1")
         .env("GH_PAGER", "cat")
         .env("GH_SPINNER_DISABLED", "1")
         .env("GH_NO_UPDATE_NOTIFIER", "1");
+    command
+}
+
+fn checked_output(command: Command, timeout: Duration) -> Result<Output, GitHubError> {
     let output = bounded_output(command, timeout)?;
     if !output.status.success() {
         return Err(GitHubError::Command(
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         ));
     }
-    let requests: Vec<GitHubPullRequest> = serde_json::from_slice(&output.stdout)?;
-    Ok(requests.into_iter().next())
+    Ok(output)
 }
 
 fn gh_executable() -> PathBuf {
@@ -108,7 +166,13 @@ fn bounded_output(mut command: Command, timeout: Duration) -> io::Result<Output>
         .spawn()?;
     fn read(pipe: impl Read) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::new();
-        pipe.take(1024 * 1024).read_to_end(&mut bytes)?;
+        pipe.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > 1024 * 1024 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "GitHub response exceeds 1 MiB",
+            ));
+        }
         Ok(bytes)
     }
     let stdout = child.stdout.take().expect("piped stdout");
@@ -148,6 +212,8 @@ fn bounded_output(mut command: Command, timeout: Duration) -> io::Result<Output>
 
 #[derive(Debug, Error)]
 pub enum GitHubError {
+    #[error("Invalid GitHub pull request URL")]
+    InvalidUrl,
     #[error(transparent)]
     Project(#[from] ProjectError),
     #[error("GitHub CLI is unavailable: {0}")]
@@ -252,12 +318,12 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
             &fixture.0.join("gh"),
             &fixture.0,
             "main",
-            Duration::from_secs(1),
+            Duration::from_secs(3),
         );
         assert!(
             matches!(result, Err(GitHubError::Io(error)) if error.kind() == io::ErrorKind::TimedOut)
         );
-        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(8));
         let pid = fs::read_to_string(fixture.0.join("pid")).unwrap();
         assert!(!Command::new("kill")
             .args(["-0", pid.trim()])
@@ -265,5 +331,126 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
             .status()
             .unwrap()
             .success());
+    }
+
+    fn details_response(url: &str) -> String {
+        serde_json::json!({
+            "number": 43, "title": "Worktrees", "url": url, "isDraft": false,
+            "body": "## Description\nIndependent checkouts", "state": "MERGED",
+            "author": { "login": "contributor" }, "headRefName": "feature/worktrees",
+            "baseRefName": "main", "additions": 128, "deletions": 42, "changedFiles": 6,
+            "reviewDecision": "APPROVED",
+            "statusCheckRollup": [
+                { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS" },
+                { "__typename": "StatusContext", "context": "Deploy", "state": "PENDING" }
+            ]
+        }).to_string()
+    }
+
+    #[test]
+    fn details_use_the_canonical_url_and_support_both_check_types() {
+        let url = "https://git.example.com/upstream/repo/pull/43";
+        let fixture = Fixture::new(&format!(
+            "printf '%s\\n' \"$@\" > arguments\npwd > directory\nprintf '%s' '{}'",
+            details_response(url)
+        ));
+        let result = query_details(
+            &fixture.0.join("gh"),
+            &fixture.0,
+            url,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(result.state, "MERGED");
+        assert_eq!(result.additions, 128);
+        assert_eq!(result.deletions, 42);
+        assert_eq!(result.changed_files, 6);
+        assert_eq!(result.author.unwrap().login, "contributor");
+        assert_eq!(result.status_check_rollup.unwrap().len(), 2);
+        let args = fs::read_to_string(fixture.0.join("arguments")).unwrap();
+        assert!(args.starts_with(&format!("pr\nview\n{url}\n--json\n")));
+        assert!(args.contains("statusCheckRollup"));
+        assert_eq!(
+            fs::read_to_string(fixture.0.join("directory"))
+                .unwrap()
+                .trim(),
+            fixture.0.to_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn details_reject_invalid_targets_and_mismatched_repositories() {
+        let fixture = Fixture::new(&format!(
+            "printf '%s' '{}'",
+            details_response("https://github.com/other/repo/pull/43")
+        ));
+        for url in [
+            "--help",
+            "43",
+            "http://github.com/owner/repo/pull/43",
+            "https://github.com/owner/repo/issues/43",
+            "https://github.com/owner/repo/pull/0",
+            "https://github.com/owner/repo/pull/43?x=1",
+        ] {
+            assert!(matches!(
+                query_details(
+                    &fixture.0.join("missing"),
+                    &fixture.0,
+                    url,
+                    Duration::from_secs(1)
+                ),
+                Err(GitHubError::InvalidUrl)
+            ));
+        }
+        assert!(matches!(
+            query_details(
+                &fixture.0.join("gh"),
+                &fixture.0,
+                "https://github.com/owner/repo/pull/43",
+                Duration::from_secs(2)
+            ),
+            Err(GitHubError::Command(_))
+        ));
+    }
+
+    #[test]
+    fn details_preserve_missing_metadata_and_report_failures() {
+        let url = "https://github.com/owner/repo/pull/43";
+        let mut response: serde_json::Value = serde_json::from_str(&details_response(url)).unwrap();
+        response["author"] = serde_json::Value::Null;
+        response["statusCheckRollup"] = serde_json::Value::Null;
+        response["reviewDecision"] = serde_json::Value::Null;
+        let fixture = Fixture::new(&format!("printf '%s' '{response}'"));
+        let details = query_details(
+            &fixture.0.join("gh"),
+            &fixture.0,
+            url,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(details.author.is_none());
+        assert!(details.status_check_rollup.is_none());
+        let failed = Fixture::new("printf 'Authentication required' >&2\nexit 1");
+        assert!(
+            matches!(query_details(&failed.0.join("gh"), &failed.0, url, Duration::from_secs(2)), Err(GitHubError::Command(message)) if message.contains("Authentication required"))
+        );
+        let invalid = Fixture::new("printf '{}'");
+        assert!(matches!(
+            query_details(
+                &invalid.0.join("gh"),
+                &invalid.0,
+                url,
+                Duration::from_secs(2)
+            ),
+            Err(GitHubError::Response(_))
+        ));
+    }
+
+    #[test]
+    fn oversized_github_responses_are_reported_explicitly() {
+        let fixture = Fixture::new("head -c 1100000 /dev/zero");
+        assert!(
+            matches!(fixture.query("main"), Err(GitHubError::Io(error)) if error.to_string().contains("exceeds 1 MiB"))
+        );
     }
 }

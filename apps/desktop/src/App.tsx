@@ -26,6 +26,7 @@ import { lastUserMessage } from "./shellMessages.js";
 import { Settings } from "./Settings.js";
 import { useSettings } from "./useSettings.js";
 import { ContextMenuProvider } from "./ContextMenu.js";
+import { PullRequestPreviewProvider } from "./PullRequestPreview.js";
 
 export default function App() {
   const preferences = useSettings();
@@ -201,30 +202,34 @@ export default function App() {
         ]}
       >
         {!collapsed && (
-          <Sidebar
-            app={app}
-            preferredWidth={sidebarWidth}
-            setPreferredWidth={setSidebarWidth}
-            collapse={() => setCollapsed(true)}
-            search={search}
-            setSearch={setSearch}
-            searchRef={searchRef}
-            newSession={newSession}
-            changesOpen={changesOpen}
-            filesOpen={pane === "files"}
-            sessionVisible={!expanded || !pane}
-            openFiles={() => {
-              setPane("files");
-              setExpanded(false);
-              setFileRequest(undefined);
-            }}
-            showSession={() => {
-              setExpanded(false);
-              textareaRef.current?.focus();
-            }}
-            toggleChanges={toggleChanges}
-            openSettings={() => setSettingsOpen(true)}
-          />
+          <PullRequestPreviewProvider
+            scope={`${sessionKey}\0${settingsOpen}\0${pane}\0${expanded}`}
+          >
+            <Sidebar
+              app={app}
+              preferredWidth={sidebarWidth}
+              setPreferredWidth={setSidebarWidth}
+              collapse={() => setCollapsed(true)}
+              search={search}
+              setSearch={setSearch}
+              searchRef={searchRef}
+              newSession={newSession}
+              changesOpen={changesOpen}
+              filesOpen={pane === "files"}
+              sessionVisible={!expanded || !pane}
+              openFiles={() => {
+                setPane("files");
+                setExpanded(false);
+                setFileRequest(undefined);
+              }}
+              showSession={() => {
+                setExpanded(false);
+                textareaRef.current?.focus();
+              }}
+              toggleChanges={toggleChanges}
+              openSettings={() => setSettingsOpen(true)}
+            />
+          </PullRequestPreviewProvider>
         )}
         <section className="main-panel">
           <header className="topbar" data-tauri-drag-region>

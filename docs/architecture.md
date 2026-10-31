@@ -32,6 +32,12 @@ Removal checks active provider sessions and pending requests, then uses `git wor
 
 `ContextMenuProvider` composes contextual actions and renders an app-owned React menu using the current theme. Menus are portaled into the active dialog when needed, positioned within the viewport, and support keyboard navigation, dismissal, and focus restoration. Navigation revisions invalidate stale actions. Text editing snapshots the original selection, uses the clipboard plugin for copy/paste, and retains browser undo history; delayed clipboard reads cannot edit a different draft or changed selection.
 
+## GitHub pull requests
+
+`caelum-core::github` uses the installed `gh` executable and its existing authentication through bounded, noninteractive processes. Visible branch indicators share lightweight discovery by checkout/branch. Hovering or focusing an indicator fetches richer PR metadata using its canonical HTTPS URL, preserving repository identity for forks and linked worktrees. Both GitHub Actions checks and legacy commit statuses cross the typed protocol boundary.
+
+`PullRequestPreviewProvider` owns the sidebar's single portaled hover card and expanded overview dialog. Icons are separate buttons beside the project/session selection controls. Hover delays, viewport positioning, keyboard entry, focus restoration, and navigation-scoped dismissal keep previews usable without selecting a different checkout or session. Detail requests are deduplicated and cached by URL for a minute, with inactive cache entries bounded; unsubscribing a view prevents late results from replacing a different PR. Refresh failures preserve the last successful snapshot and expose retry locally.
+
 ## Security boundaries
 
 - Only Rust performs project path validation and future privileged operations.

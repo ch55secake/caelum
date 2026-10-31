@@ -1,13 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { GitPullRequest, GitPullRequestDraft } from "lucide-react";
-
-type PullRequest = {
-  number: number;
-  title: string;
-  url: string;
-  isDraft: boolean;
-};
+import type { PullRequest } from "./pullRequestState.js";
+import { usePullRequestPreview } from "./PullRequestPreview.js";
 type Entry = {
   value: PullRequest | null;
   checkedAt: number;
@@ -42,12 +37,22 @@ export function PullRequestIndicator({
   branch: string;
 }) {
   const element = useRef<HTMLSpanElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const preview = usePullRequestPreview();
+  const previewRef = useRef(preview);
+  previewRef.current = preview;
   const key = `${projectPath}\0${branch}`;
   const [snapshot, setSnapshot] = useState<{
     key: string;
     value: PullRequest | null;
   }>();
   const pr = snapshot?.key === key ? snapshot.value : null;
+  useLayoutEffect(() => {
+    const anchor = trigger.current;
+    return () => {
+      if (anchor) previewRef.current.release(anchor);
+    };
+  }, [key, pr?.url]);
   useEffect(() => {
     if (!isTauri()) return;
     const entry = cache.get(key) ?? {
@@ -100,9 +105,48 @@ export function PullRequestIndicator({
   return (
     <span ref={element} className="branch-pr" data-draft={pr?.isDraft}>
       {pr && (
-        <span role="img" aria-label={label} title={label}>
+        <button
+          ref={trigger}
+          type="button"
+          className="branch-pr-trigger"
+          aria-label={label}
+          aria-haspopup="dialog"
+          aria-expanded={
+            preview.anchor === trigger.current && Boolean(trigger.current)
+          }
+          aria-controls={
+            preview.anchor === trigger.current ? preview.id : undefined
+          }
+          onPointerEnter={(event) => {
+            if (event.pointerType !== "touch")
+              preview.show({ anchor: event.currentTarget, projectPath, pr });
+          }}
+          onPointerLeave={(event) => preview.leave(event.currentTarget)}
+          onFocus={(event) =>
+            preview.show({ anchor: event.currentTarget, projectPath, pr }, true)
+          }
+          onBlur={(event) => preview.leave(event.currentTarget)}
+          onClick={(event) => {
+            event.stopPropagation();
+            preview.show(
+              { anchor: event.currentTarget, projectPath, pr },
+              true,
+            );
+          }}
+          onKeyDown={(event) => {
+            if (
+              (event.key === "Tab" && !event.shiftKey) ||
+              event.key === "ArrowDown"
+            ) {
+              if (preview.anchor === trigger.current) {
+                event.preventDefault();
+                preview.enter();
+              }
+            }
+          }}
+        >
           <Icon size={12} aria-hidden="true" />
-        </span>
+        </button>
       )}
     </span>
   );

@@ -15,6 +15,7 @@ import { projectHasActiveTurn, type ProjectInfo } from "./workspaceState.js";
 import type { WorkspaceController } from "./Sidebar.js";
 import { worktreeLabel, type GitWorktree } from "./worktreeState.js";
 import { copyAction, revealAction, useContextMenu } from "./ContextMenu.js";
+import { PullRequestIndicator } from "./PullRequestIndicator.js";
 
 function WorktreeDialog({
   app,
@@ -348,6 +349,12 @@ export function ProjectWorktrees({
                   <i className="running-dot" aria-label="Running session" />
                 ) : null}
               </button>
+              {entry.branch && entry.available && (
+                <PullRequestIndicator
+                  projectPath={entry.project.path}
+                  branch={entry.branch}
+                />
+              )}
               <button
                 className="icon-button worktree-delete"
                 aria-label={`Remove worktree ${worktreeLabel(entry)}`}
