@@ -71,7 +71,7 @@ impl WorktreeClient {
                 "refs/remotes",
             ],
         )?;
-        let branches = text(&branches)
+        let branches: Vec<String> = text(&branches)
             .lines()
             .filter(|name| !name.ends_with("/HEAD"))
             .map(str::to_owned)
@@ -81,6 +81,18 @@ impl WorktreeClient {
             .iter()
             .find(|entry| Path::new(&entry.path) == root)
             .and_then(|entry| entry.branch.clone());
+        let default_base = ["main", "origin/main"]
+            .into_iter()
+            .find(|base| branches.iter().any(|branch| branch == base))
+            .map(str::to_owned)
+            .or(current_branch)
+            .unwrap_or_else(|| {
+                if head.status.success() {
+                    text(&head.stdout)
+                } else {
+                    "HEAD".into()
+                }
+            });
         // Opening a repository subdirectory keeps that scope in every checkout.
         for entry in &mut worktrees {
             entry.project.name.clone_from(&group.name);
@@ -89,13 +101,7 @@ impl WorktreeClient {
             project: group,
             storage_directory: storage_directory.to_string_lossy().into_owned(),
             branches,
-            default_base: current_branch.unwrap_or_else(|| {
-                if head.status.success() {
-                    text(&head.stdout)
-                } else {
-                    "HEAD".into()
-                }
-            }),
+            default_base,
             worktrees,
         }))
     }
@@ -463,6 +469,7 @@ mod tests {
             "original\n"
         );
         let from_checkout = test.client.list(&entry.path, "").unwrap().unwrap();
+        assert_eq!(from_checkout.default_base, "main");
         assert_eq!(from_checkout.project, before.project);
         assert_eq!(from_checkout.storage_directory, before.storage_directory);
         assert_eq!(from_checkout.worktrees.len(), 2);

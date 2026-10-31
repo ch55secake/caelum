@@ -20,7 +20,9 @@ function WorktreeDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const catalog = app.worktreeCatalogs[project.path];
-  const [branch, setBranch] = useState("");
+  const [branch, setBranch] = useState(
+    () => `worktree-${crypto.randomUUID().slice(0, 8)}`,
+  );
   const [base, setBase] = useState(catalog?.defaultBase ?? "HEAD");
   const [destination, setDestination] = useState("");
   const [previewError, setPreviewError] = useState("");
@@ -124,6 +126,7 @@ function WorktreeDialog({
                   value={branch}
                   disabled={busy}
                   placeholder="feature/search"
+                  onFocus={(event) => event.currentTarget.select()}
                   onChange={(event) => setBranch(event.target.value)}
                 />
               </label>
@@ -197,6 +200,7 @@ export function ProjectWorktrees({
 }) {
   const [dialog, setDialog] = useState<"create" | GitWorktree | null>(null);
   const catalog = app.worktreeCatalogs[project.path];
+  const worktrees = catalog?.worktrees.filter((entry) => !entry.main) ?? [];
   const error = app.worktreeErrors[project.path];
   const busy = app.worktreeBusy[project.path];
   const menu = useContextMenu();
@@ -206,7 +210,7 @@ export function ProjectWorktrees({
     <div className="project-group">
       <ProjectItem
         project={project}
-        selected={app.rootProject?.path === project.path}
+        selected={app.project?.path === project.path}
         working={Object.entries(app.workspaces).some(
           ([path, workspace]) =>
             member(path) && projectHasActiveTurn(workspace),
@@ -239,7 +243,7 @@ export function ProjectWorktrees({
               <Plus size={12} />
             </button>
           </div>
-          {catalog.worktrees.map((entry) => (
+          {worktrees.map((entry) => (
             <div
               className="worktree-row"
               key={entry.path}
@@ -269,25 +273,23 @@ export function ProjectWorktrees({
                   <i className="running-dot" aria-label="Running session" />
                 ) : null}
               </button>
-              {!entry.main && (
-                <button
-                  className="icon-button worktree-delete"
-                  aria-label={`Remove worktree ${worktreeLabel(entry)}`}
-                  title={
-                    app.worktreeInUse(entry)
-                      ? "Stop running sessions before removing"
-                      : entry.locked != null
-                        ? "Worktree is locked"
-                        : "Remove worktree"
-                  }
-                  disabled={
-                    busy || app.worktreeInUse(entry) || entry.locked != null
-                  }
-                  onClick={() => setDialog(entry)}
-                >
-                  <Trash2 size={11} />
-                </button>
-              )}
+              <button
+                className="icon-button worktree-delete"
+                aria-label={`Remove worktree ${worktreeLabel(entry)}`}
+                title={
+                  app.worktreeInUse(entry)
+                    ? "Stop running sessions before removing"
+                    : entry.locked != null
+                      ? "Worktree is locked"
+                      : "Remove worktree"
+                }
+                disabled={
+                  busy || app.worktreeInUse(entry) || entry.locked != null
+                }
+                onClick={() => setDialog(entry)}
+              >
+                <Trash2 size={11} />
+              </button>
             </div>
           ))}
         </div>
@@ -315,22 +317,28 @@ export function ProjectWorktrees({
 export function SessionWorktree({ app }: { app: WorkspaceController }) {
   const root = app.rootProject;
   const catalog = root ? app.worktreeCatalogs[root.path] : null;
-  if (!root || !catalog) return null;
+  const worktrees = catalog?.worktrees.filter((entry) => !entry.main) ?? [];
+  if (!root || !worktrees.length) return null;
   return (
     <label className="session-worktree">
       Worktree
       <select
         aria-label="Session worktree"
-        value={app.project?.path}
+        value={app.currentWorktree?.main ? "" : app.project?.path}
         disabled={app.worktreeBusy[root.path]}
         onChange={(event) => {
-          const entry = catalog.worktrees.find(
+          const entry = worktrees.find(
             (entry) => entry.project.path === event.target.value,
           );
           if (entry) void app.openWorktree(root, entry, true);
         }}
       >
-        {catalog.worktrees.map((entry) => (
+        {app.currentWorktree?.main && (
+          <option value="" disabled>
+            Project directory
+          </option>
+        )}
+        {worktrees.map((entry) => (
           <option
             key={entry.path}
             value={entry.project.path}

@@ -367,6 +367,9 @@ export function useWorkspace(settings: AppSettings) {
     const path = selectedWorktrees[root.path] ?? root.path;
     const entry =
       worktreeCatalogs[root.path]?.worktrees.find(
+        (entry) => entry.main && entry.available,
+      ) ??
+      worktreeCatalogs[root.path]?.worktrees.find(
         (entry) => entry.project.path === path && entry.available,
       ) ??
       worktreeCatalogs[root.path]?.worktrees.find((entry) => entry.available);

@@ -1317,6 +1317,10 @@ for (const provider of ["codex", "opencode"] as const) {
     page,
   }) => {
     await desktop(page, null, { worktrees: true });
+    await expect(page.locator(".worktree-row")).toHaveCount(0);
+    await expect(
+      page.getByRole("combobox", { name: "Session worktree" }),
+    ).toHaveCount(0);
     const message = page.getByRole("textbox", { name: "Message", exact: true });
     await message.fill("Original checkout draft");
     const settings = await openSettings(page, "Worktrees");
@@ -1326,6 +1330,12 @@ for (const provider of ["codex", "opencode"] as const) {
     await settings.getByRole("button", { name: "Done", exact: true }).click();
     const path = await createCheckout(page);
     expect(path).toBe("/custom/checkouts/caelum-a1b2/feature-search");
+    await expect(page.locator(".worktree-row")).toHaveCount(1);
+    await expect(
+      page
+        .getByRole("combobox", { name: "Session worktree" })
+        .locator("option"),
+    ).toHaveText(["feature/search"]);
     await expect(page.locator(".project-group")).toHaveCount(1);
     await expect(page.locator(".breadcrumbs")).toContainText("feature/search");
     await findProjectFile(page, "src/App.tsx");
@@ -1350,7 +1360,7 @@ for (const provider of ["codex", "opencode"] as const) {
     ).toContainText("worktree change");
     await page
       .getByRole("button", {
-        name: "Switch to worktree Original checkout",
+        name: "caelum",
         exact: true,
       })
       .click();
@@ -1405,7 +1415,7 @@ for (const provider of ["codex", "opencode"] as const) {
     );
     await page
       .getByRole("button", {
-        name: "Switch to worktree Original checkout",
+        name: "caelum",
         exact: true,
       })
       .click();
@@ -1516,7 +1526,7 @@ test("worktrees discover external checkouts, reject removal failures and ignore 
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", {
-      name: "Switch to worktree Original checkout",
+      name: "caelum",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
@@ -1553,7 +1563,7 @@ test("worktrees discover external checkouts, reject removal failures and ignore 
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", {
-      name: "Switch to worktree Original checkout",
+      name: "caelum",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
@@ -1576,7 +1586,13 @@ test("worktrees recover creation failures and delayed selection cannot steal ano
     name: "Create worktree",
     exact: true,
   });
-  await dialog.getByRole("textbox", { name: "New branch" }).fill("feature/new");
+  const branch = await dialog
+    .getByRole("textbox", { name: "New branch" })
+    .inputValue();
+  expect(branch).not.toBe("");
+  await expect(
+    dialog.getByRole("combobox", { name: "Start from" }),
+  ).toHaveValue("main");
   await dialog
     .getByRole("button", { name: "Create worktree", exact: true })
     .click();
@@ -1584,7 +1600,7 @@ test("worktrees recover creation failures and delayed selection cannot steal ano
     "branch already exists",
   );
   await expect(dialog.getByRole("textbox", { name: "New branch" })).toHaveValue(
-    "feature/new",
+    branch,
   );
   await page.evaluate(() =>
     (window as any).fixture.setCommandError("create_worktree", null),
@@ -1593,22 +1609,37 @@ test("worktrees recover creation failures and delayed selection cannot steal ano
     .getByRole("button", { name: "Create worktree", exact: true })
     .click();
   await expect(dialog).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls
+          .filter((call: any) => call.command === "create_worktree")
+          .at(-1).args,
+    ),
+  ).toMatchObject({ branch, base: "main" });
+  await page
+    .getByRole("button", { name: "Create worktree for caelum" })
+    .click();
+  await expect(
+    dialog.getByRole("textbox", { name: "New branch" }),
+  ).not.toHaveValue(branch);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Switch to worktree Original checkout",
+      name: "caelum",
       exact: true,
     })
     .click();
   await expect(
     page.getByRole("button", {
-      name: "Switch to worktree Original checkout",
+      name: "caelum",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
   await page.evaluate(() => (window as any).fixture.hold("open_worktree"));
   await page
     .getByRole("button", {
-      name: "Switch to worktree feature/new",
+      name: `Switch to worktree ${branch}`,
       exact: true,
     })
     .click();
@@ -1619,14 +1650,14 @@ test("worktrees recover creation failures and delayed selection cannot steal ano
   await page.getByRole("button", { name: "caelum", exact: true }).click();
   await expect(
     page.getByRole("button", {
-      name: "Switch to worktree Original checkout",
+      name: "caelum",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
   await page.evaluate(() => (window as any).fixture.hold("open_worktree"));
   await page
     .getByRole("button", {
-      name: "Switch to worktree feature/new",
+      name: `Switch to worktree ${branch}`,
       exact: true,
     })
     .click();
@@ -1645,7 +1676,7 @@ test("worktrees recover creation failures and delayed selection cannot steal ano
   await page.reload();
   await expect(
     page.getByRole("button", {
-      name: "Switch to worktree feature/new",
+      name: `Switch to worktree ${branch}`,
       exact: true,
     }),
   ).toHaveCount(0);
@@ -1673,7 +1704,7 @@ test("worktrees keep drafts when the active checkout is removed externally", asy
   ).toBeVisible();
   await page
     .getByRole("button", {
-      name: "Switch to worktree Original checkout",
+      name: "caelum",
       exact: true,
     })
     .click();
@@ -1712,7 +1743,7 @@ test("worktrees restore their project group when the original project directory 
       name: "Switch to worktree Original checkout",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", {
       name: "Switch to worktree feature/search",

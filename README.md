@@ -123,7 +123,7 @@ Session rows show a branch and added/deleted lines from the latest turn when ava
 
 ## Project worktrees
 
-Git projects show their **Original checkout** and linked worktrees beneath the project in the sidebar. Use **+** beside **Worktrees** to create a new branch from a local or remote-tracking base branch. Existing Git worktrees are discovered automatically; **Refresh** updates the list immediately.
+Only created, linked worktrees appear beneath a project in the sidebar. Click the project itself to return to its original directory. Use **+** beside **Worktrees** to create a worktree with a generated branch name and `main` as its default base when available. You can edit the name or choose another local or remote-tracking base branch. Existing Git worktrees are discovered automatically; **Refresh** updates the list immediately.
 
 Choose a checkout in the sidebar or the **Worktree** selector on a new session. Each checkout can have multiple Codex and OpenCode sessions, with independent drafts and file tabs. **Files** and **Changes** follow the selected checkout, and the selected worktree restores when you restart. Projects opened at a repository subdirectory keep that scope in each checkout.
 
