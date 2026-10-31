@@ -731,12 +731,16 @@ mod tests {
             project_path: "/workspace".to_owned(),
             event_type: "session.text.delta".to_owned(),
             data: json!({ "sessionID": "ses_1", "delta": "hello" }),
+            id: None,
+            created: None,
             location: None,
         });
         let complete = ProviderEvent::OpenCode(OpenCodeEvent {
             project_path: "/workspace".to_owned(),
             event_type: "session.idle".to_owned(),
             data: json!({ "sessionID": "ses_1" }),
+            id: None,
+            created: None,
             location: None,
         });
         assert_eq!(event_outcome(&delta, "ses_1", false).output, ["hello"]);

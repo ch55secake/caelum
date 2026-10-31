@@ -13,14 +13,14 @@
     "windows": [
       {
         "label": "main",
-        "title": "Caelum \u2014 Your code. New horizons.",
+        "title": "Caelum",
         "width": 1440,
         "height": 960,
         "minWidth": 800,
         "minHeight": 620,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "backgroundColor": "#111318"
+        "backgroundColor": "#0B0C0E"
       }
     ],
     "security": {

@@ -4,12 +4,14 @@ use std::{path::PathBuf, sync::Arc};
 
 use caelum_core::{
     approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase, files,
-    git::GitClient, opencode::OpenCodeProvider, processes::ProcessRegistry, projects::Project,
+    git::GitClient, github, opencode::OpenCodeProvider, processes::ProcessRegistry,
+    projects::Project,
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
-    GitFileVersions, GitRepositoryStatus, OpenCodeConversationEntry, OpenCodeSessionInfo,
+    GitFileVersions, GitHubPullRequest, GitRepositoryStatus, OpenCodeSessionInfo,
     OpenCodeSessionList, ProjectDirectoryListing, ProjectFileContent, ProjectInfo,
+    ProjectSearchMode, ProjectSearchResults, ProviderChoices, SessionDetails, SessionHistoryPage,
     WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
@@ -86,6 +88,18 @@ async fn git_repository_status(project_path: String) -> Result<GitRepositoryStat
 }
 
 #[tauri::command]
+async fn github_open_pull_request(
+    project_path: String,
+    branch: String,
+) -> Result<Option<GitHubPullRequest>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::open_pull_request(project_path, &branch).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn git_file_diff(project_path: String, file_path: String) -> Result<GitFileDiff, String> {
     tauri::async_runtime::spawn_blocking(move || {
         GitClient::new()
@@ -119,6 +133,21 @@ async fn list_project_directory(
 ) -> Result<ProjectDirectoryListing, String> {
     tauri::async_runtime::spawn_blocking(move || {
         files::list_directory(project_path, &path, offset, limit).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn search_project_files(
+    project_path: String,
+    query: String,
+    mode: ProjectSearchMode,
+    include_ignored: bool,
+) -> Result<ProjectSearchResults, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        files::search_project(project_path, &query, mode, include_ignored)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -247,6 +276,70 @@ async fn sync_provider_sessions(
 }
 
 #[tauri::command]
+async fn forget_project_session(
+    persistence: State<'_, PersistenceState>,
+    project_path: String,
+    provider: String,
+    session_id: String,
+) -> Result<(), String> {
+    let database = persistence.database()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        database
+            .remove_session(&project_path, &provider, &session_id)
+            .map_err(|error| format!("Could not remove the saved session: {error}"))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn session_details(
+    codex: State<'_, CodexProvider>,
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    provider: String,
+    session_id: String,
+) -> Result<SessionDetails, String> {
+    let codex = codex.inner().clone();
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
+        "codex" => codex
+            .session_details(project_path, &session_id)
+            .map_err(|error| error.to_string()),
+        "opencode" => opencode
+            .session_details(project_path, &session_id)
+            .map_err(|error| error.to_string()),
+        _ => Err("Unknown provider".into()),
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn set_session_archived(
+    codex: State<'_, CodexProvider>,
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    provider: String,
+    session_id: String,
+    archived: bool,
+) -> Result<(), String> {
+    let codex = codex.inner().clone();
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
+        "codex" => codex
+            .set_session_archived(project_path, &session_id, archived)
+            .map_err(|error| error.to_string()),
+        "opencode" => opencode
+            .set_session_archived(project_path, &session_id, archived)
+            .map_err(|error| error.to_string()),
+        _ => Err("Unknown provider".into()),
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn pending_approvals(approvals: State<'_, ApprovalBroker>) -> Vec<ApprovalPrompt> {
     approvals.pending()
 }
@@ -280,14 +373,37 @@ async fn codex_list_sessions(
 }
 
 #[tauri::command]
+async fn provider_choices(
+    codex: State<'_, CodexProvider>,
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    provider: String,
+) -> Result<ProviderChoices, String> {
+    let codex = codex.inner().clone();
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
+        "codex" => codex
+            .choices(project_path)
+            .map_err(|error| error.to_string()),
+        "opencode" => opencode
+            .choices(project_path)
+            .map_err(|error| error.to_string()),
+        _ => Err("Unknown provider".into()),
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn codex_start_session(
     codex: State<'_, CodexProvider>,
     project_path: String,
+    model: Option<String>,
 ) -> Result<CodexSessionInfo, String> {
     let codex = codex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         codex
-            .start_session(project_path)
+            .start_session_with_model(project_path, model.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -311,16 +427,41 @@ async fn codex_resume_session(
 }
 
 #[tauri::command]
+async fn codex_session_history(
+    codex: State<'_, CodexProvider>,
+    project_path: String,
+    thread_id: String,
+    cursor: Option<String>,
+) -> Result<SessionHistoryPage, String> {
+    let codex = codex.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        codex
+            .session_history(project_path, &thread_id, cursor.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn codex_send_prompt(
     codex: State<'_, CodexProvider>,
     project_path: String,
     thread_id: String,
     prompt: String,
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Result<(), String> {
     let codex = codex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         codex
-            .send_prompt(project_path, &thread_id, &prompt)
+            .send_prompt_with_options(
+                project_path,
+                &thread_id,
+                &prompt,
+                model.as_deref(),
+                effort.as_deref(),
+            )
             .map_err(|error| error.to_string())
     })
     .await
@@ -362,11 +503,13 @@ async fn opencode_list_sessions(
 async fn opencode_start_session(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,
+    model: Option<String>,
+    agent: Option<String>,
 ) -> Result<OpenCodeSessionInfo, String> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         opencode
-            .start_session(project_path)
+            .start_session_with_options(project_path, model.as_deref(), agent.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -394,11 +537,29 @@ async fn opencode_session_history(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,
     session_id: String,
-) -> Result<Vec<OpenCodeConversationEntry>, String> {
+    cursor: Option<String>,
+) -> Result<SessionHistoryPage, String> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         opencode
-            .session_history(project_path, &session_id)
+            .session_history(project_path, &session_id, cursor.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_select_agent(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+    agent: String,
+) -> Result<(), String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .select_agent(project_path, &session_id, &agent)
             .map_err(|error| error.to_string())
     })
     .await
@@ -411,11 +572,21 @@ async fn opencode_send_prompt(
     project_path: String,
     session_id: String,
     prompt: String,
+    message_id: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Result<(), String> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         opencode
-            .send_prompt(project_path, &session_id, &prompt)
+            .send_prompt_with_options(
+                project_path,
+                &session_id,
+                &prompt,
+                message_id.as_deref(),
+                model.as_deref(),
+                effort.as_deref(),
+            )
             .map_err(|error| error.to_string())
     })
     .await
@@ -438,11 +609,68 @@ async fn opencode_cancel_turn(
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn opencode_commands(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+) -> Result<Vec<caelum_protocol::OpenCodeCommandInfo>, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .commands(project_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_usage_limits(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+) -> Result<serde_json::Value, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .usage_limits(project_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_run_command(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+    command: caelum_protocol::OpenCodeCommandInput,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(), String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .run_command(
+                project_path,
+                &session_id,
+                &command,
+                model.as_deref(),
+                effort.as_deref(),
+            )
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(ApprovalBroker::default())
         .manage(Arc::new(ProcessRegistry::default()))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir();
             app.manage(PersistenceState::open(app_data_dir));
@@ -497,10 +725,12 @@ pub fn run() {
             startup_project,
             open_project,
             git_repository_status,
+            github_open_pull_request,
             git_file_diff,
             git_file_versions,
             list_project_directory,
             read_project_file,
+            search_project_files,
             restore_workspace,
             remember_project,
             close_project_record,
@@ -508,11 +738,16 @@ pub fn run() {
             set_project_provider,
             select_project_session,
             sync_provider_sessions,
+            forget_project_session,
+            session_details,
+            set_session_archived,
             pending_approvals,
             resolve_approval,
             codex_list_sessions,
             codex_start_session,
+            provider_choices,
             codex_resume_session,
+            codex_session_history,
             codex_send_prompt,
             codex_cancel_turn,
             opencode_list_sessions,
@@ -520,6 +755,10 @@ pub fn run() {
             opencode_resume_session,
             opencode_session_history,
             opencode_send_prompt,
+            opencode_select_agent,
+            opencode_commands,
+            opencode_run_command,
+            opencode_usage_limits,
             opencode_cancel_turn
         ])
         .build(tauri::generate_context!())

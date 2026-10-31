@@ -23,6 +23,12 @@ pub struct GitFileStatus {
     pub path: String,
     pub index_status: String,
     pub worktree_status: String,
+    /// Nanoseconds since the Unix epoch, encoded as text to retain precision in JavaScript.
+    #[serde(default)]
+    pub modified_at: Option<String>,
+    /// Opaque Git/index and working-tree metadata revision used to detect repeated edits.
+    #[serde(default)]
+    pub revision: String,
 }
 
 /// Read-only Git status scoped to the selected project directory.
@@ -35,6 +41,16 @@ pub struct GitRepositoryStatus {
     pub changes: Vec<GitFileStatus>,
 }
 
+/// An open GitHub pull request for a project's branch (including drafts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequest {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub is_draft: bool,
+}
+
 /// Separate staged, unstaged, and untracked diffs for one changed path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,7 +61,7 @@ pub struct GitFileDiff {
     pub untracked: String,
 }
 
-/// Bounded before/working-tree text for Monaco's side-by-side diff editor.
+/// Bounded before/working-tree text for the side-by-side diff viewer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitFileVersions {
@@ -92,6 +108,31 @@ pub struct ProjectFileContent {
     pub content: String,
     pub size_bytes: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectSearchMode {
+    Files,
+    Content,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSearchMatch {
+    pub path: String,
+    pub line: Option<usize>,
+    /// One-based UTF-16 column, matching the code viewer's coordinate system.
+    pub column: Option<usize>,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSearchResults {
+    pub matches: Vec<ProjectSearchMatch>,
+    pub truncated: bool,
+    pub skipped: usize,
 }
 
 /// Project and session metadata restored from Caelum's local workspace database.
@@ -165,6 +206,8 @@ pub struct CodexThreadInfo {
     pub preview: String,
     #[serde(default)]
     pub updated_at: Option<u64>,
+    #[serde(default)]
+    pub is_working: bool,
 }
 
 /// The project and thread selected in the desktop Codex workspace.
@@ -173,6 +216,10 @@ pub struct CodexThreadInfo {
 pub struct CodexSessionInfo {
     pub project: ProjectInfo,
     pub thread: CodexThreadInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Recent Codex-owned threads scoped to one project.
@@ -203,6 +250,14 @@ pub struct OpenCodeSession {
     pub title: Option<String>,
     #[serde(default)]
     pub updated_at: Option<u64>,
+    #[serde(default)]
+    pub is_working: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// The selected project and OpenCode session shown in the desktop workspace.
@@ -221,13 +276,85 @@ pub struct OpenCodeSessionList {
     pub sessions: Vec<OpenCodeSession>,
 }
 
-/// A flattened entry from OpenCode's persisted session history.
+/// One chronological page of provider-owned history, retaining native tool details.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryPage {
+    pub data: Vec<serde_json::Value>,
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub is_working: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// Compact provider-owned context for a session's sidebar entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenCodeConversationEntry {
+pub struct SessionDetails {
+    pub branch: Option<String>,
+    pub branch_is_current: bool,
+    pub changes: Option<LineChanges>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineChanges {
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderChoice {
     pub id: String,
-    pub kind: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelChoice {
+    pub id: String,
+    pub name: String,
+    /// The service supplying this model, which may differ from its original vendor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    pub efforts: Vec<ProviderChoice>,
+    pub default_effort: Option<String>,
+}
+
+/// Choices reported by the installed provider, rather than hard-coded UI options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderChoices {
+    pub models: Vec<ProviderModelChoice>,
+    pub agents: Vec<ProviderChoice>,
+    pub default_model: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenCodeCommandInfo {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenCodeCommandFile {
+    pub uri: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenCodeCommandInput {
+    pub name: String,
     pub text: String,
+    #[serde(default)]
+    pub files: Vec<OpenCodeCommandFile>,
 }
 
 /// An event received from OpenCode's `/api/event` server-sent event stream.
@@ -237,6 +364,11 @@ pub struct OpenCodeEvent {
     pub project_path: String,
     pub event_type: String,
     pub data: serde_json::Value,
+    /// Native event identity and time are needed to reconcile projected compaction messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<serde_json::Value>,
 }
@@ -275,6 +407,8 @@ mod tests {
             project_path: "/workspace/project".into(),
             event_type: "session.text.delta".into(),
             data: json!({ "sessionID": "ses_1", "delta": "hello" }),
+            id: Some("evt_1".into()),
+            created: Some(123),
             location: None,
         };
 
@@ -283,6 +417,8 @@ mod tests {
             json!({
                 "projectPath": "/workspace/project",
                 "eventType": "session.text.delta",
+                "id": "evt_1",
+                "created": 123,
                 "data": { "sessionID": "ses_1", "delta": "hello" }
             })
         );
@@ -355,6 +491,8 @@ mod tests {
                 path: "src/main.rs".into(),
                 index_status: "M".into(),
                 worktree_status: " ".into(),
+                modified_at: Some("1793275200000000001".into()),
+                revision: "index-and-worktree-revision".into(),
             }],
         };
         let diff = GitFileDiff {
@@ -373,7 +511,9 @@ mod tests {
                 "changes": [{
                     "path": "src/main.rs",
                     "indexStatus": "M",
-                    "worktreeStatus": " "
+                    "worktreeStatus": " ",
+                    "modifiedAt": "1793275200000000001",
+                    "revision": "index-and-worktree-revision"
                 }]
             })
         );

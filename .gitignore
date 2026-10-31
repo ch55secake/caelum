@@ -6,6 +6,8 @@
 node_modules/
 **/node_modules/
 apps/desktop/dist/
+apps/desktop/test-results/
+apps/desktop/playwright-report/
 .pnpm-store/
 
 # Tauri

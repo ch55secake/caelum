@@ -85,6 +85,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @caelum/desktop build
+      - run: pnpm --filter @caelum/desktop test
+      - run: pnpm --filter @caelum/desktop exec playwright install --with-deps chromium
+      - run: pnpm --filter @caelum/desktop test:ui
 
   release-package:
     name: release-package

@@ -14,8 +14,9 @@ use std::{
 };
 
 use caelum_protocol::{
-    ApprovalDecision, CodexEvent, CodexSessionInfo, CodexSessionList, CodexThreadInfo,
-    PermissionRequest,
+    ApprovalDecision, CodexEvent, CodexSessionInfo, CodexSessionList, CodexThreadInfo, LineChanges,
+    PermissionRequest, ProviderChoice, ProviderChoices, ProviderModelChoice, SessionDetails,
+    SessionHistoryPage,
 };
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -130,6 +131,7 @@ impl CodexProvider {
                     "cursor": cursor,
                     "limit": 100,
                     "sortKey": "updated_at",
+                    "archived": false,
                     "cwd": project.path().to_string_lossy(),
                     "sourceKinds": ["appServer", "cli", "vscode"]
                 }),
@@ -173,6 +175,87 @@ impl CodexProvider {
         &self,
         project_path: impl AsRef<Path>,
     ) -> Result<CodexSessionInfo, CodexError> {
+        self.start_session_with_model(project_path, None)
+    }
+
+    pub fn choices(&self, project_path: impl AsRef<Path>) -> Result<ProviderChoices, CodexError> {
+        let project = Project::open(project_path)?;
+        let connection = self.connection(&project)?;
+        let mut models = Vec::new();
+        let mut default_model = None;
+        let mut cursor: Option<String> = None;
+        let mut seen = HashSet::new();
+        loop {
+            let response =
+                connection.request("model/list", json!({ "limit": 100, "cursor": cursor }))?;
+            let data = response
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or_else(|| CodexError::Protocol("model/list has no data array".into()))?;
+            models.extend(data.iter().filter_map(|model| {
+                if model.get("isDefault").and_then(Value::as_bool) == Some(true) {
+                    default_model = model
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                }
+                Some(ProviderModelChoice {
+                    id: model.get("model")?.as_str()?.to_owned(),
+                    name: model.get("displayName")?.as_str()?.to_owned(),
+                    provider: None,
+                    // Codex reports the effective context limit with thread token usage.
+                    context_window: None,
+                    efforts: model
+                        .get("supportedReasoningEfforts")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|effort| {
+                            let id = effort.get("reasoningEffort")?.as_str()?.to_owned();
+                            Some(ProviderChoice {
+                                name: id.clone(),
+                                id,
+                            })
+                        })
+                        .collect(),
+                    default_effort: model
+                        .get("defaultReasoningEffort")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                })
+            }));
+            cursor = response
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            match &cursor {
+                Some(next) if seen.insert(next.clone()) => {}
+                Some(_) => return Err(CodexError::Protocol("model/list repeated cursor".into())),
+                None => break,
+            }
+        }
+        // Resolve project-specific defaults before offering effort options for
+        // the otherwise implicit model in a new session.
+        if let Ok(config) = connection.request(
+            "config/read",
+            json!({ "cwd": project.path().to_string_lossy(), "includeLayers": false }),
+        ) {
+            if let Some(model) = config.pointer("/config/model").and_then(Value::as_str) {
+                default_model = Some(model.to_owned());
+            }
+        }
+        Ok(ProviderChoices {
+            models,
+            agents: Vec::new(),
+            default_model,
+        })
+    }
+
+    pub fn start_session_with_model(
+        &self,
+        project_path: impl AsRef<Path>,
+        model: Option<&str>,
+    ) -> Result<CodexSessionInfo, CodexError> {
         let project = Project::open(project_path)?;
         let connection = self.connection(&project)?;
         let response = connection.request(
@@ -181,7 +264,8 @@ impl CodexProvider {
                 "cwd": project.path().to_string_lossy(),
                 "approvalPolicy": "unlessTrusted",
                 "sandbox": "workspaceWrite",
-                "serviceName": "caelum"
+                "serviceName": "caelum",
+                "model": model
             }),
         )?;
         let thread = response
@@ -192,6 +276,14 @@ impl CodexProvider {
         Ok(CodexSessionInfo {
             project: project.info(),
             thread,
+            effort: response
+                .get("reasoningEffort")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            model: response
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         })
     }
 
@@ -217,6 +309,50 @@ impl CodexProvider {
         Ok(CodexSessionInfo {
             project: project.info(),
             thread,
+            effort: response
+                .get("reasoningEffort")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            model: response
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })
+    }
+
+    pub fn session_history(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        cursor: Option<&str>,
+    ) -> Result<SessionHistoryPage, CodexError> {
+        if thread_id.trim().is_empty() {
+            return Err(CodexError::InvalidThreadId);
+        }
+        let project = Project::open(project_path)?;
+        let connection = self.connection_for_thread(&project, thread_id)?;
+        let response = connection.request(
+            "thread/turns/list",
+            json!({ "threadId": thread_id, "limit": 30, "sortDirection": "desc", "itemsView": "full", "cursor": cursor }),
+        )?;
+        let data = response
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| CodexError::Protocol("thread/turns/list has no data array".into()))?;
+        Ok(SessionHistoryPage {
+            agent: None,
+            model: None,
+            effort: None,
+            is_working: cursor.is_none().then(|| {
+                data.first().is_some_and(|turn| {
+                    turn.get("status").and_then(Value::as_str) == Some("inProgress")
+                })
+            }),
+            data: data.iter().rev().cloned().collect(),
+            next_cursor: response
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         })
     }
 
@@ -227,6 +363,27 @@ impl CodexProvider {
         project_path: impl AsRef<Path>,
         thread_id: &str,
         prompt: &str,
+    ) -> Result<(), CodexError> {
+        self.send_prompt_with_model(project_path, thread_id, prompt, None)
+    }
+
+    pub fn send_prompt_with_model(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        prompt: &str,
+        model: Option<&str>,
+    ) -> Result<(), CodexError> {
+        self.send_prompt_with_options(project_path, thread_id, prompt, model, None)
+    }
+
+    pub fn send_prompt_with_options(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        prompt: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
     ) -> Result<(), CodexError> {
         if thread_id.trim().is_empty() {
             return Err(CodexError::InvalidThreadId);
@@ -241,6 +398,8 @@ impl CodexProvider {
             "turn/start",
             json!({
                 "threadId": thread_id,
+                "model": model,
+                "effort": effort,
                 "input": [{ "type": "text", "text": prompt }]
             }),
         ) {
@@ -250,6 +409,91 @@ impl CodexProvider {
                 return Err(error);
             }
         }
+        Ok(())
+    }
+
+    pub fn session_details(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+    ) -> Result<SessionDetails, CodexError> {
+        let project = Project::open(project_path)?;
+        let connection = self.connection_for_thread(&project, thread_id)?;
+        let response = connection.request("thread/read", json!({ "threadId": thread_id }))?;
+        let branch = response
+            .pointer("/thread/gitInfo/branch")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        // A newly created thread may not have materialized history yet.
+        let response = connection.request("thread/turns/list", json!({ "threadId": thread_id, "limit": 1, "sortDirection": "desc", "itemsView": "full" })).ok();
+        let changes = response
+            .as_ref()
+            .and_then(|response| response.pointer("/data/0/items"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                let mut total = LineChanges::default();
+                for item in items.iter().filter(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("fileChange")
+                        && item.get("status").and_then(Value::as_str) == Some("completed")
+                }) {
+                    for change in item
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let counts = file_change_lines(change);
+                        total.additions += counts.additions;
+                        total.deletions += counts.deletions;
+                    }
+                }
+                total
+            });
+        Ok(SessionDetails {
+            branch,
+            branch_is_current: false,
+            changes,
+        })
+    }
+
+    pub fn set_session_archived(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+        archived: bool,
+    ) -> Result<(), CodexError> {
+        if thread_id.trim().is_empty() {
+            return Err(CodexError::InvalidThreadId);
+        }
+        let project = Project::open(project_path)?;
+        // Read also works for archived threads, which are absent from thread/list.
+        let connection = self.connection(&project)?;
+        let response = connection.request("thread/read", json!({ "threadId": thread_id }))?;
+        let cwd = response
+            .pointer("/thread/cwd")
+            .and_then(Value::as_str)
+            .ok_or(CodexError::ThreadNotInProject)?;
+        if Path::new(cwd).canonicalize().ok().as_deref() != Some(project.path()) {
+            return Err(CodexError::ThreadNotInProject);
+        }
+        if archived
+            && response
+                .pointer("/thread/status/type")
+                .and_then(Value::as_str)
+                == Some("active")
+        {
+            return Err(CodexError::Protocol(
+                "stop the running turn before archiving this session".into(),
+            ));
+        }
+        connection.request(
+            if archived {
+                "thread/archive"
+            } else {
+                "thread/unarchive"
+            },
+            json!({ "threadId": thread_id }),
+        )?;
         Ok(())
     }
 
@@ -856,8 +1100,40 @@ fn publish_event(subscribers: &EventSubscribers, event: CodexEvent) {
         .retain(|subscriber| subscriber.send(event.clone()).is_ok());
 }
 
+fn file_change_lines(change: &Value) -> LineChanges {
+    let diff = change.get("diff").and_then(Value::as_str).unwrap_or("");
+    let mut counts = LineChanges::default();
+    let mut in_hunk = false;
+    let mut unified = false;
+    for line in diff.lines() {
+        if line.starts_with("@@ ") {
+            in_hunk = true;
+            unified = true;
+        } else if line.starts_with("diff ") {
+            in_hunk = false;
+        } else if in_hunk {
+            if line.starts_with('+') {
+                counts.additions += 1;
+            }
+            if line.starts_with('-') {
+                counts.deletions += 1;
+            }
+        }
+    }
+    if !unified {
+        // Added/deleted files can carry their complete contents rather than a patch.
+        match change.pointer("/kind/type").and_then(Value::as_str) {
+            Some("add") => counts.additions = diff.lines().count() as u64,
+            Some("delete") => counts.deletions = diff.lines().count() as u64,
+            _ => {}
+        }
+    }
+    counts
+}
+
 fn thread_info(value: &Value) -> Option<CodexThreadInfo> {
     Some(CodexThreadInfo {
+        is_working: value.pointer("/status/type").and_then(Value::as_str) == Some("active"),
         id: value.get("id")?.as_str()?.to_owned(),
         name: value.get("name").and_then(Value::as_str).map(str::to_owned),
         preview: value
@@ -1072,6 +1348,9 @@ mod tests {
 
     const PYTHON_FAKE_SERVER: &str = r#"
 import json, os, sys
+models = {'thread-existing': 'saved-model'}
+efforts = {'thread-existing': 'low'}
+archived = set()
 for raw in sys.stdin:
     request = json.loads(raw)
     method = request.get('method')
@@ -1085,16 +1364,54 @@ for raw in sys.stdin:
     if method == 'initialize':
         result = {'userAgent': 'fake-codex'}
     elif method == 'thread/list':
-        result = {'data': [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123}], 'nextCursor': None}
+        assert params['archived'] is False
+        result = {'data': [] if 'thread-existing' in archived else [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123}], 'nextCursor': None}
+    elif method == 'thread/read':
+        result = {'thread': {'id': params['threadId'], 'cwd': os.path.dirname(os.getcwd()) if params['threadId'] == 'foreign-thread' else os.getcwd(), 'gitInfo': {'branch': 'feature/sidebar'}, 'status': {'type': 'active' if os.path.exists('active-thread') else 'idle'}}}
+    elif method in ['thread/archive', 'thread/unarchive']:
+        if os.path.exists('archive-error'):
+            print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'archive unavailable'}}), flush=True)
+            continue
+        if method == 'thread/archive': archived.add(params['threadId'])
+        else: archived.discard(params['threadId'])
+        result = {}
     elif method == 'thread/start':
-        result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}}
+        models['thread-new'] = params.get('model') or 'default-model'
+        efforts['thread-new'] = 'medium'
+        result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}, 'model': models['thread-new'], 'reasoningEffort': efforts['thread-new']}
     elif method == 'thread/resume':
-        result = {'thread': {'id': params['threadId'], 'name': 'Resumed', 'preview': 'History'}}
+        result = {'thread': {'id': params['threadId'], 'name': 'Resumed', 'preview': 'History'}, 'model': models[params['threadId']], 'reasoningEffort': efforts[params['threadId']]}
+    elif method == 'model/list':
+        result = {'data': [{'model': 'test-model', 'displayName': 'Test model', 'isDefault': True, 'defaultReasoningEffort': 'medium', 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}, {'reasoningEffort': 'medium'}, {'reasoningEffort': 'high'}]}], 'nextCursor': None}
+    elif method == 'config/read':
+        assert params['cwd'] == os.getcwd()
+        result = {'config': {'model': 'configured-model'}}
+    elif method == 'thread/turns/list':
+        assert params['itemsView'] == 'full' and params['sortDirection'] == 'desc'
+        if params['limit'] == 1:
+            if os.path.exists('missing-details'):
+                print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'no history yet'}}), flush=True)
+                continue
+            result = {'data': [{'id': 'latest', 'items': [
+                {'type': 'fileChange', 'status': 'completed', 'changes': [
+                    {'kind': {'type': 'update'}, 'diff': '--- a/file\n+++ b/file\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n'},
+                    {'kind': {'type': 'add'}, 'diff': 'first\nsecond\n'}]},
+                {'type': 'fileChange', 'status': 'failed', 'changes': [{'kind': {'type': 'add'}, 'diff': 'not applied'}]}]}], 'nextCursor': 'older'}
+        elif params.get('cursor'):
+            assert params['cursor'] == 'older-cursor'
+            result = {'data': [{'id': 'turn-old', 'items': [{'id': 'old-user', 'type': 'userMessage', 'content': [{'type': 'text', 'text': 'Oldest'}]}]}], 'nextCursor': None}
+        else:
+            assert params['limit'] == 30
+            result = {'data': [{'id': 'turn-b', 'items': [{'id': 'cmd', 'type': 'commandExecution', 'command': 'git status', 'aggregatedOutput': 'clean', 'status': 'completed'}]}, {'id': 'turn-a', 'items': []}], 'nextCursor': 'older-cursor'}
     elif method == 'turn/start':
         prompt = params['input'][0]['text']
         if prompt == 'rpc-error':
             print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'fake request error'}}), flush=True)
             continue
+        if params.get('model'):
+            models[params['threadId']] = params['model']
+        if params.get('effort'):
+            efforts[params['threadId']] = params['effort']
         if prompt == 'request-approval':
             print(json.dumps({'id': 'server-approval-1', 'method': 'item/commandExecution/requestApproval', 'params': {'threadId': params['threadId'], 'turnId': 'turn-approval', 'itemId': 'command-1', 'command': ['git', 'status'], 'cwd': '/project', 'availableDecisions': ['accept', 'decline']}}), flush=True)
         print(json.dumps({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}}), flush=True)
@@ -1111,6 +1428,89 @@ for raw in sys.stdin:
         os.unlink('die-after-list')
         sys.exit(0)
 "#;
+
+    #[test]
+    fn session_archiving_is_reversible_scoped_and_keeps_recorded_branch_details() {
+        let directory = TestDirectory::new();
+        let project_path = directory.project();
+        let provider = CodexProvider::with_executable(
+            Arc::new(ProcessRegistry::default()),
+            ApprovalBroker::default(),
+            directory.fake_codex(true),
+        );
+        let details = provider
+            .session_details(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(details.branch.as_deref(), Some("feature/sidebar"));
+        assert!(!details.branch_is_current);
+        assert_eq!(
+            details.changes,
+            Some(LineChanges {
+                additions: 4,
+                deletions: 1
+            })
+        );
+        fs::write(project_path.join("missing-details"), "").unwrap();
+        let details = provider
+            .session_details(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(details.branch.as_deref(), Some("feature/sidebar"));
+        assert_eq!(details.changes, None);
+        assert!(matches!(
+            provider.session_details(&project_path, "foreign-thread"),
+            Err(CodexError::ThreadNotInProject)
+        ));
+        for archived in [true, false] {
+            assert!(matches!(
+                provider.set_session_archived(&project_path, "foreign-thread", archived),
+                Err(CodexError::ThreadNotInProject)
+            ));
+        }
+        fs::write(project_path.join("active-thread"), "").unwrap();
+        assert!(provider
+            .set_session_archived(&project_path, "thread-existing", true)
+            .is_err());
+        assert_eq!(
+            provider.list_sessions(&project_path).unwrap().threads.len(),
+            1
+        );
+        fs::remove_file(project_path.join("active-thread")).unwrap();
+        fs::write(project_path.join("archive-error"), "").unwrap();
+        assert!(matches!(
+            provider.set_session_archived(&project_path, "thread-existing", true),
+            Err(CodexError::Rpc(_))
+        ));
+        fs::remove_file(project_path.join("archive-error")).unwrap();
+        provider
+            .set_session_archived(&project_path, "thread-existing", true)
+            .unwrap();
+        assert!(provider
+            .list_sessions(&project_path)
+            .unwrap()
+            .threads
+            .is_empty());
+        provider
+            .set_session_archived(&project_path, "thread-existing", false)
+            .unwrap();
+        assert_eq!(
+            provider.list_sessions(&project_path).unwrap().threads[0].id,
+            "thread-existing"
+        );
+        provider.shutdown();
+    }
+
+    #[test]
+    fn line_counts_handle_patch_headers_context_and_full_file_contents() {
+        for (kind, diff, additions, deletions) in [
+            ("update", "--- a/file\n+++ b/file\n@@ -1,2 +1,3 @@\n context\n-old\n+++literal\n+\n\\ No newline at end of file\n@@ -9 +10 @@\n-old2\n+new2\n", 3, 2),
+            ("add", "first\n\nlast", 3, 0),
+            ("delete", "first\nlast\n", 0, 2),
+            ("add", "", 0, 0),
+            ("update", "Binary files a/file and b/file differ", 0, 0),
+        ] {
+            assert_eq!(file_change_lines(&json!({ "kind": { "type": kind }, "diff": diff })), LineChanges { additions, deletions });
+        }
+    }
 
     #[test]
     fn project_sessions_can_be_listed_started_resumed_and_cancelled() {
@@ -1137,10 +1537,44 @@ for raw in sys.stdin:
 
         let created = provider.start_session(&project_path).unwrap();
         assert_eq!(created.thread.id, "thread-new");
+        assert_eq!(created.model.as_deref(), Some("default-model"));
+        assert_eq!(created.effort.as_deref(), Some("medium"));
         let resumed = provider
             .resume_session(&project_path, "thread-existing")
             .unwrap();
         assert_eq!(resumed.thread.name.as_deref(), Some("Resumed"));
+        assert_eq!(resumed.model.as_deref(), Some("saved-model"));
+        assert_eq!(resumed.effort.as_deref(), Some("low"));
+        let choices = provider.choices(&project_path).unwrap();
+        assert_eq!(choices.models[0].id, "test-model");
+        assert_eq!(
+            choices.models[0]
+                .efforts
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect::<Vec<_>>(),
+            ["low", "medium", "high"]
+        );
+        assert_eq!(choices.models[0].default_effort.as_deref(), Some("medium"));
+        assert_eq!(choices.default_model.as_deref(), Some("configured-model"));
+        let history = provider
+            .session_history(&project_path, "thread-existing", None)
+            .unwrap();
+        assert_eq!(history.data[0]["id"], "turn-a");
+        assert_eq!(history.data[1]["items"][0]["aggregatedOutput"], "clean");
+        let older = provider
+            .session_history(
+                &project_path,
+                "thread-existing",
+                history.next_cursor.as_deref(),
+            )
+            .unwrap();
+        assert_eq!(older.data[0]["items"][0]["content"][0]["text"], "Oldest");
+        assert_eq!(older.next_cursor, None);
+        assert!(matches!(
+            provider.session_history(&project_path, "another-project-thread", None),
+            Err(CodexError::ThreadNotInProject)
+        ));
 
         let events = provider.subscribe();
         provider
@@ -1158,6 +1592,54 @@ for raw in sys.stdin:
         provider
             .cancel_turn(&project_path, "thread-existing")
             .unwrap();
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "thread-existing",
+                "Use the selected model",
+                Some("test-model"),
+                Some("high"),
+            )
+            .unwrap();
+        let resumed = provider
+            .resume_session(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(resumed.thread.id, "thread-existing");
+        assert_eq!(resumed.model.as_deref(), Some("test-model"));
+        assert_eq!(resumed.effort.as_deref(), Some("high"));
+        provider
+            .send_prompt(&project_path, "thread-existing", "Keep this model")
+            .unwrap();
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "thread-existing")
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("test-model")
+        );
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "thread-existing")
+                .unwrap()
+                .effort
+                .as_deref(),
+            Some("high")
+        );
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "thread-existing",
+                "Change only effort",
+                None,
+                Some("low"),
+            )
+            .unwrap();
+        let resumed = provider
+            .resume_session(&project_path, "thread-existing")
+            .unwrap();
+        assert_eq!(resumed.model.as_deref(), Some("test-model"));
+        assert_eq!(resumed.effort.as_deref(), Some("low"));
         assert!(matches!(
             provider.send_prompt(&project_path, "thread-existing", "rpc-error"),
             Err(CodexError::Rpc(message)) if message == "fake request error"

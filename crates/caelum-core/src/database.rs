@@ -10,7 +10,7 @@ use caelum_protocol::{PersistedProject, ProjectInfo, WorkspaceSnapshot};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 const PROVIDERS: [&str; 2] = ["codex", "opencode"];
 
 /// Thread-safe access to Caelum's app-owned workspace metadata database.
@@ -234,6 +234,30 @@ impl WorkspaceDatabase {
         Ok(())
     }
 
+    /// Forget one archived session and clear its selection atomically.
+    pub fn remove_session(
+        &self,
+        path: &str,
+        provider: &str,
+        session_id: &str,
+    ) -> Result<(), DatabaseError> {
+        validate_nonempty("project path", path)?;
+        validate_provider(provider)?;
+        validate_nonempty("session ID", session_id)?;
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM sessions WHERE project_path = ?1 AND provider = ?2 AND session_id = ?3",
+            params![path, provider, session_id],
+        )?;
+        transaction.execute(
+            "UPDATE project_provider_state SET selected_session_id = NULL WHERE project_path = ?1 AND provider = ?2 AND selected_session_id = ?3",
+            params![path, provider, session_id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Record provider-owned session identifiers without copying provider history or content.
     pub fn sync_sessions(
         &self,
@@ -382,6 +406,40 @@ fn migrate(connection: &mut Connection) -> Result<(), DatabaseError> {
         )?;
         transaction.pragma_update(None, "user_version", 2)?;
         transaction.commit()?;
+        version = 2;
+    }
+
+    if version < 3 {
+        let transaction = connection.transaction()?;
+        // Early v2 installations required an opened timestamp even for sessions
+        // merely discovered in a provider listing. SQLite needs a table rebuild
+        // to remove that constraint; retain every label and timestamp as-is.
+        let opened_required: bool = transaction.query_row(
+            "SELECT \"notnull\" FROM pragma_table_info('sessions') WHERE name = 'last_opened_at'",
+            [],
+            |row| row.get(0),
+        )?;
+        if opened_required {
+            transaction.execute_batch(
+                "CREATE TABLE sessions_v3 (
+                    project_path TEXT NOT NULL REFERENCES projects(path) ON DELETE CASCADE,
+                    provider TEXT NOT NULL CHECK (provider IN ('codex', 'opencode')),
+                    session_id TEXT NOT NULL,
+                    first_seen_at INTEGER NOT NULL,
+                    last_opened_at INTEGER,
+                    local_label TEXT,
+                    PRIMARY KEY (project_path, provider, session_id)
+                 );
+                 INSERT INTO sessions_v3
+                    SELECT project_path, provider, session_id, first_seen_at, last_opened_at, local_label FROM sessions;
+                 DROP TABLE sessions;
+                 ALTER TABLE sessions_v3 RENAME TO sessions;
+                 CREATE INDEX sessions_recent_idx
+                    ON sessions(project_path, provider, last_opened_at DESC);",
+            )?;
+        }
+        transaction.pragma_update(None, "user_version", 3)?;
+        transaction.commit()?;
     }
     Ok(())
 }
@@ -469,6 +527,46 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_session_clears_only_its_scoped_saved_selection() {
+        let directory = TestDirectory::new("remove-session");
+        let path = directory.database_path();
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        for name in ["one", "two"] {
+            let project_path = format!("/work/{name}");
+            database
+                .remember_project(&project(&project_path, name))
+                .unwrap();
+            for provider in PROVIDERS {
+                database
+                    .select_session(&project_path, provider, Some("same-id"))
+                    .unwrap();
+                database
+                    .sync_sessions(&project_path, provider, &["same-id".into(), "kept".into()])
+                    .unwrap();
+            }
+        }
+        database
+            .remove_session("/work/one", "codex", "same-id")
+            .unwrap();
+        database
+            .remove_session("/work/one", "codex", "same-id")
+            .unwrap();
+        drop(database);
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        for entry in database.restore().unwrap().projects {
+            if entry.project.path == "/work/one" {
+                assert_eq!(entry.codex_session_id, None);
+                assert_eq!(entry.codex_session_ids, ["kept"]);
+            } else {
+                assert_eq!(entry.codex_session_id.as_deref(), Some("same-id"));
+                assert_eq!(entry.codex_session_ids.len(), 2);
+            }
+            assert_eq!(entry.opencode_session_id.as_deref(), Some("same-id"));
+            assert_eq!(entry.opencode_session_ids.len(), 2);
+        }
+    }
+
+    #[test]
     fn fresh_database_migrates_and_can_be_opened_repeatedly() {
         let directory = TestDirectory::new("fresh");
         let database = WorkspaceDatabase::open(directory.database_path()).unwrap();
@@ -523,6 +621,83 @@ mod tests {
         assert_eq!(snapshot.projects[0].project.path, "/work/kept");
         assert_eq!(snapshot.projects[0].provider, "opencode");
         assert_eq!(snapshot.projects[0].opencode_session_id, None);
+    }
+
+    #[test]
+    fn legacy_v2_session_timestamps_migrate_without_losing_metadata() {
+        let directory = TestDirectory::new("legacy-v2");
+        let path = directory.database_path();
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        database
+            .remember_project(&project("/work/kept", "kept"))
+            .unwrap();
+        database
+            .select_session("/work/kept", "opencode", Some("ses_kept"))
+            .unwrap();
+        database.set_active_project(Some("/work/kept")).unwrap();
+        database.lock().execute_batch(
+            "DROP TABLE sessions;
+             CREATE TABLE sessions (
+                project_path TEXT NOT NULL REFERENCES projects(path) ON DELETE CASCADE,
+                provider TEXT NOT NULL CHECK (provider IN ('codex', 'opencode')),
+                session_id TEXT NOT NULL,
+                first_seen_at INTEGER NOT NULL,
+                last_opened_at INTEGER NOT NULL,
+                local_label TEXT,
+                PRIMARY KEY (project_path, provider, session_id)
+             );
+             CREATE INDEX sessions_recent_idx ON sessions(project_path, provider, last_opened_at DESC);
+             INSERT INTO sessions VALUES ('/work/kept', 'opencode', 'ses_kept', 10, 20, 'Keep this label');
+             PRAGMA user_version = 2;",
+        ).unwrap();
+        assert!(database
+            .sync_sessions(
+                "/work/kept",
+                "opencode",
+                &["ses_kept".into(), "ses_new".into()]
+            )
+            .is_err());
+        drop(database);
+
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        database
+            .sync_sessions(
+                "/work/kept",
+                "opencode",
+                &["ses_kept".into(), "ses_new".into()],
+            )
+            .unwrap();
+        let snapshot = database.restore().unwrap();
+        assert_eq!(snapshot.active_project_path.as_deref(), Some("/work/kept"));
+        assert_eq!(
+            snapshot.projects[0].opencode_session_id.as_deref(),
+            Some("ses_kept")
+        );
+        let kept: (i64, i64, String) = database.lock().query_row(
+            "SELECT first_seen_at, last_opened_at, local_label FROM sessions WHERE session_id = 'ses_kept'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(kept, (10, 20, "Keep this label".into()));
+        let opened: Option<i64> = database
+            .lock()
+            .query_row(
+                "SELECT last_opened_at FROM sessions WHERE session_id = 'ses_new'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(opened, None);
+        database
+            .select_session("/work/kept", "opencode", Some("ses_new"))
+            .unwrap();
+        drop(database);
+        let reopened = WorkspaceDatabase::open(&path).unwrap();
+        assert_eq!(
+            reopened.restore().unwrap().projects[0]
+                .opencode_session_id
+                .as_deref(),
+            Some("ses_new")
+        );
     }
 
     #[test]

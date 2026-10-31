@@ -15,8 +15,9 @@ use std::{
 };
 
 use caelum_protocol::{
-    ApprovalDecision, OpenCodeConversationEntry, OpenCodeEvent, OpenCodeSession,
-    OpenCodeSessionInfo, OpenCodeSessionList, PermissionRequest,
+    ApprovalDecision, LineChanges, OpenCodeCommandInfo, OpenCodeCommandInput, OpenCodeEvent,
+    OpenCodeSession, OpenCodeSessionInfo, OpenCodeSessionList, PermissionRequest, ProviderChoice,
+    ProviderChoices, ProviderModelChoice, SessionDetails, SessionHistoryPage,
 };
 use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
@@ -38,9 +39,8 @@ const SESSION_LIMIT: &str = "100";
 
 type EventSubscribers = Arc<Mutex<Vec<Sender<OpenCodeEvent>>>>;
 
-/// Manages one official OpenCode HTTP server for each selected project.
-/// Servers bind only to loopback and use OpenCode's `/api` and `/api/event`
-/// endpoints.
+/// Connects projects to the registered local OpenCode service, falling back to
+/// an owned loopback server. Both use the official `/api` and `/api/event` routes.
 #[derive(Clone)]
 pub struct OpenCodeProvider {
     inner: Arc<ProviderInner>,
@@ -48,6 +48,7 @@ pub struct OpenCodeProvider {
 
 struct ProviderInner {
     executable: Option<PathBuf>,
+    service_file: Option<PathBuf>,
     processes: Arc<ProcessRegistry>,
     approvals: ApprovalBroker,
     servers: Mutex<HashMap<PathBuf, Arc<OpenCodeServer>>>,
@@ -56,11 +57,11 @@ struct ProviderInner {
 }
 
 struct OpenCodeServer {
-    process_id: ProcessId,
+    process_id: Option<ProcessId>,
     base_url: String,
     client: Client,
     event_client: Client,
-    password: String,
+    password: Option<String>,
     alive: Arc<AtomicBool>,
     session_ids: Mutex<HashSet<String>>,
     pending_permission_ids: Arc<Mutex<HashSet<String>>>,
@@ -88,6 +89,7 @@ impl OpenCodeProvider {
     ) -> Self {
         Self {
             inner: Arc::new(ProviderInner {
+                service_file: executable.is_none().then(service_file).flatten(),
                 executable,
                 processes,
                 approvals,
@@ -124,13 +126,15 @@ impl OpenCodeProvider {
             .get("data")
             .and_then(Value::as_array)
             .ok_or_else(|| OpenCodeError::Protocol("session list has no data array".into()))?;
+        let active = server.active_sessions()?;
 
         let mut sessions = Vec::with_capacity(values.len());
         for value in values {
             if session_directory(value)
                 .is_some_and(|directory| directory_matches(directory, project.path()))
             {
-                if let Some(session) = session_info(value) {
+                if let Some(mut session) = session_info(value) {
+                    session.is_working = active.contains(&session.id);
                     server.remember_session(&session.id);
                     sessions.push(session);
                 }
@@ -147,14 +151,122 @@ impl OpenCodeProvider {
         &self,
         project_path: impl AsRef<Path>,
     ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
+        self.start_session_with_options(project_path, None, None)
+    }
+
+    pub fn choices(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<ProviderChoices, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let models = server.request_json(Method::GET, "/api/model", &query, None)?;
+        let agents = server.request_json(Method::GET, "/api/agent", &query, None)?;
+        // Provider names include custom endpoints and routed services. Keep the
+        // native provider ID as a fallback if this optional metadata is unavailable.
+        let providers = server
+            .request_json(Method::GET, "/api/provider", &query, None)
+            .ok();
+        let provider_names: HashMap<&str, &str> = providers
+            .as_ref()
+            .and_then(|response| response.get("data"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|provider| {
+                let id = provider.get("id")?.as_str()?;
+                let name = provider.get("name")?.as_str()?;
+                (!name.trim().is_empty()).then_some((id, name))
+            })
+            .collect();
+        let default_model = server
+            .request_json(Method::GET, "/api/model/default", &query, None)
+            .ok()
+            .and_then(|response| model_id(response.get("data")?));
+        let models = models
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| OpenCodeError::Protocol("model list has no data array".into()))?
+            .iter()
+            .filter(|model| model.get("enabled").and_then(Value::as_bool) == Some(true))
+            .filter_map(|model| {
+                let provider_id = model.get("providerID")?.as_str()?;
+                Some(ProviderModelChoice {
+                    id: format!("{}/{}", provider_id, model.get("id")?.as_str()?),
+                    name: model.get("name")?.as_str()?.to_owned(),
+                    context_window: model
+                        .pointer("/limit/context")
+                        .and_then(Value::as_u64)
+                        .filter(|limit| *limit > 0),
+                    provider: Some(ProviderChoice {
+                        id: provider_id.to_owned(),
+                        name: provider_names
+                            .get(provider_id)
+                            .copied()
+                            .unwrap_or(provider_id)
+                            .to_owned(),
+                    }),
+                    efforts: model
+                        .get("variants")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|variant| {
+                            let id = variant.get("id")?.as_str()?.to_owned();
+                            Some(ProviderChoice {
+                                name: id.clone(),
+                                id,
+                            })
+                        })
+                        .collect(),
+                    default_effort: None,
+                })
+            })
+            .collect();
+        let agents = agents
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| OpenCodeError::Protocol("agent list has no data array".into()))?
+            .iter()
+            .filter(|agent| {
+                agent.get("hidden").and_then(Value::as_bool) != Some(true)
+                    && agent.get("mode").and_then(Value::as_str) != Some("subagent")
+            })
+            .filter_map(|agent| {
+                Some(ProviderChoice {
+                    id: agent.get("id")?.as_str()?.to_owned(),
+                    name: agent.get("name")?.as_str()?.to_owned(),
+                })
+            })
+            .collect();
+        Ok(ProviderChoices {
+            models,
+            agents,
+            default_model,
+        })
+    }
+
+    pub fn start_session_with_options(
+        &self,
+        project_path: impl AsRef<Path>,
+        model: Option<&str>,
+        agent: Option<&str>,
+    ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let model = model.map(|model| model_ref(model, None)).transpose()?;
         let response = server.request_json(
             Method::POST,
             "/api/session",
             &[],
             Some(json!({
-                "location": { "directory": project.path().to_string_lossy() }
+                "location": { "directory": project.path().to_string_lossy() },
+                "model": model,
+                "agent": agent
             })),
         )?;
         let value = response.get("data").ok_or_else(|| {
@@ -175,6 +287,65 @@ impl OpenCodeProvider {
         })
     }
 
+    pub fn commands(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<Vec<OpenCodeCommandInfo>, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let response = server.request_json(Method::GET, "/api/command", &query, None)?;
+        serde_json::from_value(response.get("data").cloned().unwrap_or(Value::Null))
+            .map_err(|error| OpenCodeError::Protocol(format!("invalid command list: {error}")))
+    }
+
+    pub fn usage_limits(&self, project_path: impl AsRef<Path>) -> Result<Value, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let response =
+            server.request_json(Method::GET, "/api/experimental/usage/limits", &query, None)?;
+        response
+            .get("data")
+            .cloned()
+            .ok_or_else(|| OpenCodeError::Protocol("usage response has no data".into()))
+    }
+
+    pub fn run_command(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        command: &OpenCodeCommandInput,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<(), OpenCodeError> {
+        if command.name.trim().is_empty() {
+            return Err(OpenCodeError::Protocol(
+                "command name must not be empty".into(),
+            ));
+        }
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let session = self.session(&server, &project, session_id)?;
+        select_model(&server, &project, &session, model, effort)?;
+        server.request_json(
+            Method::POST,
+            &format!("/api/session/{session_id}/command"),
+            &[],
+            Some(
+                serde_json::to_value(command)
+                    .map_err(|error| OpenCodeError::Protocol(error.to_string()))?,
+            ),
+        )?;
+        Ok(())
+    }
+
     pub fn resume_session(
         &self,
         project_path: impl AsRef<Path>,
@@ -193,22 +364,34 @@ impl OpenCodeProvider {
         &self,
         project_path: impl AsRef<Path>,
         session_id: &str,
-    ) -> Result<Vec<OpenCodeConversationEntry>, OpenCodeError> {
+        cursor: Option<&str>,
+    ) -> Result<SessionHistoryPage, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
-        self.session(&server, &project, session_id)?;
+        let session = self.session(&server, &project, session_id)?;
         let path = format!("/api/session/{session_id}/message");
-        let query = [
-            ("order", "desc".to_owned()),
-            ("limit", SESSION_LIMIT.to_owned()),
-        ];
+        let mut query = vec![("limit", "50".to_owned())];
+        if let Some(cursor) = cursor {
+            query.push(("cursor", cursor.to_owned()));
+        } else {
+            query.push(("order", "desc".to_owned()));
+        }
         let response = server.request_json(Method::GET, &path, &query, None)?;
         let messages = response
             .get("data")
             .and_then(Value::as_array)
             .ok_or_else(|| OpenCodeError::Protocol("session history has no data array".into()))?;
-        let ordered = messages.iter().rev().cloned().collect::<Vec<_>>();
-        Ok(history_entries(&ordered))
+        Ok(SessionHistoryPage {
+            is_working: Some(session.is_working),
+            model: session.model,
+            effort: session.effort,
+            agent: session.agent,
+            data: messages.iter().rev().cloned().collect(),
+            next_cursor: response
+                .pointer("/cursor/next")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })
     }
 
     /// Submit a prompt. OpenCode durably admits it before this call returns;
@@ -219,14 +402,132 @@ impl OpenCodeProvider {
         session_id: &str,
         prompt: &str,
     ) -> Result<(), OpenCodeError> {
+        self.send_prompt_with_id(project_path, session_id, prompt, None)
+    }
+
+    pub fn select_agent(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        agent: &str,
+    ) -> Result<(), OpenCodeError> {
+        if agent.trim().is_empty() {
+            return Err(OpenCodeError::Protocol("agent ID must not be empty".into()));
+        }
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let session = self.session(&server, &project, session_id)?;
+        if session.agent.as_deref() != Some(agent) {
+            server.request_json(
+                Method::POST,
+                &format!("/api/session/{session_id}/agent"),
+                &[],
+                Some(json!({ "agent": agent })),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn send_prompt_with_id(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        prompt: &str,
+        message_id: Option<&str>,
+    ) -> Result<(), OpenCodeError> {
+        self.send_prompt_with_options(project_path, session_id, prompt, message_id, None, None)
+    }
+
+    pub fn send_prompt_with_options(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        prompt: &str,
+        message_id: Option<&str>,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<(), OpenCodeError> {
         if prompt.trim().is_empty() {
             return Err(OpenCodeError::EmptyPrompt);
         }
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
-        self.session(&server, &project, session_id)?;
+        let session = self.session(&server, &project, session_id)?;
+        select_model(&server, &project, &session, model, effort)?;
         let path = format!("/api/session/{session_id}/prompt");
-        server.request_json(Method::POST, &path, &[], Some(json!({ "text": prompt })))?;
+        server.request_json(
+            Method::POST,
+            &path,
+            &[],
+            Some(json!({ "text": prompt, "id": message_id })),
+        )?;
+        Ok(())
+    }
+
+    pub fn session_details(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+    ) -> Result<SessionDetails, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        self.session(&server, &project, session_id)?;
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let branch = server
+            .request_json(Method::GET, "/api/vcs", &query, None)
+            .ok()
+            .and_then(|response| {
+                response
+                    .pointer("/data/branch/current")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        let changes = server
+            .request_json(
+                Method::GET,
+                &format!("/api/session/{session_id}/diff"),
+                &[("context", "0".to_owned())],
+                None,
+            )
+            .ok()
+            .and_then(|response| {
+                let mut total = LineChanges::default();
+                for file in response.get("data")?.as_array()? {
+                    total.additions += file.get("additions")?.as_u64()?;
+                    total.deletions += file.get("deletions")?.as_u64()?;
+                }
+                Some(total)
+            });
+        Ok(SessionDetails {
+            branch,
+            branch_is_current: true,
+            changes,
+        })
+    }
+
+    pub fn set_session_archived(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        archived: bool,
+    ) -> Result<(), OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let session = self.session(&server, &project, session_id)?;
+        if archived && session.is_working {
+            return Err(OpenCodeError::Protocol(
+                "stop the running turn before archiving this session".into(),
+            ));
+        }
+        server.request_json(
+            Method::PATCH,
+            &format!("/api/session/{session_id}"),
+            &[],
+            Some(json!({ "archived": archived })),
+        )?;
         Ok(())
     }
 
@@ -254,8 +555,7 @@ impl OpenCodeProvider {
             std::mem::take(&mut *servers)
         };
         for (_, server) in servers {
-            server.alive.store(false, Ordering::Release);
-            let _ = self.inner.processes.terminate(server.process_id);
+            server.close(&self.inner.processes);
         }
         self.inner.lock_subscribers().clear();
     }
@@ -279,8 +579,9 @@ impl OpenCodeProvider {
         {
             return Err(OpenCodeError::SessionNotInProject);
         }
-        let session = session_info(value)
+        let mut session = session_info(value)
             .ok_or_else(|| OpenCodeError::Protocol("session response has no session ID".into()))?;
+        session.is_working = server.active_sessions()?.contains(&session.id);
         server.remember_session(&session.id);
         Ok(session)
     }
@@ -298,7 +599,18 @@ impl OpenCodeProvider {
             let dead = servers
                 .remove(project.path())
                 .expect("entry was just found");
-            let _ = self.inner.processes.terminate(dead.process_id);
+            dead.close(&self.inner.processes);
+        }
+
+        if let Some(server) = self
+            .inner
+            .service_file
+            .as_deref()
+            .and_then(discover_service)
+        {
+            self.listen(&server, project)?;
+            servers.insert(project.path().to_path_buf(), Arc::clone(&server));
+            return Ok(server);
         }
 
         let executable = match self.inner.executable.as_deref() {
@@ -358,33 +670,16 @@ impl OpenCodeProvider {
                 }
             }
         };
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(1))
-            .timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
+        let server = Arc::new(
+            OpenCodeServer::new(
+                Some(process_id),
+                format!("http://127.0.0.1:{port}"),
+                Some(password),
+            )
+            .inspect_err(|_| {
                 let _ = self.inner.processes.terminate(process_id);
-                OpenCodeError::Request(error.to_string())
-            })?;
-        let event_client = Client::builder()
-            .connect_timeout(Duration::from_secs(1))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
-                let _ = self.inner.processes.terminate(process_id);
-                OpenCodeError::Request(error.to_string())
-            })?;
-        let server = Arc::new(OpenCodeServer {
-            process_id,
-            base_url: format!("http://127.0.0.1:{port}"),
-            client,
-            event_client,
-            password,
-            alive: Arc::new(AtomicBool::new(true)),
-            session_ids: Mutex::new(HashSet::new()),
-            pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
-        });
+            })?,
+        );
 
         let query = [("directory", project.path().to_string_lossy().into_owned())];
         loop {
@@ -409,22 +704,119 @@ impl OpenCodeProvider {
             }
         }
 
-        if self.inner.closed.load(Ordering::Acquire) {
-            let _ = self.inner.processes.terminate(process_id);
-            return Err(OpenCodeError::Closed);
-        }
-        spawn_event_listener(
-            Arc::clone(&server),
-            project.path().to_path_buf(),
-            self.inner.approvals.clone(),
-            Arc::clone(&self.inner.subscribers),
-        );
+        self.listen(&server, project)?;
         servers.insert(project.path().to_path_buf(), Arc::clone(&server));
         Ok(server)
     }
+
+    fn listen(&self, server: &Arc<OpenCodeServer>, project: &Project) -> Result<(), OpenCodeError> {
+        let result = if self.inner.closed.load(Ordering::Acquire) {
+            Err(OpenCodeError::Closed)
+        } else {
+            spawn_event_listener(
+                Arc::clone(server),
+                project.path().to_path_buf(),
+                self.inner.approvals.clone(),
+                Arc::clone(&self.inner.subscribers),
+            )
+        };
+        if result.is_err() {
+            server.close(&self.inner.processes);
+        }
+        result
+    }
+}
+
+fn select_model(
+    server: &OpenCodeServer,
+    project: &Project,
+    session: &OpenCodeSession,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Result<(), OpenCodeError> {
+    if model.is_none() && effort.is_none() {
+        return Ok(());
+    }
+    let selected_model = model.or(session.model.as_deref());
+    let fallback = if selected_model.is_none() {
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let response = server.request_json(Method::GET, "/api/model/default", &query, None)?;
+        response.get("data").and_then(model_id)
+    } else {
+        None
+    };
+    let selected_model = selected_model.or(fallback.as_deref()).ok_or_else(|| {
+        OpenCodeError::Protocol("no model available for the selected effort".into())
+    })?;
+    // Changing models resets the variant; an empty effort explicitly selects the base model.
+    let selected_effort = effort.unwrap_or_else(|| {
+        if model.is_some_and(|model| session.model.as_deref() != Some(model)) {
+            ""
+        } else {
+            session.effort.as_deref().unwrap_or("")
+        }
+    });
+    if session.model.as_deref() != Some(selected_model)
+        || session.effort.as_deref().unwrap_or("") != selected_effort
+    {
+        server.request_json(
+            Method::POST,
+            &format!("/api/session/{}/model", session.id),
+            &[],
+            Some(json!({ "model": model_ref(selected_model, Some(selected_effort))? })),
+        )?;
+    }
+    Ok(())
 }
 
 impl OpenCodeServer {
+    fn new(
+        process_id: Option<ProcessId>,
+        base_url: String,
+        password: Option<String>,
+    ) -> Result<Self, OpenCodeError> {
+        let builder = || {
+            Client::builder()
+                .connect_timeout(Duration::from_secs(1))
+                .redirect(reqwest::redirect::Policy::none())
+        };
+        Ok(Self {
+            process_id,
+            base_url,
+            client: builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .map_err(|error| OpenCodeError::Request(error.to_string()))?,
+            event_client: builder()
+                .build()
+                .map_err(|error| OpenCodeError::Request(error.to_string()))?,
+            password,
+            alive: Arc::new(AtomicBool::new(true)),
+            session_ids: Mutex::new(HashSet::new()),
+            pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
+        })
+    }
+
+    fn authenticate(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        match &self.password {
+            Some(password) => request.basic_auth("opencode", Some(password)),
+            None => request,
+        }
+    }
+
+    fn close(&self, processes: &ProcessRegistry) {
+        self.alive.store(false, Ordering::Release);
+        if let Some(id) = self.process_id {
+            let _ = processes.terminate(id);
+        }
+    }
+
     fn request_json(
         &self,
         method: Method,
@@ -433,10 +825,7 @@ impl OpenCodeServer {
         body: Option<Value>,
     ) -> Result<Value, OpenCodeError> {
         let url = api_url(&self.base_url, path, query)?;
-        let mut request = self
-            .client
-            .request(method, url)
-            .basic_auth("opencode", Some(&self.password));
+        let mut request = self.authenticate(self.client.request(method, url));
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -457,6 +846,17 @@ impl OpenCodeServer {
             .insert(session_id.to_owned());
     }
 
+    fn active_sessions(&self) -> Result<HashSet<String>, OpenCodeError> {
+        // Activity belongs to the runtime drain, not persisted busy/idle times.
+        // A running session can have no busy timestamp (or a previous idle time).
+        let response = self.request_json(Method::GET, "/api/session/active", &[], None)?;
+        let active = response
+            .get("data")
+            .and_then(Value::as_object)
+            .ok_or_else(|| OpenCodeError::Protocol("active sessions has no data map".into()))?;
+        Ok(active.keys().cloned().collect())
+    }
+
     fn owns_session(&self, session_id: &str) -> bool {
         self.session_ids
             .lock()
@@ -470,16 +870,14 @@ fn spawn_event_listener(
     project_path: PathBuf,
     approvals: ApprovalBroker,
     subscribers: EventSubscribers,
-) {
+) -> Result<(), OpenCodeError> {
+    let (ready, receiver) = mpsc::channel();
     thread::spawn(move || {
         let url = match api_url(&server.base_url, "/api/event", &[]) {
             Ok(url) => url,
             Err(_) => return,
         };
-        let request = server
-            .event_client
-            .get(url)
-            .basic_auth("opencode", Some(&server.password));
+        let request = server.authenticate(server.event_client.get(url));
         let result = request.send();
         let Ok(response) = result else {
             publish_disconnected(&server, &project_path, &approvals, &subscribers);
@@ -491,32 +889,102 @@ fn spawn_event_listener(
         }
 
         let mut reader = BufReader::new(response);
-        let _ = read_sse_frames(&mut reader, |payload| {
-            let Ok(event) = parse_event(&payload, &project_path) else {
-                return;
-            };
-            if !event_belongs_to_project(
-                event.location.as_ref(),
-                &event.data,
-                &project_path,
-                &server,
-            ) {
-                return;
-            }
-
-            if event.event_type == "permission.asked" {
-                request_permission(
-                    &server,
-                    &approvals,
-                    &project_path,
-                    &subscribers,
+        let mut ready = Some(ready);
+        let _ = read_sse_frames(
+            &mut reader,
+            || server.alive.load(Ordering::Acquire),
+            |payload| {
+                let Ok(event) = parse_event(&payload, &project_path) else {
+                    return;
+                };
+                // Wait for the stream's first frame before admitting prompts or
+                // fetching snapshots: SSE subscriptions have no replay.
+                if let Some(ready) = ready.take() {
+                    let _ = ready.send(());
+                }
+                if !server.alive.load(Ordering::Acquire) {
+                    return;
+                }
+                if !event_belongs_to_project(
+                    event.location.as_ref(),
                     &event.data,
-                );
-            }
-            publish_event(&subscribers, event);
-        });
+                    &project_path,
+                    &server,
+                ) {
+                    return;
+                }
+
+                if event.event_type == "permission.asked" {
+                    request_permission(
+                        &server,
+                        &approvals,
+                        &project_path,
+                        &subscribers,
+                        &event.data,
+                    );
+                }
+                publish_event(&subscribers, event);
+            },
+        );
         publish_disconnected(&server, &project_path, &approvals, &subscribers);
     });
+    receiver
+        .recv_timeout(SERVER_START_TIMEOUT)
+        .map_err(|error| OpenCodeError::ServerNotReady(format!("event subscription: {error}")))
+}
+
+fn service_file() -> Option<PathBuf> {
+    env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .map(|state| state.join("opencode/service.json"))
+}
+
+fn discover_service(file: &Path) -> Option<Arc<OpenCodeServer>> {
+    let registration: Value = serde_json::from_slice(&fs::read(file).ok()?).ok()?;
+    let url = Url::parse(registration.get("url")?.as_str()?).ok()?;
+    let host = url.host_str()?;
+    let local = host == "localhost"
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if !local || !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let server = OpenCodeServer::new(
+        None,
+        url.to_string(),
+        registration
+            .get("password")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    )
+    .ok()?;
+    let response = server
+        .authenticate(
+            server
+                .client
+                .get(api_url(&server.base_url, "/api/info", &[]).ok()?),
+        )
+        .timeout(Duration::from_secs(2))
+        .send()
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let info: Value = response.json().ok()?;
+    let version = info.get("version")?.as_str()?;
+    if info.get("pid")?.as_u64()? != registration.get("pid")?.as_u64()?
+        || !version.starts_with("2.")
+        || registration
+            .get("version")
+            .and_then(Value::as_str)
+            .is_some_and(|registered| registered != version)
+    {
+        return None;
+    }
+    Some(Arc::new(server))
 }
 
 fn request_permission(
@@ -614,6 +1082,8 @@ fn request_permission(
                 OpenCodeEvent {
                     project_path: project_path.to_string_lossy().into_owned(),
                     event_type: "permission.reply.failed".to_owned(),
+                    id: None,
+                    created: None,
                     data: json!({ "sessionID": session_id, "message": error.to_string() }),
                     location: Some(json!({ "directory": project_path.to_string_lossy() })),
                 },
@@ -678,6 +1148,8 @@ fn publish_disconnected(
             OpenCodeEvent {
                 project_path: project_path.clone(),
                 event_type: "server.disconnected".to_owned(),
+                id: None,
+                created: None,
                 data: Value::Null,
                 location: Some(json!({ "directory": project_path })),
             },
@@ -715,13 +1187,17 @@ fn deny_pending_approvals(
     }
 }
 
-fn read_sse_frames<R, F>(reader: &mut R, mut on_data: F) -> io::Result<()>
+fn read_sse_frames<R, F>(
+    reader: &mut R,
+    mut active: impl FnMut() -> bool,
+    mut on_data: F,
+) -> io::Result<()>
 where
     R: BufRead,
     F: FnMut(String),
 {
     let mut data = Vec::new();
-    loop {
+    while active() {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
             if !data.is_empty() {
@@ -745,6 +1221,7 @@ where
             data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
         }
     }
+    Ok(())
 }
 
 fn capture_server_password(stdout: ChildStdout) -> Receiver<Result<String, String>> {
@@ -833,13 +1310,50 @@ fn parse_event(payload: &str, project_path: &Path) -> Result<OpenCodeEvent, Open
     Ok(OpenCodeEvent {
         project_path: project_path.to_string_lossy().into_owned(),
         event_type: event_type.to_owned(),
+        id: value.get("id").and_then(Value::as_str).map(str::to_owned),
+        created: value.get("created").and_then(Value::as_u64),
         data: value.get("data").cloned().unwrap_or(Value::Null),
         location: value.get("location").cloned(),
     })
 }
 
+fn model_ref(model: &str, effort: Option<&str>) -> Result<Value, OpenCodeError> {
+    model
+        .split_once('/')
+        .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
+        .map(|(provider, id)| {
+            let mut model = json!({ "providerID": provider, "id": id });
+            if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
+                model["variant"] = json!(effort);
+            }
+            model
+        })
+        .ok_or_else(|| OpenCodeError::Protocol("model must include its provider and ID".into()))
+}
+
+fn model_id(model: &Value) -> Option<String> {
+    Some(format!(
+        "{}/{}",
+        model.get("providerID")?.as_str()?,
+        model.get("id")?.as_str()?
+    ))
+}
+
 fn session_info(value: &Value) -> Option<OpenCodeSession> {
     Some(OpenCodeSession {
+        agent: value
+            .get("agent")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        model: value.get("model").and_then(model_id),
+        effort: Some(
+            value
+                .pointer("/model/variant")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        ),
+        is_working: false,
         id: value.get("id")?.as_str()?.to_owned(),
         title: value
             .get("title")
@@ -876,124 +1390,6 @@ fn valid_permission_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-}
-
-fn history_entries(messages: &[Value]) -> Vec<OpenCodeConversationEntry> {
-    let mut entries = Vec::new();
-    for message in messages {
-        let Some(message_id) = message.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        match message
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-        {
-            "user" => push_entry(
-                &mut entries,
-                message_id,
-                "user",
-                message
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            ),
-            "assistant" => {
-                if let Some(parts) = message.get("content").and_then(Value::as_array) {
-                    for (index, part) in parts.iter().enumerate() {
-                        match part.get("type").and_then(Value::as_str).unwrap_or_default() {
-                            "text" => push_entry(
-                                &mut entries,
-                                &format!("{message_id}-{index}"),
-                                "assistant",
-                                part.get("text").and_then(Value::as_str).unwrap_or_default(),
-                            ),
-                            "tool" => {
-                                let name =
-                                    part.get("name").and_then(Value::as_str).unwrap_or("tool");
-                                let status = part
-                                    .get("state")
-                                    .and_then(|state| state.get("status"))
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("completed");
-                                let input = part
-                                    .get("state")
-                                    .and_then(|state| state.get("input"))
-                                    .map(tool_input_summary)
-                                    .unwrap_or_default();
-                                let text = if input.is_empty() {
-                                    format!("Using tool: {name} ({status})")
-                                } else {
-                                    format!("Using tool: {name} ({status})\n{input}")
-                                };
-                                push_entry(
-                                    &mut entries,
-                                    part.get("id").and_then(Value::as_str).unwrap_or(message_id),
-                                    "activity",
-                                    &text,
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            "shell" => {
-                let command = message
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .unwrap_or("shell command");
-                let status = message
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or("running");
-                push_entry(
-                    &mut entries,
-                    message_id,
-                    "activity",
-                    &format!("Running: {command} ({status})"),
-                );
-            }
-            "idle" => {
-                let outcome = message
-                    .get("outcome")
-                    .and_then(Value::as_str)
-                    .unwrap_or("idle");
-                push_entry(
-                    &mut entries,
-                    message_id,
-                    "status",
-                    &format!("Session {outcome}"),
-                );
-            }
-            "system" | "synthetic" => {
-                if let Some(text) = message.get("text").and_then(Value::as_str) {
-                    push_entry(&mut entries, message_id, "status", text);
-                }
-            }
-            _ => {}
-        }
-    }
-    entries
-}
-
-fn push_entry(entries: &mut Vec<OpenCodeConversationEntry>, id: &str, kind: &str, text: &str) {
-    if text.is_empty() {
-        return;
-    }
-    entries.push(OpenCodeConversationEntry {
-        id: format!("opencode-{kind}-{id}"),
-        kind: kind.to_owned(),
-        text: text.to_owned(),
-    });
-}
-
-fn tool_input_summary(input: &Value) -> String {
-    if let Some(command) = input.get("command").and_then(Value::as_str) {
-        return command.to_owned();
-    }
-    let summary = serde_json::to_string(input).unwrap_or_default();
-    summary.chars().take(600).collect()
 }
 
 fn publish_event(subscribers: &EventSubscribers, event: OpenCodeEvent) {
@@ -1089,8 +1485,7 @@ impl Drop for ProviderInner {
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (_, server) in std::mem::take(servers) {
-            server.alive.store(false, Ordering::Release);
-            let _ = self.processes.terminate(server.process_id);
+            server.close(&self.processes);
         }
     }
 }
@@ -1171,28 +1566,9 @@ mod tests {
         let mut reader = BufReader::new(&input[..]);
         let mut frames = Vec::new();
 
-        read_sse_frames(&mut reader, |frame| frames.push(frame)).unwrap();
+        read_sse_frames(&mut reader, || true, |frame| frames.push(frame)).unwrap();
 
         assert_eq!(frames, ["{\n\"type\":\"session.text.delta\"}", "final"]);
-    }
-
-    #[test]
-    fn history_parser_preserves_user_text_assistant_text_and_tool_activity() {
-        let messages = json!([
-            {"id":"msg_user","type":"user","text":"Fix the bug"},
-            {"id":"msg_assistant","type":"assistant","content":[
-                {"type":"text","text":"I will inspect it."},
-                {"type":"tool","id":"part_tool","name":"bash","state":{"status":"completed","input":{"command":"cargo test"}}}
-            ]}
-        ]);
-
-        let entries = history_entries(messages.as_array().unwrap());
-
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].kind, "user");
-        assert_eq!(entries[1].kind, "assistant");
-        assert_eq!(entries[2].kind, "activity");
-        assert!(entries[2].text.contains("cargo test"));
     }
 
     #[test]
@@ -1205,12 +1581,14 @@ mod tests {
     #[test]
     fn event_parser_maps_open_code_sse_payload_to_the_desktop_contract() {
         let event = parse_event(
-            r#"{"id":"evt_1","type":"session.text.delta","location":{"directory":"/workspace"},"data":{"sessionID":"ses_1","delta":"hi"}}"#,
+            r#"{"id":"evt_1","created":123,"type":"session.text.delta","location":{"directory":"/workspace"},"data":{"sessionID":"ses_1","delta":"hi"}}"#,
             Path::new("/workspace"),
         )
         .unwrap();
 
         assert_eq!(event.event_type, "session.text.delta");
+        assert_eq!(event.id.as_deref(), Some("evt_1"));
+        assert_eq!(event.created, Some(123));
         assert_eq!(event.project_path, "/workspace");
         assert_eq!(event.data["sessionID"], "ses_1");
         assert_eq!(event.location.as_ref().unwrap()["directory"], "/workspace");
@@ -1312,11 +1690,11 @@ mod tests {
         let client = Client::builder().build().unwrap();
         let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let server = Arc::new(OpenCodeServer {
-            process_id,
+            process_id: Some(process_id),
             base_url: "http://127.0.0.1:1".to_owned(),
             client: client.clone(),
             event_client: client,
-            password: "unused-test-password".to_owned(),
+            password: Some("unused-test-password".to_owned()),
             alive: Arc::new(AtomicBool::new(true)),
             session_ids: Mutex::new(HashSet::new()),
             pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
@@ -1356,11 +1734,11 @@ import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 PROJECT = os.getcwd()
 PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
-SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}}
+SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}, "model": {"providerID": "local", "id": "original"}, "agent": "build"}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
@@ -1405,16 +1783,81 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
         elif path == "/api/session":
-            self.send_json({"data": [SESSION], "cursor": {"previous": None, "next": None}})
+            assert parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["false"]
+            self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
+        elif path == "/api/session/active":
+            self.send_json({"data": {"ses_fake": {"type": "running"}} if os.path.exists(os.path.join(PROJECT, "busy")) else {}})
         elif path == "/api/session/ses_fake":
-            self.send_json({"data": SESSION})
+            session = dict(SESSION)
+            self.send_json({"data": session})
+        elif path == "/api/session/ses_foreign":
+            self.send_json({"data": {"id": "ses_foreign", "location": {"directory": os.path.dirname(PROJECT)}}})
+        elif path == "/api/vcs":
+            assert parse_qs(urlsplit(self.path).query)["location[directory]"] == [PROJECT]
+            if os.path.exists(os.path.join(PROJECT, "no-vcs")):
+                self.send_error(404)
+                return
+            self.send_json({"data": {"branch": {"current": "feature/current"}}})
+        elif path == "/api/session/ses_fake/diff":
+            assert parse_qs(urlsplit(self.path).query) == {"context": ["0"]}
+            if os.path.exists(os.path.join(PROJECT, "no-vcs")):
+                self.send_error(404)
+                return
+            self.send_json({"data": [{"additions": 12, "deletions": 2}, {"additions": 3, "deletions": 5}]})
         elif path == "/api/session/ses_fake/message":
+            query = parse_qs(urlsplit(self.path).query)
+            if "cursor" in query:
+                assert query["cursor"] == ["older+opaque/=="] and "order" not in query
+                self.send_json({"data": [{"id": "msg_old", "type": "user", "text": "Oldest"}], "cursor": {"previous": None, "next": None}})
+                return
+            assert query["order"] == ["desc"] and query["limit"] == ["50"]
             self.send_json({"data": [
-                {"id": "msg_assistant", "type": "assistant", "content": [{"type": "text", "text": "Earlier answer"}]},
+                {"id": "msg_assistant", "type": "assistant", "content": [{"type": "text", "text": "Earlier answer"}, {"id": "tool_1", "type": "tool", "name": "bash", "state": {"status": "completed", "input": {"command": "cargo test"}, "content": [{"type": "text", "text": "All passed"}]}}]},
                 {"id": "msg_user", "type": "user", "text": "Earlier prompt"}
-            ], "cursor": {"previous": None, "next": None}})
+            ], "cursor": {"previous": None, "next": "older+opaque/=="}})
+        elif path == "/api/model":
+            self.send_json({"data": [
+                {"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True, "limit": {"context": 200000}, "variants": [{"id": "low"}, {"id": "high"}]},
+                {"id": "model/a", "providerID": "router", "canonical": "local", "name": "Model A", "enabled": True, "limit": {"context": 0}},
+                {"id": "model/a", "providerID": "custom", "name": "Model A", "enabled": True},
+                {"id": "disabled", "providerID": "local", "name": "Hidden", "enabled": False}
+            ]})
+        elif path == "/api/provider":
+            assert parse_qs(urlsplit(self.path).query)["location[directory]"] == [PROJECT]
+            if os.path.exists(os.path.join(PROJECT, "no-providers")):
+                self.send_error(503)
+                return
+            self.send_json({"data": [{"id": "local", "name": "Local gateway"}, {"id": "router", "name": "OpenRouter"}]})
+        elif path == "/api/model/default":
+            self.send_json({"data": {"providerID": "local", "id": "model/a"}})
+        elif path == "/api/agent":
+            self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "plan", "name": "Plan", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}, {"id": "hidden", "name": "Hidden", "mode": "primary", "hidden": True}]})
+        elif path in ["/api/command", "/api/experimental/usage/limits"]:
+            assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
+            if os.path.exists(os.path.join(PROJECT, "command-api-error")):
+                self.send_error(503)
+                return
+            if path == "/api/command":
+                data = [{"name": "goal", "description": "Set or control an objective"}, {"name": "team/review"}]
+            else:
+                usage = os.path.join(PROJECT, "usage.json")
+                with open(usage) as source:
+                    data = json.load(source)
+            self.send_json({"location": {"directory": PROJECT}, "data": data})
         else:
             self.send_error(404)
+
+    def do_PATCH(self):
+        if not self.authorized(): return
+        assert urlsplit(self.path).path == "/api/session/ses_fake"
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        assert set(body) == {"archived"} and isinstance(body["archived"], bool)
+        if os.path.exists(os.path.join(PROJECT, "archive-error")):
+            self.send_error(500)
+            return
+        SESSION["archived"] = body["archived"]
+        self.send_response(204)
+        self.end_headers()
 
     def do_POST(self):
         if not self.authorized():
@@ -1422,10 +1865,38 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length) or b"{}")
         path = urlsplit(self.path).path
+        with open(os.path.join(PROJECT, "requests.jsonl"), "a") as requests:
+            requests.write(json.dumps({"path": path, "body": body}) + "\n")
         if path == "/api/session":
+            if body.get("model"):
+                assert body["model"] == {"providerID": "local", "id": "model/a"}
+                assert body["agent"] == "build"
+                SESSION["model"] = body["model"]
             self.send_json({"data": SESSION})
+        elif path == "/api/session/ses_fake/model":
+            if body["model"]["id"] == "missing" or body["model"].get("variant") == "invalid":
+                self.send_error(400)
+                return
+            SESSION["model"] = body["model"]
+            self.send_response(204)
+            self.end_headers()
+        elif path == "/api/session/ses_fake/agent":
+            assert set(body) == {"agent"}
+            if body["agent"] not in ["build", "plan"]:
+                self.send_error(400)
+                return
+            SESSION["agent"] = body["agent"]
+            self.send_response(204)
+            self.end_headers()
         elif path == "/api/session/ses_fake/prompt":
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
+        elif path == "/api/session/ses_fake/command":
+            assert set(body) == {"name", "text", "files"}
+            if body["name"] not in ["goal", "team/review"]:
+                self.send_error(404)
+                return
+            self.send_response(204)
+            self.end_headers()
         elif path == "/api/session/ses_fake/interrupt":
             self.send_json({"interrupted": True})
         elif path == "/api/session/ses_fake/permission/per_fake/reply":
@@ -1457,15 +1928,336 @@ server.serve_forever()
 
         let listed = provider.list_sessions(&project_path).unwrap();
         assert_eq!(listed.sessions[0].id, "ses_fake");
-        let started = provider.start_session(&project_path).unwrap();
-        assert_eq!(started.session.id, "ses_fake");
+        let commands = provider.commands(&project_path).unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].name, "goal");
         assert_eq!(
-            provider.session_history(&project_path, "ses_fake").unwrap()[0].text,
-            "Earlier prompt"
+            commands[0].description.as_deref(),
+            Some("Set or control an objective")
         );
+        assert_eq!(commands[1].name, "team/review");
+        assert_eq!(commands[1].description, None);
+        let limits = json!({
+            "workspace": { "id": "workspace", "usageURL": "https://opencode.ai/workspace/usage" },
+            "go": {
+                "rolling": { "percent": 42, "limited": false, "resetsAt": 1800000000000_u64 },
+                "weekly": { "percent": 20, "limited": false, "resetsAt": 1800100000000_u64 },
+                "monthly": { "percent": 100, "limited": true, "resetsAt": 1800200000000_u64 }
+            },
+            "budgets": []
+        });
+        fs::write(
+            project_path.join("usage.json"),
+            serde_json::to_vec(&limits).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(provider.usage_limits(&project_path).unwrap(), limits);
+        fs::write(project_path.join("usage.json"), "null").unwrap();
+        assert!(provider.usage_limits(&project_path).unwrap().is_null());
+        fs::write(project_path.join("command-api-error"), "").unwrap();
+        assert!(provider.commands(&project_path).is_err());
+        assert!(provider.usage_limits(&project_path).is_err());
+        fs::remove_file(project_path.join("command-api-error")).unwrap();
+        let choices = provider.choices(&project_path).unwrap();
+        assert_eq!(choices.models.len(), 3);
+        assert_eq!(choices.models[0].id, "local/model/a");
+        assert_eq!(choices.models[1].id, "router/model/a");
+        assert_eq!(choices.models[0].context_window, Some(200_000));
+        assert_eq!(choices.models[1].context_window, None);
+        assert_eq!(choices.models[2].context_window, None);
+        assert_eq!(
+            choices.models[0].provider.as_ref().unwrap().name,
+            "Local gateway"
+        );
+        assert_eq!(choices.models[1].provider.as_ref().unwrap().id, "router");
+        assert_eq!(
+            choices.models[1].provider.as_ref().unwrap().name,
+            "OpenRouter"
+        );
+        assert_eq!(choices.models[2].provider.as_ref().unwrap().name, "custom");
+        fs::write(project_path.join("no-providers"), "").unwrap();
+        let fallback = provider.choices(&project_path).unwrap();
+        assert_eq!(fallback.models.len(), 3);
+        assert_eq!(fallback.models[0].provider.as_ref().unwrap().name, "local");
+        assert_eq!(fallback.models[1].provider.as_ref().unwrap().name, "router");
+        assert_eq!(choices.agents.len(), 2);
+        assert_eq!(choices.default_model.as_deref(), Some("local/model/a"));
+        assert_eq!(
+            choices.models[0]
+                .efforts
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect::<Vec<_>>(),
+            ["low", "high"]
+        );
+        let started = provider
+            .start_session_with_options(&project_path, Some(&choices.models[0].id), Some("build"))
+            .unwrap();
+        assert_eq!(started.session.id, "ses_fake");
+        assert_eq!(started.session.model.as_deref(), Some("local/model/a"));
+        assert_eq!(started.session.agent.as_deref(), Some("build"));
+        let history = provider
+            .session_history(&project_path, "ses_fake", None)
+            .unwrap();
+        assert_eq!(history.data[0]["text"], "Earlier prompt");
+        assert_eq!(history.model.as_deref(), Some("local/model/a"));
+        assert_eq!(history.agent.as_deref(), Some("build"));
+        assert_eq!(
+            history.data[1]["content"][1]["state"]["content"][0]["text"],
+            "All passed"
+        );
+        let older = provider
+            .session_history(&project_path, "ses_fake", history.next_cursor.as_deref())
+            .unwrap();
+        assert_eq!(older.data[0]["text"], "Oldest");
+        assert_eq!(older.next_cursor, None);
         provider
             .send_prompt(&project_path, "ses_fake", "Continue")
             .unwrap();
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Switch model",
+                Some("msg_selected"),
+                Some("other/model/b"),
+                Some("high"),
+            )
+            .unwrap();
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .model
+                .as_deref(),
+            Some("other/model/b")
+        );
+        let requests = || {
+            fs::read_to_string(project_path.join("requests.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let sent = requests();
+        let switch = &sent[sent.len() - 2];
+        assert_eq!(switch["path"], "/api/session/ses_fake/model");
+        assert_eq!(
+            switch["body"],
+            json!({ "model": { "providerID": "other", "id": "model/b", "variant": "high" } })
+        );
+        assert_eq!(
+            sent.last().unwrap()["body"],
+            json!({ "text": "Switch model", "id": "msg_selected" })
+        );
+        assert!(provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Do not send with a rejected model",
+                None,
+                Some("other/missing"),
+                None,
+            )
+            .is_err());
+        assert_eq!(requests().len(), sent.len() + 1);
+        assert_eq!(
+            requests().last().unwrap()["path"],
+            "/api/session/ses_fake/model"
+        );
+        assert_eq!(
+            provider
+                .session_history(&project_path, "ses_fake", None)
+                .unwrap()
+                .effort
+                .as_deref(),
+            Some("high")
+        );
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Change effort",
+                None,
+                None,
+                Some("low"),
+            )
+            .unwrap();
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .effort
+                .as_deref(),
+            Some("low")
+        );
+        let sent = requests();
+        assert_eq!(
+            sent[sent.len() - 2]["body"],
+            json!({ "model": { "providerID": "other", "id": "model/b", "variant": "low" } })
+        );
+        assert!(provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Rejected effort must not send",
+                None,
+                None,
+                Some("invalid")
+            )
+            .is_err());
+        assert_eq!(requests().len(), sent.len() + 1);
+        provider
+            .send_prompt_with_options(
+                &project_path,
+                "ses_fake",
+                "Default effort",
+                None,
+                None,
+                Some(""),
+            )
+            .unwrap();
+        let sent = requests();
+        assert_eq!(
+            sent[sent.len() - 2]["body"],
+            json!({ "model": { "providerID": "other", "id": "model/b" } })
+        );
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .effort
+                .as_deref(),
+            Some("")
+        );
+        provider
+            .select_agent(&project_path, "ses_fake", "plan")
+            .unwrap();
+        assert_eq!(
+            requests().last().unwrap(),
+            &json!({
+                "path": "/api/session/ses_fake/agent", "body": { "agent": "plan" }
+            })
+        );
+        let resumed = provider.resume_session(&project_path, "ses_fake").unwrap();
+        assert_eq!(resumed.session.agent.as_deref(), Some("plan"));
+        assert_eq!(resumed.session.model.as_deref(), Some("other/model/b"));
+        assert_eq!(resumed.session.effort.as_deref(), Some(""));
+        assert_eq!(
+            provider
+                .session_history(&project_path, "ses_fake", None)
+                .unwrap()
+                .agent
+                .as_deref(),
+            Some("plan")
+        );
+        let count = requests().len();
+        provider
+            .select_agent(&project_path, "ses_fake", "plan")
+            .unwrap();
+        assert!(matches!(
+            provider.select_agent(&project_path, "ses_foreign", "build"),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        assert!(provider
+            .select_agent(&project_path, "ses_fake", "")
+            .is_err());
+        assert_eq!(requests().len(), count);
+        assert!(provider
+            .select_agent(&project_path, "ses_fake", "missing")
+            .is_err());
+        assert_eq!(
+            provider
+                .resume_session(&project_path, "ses_fake")
+                .unwrap()
+                .session
+                .agent
+                .as_deref(),
+            Some("plan")
+        );
+        let mut command: OpenCodeCommandInput = serde_json::from_value(json!({
+            "name": "team/review", "text": "src/main.rs\nKeep Unicode: 日本語 🚀\n",
+            "files": [{ "uri": "data:text/plain;base64,aGVsbG8K", "name": "src/main.rs", "description": "Lines 2–3 of src/main.rs" }]
+        })).unwrap();
+        let count = requests().len();
+        assert!(matches!(
+            provider.run_command(
+                &project_path,
+                "ses_foreign",
+                &command,
+                Some("local/model/a"),
+                Some("low")
+            ),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        assert_eq!(requests().len(), count);
+        assert!(provider
+            .run_command(
+                &project_path,
+                "ses_fake",
+                &command,
+                Some("other/missing"),
+                None
+            )
+            .is_err());
+        assert_eq!(requests().len(), count + 1);
+        assert_eq!(
+            requests().last().unwrap()["path"],
+            "/api/session/ses_fake/model"
+        );
+        provider
+            .run_command(
+                &project_path,
+                "ses_fake",
+                &command,
+                Some("local/model/a"),
+                Some("low"),
+            )
+            .unwrap();
+        let sent = requests();
+        assert_eq!(
+            sent[sent.len() - 2]["body"],
+            json!({ "model": { "providerID": "local", "id": "model/a", "variant": "low" } })
+        );
+        assert_eq!(
+            sent.last().unwrap(),
+            &json!({ "path": "/api/session/ses_fake/command", "body": command })
+        );
+        command.name = "goal".into();
+        command.files.clear();
+        fs::write(project_path.join("busy"), "").unwrap();
+        for text in [
+            "Finish the task\nThen summarize.",
+            "pause",
+            "resume",
+            "clear",
+            "",
+        ] {
+            command.text = text.into();
+            let count = requests().len();
+            provider
+                .run_command(&project_path, "ses_fake", &command, None, None)
+                .unwrap();
+            assert_eq!(requests().len(), count + 1);
+            assert_eq!(
+                requests().last().unwrap()["body"],
+                json!({ "name": "goal", "text": text, "files": [] })
+            );
+        }
+        fs::remove_file(project_path.join("busy")).unwrap();
+        command.name = "unknown".into();
+        assert!(provider
+            .run_command(&project_path, "ses_fake", &command, None, None)
+            .is_err());
+        command.name = " ".into();
+        let count = requests().len();
+        assert!(provider
+            .run_command(&project_path, "ses_fake", &command, None, None)
+            .is_err());
+        assert_eq!(requests().len(), count);
         provider.cancel_turn(&project_path, "ses_fake").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut received_text = false;
@@ -1511,12 +2303,71 @@ server.serve_forever()
         let reply: Value = serde_json::from_slice(&fs::read(approval_path).unwrap()).unwrap();
         assert_eq!(reply["decision"], "once");
 
+        let details = provider.session_details(&project_path, "ses_fake").unwrap();
+        assert_eq!(details.branch.as_deref(), Some("feature/current"));
+        assert!(details.branch_is_current);
+        assert_eq!(
+            details.changes,
+            Some(LineChanges {
+                additions: 15,
+                deletions: 7
+            })
+        );
+        fs::write(project_path.join("no-vcs"), "").unwrap();
+        let details = provider.session_details(&project_path, "ses_fake").unwrap();
+        assert_eq!(details.branch, None);
+        assert_eq!(details.changes, None);
+        assert!(matches!(
+            provider.session_details(&project_path, "ses_foreign"),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        for archived in [true, false] {
+            assert!(matches!(
+                provider.set_session_archived(&project_path, "ses_foreign", archived),
+                Err(OpenCodeError::SessionNotInProject)
+            ));
+        }
+        fs::write(project_path.join("busy"), "").unwrap();
+        assert!(provider
+            .set_session_archived(&project_path, "ses_fake", true)
+            .is_err());
+        fs::remove_file(project_path.join("busy")).unwrap();
+        fs::write(project_path.join("archive-error"), "").unwrap();
+        assert!(provider
+            .set_session_archived(&project_path, "ses_fake", true)
+            .is_err());
+        assert_eq!(
+            provider
+                .list_sessions(&project_path)
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        fs::remove_file(project_path.join("archive-error")).unwrap();
+        provider
+            .set_session_archived(&project_path, "ses_fake", true)
+            .unwrap();
+        assert!(provider
+            .list_sessions(&project_path)
+            .unwrap()
+            .sessions
+            .is_empty());
+        provider
+            .set_session_archived(&project_path, "ses_fake", false)
+            .unwrap();
+        assert_eq!(
+            provider.list_sessions(&project_path).unwrap().sessions[0].id,
+            "ses_fake"
+        );
+
         let process_id = provider
             .inner
             .lock_servers()
             .get(&Project::open(&project_path).unwrap().path().to_path_buf())
             .unwrap()
-            .process_id;
+            .process_id
+            .unwrap();
         provider.shutdown();
         assert!(matches!(
             processes.terminate(process_id),
@@ -1528,5 +2379,186 @@ server.serve_forever()
     fn reserve_local_port_returns_a_loopback_port_that_can_be_rebound() {
         let port = reserve_local_port().unwrap();
         assert_ne!(port, 0);
+    }
+
+    #[test]
+    fn registered_service_streams_external_work_and_survives_provider_shutdown() {
+        if Command::new("python3").arg("--version").output().is_err() {
+            return;
+        }
+        struct ExternalServer(std::process::Child);
+        impl Drop for ExternalServer {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        for password in [None, Some("shared-secret")] {
+            let directory = TestDirectory::new();
+            let script = directory.0.join("service.py");
+            fs::write(&script, r#"
+import base64, json, os, queue, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+events = queue.Queue()
+subscribed = False
+password = os.environ.get('TEST_PASSWORD')
+session = {'id': 'ses_shared', 'title': 'External work', 'location': {'directory': os.getcwd()}, 'time': {'idle': 1}}
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args): pass
+    def authorized(self):
+        expected = 'Basic ' + base64.b64encode(('opencode:' + password).encode()).decode() if password else None
+        if self.headers.get('Authorization') == expected: return True
+        self.send_error(401)
+        return False
+    def reply(self, value):
+        body = json.dumps(value).encode()
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        global subscribed
+        if not self.authorized(): return
+        path = urlsplit(self.path).path
+        if path == '/api/info':
+            self.reply({'pid': os.getpid(), 'version': '2.2.1'})
+        elif path == '/api/event':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.end_headers()
+            # Headers alone are not a subscription acknowledgement.
+            time.sleep(0.1)
+            subscribed = True
+            self.wfile.write(b'data: {"type":"server.connected","data":{}}\n\n')
+            self.wfile.flush()
+            try:
+                while True:
+                    try: frame = ('data: ' + json.dumps(events.get(timeout=0.1)) + '\n\n').encode()
+                    except queue.Empty: frame = b': keepalive\n\n'
+                    self.wfile.write(frame)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError): pass
+        elif path == '/api/session':
+            assert subscribed
+            self.reply({'data': [session]})
+        elif path == '/api/session/active':
+            if os.path.exists('activity-error'): self.send_error(503)
+            elif os.path.exists('activity-invalid'): self.reply({'data': []})
+            else: self.reply({'data': {} if os.path.exists('idle') else {'ses_shared': {'type': 'running'}}})
+        elif path == '/api/session/ses_shared': self.reply({'data': session})
+        elif path == '/api/session/ses_shared/message': self.reply({'data': [], 'cursor': {'next': None}})
+        else: self.send_error(404)
+    def do_POST(self):
+        if not self.authorized(): return
+        events.put({'type': 'session.text.delta', 'location': {'directory': '/other-project'}, 'data': {'sessionID': 'ses_shared', 'delta': 'Wrong project'}})
+        events.put({'type': 'session.reasoning.delta', 'data': {'sessionID': 'ses_shared', 'assistantMessageID': 'msg_external', 'ordinal': 0, 'delta': 'External thinking'}})
+        self.reply({})
+server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+print('http://127.0.0.1:' + str(server.server_port), flush=True)
+server.serve_forever()
+"#).unwrap();
+            let mut command = Command::new("python3");
+            command
+                .arg(script)
+                .current_dir(&directory.0)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            if let Some(password) = password {
+                command.env("TEST_PASSWORD", password);
+            } else {
+                command.env_remove("TEST_PASSWORD");
+            }
+            let mut external = ExternalServer(command.spawn().unwrap());
+            let mut url = String::new();
+            BufReader::new(external.0.stdout.take().unwrap())
+                .read_line(&mut url)
+                .unwrap();
+            let url = url.trim();
+            let registration = directory.0.join("service.json");
+            let mut record = json!({ "url": url, "pid": external.0.id(), "version": "2.2.1", "password": password });
+            // Stale registrations must not attach to a different process/version.
+            record["pid"] = json!(external.0.id() + 1);
+            fs::write(&registration, record.to_string()).unwrap();
+            assert!(discover_service(&registration).is_none());
+            record["pid"] = json!(external.0.id());
+            record["version"] = json!("2.0.0");
+            fs::write(&registration, record.to_string()).unwrap();
+            assert!(discover_service(&registration).is_none());
+            record["version"] = json!("2.2.1");
+            fs::write(&registration, record.to_string()).unwrap();
+
+            let mut provider = OpenCodeProvider::new(
+                Arc::new(ProcessRegistry::default()),
+                ApprovalBroker::default(),
+            );
+            Arc::get_mut(&mut provider.inner).unwrap().service_file = Some(registration);
+            let events = provider.subscribe();
+            let sessions = provider.list_sessions(&directory.0).unwrap();
+            assert!(sessions.sessions[0].is_working);
+            assert_eq!(
+                provider
+                    .session_history(&directory.0, "ses_shared", None)
+                    .unwrap()
+                    .is_working,
+                Some(true)
+            );
+            let server = Arc::clone(provider.inner.lock_servers().values().next().unwrap());
+            assert!(server.process_id.is_none());
+            // Trigger the service independently of Caelum's prompt endpoint.
+            server
+                .request_json(Method::POST, "/external", &[], None)
+                .unwrap();
+            let event = events.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert_eq!(event.event_type, "session.reasoning.delta");
+            assert_eq!(event.data["delta"], "External thinking");
+            assert!(events.try_recv().is_err());
+            // Repeated history polls and resume must agree with the runtime,
+            // even though persisted session metadata has only an old idle time.
+            for _ in 0..3 {
+                assert!(
+                    provider
+                        .resume_session(&directory.0, "ses_shared")
+                        .unwrap()
+                        .session
+                        .is_working
+                );
+                assert_eq!(
+                    provider
+                        .session_history(&directory.0, "ses_shared", None)
+                        .unwrap()
+                        .is_working,
+                    Some(true)
+                );
+            }
+            // An unavailable or malformed activity response must not report idle.
+            fs::write(directory.0.join("activity-error"), "").unwrap();
+            assert!(matches!(
+                provider.session_history(&directory.0, "ses_shared", None),
+                Err(OpenCodeError::HttpStatus { status: 503, .. })
+            ));
+            fs::remove_file(directory.0.join("activity-error")).unwrap();
+            fs::write(directory.0.join("activity-invalid"), "").unwrap();
+            assert!(matches!(
+                provider.list_sessions(&directory.0),
+                Err(OpenCodeError::Protocol(_))
+            ));
+            fs::remove_file(directory.0.join("activity-invalid")).unwrap();
+            fs::write(directory.0.join("idle"), "").unwrap();
+            assert!(!provider.list_sessions(&directory.0).unwrap().sessions[0].is_working);
+            assert_eq!(
+                provider
+                    .session_history(&directory.0, "ses_shared", None)
+                    .unwrap()
+                    .is_working,
+                Some(false)
+            );
+            provider.shutdown();
+            assert!(external.0.try_wait().unwrap().is_none());
+            assert!(server
+                .request_json(Method::GET, "/api/info", &[], None)
+                .is_ok());
+        }
     }
 }
