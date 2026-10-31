@@ -1,8 +1,5 @@
 import type { AccentColor } from "./accentColors.js";
-import type {
-  ProviderKind,
-  ProviderWorkspaceState,
-} from "./workspaceState.js";
+import type { ProviderKind, ProviderWorkspaceState } from "./workspaceState.js";
 
 export type Theme = "dark" | "light" | "system";
 export type ProviderDefaults = {
@@ -14,6 +11,7 @@ export type AppSettings = {
   theme: Theme;
   accentColor: AccentColor;
   defaultProvider: ProviderKind;
+  worktreeDirectory: string;
   favoriteModels: Record<ProviderKind, string[]>;
   providers: Record<ProviderKind, ProviderDefaults>;
 };

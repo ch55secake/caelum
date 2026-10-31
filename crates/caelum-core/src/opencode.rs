@@ -124,6 +124,13 @@ impl OpenCodeProvider {
     ) -> Result<OpenCodeSessionList, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
+        Self::list_sessions_on(&project, &server)
+    }
+
+    fn list_sessions_on(
+        project: &Project,
+        server: &OpenCodeServer,
+    ) -> Result<OpenCodeSessionList, OpenCodeError> {
         let query = [
             ("directory", project.path().to_string_lossy().into_owned()),
             ("archived", "false".to_owned()),
@@ -569,6 +576,47 @@ impl OpenCodeProvider {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
         sync_questions(&server, &self.inner.questions, project.path())
+    }
+
+    pub fn ensure_checkout_idle(&self, checkout: &Path) -> Result<(), OpenCodeError> {
+        let servers: Vec<_> = self
+            .inner
+            .lock_servers()
+            .iter()
+            .filter(|(path, server)| {
+                path.starts_with(checkout) && server.alive.load(Ordering::Acquire)
+            })
+            .map(|(path, server)| (path.clone(), Arc::clone(server)))
+            .collect();
+        for (path, server) in servers {
+            if Self::list_sessions_on(&Project::open(&path)?, &server)?
+                .sessions
+                .iter()
+                .any(|session| session.is_working)
+            {
+                return Err(OpenCodeError::Protocol(
+                    "Stop running OpenCode sessions before removing this worktree.".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn release_checkout(&self, checkout: &Path) {
+        let mut servers = self.inner.lock_servers();
+        let paths: Vec<_> = servers
+            .keys()
+            .filter(|path| path.starts_with(checkout))
+            .cloned()
+            .collect();
+        for path in paths {
+            if let Some(server) = servers.remove(&path) {
+                server.close(&self.inner.processes);
+                self.inner
+                    .questions
+                    .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
+            }
+        }
     }
 
     /// Terminate every OpenCode server owned by this provider.
@@ -2481,6 +2529,8 @@ server.serve_forever()
         command.name = "goal".into();
         command.files.clear();
         fs::write(project_path.join("busy"), "").unwrap();
+        let checkout = project_path.canonicalize().unwrap();
+        assert!(provider.ensure_checkout_idle(&checkout).is_err());
         for text in [
             "Finish the task\nThen summarize.",
             "pause",
@@ -2500,6 +2550,7 @@ server.serve_forever()
             );
         }
         fs::remove_file(project_path.join("busy")).unwrap();
+        provider.ensure_checkout_idle(&checkout).unwrap();
         command.name = "unknown".into();
         assert!(provider
             .run_command(&project_path, "ses_fake", &command, None, None)
@@ -2620,6 +2671,8 @@ server.serve_forever()
             .unwrap()
             .process_id
             .unwrap();
+        provider.release_checkout(&checkout);
+        assert!(provider.inner.lock_servers().is_empty());
         provider.shutdown();
         assert!(matches!(
             processes.terminate(process_id),
@@ -2759,6 +2812,8 @@ server.serve_forever()
             );
             let server = Arc::clone(provider.inner.lock_servers().values().next().unwrap());
             assert!(server.process_id.is_none());
+            let checkout = directory.0.canonicalize().unwrap();
+            assert!(provider.ensure_checkout_idle(&checkout).is_err());
             // Trigger the service independently of Caelum's prompt endpoint.
             server
                 .request_json(Method::POST, "/external", &[], None)
@@ -2807,6 +2862,10 @@ server.serve_forever()
                     .is_working,
                 Some(false)
             );
+            provider.ensure_checkout_idle(&checkout).unwrap();
+            provider.release_checkout(&checkout);
+            assert!(provider.inner.lock_servers().is_empty());
+            assert!(!server.alive.load(Ordering::Acquire));
             provider.shutdown();
             assert!(external.0.try_wait().unwrap().is_none());
             assert!(server

@@ -7,7 +7,12 @@ import {
   type GitRepositoryStatus,
 } from "./gitStatus.js";
 import type { ProjectInfo } from "./workspaceState.js";
-import { useContextMenu, copyAction, revealAction } from "./ContextMenu.js";
+import {
+  useContextMenu,
+  copyAction,
+  revealAction,
+  type ContextAction,
+} from "./ContextMenu.js";
 import { PullRequestIndicator } from "./PullRequestIndicator.js";
 
 export function ProjectItem({
@@ -17,6 +22,7 @@ export function ProjectItem({
   approval,
   activate,
   close,
+  worktreeActions,
 }: {
   project: ProjectInfo;
   selected: boolean;
@@ -24,6 +30,7 @@ export function ProjectItem({
   approval: boolean;
   activate: () => void;
   close: () => void;
+  worktreeActions: ContextAction[];
 }) {
   const detailsId = useId();
   const contextMenu = useContextMenu();
@@ -72,6 +79,8 @@ export function ProjectItem({
       onContextMenu={(event) =>
         contextMenu(event, [
           { text: "Open project", action: activate },
+          ...worktreeActions,
+          { item: "Separator" },
           copyAction("Copy project path", project.path),
           revealAction(project.path),
           { item: "Separator" },
