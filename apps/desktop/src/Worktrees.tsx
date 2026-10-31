@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { GitBranch, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import {
+  ChevronDown,
+  Folder,
+  GitBranch,
+  GitCommitHorizontal,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
 import { ProjectItem } from "./ProjectItem.js";
 import { projectHasActiveTurn, type ProjectInfo } from "./workspaceState.js";
 import type { WorkspaceController } from "./Sidebar.js";
@@ -19,6 +28,8 @@ function WorktreeDialog({
   close: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const branchInput = useRef<HTMLInputElement>(null);
+  const id = useId();
   const catalog = app.worktreeCatalogs[project.path];
   const [branch, setBranch] = useState(
     () => `worktree-${crypto.randomUUID().slice(0, 8)}`,
@@ -34,6 +45,7 @@ function WorktreeDialog({
     const element = dialog.current!;
     const previous = document.activeElement;
     element.showModal();
+    branchInput.current?.select();
     return () => {
       element.close();
       if (previous instanceof HTMLElement && previous.isConnected)
@@ -69,6 +81,7 @@ function WorktreeDialog({
       ref={dialog}
       className="worktree-dialog"
       aria-label={title}
+      aria-describedby={removing ? undefined : `${id}-description`}
       onCancel={(event) => {
         event.preventDefault();
         if (!busy) close();
@@ -93,8 +106,20 @@ function WorktreeDialog({
           }
         }}
       >
-        <header className="settings-heading">
-          <h1>{title}</h1>
+        <header className="settings-heading worktree-dialog-heading">
+          {!removing && (
+            <span className="worktree-dialog-icon" aria-hidden="true">
+              <GitBranch size={18} />
+            </span>
+          )}
+          <div>
+            <h1>{title}</h1>
+            {!removing && (
+              <p id={`${id}-description`}>
+                A separate checkout of {project.name}.
+              </p>
+            )}
+          </div>
           <button
             type="button"
             className="icon-button"
@@ -116,52 +141,85 @@ function WorktreeDialog({
             </>
           ) : (
             <>
-              <label>
-                New branch
-                <input
-                  autoFocus
-                  required
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={branch}
-                  disabled={busy}
-                  placeholder="feature/search"
-                  onFocus={(event) => event.currentTarget.select()}
-                  onChange={(event) => setBranch(event.target.value)}
-                />
-              </label>
-              <label>
-                Start from
-                <select
-                  value={base}
-                  disabled={busy}
-                  onChange={(event) => setBase(event.target.value)}
-                >
-                  {[
-                    ...new Set([
-                      catalog?.defaultBase ?? "HEAD",
-                      ...(catalog?.branches ?? []),
-                    ]),
-                  ].map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div>
-                <span className="worktree-location-label">Location</span>
-                <code className="worktree-destination">
+              <div className="worktree-field">
+                <label htmlFor={`${id}-branch`}>New branch</label>
+                <div className="worktree-control">
+                  <GitBranch size={15} aria-hidden="true" />
+                  <input
+                    ref={branchInput}
+                    id={`${id}-branch`}
+                    autoFocus
+                    required
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    value={branch}
+                    disabled={busy}
+                    placeholder="feature/search"
+                    aria-invalid={Boolean(previewError) || undefined}
+                    aria-describedby={`${id}-branch-hint${previewError ? ` ${id}-branch-error` : ""}`}
+                    onChange={(event) => setBranch(event.target.value)}
+                  />
+                </div>
+                <p id={`${id}-branch-hint`} className="worktree-field-hint">
+                  Give your work its own branch, like feature/search.
+                </p>
+                {previewError && (
+                  <p
+                    id={`${id}-branch-error`}
+                    className="worktree-error"
+                    role="alert"
+                  >
+                    {previewError}
+                  </p>
+                )}
+              </div>
+              <div className="worktree-field">
+                <label htmlFor={`${id}-base`}>Start from</label>
+                <div className="worktree-control">
+                  <GitCommitHorizontal size={15} aria-hidden="true" />
+                  <select
+                    id={`${id}-base`}
+                    value={base}
+                    disabled={busy}
+                    aria-describedby={`${id}-base-hint`}
+                    onChange={(event) => setBase(event.target.value)}
+                  >
+                    {[
+                      ...new Set([
+                        catalog?.defaultBase ?? "HEAD",
+                        ...(catalog?.branches ?? []),
+                      ]),
+                    ].map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={14}
+                    className="worktree-select-chevron"
+                    aria-hidden="true"
+                  />
+                </div>
+                <p id={`${id}-base-hint`} className="worktree-field-hint">
+                  The existing branch to use as your starting point.
+                </p>
+              </div>
+              <div className="worktree-location">
+                <div className="worktree-location-label">
+                  <Folder size={14} aria-hidden="true" />
+                  <span>Location</span>
+                </div>
+                <code className="worktree-destination" title={destination}>
                   {destination ||
                     catalog?.storageDirectory ||
                     "Choose a branch name"}
                 </code>
-              </div>
-              {previewError && (
-                <p className="worktree-error" role="alert">
-                  {previewError}
+                <p className="worktree-field-hint">
+                  Uses your worktree folder from Settings.
                 </p>
-              )}
+              </div>
             </>
           )}
           {error && (
@@ -176,13 +234,14 @@ function WorktreeDialog({
           </button>
           <button
             type="submit"
-            className={removing ? "worktree-remove" : "question-submit"}
+            className={removing ? "worktree-remove" : "worktree-create"}
             disabled={
               busy ||
               (!removing && (!destination || Boolean(previewError))) ||
               Boolean(removing && app.worktreeInUse(removing))
             }
           >
+            {!removing && <Plus size={14} aria-hidden="true" />}
             {busy ? "Working…" : title}
           </button>
         </footer>
