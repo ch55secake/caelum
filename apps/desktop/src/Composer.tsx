@@ -47,6 +47,7 @@ export function Composer({
   choicesError,
   retryChoices,
   awaitingApproval,
+  awaitingQuestion,
   fileContext,
   removeFileContext,
 }: {
@@ -80,6 +81,7 @@ export function Composer({
   choicesError: string | null;
   retryChoices: () => void;
   awaitingApproval: boolean;
+  awaitingQuestion: boolean;
   fileContext: FileContext[];
   removeFileContext: (id: string) => void;
 }) {
@@ -100,7 +102,7 @@ export function Composer({
     input: textareaRef,
   });
   function send(text = draft) {
-    if (disabled || submitting) return;
+    if (disabled || submitting || awaitingQuestion) return;
     const command = parseSlashCommand(text);
     if (command?.name === "new") {
       if (command.arguments.trim()) {
@@ -120,7 +122,7 @@ export function Composer({
       setUsageOpen(true);
     } else if (!working || (provider === "opencode" && command)) submit();
   }
-  const busy = working || submitting || awaitingApproval;
+  const busy = working || submitting || awaitingApproval || awaitingQuestion;
   const agents = choices?.agents ?? [];
   const canCycleAgent =
     provider === "opencode" &&
@@ -165,7 +167,9 @@ export function Composer({
         <span className="sr-only" role="status" aria-label="Agent activity">
           {awaitingApproval
             ? "Approval required"
-            : (activity ?? "Agent working")}
+            : awaitingQuestion
+              ? "Waiting for your answer"
+              : (activity ?? "Agent working")}
         </span>
       )}
       {awaitingApproval && (
@@ -396,7 +400,11 @@ export function Composer({
               className="send-button"
               onClick={() => send()}
               disabled={
-                disabled || submitting || !draft.trim() || draft.trim() === "/"
+                disabled ||
+                submitting ||
+                awaitingQuestion ||
+                !draft.trim() ||
+                draft.trim() === "/"
               }
               aria-label={command ? "Run command" : "Send message"}
               title={command ? "Run command" : "Send message"}

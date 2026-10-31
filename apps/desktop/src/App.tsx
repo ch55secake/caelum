@@ -7,6 +7,7 @@ import {
   PanelRight,
   Search,
   ShieldAlert,
+  MessageCircleQuestion,
   Settings as SettingsIcon,
   X,
 } from "lucide-react";
@@ -17,6 +18,8 @@ import { useWorkspace } from "./useWorkspace.js";
 import { Sidebar, sessionTitle } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
+import { QuestionCard } from "./QuestionCard.js";
+import { questionKey } from "./questionState.js";
 import { projectHasActiveTurn } from "./workspaceState.js";
 import { lastUserMessage } from "./shellMessages.js";
 import { Settings } from "./Settings.js";
@@ -154,6 +157,12 @@ export default function App() {
     (request) =>
       request.projectPath === app.project?.path && !request.sessionId,
   );
+  const activeQuestions = app.questions.filter(
+    (request) =>
+      request.projectPath === app.project?.path &&
+      request.provider === app.provider &&
+      request.sessionId === app.selectedId,
+  );
   const sessionError = app.selected?.error ?? app.providerWorkspace?.error;
   const mac = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   return (
@@ -243,6 +252,8 @@ export default function App() {
                     "Disconnected"
                   ) : activeApprovals.length ? (
                     "Approval required"
+                  ) : activeQuestions.length ? (
+                    "Waiting for your answer"
                   ) : app.selected.isWorking ? (
                     <LoaderCircle
                       size={14}
@@ -269,6 +280,30 @@ export default function App() {
                 >
                   <ShieldAlert size={14} />
                   {app.approvals.length}
+                </button>
+              )}
+              {app.questions.length > 0 && (
+                <button
+                  className="question-shortcut"
+                  aria-label={`${app.questions.length} pending questions`}
+                  onClick={() => {
+                    setExpanded(false);
+                    app.viewQuestion(
+                      app.questions.find(
+                        (request) => !activeQuestions.includes(request),
+                      ) ?? app.questions[0],
+                    );
+                    requestAnimationFrame(() =>
+                      document
+                        .querySelector<HTMLElement>(
+                          ".question-card input, .question-card textarea, .question-card button",
+                        )
+                        ?.focus(),
+                    );
+                  }}
+                >
+                  <MessageCircleQuestion size={14} />
+                  {app.questions.length}
                 </button>
               )}
               <button
@@ -445,6 +480,28 @@ export default function App() {
                   <p>What would you like to work on?</p>
                 </div>
               )}
+              {activeQuestions.length > 0 && (
+                <div className="question-dock" aria-label="Agent questions">
+                  {activeQuestions.map((request) => {
+                    const key = questionKey(request);
+                    return (
+                      <QuestionCard
+                        key={key}
+                        request={request}
+                        draft={app.questionDraft(request)}
+                        setDraft={(draft) =>
+                          app.setQuestionDraft(request, draft)
+                        }
+                        submitting={Boolean(app.questionEdits[key]?.submitting)}
+                        error={app.questionEdits[key]?.error}
+                        resolve={(answer) =>
+                          void app.resolveQuestion(request, answer)
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              )}
               {app.project && (
                 <Composer
                   key={`composer-${sessionKey}`}
@@ -469,6 +526,7 @@ export default function App() {
                   working={app.selected?.isWorking ?? false}
                   activity={app.selected?.activity?.label}
                   awaitingApproval={activeApprovals.length > 0}
+                  awaitingQuestion={activeQuestions.length > 0}
                   submitting={
                     app.selected?.isSubmitting ||
                     (!app.selectedId && app.providerWorkspace?.isCreating) ||

@@ -3,16 +3,23 @@
 use std::{path::PathBuf, sync::Arc};
 
 use caelum_core::{
-    approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase, files,
-    git::GitClient, github, opencode::OpenCodeProvider, processes::ProcessRegistry,
+    approvals::ApprovalBroker,
+    codex::CodexProvider,
+    database::WorkspaceDatabase,
+    files,
+    git::GitClient,
+    github,
+    opencode::OpenCodeProvider,
+    processes::ProcessRegistry,
     projects::Project,
+    questions::{Answer, QuestionBroker},
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
     GitFileVersions, GitHubPullRequest, GitRepositoryStatus, OpenCodeSessionInfo,
     OpenCodeSessionList, ProjectDirectoryListing, ProjectFileContent, ProjectInfo,
-    ProjectSearchMode, ProjectSearchResults, ProviderChoices, SessionDetails, SessionHistoryPage,
-    WorkspaceSnapshot,
+    ProjectSearchMode, ProjectSearchResults, ProviderChoices, QuestionPrompt, SessionDetails,
+    SessionHistoryPage, WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -345,6 +352,43 @@ fn pending_approvals(approvals: State<'_, ApprovalBroker>) -> Vec<ApprovalPrompt
 }
 
 #[tauri::command]
+fn pending_questions(questions: State<'_, QuestionBroker>) -> Vec<QuestionPrompt> {
+    questions.pending()
+}
+
+#[tauri::command]
+async fn refresh_questions(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+) -> Result<(), String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .refresh_questions(project_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn resolve_question(
+    questions: State<'_, QuestionBroker>,
+    provider: String,
+    project_path: String,
+    session_id: String,
+    request_id: String,
+    answer: Option<Answer>,
+) -> Result<(), String> {
+    let questions = questions.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        questions.resolve(&provider, &project_path, &session_id, &request_id, answer)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn resolve_approval(
     approvals: State<'_, ApprovalBroker>,
     provider: String,
@@ -667,6 +711,7 @@ async fn opencode_run_command(
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(ApprovalBroker::default())
+        .manage(QuestionBroker::default())
         .manage(Arc::new(ProcessRegistry::default()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -683,11 +728,29 @@ pub fn run() {
 
             let approvals = app.state::<ApprovalBroker>().inner().clone();
             let processes = app.state::<Arc<ProcessRegistry>>().inner().clone();
-            app.manage(CodexProvider::new(processes, approvals));
+            app.manage(CodexProvider::new(
+                processes,
+                approvals,
+                app.state::<QuestionBroker>().inner().clone(),
+            ));
 
             let approvals = app.state::<ApprovalBroker>().inner().clone();
             let processes = app.state::<Arc<ProcessRegistry>>().inner().clone();
-            app.manage(OpenCodeProvider::new(processes, approvals));
+            app.manage(OpenCodeProvider::new(
+                processes,
+                approvals,
+                app.state::<QuestionBroker>().inner().clone(),
+            ));
+
+            let updates = app.state::<QuestionBroker>().subscribe();
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                while let Ok(prompts) = updates.recv() {
+                    if handle.emit("question-requests", prompts).is_err() {
+                        break;
+                    }
+                }
+            });
 
             let updates = app.state::<ApprovalBroker>().subscribe();
             let handle = app.handle().clone();
@@ -743,6 +806,9 @@ pub fn run() {
             set_session_archived,
             pending_approvals,
             resolve_approval,
+            pending_questions,
+            refresh_questions,
+            resolve_question,
             codex_list_sessions,
             codex_start_session,
             provider_choices,
