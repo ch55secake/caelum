@@ -13,8 +13,6 @@ import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowRight,
-  Check,
-  CircleDot,
   ExternalLink,
   FileDiff,
   GitBranch,
@@ -28,13 +26,14 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  checkStatus,
   checkSummary,
   pullRequestState,
   reviewStatus,
   type PullRequest,
 } from "./pullRequestState.js";
 import { usePullRequestDetails } from "./usePullRequestDetails.js";
+import { CheckStatusIcon, PullRequestChecks } from "./PullRequestChecks.js";
+import { PullRequestMerge } from "./PullRequestMerge.js";
 import { copyAction, useContextMenu } from "./ContextMenu.js";
 
 export type PullRequestTarget = {
@@ -341,7 +340,11 @@ function PullRequestContent({
   expanded?: boolean;
   expand?: () => void;
 }) {
-  const details = usePullRequestDetails(target.projectPath, target.pr.url);
+  const details = usePullRequestDetails(
+    target.projectPath,
+    target.pr.url,
+    expanded,
+  );
   const primaryAction = useRef<HTMLButtonElement>(null);
   const [linkError, setLinkError] = useState("");
   const menu = useContextMenu();
@@ -357,6 +360,12 @@ function PullRequestContent({
           ? GitPullRequestDraft
           : GitPullRequest;
   const checks = checkSummary(details.value?.statusCheckRollup ?? null);
+  const reviewTone =
+    details.value?.reviewDecision === "APPROVED"
+      ? "success"
+      : details.value?.reviewDecision === "CHANGES_REQUESTED"
+        ? "failure"
+        : "neutral";
   const description = details.value?.body
     .replace(/<!--[\s\S]*?-->/g, "")
     .trim();
@@ -453,36 +462,31 @@ function PullRequestContent({
               {details.value.changedFiles === 1 ? "file" : "files"} changed
             </span>
           </div>
-          <div className="pr-status" data-tone={checks.tone}>
-            <CircleDot size={13} />
-            <span>{checks.text}</span>
-          </div>
-          <div
-            className="pr-status"
-            data-tone={
-              details.value.reviewDecision === "APPROVED"
-                ? "success"
-                : details.value.reviewDecision === "CHANGES_REQUESTED"
-                  ? "failure"
-                  : "neutral"
-            }
-          >
-            <Check size={13} />
+          {!expanded && (
+            <div className="pr-status" data-tone={checks.tone}>
+              <CheckStatusIcon tone={checks.tone} size={13} />
+              <span>{checks.text}</span>
+            </div>
+          )}
+          <div className="pr-status" data-tone={reviewTone}>
+            <CheckStatusIcon tone={reviewTone} size={13} />
             <span>{reviewStatus(details.value.reviewDecision)}</span>
           </div>
-          {expanded && Boolean(details.value.statusCheckRollup?.length) && (
-            <section className="pr-checks" aria-label="Pull request checks">
-              <h3>Checks</h3>
-              {details.value.statusCheckRollup!.map((check, index) => {
-                const result = checkStatus(check);
-                return (
-                  <div className="pr-check" key={index}>
-                    <span>{result.name}</span>
-                    <span data-tone={result.tone}>{result.text}</span>
-                  </div>
-                );
-              })}
-            </section>
+          {expanded && (
+            <>
+              <PullRequestChecks
+                checks={details.value.statusCheckRollup}
+                open={open}
+              />
+              <PullRequestMerge
+                pr={details.value}
+                loading={details.loading}
+                merging={details.merging}
+                error={details.mergeError}
+                lastMethod={details.mergeMethod}
+                merge={details.merge}
+              />
+            </>
           )}
         </>
       ) : (
@@ -506,7 +510,7 @@ function PullRequestContent({
               primaryAction.current?.focus({ preventScroll: true });
               details.refresh();
             }}
-            disabled={details.loading}
+            disabled={details.loading || details.merging}
           >
             Retry
           </button>
@@ -522,7 +526,7 @@ function PullRequestContent({
           <button
             ref={primaryAction}
             type="button"
-            disabled={details.loading}
+            disabled={details.loading || details.merging}
             onClick={details.refresh}
           >
             <RefreshCw

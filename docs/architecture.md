@@ -40,6 +40,10 @@ Removal checks active provider sessions and pending requests, then uses `git wor
 
 `SessionPullRequests` lists unique PR URLs attached to the current checkout's unarchived sessions beneath the session list. It loads session branch metadata in small batches, including off-screen sessions, without connecting their conversations. `useBranchPullRequests` shares discovery subscriptions and a four-request queue with the inline indicators. Session filtering does not affect the PR list; project changes and archive/restore update its membership. Each list row opens the PR screen directly, preserving the active session and its draft.
 
+`PullRequestChecks` uses shared check normalization for status icons, pending animations, summary counts, and check-detail links. The active screen refreshes pending checks or unknown mergeability on a 15-second cadence, with the normal one-minute cache for settled details. Reduced-motion preferences disable spinner animation.
+
+`PullRequestMerge` presents GitHub's mergeability state and a merge/squash/rebase selector. The typed `github_merge_pull_request` command uses authenticated `gh api` against the canonical PR host/repository and pins the merge to the displayed head commit. GitHub enforces permissions, enabled merge methods, and repository rules; only a confirmed API merge counts as success. Merge progress and errors live in the URL-keyed detail cache, so navigation preserves in-flight actions and duplicate submissions are suppressed. Successful merges update the detail snapshot and remove matching discovery entries, including delayed branch lookups; failures retain the PR and reload its latest metadata for retry.
+
 ## Security boundaries
 
 - Only Rust performs project path validation and future privileged operations.

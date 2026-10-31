@@ -7,7 +7,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use caelum_protocol::{GitHubPullRequest, GitHubPullRequestDetails};
+use caelum_protocol::{
+    GitHubMergeMethod, GitHubMergeResult, GitHubPullRequest, GitHubPullRequestDetails,
+};
 use thiserror::Error;
 
 use crate::projects::{Project, ProjectError};
@@ -41,6 +43,86 @@ fn query_details(
 ) -> Result<GitHubPullRequestDetails, GitHubError> {
     // Use the URL returned by discovery, so forks and different worktrees cannot
     // accidentally resolve the same PR number in a different repository.
+    pull_request_url(url)?;
+    let project = Project::open(project_path)?;
+    let mut command = github_command(executable, project.path());
+    command.args(["pr", "view", url, "--json", "number,title,url,isDraft,body,state,author,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,additions,deletions,changedFiles,reviewDecision,statusCheckRollup"]);
+    let output = checked_output(command, timeout)?;
+    let details: GitHubPullRequestDetails = serde_json::from_slice(&output.stdout)?;
+    if details.pull_request.url != url {
+        return Err(GitHubError::Command(
+            "GitHub returned a different pull request".into(),
+        ));
+    }
+    Ok(details)
+}
+
+pub fn merge_pull_request(
+    project_path: impl AsRef<Path>,
+    url: &str,
+    method: GitHubMergeMethod,
+    head_oid: &str,
+) -> Result<(), GitHubError> {
+    merge_request(
+        &gh_executable(),
+        project_path,
+        url,
+        method,
+        head_oid,
+        Duration::from_secs(30),
+    )
+}
+
+fn merge_request(
+    executable: &Path,
+    project_path: impl AsRef<Path>,
+    url: &str,
+    method: GitHubMergeMethod,
+    head_oid: &str,
+    timeout: Duration,
+) -> Result<(), GitHubError> {
+    let parsed = pull_request_url(url)?;
+    if !matches!(head_oid.len(), 40 | 64) || !head_oid.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(GitHubError::InvalidHead);
+    }
+    let segments: Vec<_> = parsed
+        .path_segments()
+        .ok_or(GitHubError::InvalidUrl)?
+        .collect();
+    let project = Project::open(project_path)?;
+    let mut command = github_command(executable, project.path());
+    let method = match method {
+        GitHubMergeMethod::Merge => "merge",
+        GitHubMergeMethod::Squash => "squash",
+        GitHubMergeMethod::Rebase => "rebase",
+    };
+    // The API confirms whether a merge actually happened and enforces repository
+    // rules. Pin it to the displayed head, including when the branch is updated.
+    command.args([
+        "api",
+        "--hostname",
+        parsed.host_str().ok_or(GitHubError::InvalidUrl)?,
+        "--method",
+        "PUT",
+        &format!(
+            "repos/{}/{}/pulls/{}/merge",
+            segments[0], segments[1], segments[3]
+        ),
+        "-f",
+        &format!("merge_method={method}"),
+        "-f",
+        &format!("sha={head_oid}"),
+    ]);
+    let output = checked_output(command, timeout)?;
+    let response: GitHubMergeResult = serde_json::from_slice(&output.stdout)?;
+    if !response.merged {
+        return Err(GitHubError::Command(response.message));
+    }
+    Ok(())
+}
+
+fn pull_request_url(url: &str) -> Result<reqwest::Url, GitHubError> {
     let parsed = reqwest::Url::parse(url).map_err(|_| GitHubError::InvalidUrl)?;
     let segments: Vec<_> = parsed
         .path_segments()
@@ -60,17 +142,7 @@ fn query_details(
     {
         return Err(GitHubError::InvalidUrl);
     }
-    let project = Project::open(project_path)?;
-    let mut command = github_command(executable, project.path());
-    command.args(["pr", "view", url, "--json", "number,title,url,isDraft,body,state,author,baseRefName,headRefName,additions,deletions,changedFiles,reviewDecision,statusCheckRollup"]);
-    let output = checked_output(command, timeout)?;
-    let details: GitHubPullRequestDetails = serde_json::from_slice(&output.stdout)?;
-    if details.pull_request.url != url {
-        return Err(GitHubError::Command(
-            "GitHub returned a different pull request".into(),
-        ));
-    }
-    Ok(details)
+    Ok(parsed)
 }
 
 fn query_pull_request(
@@ -187,7 +259,7 @@ fn bounded_output(mut command: Command, timeout: Duration) -> io::Result<Output>
             Ok(None) => {
                 break Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "GitHub lookup timed out",
+                    "GitHub request timed out",
                 ))
             }
             Err(error) => break Err(error),
@@ -214,11 +286,13 @@ fn bounded_output(mut command: Command, timeout: Duration) -> io::Result<Output>
 pub enum GitHubError {
     #[error("Invalid GitHub pull request URL")]
     InvalidUrl,
+    #[error("Invalid pull request head commit; refresh the pull request and try again")]
+    InvalidHead,
     #[error(transparent)]
     Project(#[from] ProjectError),
     #[error("GitHub CLI is unavailable: {0}")]
     Io(#[from] io::Error),
-    #[error("GitHub pull request lookup failed: {0}")]
+    #[error("GitHub request failed: {0}")]
     Command(String),
     #[error("Invalid GitHub pull request response: {0}")]
     Response(#[from] serde_json::Error),
@@ -339,10 +413,12 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
             "body": "## Description\nIndependent checkouts", "state": "MERGED",
             "author": { "login": "contributor" }, "headRefName": "feature/worktrees",
             "baseRefName": "main", "additions": 128, "deletions": 42, "changedFiles": 6,
+            "headRefOid": "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
             "reviewDecision": "APPROVED",
             "statusCheckRollup": [
-                { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS" },
-                { "__typename": "StatusContext", "context": "Deploy", "state": "PENDING" }
+                { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/example/repo/actions/runs/1" },
+                { "__typename": "StatusContext", "context": "Deploy", "state": "PENDING", "targetUrl": "https://deploy.example.com/1" }
             ]
         }).to_string()
     }
@@ -365,6 +441,20 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
         assert_eq!(result.additions, 128);
         assert_eq!(result.deletions, 42);
         assert_eq!(result.changed_files, 6);
+        assert_eq!(result.merge_state_status, "CLEAN");
+        assert_eq!(
+            result.head_ref_oid,
+            "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+        );
+        let serialized = serde_json::to_value(&result).unwrap();
+        assert_eq!(
+            serialized["statusCheckRollup"][0]["detailsUrl"],
+            "https://github.com/example/repo/actions/runs/1"
+        );
+        assert_eq!(
+            serialized["statusCheckRollup"][1]["targetUrl"],
+            "https://deploy.example.com/1"
+        );
         assert_eq!(result.author.unwrap().login, "contributor");
         assert_eq!(result.status_check_rollup.unwrap().len(), 2);
         let args = fs::read_to_string(fixture.0.join("arguments")).unwrap();
@@ -452,5 +542,109 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
         assert!(
             matches!(fixture.query("main"), Err(GitHubError::Io(error)) if error.to_string().contains("exceeds 1 MiB"))
         );
+    }
+
+    #[test]
+    fn merge_targets_the_canonical_repository_and_exact_head_for_each_method() {
+        let fixture = Fixture::new(
+            r#"
+printf '%s\n' "$@" > arguments
+pwd > directory
+printf '%s' "$GH_PROMPT_DISABLED" > no-prompts
+printf '%s' '{"merged":true,"message":"Pull Request successfully merged"}'
+"#,
+        );
+        let sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+        for (method, name) in [
+            (GitHubMergeMethod::Merge, "merge"),
+            (GitHubMergeMethod::Squash, "squash"),
+            (GitHubMergeMethod::Rebase, "rebase"),
+        ] {
+            merge_request(
+                &fixture.0.join("gh"),
+                &fixture.0,
+                "https://git.example.com/upstream/repo/pull/43",
+                method,
+                sha,
+                Duration::from_secs(2),
+            )
+            .unwrap();
+            assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), format!("api\n--hostname\ngit.example.com\n--method\nPUT\nrepos/upstream/repo/pulls/43/merge\n-f\nmerge_method={name}\n-f\nsha={sha}\n"));
+        }
+        assert_eq!(
+            fs::read_to_string(fixture.0.join("directory"))
+                .unwrap()
+                .trim(),
+            fixture.0.to_str().unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.0.join("no-prompts")).unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn merge_rejects_invalid_targets_heads_and_methods_before_execution() {
+        let fixture = Fixture::new("exit 99");
+        let executable = fixture.0.join("missing");
+        let url = "https://github.com/owner/repo/pull/43";
+        assert!(matches!(
+            merge_request(
+                &executable,
+                &fixture.0,
+                "--help",
+                GitHubMergeMethod::Merge,
+                &"a".repeat(40),
+                Duration::from_secs(1)
+            ),
+            Err(GitHubError::InvalidUrl)
+        ));
+        for sha in ["", "HEAD", "--help", "$(touch unexpected)", &"z".repeat(40)] {
+            assert!(matches!(
+                merge_request(
+                    &executable,
+                    &fixture.0,
+                    url,
+                    GitHubMergeMethod::Merge,
+                    sha,
+                    Duration::from_secs(1)
+                ),
+                Err(GitHubError::InvalidHead)
+            ));
+        }
+        assert!(serde_json::from_str::<GitHubMergeMethod>("\"admin\"").is_err());
+        assert!(!fixture.0.join("unexpected").exists());
+    }
+
+    #[test]
+    fn merge_requires_confirmation_and_preserves_github_rejection_messages() {
+        for script in [
+            "printf '%s' '{\"merged\":false,\"message\":\"Required checks have not passed\"}'",
+            "printf '%s' 'Head branch was modified (HTTP 409)' >&2\nexit 1",
+            "printf '%s' 'Merge method is not allowed (HTTP 405)' >&2\nexit 1",
+        ] {
+            let fixture = Fixture::new(script);
+            let result = merge_request(
+                &fixture.0.join("gh"),
+                &fixture.0,
+                "https://github.com/owner/repo/pull/43",
+                GitHubMergeMethod::Squash,
+                &"a".repeat(40),
+                Duration::from_secs(2),
+            );
+            assert!(matches!(result, Err(GitHubError::Command(message)) if !message.is_empty()));
+        }
+        let fixture = Fixture::new("printf '{}'");
+        assert!(matches!(
+            merge_request(
+                &fixture.0.join("gh"),
+                &fixture.0,
+                "https://github.com/owner/repo/pull/43",
+                GitHubMergeMethod::Merge,
+                &"a".repeat(40),
+                Duration::from_secs(2)
+            ),
+            Err(GitHubError::Response(_))
+        ));
     }
 }

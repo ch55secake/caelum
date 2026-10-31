@@ -10,14 +10,24 @@ export type StatusCheck =
       name: string;
       status: string;
       conclusion: string | null;
+      detailsUrl?: string | null;
     }
-  | { __typename: "StatusContext"; context: string; state: string };
+  | {
+      __typename: "StatusContext";
+      context: string;
+      state: string;
+      targetUrl?: string | null;
+    };
+export type MergeMethod = "merge" | "squash" | "rebase";
 export type PullRequestDetails = PullRequest & {
   body: string;
   state: string;
   author: { login: string } | null;
   baseRefName: string;
   headRefName: string;
+  headRefOid: string;
+  mergeable: string;
+  mergeStateStatus: string;
   additions: number;
   deletions: number;
   changedFiles: number;
@@ -30,8 +40,13 @@ export function checkStatus(check: StatusCheck): {
   name: string;
   tone: string;
   text: string;
+  url: string | null;
 };
 export function checkSummary(checks: StatusCheck[] | null): {
   tone: string;
+  text: string;
+};
+export function mergeStatus(pr: PullRequestDetails): {
+  enabled: boolean;
   text: string;
 };

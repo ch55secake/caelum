@@ -1000,6 +1000,21 @@ async function desktop(
                 throw new Error("No pull request details in fixture");
               return result;
             }
+            if (command === "github_merge_pull_request") {
+              const error = commandErrors.get(command);
+              await (gates.get(`${command}:${args.url}`) ?? gates.get(command))
+                ?.promise;
+              if (error) throw new Error(error);
+              const pr = pullRequests.get(args.url) as any;
+              if (!pr || pr.headRefOid !== args.headOid)
+                throw new Error("Head branch was modified (HTTP 409)");
+              pullRequests.set(args.url, { ...pr, state: "MERGED" });
+              for (const [key, value] of pullRequests) {
+                if (key !== args.url && (value as any)?.url === args.url)
+                  pullRequests.delete(key);
+              }
+              return;
+            }
             if (command === "git_repository_status") {
               const error = gitErrors.get(args.projectPath);
               const snapshot = {
@@ -6240,6 +6255,9 @@ const previewPullRequest = {
   author: { login: "oscar" },
   baseRefName: "main",
   headRefName: "feature/navigation",
+  headRefOid: "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+  mergeable: "MERGEABLE",
+  mergeStateStatus: "CLEAN",
   additions: 128,
   deletions: 42,
   changedFiles: 6,
@@ -6250,11 +6268,13 @@ const previewPullRequest = {
       name: "Tests",
       status: "COMPLETED",
       conclusion: "SUCCESS",
+      detailsUrl: "https://github.com/example/caelum/actions/runs/123",
     },
     {
       __typename: "StatusContext",
       context: "Preview deploy",
       state: "PENDING",
+      targetUrl: "https://deploy.example.com/preview/44",
     },
   ],
 };
@@ -6611,6 +6631,9 @@ test("session PR section groups open sessions and opens an overview without sele
       ),
     ),
   ).toHaveLength(0);
+  await shared.focus();
+  await page.clock.runFor(32);
+  await expect(shared).toBeFocused();
   await shared.press("Enter");
   await expect(screen).toBeVisible();
   await page.getByRole("button", { name: "Sessions", exact: true }).click();
@@ -6822,6 +6845,375 @@ test("PR screen switches between requests, retries refresh failures and rejects 
   );
   await expect(page.locator(".breadcrumbs")).toContainText("other");
   await expect(page.locator(".pr-screen")).toHaveCount(0);
+});
+
+test("PR checks show live pending animations, passed ticks and linked results in both themes", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      body: "Check progress and merge this pull request.",
+      mergeStateStatus: "BLOCKED",
+      statusCheckRollup: [
+        pr.statusCheckRollup[0],
+        {
+          __typename: "CheckRun",
+          name: "macOS build",
+          status: "IN_PROGRESS",
+          conclusion: null,
+        },
+        {
+          __typename: "CheckRun",
+          name: "Linux build",
+          status: "QUEUED",
+          conclusion: null,
+        },
+        {
+          __typename: "CheckRun",
+          name: "Lint",
+          status: "COMPLETED",
+          conclusion: "FAILURE",
+          detailsUrl: "javascript:alert(1)",
+        },
+        {
+          __typename: "CheckRun",
+          name: "Optional deploy",
+          status: "COMPLETED",
+          conclusion: "SKIPPED",
+        },
+        pr.statusCheckRollup[1],
+      ],
+    });
+  }, previewPullRequest);
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const checks = screen.getByRole("region", { name: "Pull request checks" });
+  const rows = checks.getByRole("listitem");
+  await expect(rows).toHaveCount(6);
+  await expect(rows.filter({ hasText: "Tests" })).toContainText("Passed");
+  await expect(
+    rows.filter({ hasText: "Tests" }).locator(".lucide-check"),
+  ).toBeVisible();
+  await expect(rows.filter({ hasText: "macOS build" })).toContainText(
+    "In progress",
+  );
+  await expect(rows.filter({ hasText: "Linux build" })).toContainText("Queued");
+  await expect(
+    rows.filter({ hasText: "Lint" }).locator(".lucide-x"),
+  ).toBeVisible();
+  await expect(rows.filter({ hasText: "Lint" }).getByRole("link")).toHaveCount(
+    0,
+  );
+  await expect(rows.filter({ hasText: "Optional deploy" })).toContainText(
+    "Skipped",
+  );
+  const spinner = rows.filter({ hasText: "macOS build" }).locator(".spinning");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(spinner).toHaveCSS("animation-name", "spin");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(spinner).toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await checks.getByRole("link", { name: "Tests", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter((call: any) => call.command === "plugin:opener|open_url")
+            .at(-1)?.args.url,
+      ),
+    )
+    .toBe("https://github.com/example/caelum/actions/runs/123");
+  await checks
+    .getByRole("link", { name: "Preview deploy", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter((call: any) => call.command === "plugin:opener|open_url")
+            .at(-1)?.args.url,
+      ),
+    )
+    .toBe("https://deploy.example.com/preview/44");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await page.screenshot({ path: `test-results/pr-checks-${theme}.png` });
+    await screen
+      .getByRole("region", { name: "Merge pull request", exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `test-results/pr-merge-${theme}.png` });
+    await screen.evaluate((node) => {
+      node.scrollTop = 0;
+    });
+  }
+  await page.setViewportSize({ width: 800, height: 620 });
+  await checks.scrollIntoViewIfNeeded();
+  expect(
+    await screen.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: "test-results/pr-checks-compact.png" });
+  await expect(
+    screen.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        statusCheckRollup: [pr.statusCheckRollup[0]],
+      }),
+    previewPullRequest,
+  );
+  await page.clock.runFor(30_100);
+  await expect(checks).toContainText("1 passed");
+  await expect(checks.locator(".spinning")).toHaveCount(0);
+  await expect(
+    screen.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeEnabled();
+  await screen
+    .getByRole("region", { name: "Merge pull request", exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/pr-merge-compact.png" });
+});
+
+test("PR merge is shared across navigation, pins the head and removes merged rows despite delayed discovery", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const list = page.getByRole("region", { name: "Pull requests", exact: true });
+  const first = list.getByRole("button", { name: /View pull request #44/ });
+  await first.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(
+    screen.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    const other = {
+      ...pr,
+      number: 45,
+      title: "Another pull request",
+      url: "https://github.com/example/caelum/pull/45",
+    };
+    fixture.setPullRequest("fix/provider-adapters", other);
+    fixture.setPullRequestDetails(other.url, other);
+    fixture.hold("github_open_pull_request:/work/caelum:main");
+    fixture.hold("github_merge_pull_request");
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  const second = list.getByRole("button", { name: /View pull request #45/ });
+  await expect(second).toBeVisible();
+  await screen
+    .getByRole("combobox", { name: "Merge method" })
+    .selectOption("squash");
+  await screen
+    .getByRole("button", { name: "Merge pull request", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Merging…", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    screen
+      .getByRole("button", { name: "Merging…", exact: true })
+      .locator(".spinning"),
+  ).toBeVisible();
+  await expect(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeDisabled();
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await first.click();
+  await expect(
+    screen.getByRole("combobox", { name: "Merge method" }),
+  ).toHaveValue("squash");
+  await expect(
+    screen.getByRole("combobox", { name: "Merge method" }),
+  ).toBeDisabled();
+  await expect(
+    screen.getByRole("button", { name: "Merging…", exact: true }),
+  ).toBeDisabled();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_merge_pull_request",
+    ),
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args).toEqual({
+    projectPath: "/work/caelum",
+    url: previewPullRequest.url,
+    method: "squash",
+    headOid: previewPullRequest.headRefOid,
+  });
+  await second.click();
+  const otherScreen = page.getByRole("region", {
+    name: "Pull request #45",
+    exact: true,
+  });
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_merge_pull_request"),
+  );
+  await expect(first).toHaveCount(0);
+  await expect(otherScreen).toBeVisible();
+  await expect(
+    otherScreen.getByRole("button", {
+      name: "Merge pull request",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await page.evaluate(() =>
+    (window as any).fixture.release(
+      "github_open_pull_request:/work/caelum:main",
+    ),
+  );
+  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
+  await expect(first).toHaveCount(0);
+  await expect(second).toHaveAttribute("aria-current", "page");
+});
+
+test("PR merge reports failures, reloads changed heads and confirms a successful retry", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  const button = merge.getByRole("button", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await expect(button).toBeEnabled();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_merge_pull_request",
+      "Merge method is not allowed (HTTP 405)",
+    ),
+  );
+  await button.click();
+  await expect(merge.getByRole("alert")).toContainText(
+    "Merge method is not allowed",
+  );
+  await expect(entry).toBeVisible();
+  await expect(button).toBeEnabled();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_merge_pull_request", null);
+    fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      headRefOid: "b".repeat(40),
+    });
+  }, previewPullRequest);
+  await button.click();
+  await expect(merge.getByRole("alert")).toContainText(
+    "Head branch was modified",
+  );
+  await expect(button).toBeEnabled();
+  await merge
+    .getByRole("combobox", { name: "Merge method" })
+    .selectOption("rebase");
+  await button.click();
+  await expect(merge.getByRole("status")).toHaveText("Merged into main");
+  await expect(merge.getByRole("alert")).toHaveCount(0);
+  await expect(merge.getByRole("button")).toHaveCount(0);
+  await expect(screen.locator(".pr-state")).toHaveText("Merged");
+  await expect(entry).toHaveCount(0);
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_merge_pull_request",
+    ),
+  );
+  expect(calls).toHaveLength(3);
+  expect(calls[2].args).toMatchObject({
+    method: "rebase",
+    headOid: "b".repeat(40),
+  });
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(merge.getByRole("status")).toHaveText("Merged into main");
+});
+
+test("PR merge explains draft, blocked, conflicting and unknown states without submitting", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await expect(merge).toBeVisible();
+  for (const [change, message] of [
+    [{ isDraft: true }, "Mark this draft ready"],
+    [{ mergeStateStatus: "BLOCKED" }, "Waiting for required checks"],
+    [{ mergeable: "CONFLICTING" }, "Resolve merge conflicts"],
+    [{ mergeStateStatus: "BEHIND" }, "Update this branch"],
+    [{ mergeable: "UNKNOWN" }, "Waiting for GitHub"],
+  ] as const) {
+    await page.evaluate(
+      ({ pr, change }) =>
+        (window as any).fixture.setPullRequestDetails(pr.url, {
+          ...pr,
+          ...change,
+        }),
+      { pr: previewPullRequest, change },
+    );
+    await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(merge.getByRole("status")).toContainText(message);
+    await expect(
+      merge.getByRole("button", { name: "Merge pull request", exact: true }),
+    ).toBeDisabled();
+  }
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        state: "CLOSED",
+        statusCheckRollup: null,
+      }),
+    previewPullRequest,
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(merge.getByRole("status")).toContainText(
+    "This pull request is closed",
+  );
+  await expect(merge.getByRole("button")).toHaveCount(0);
+  await expect(
+    screen.getByRole("region", { name: "Pull request checks" }),
+  ).toContainText("No checks reported");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_merge_pull_request",
+      ),
+    ),
+  ).toHaveLength(0);
 });
 
 test("session PR section discovers off-screen sessions with shared bounded lookups", async ({

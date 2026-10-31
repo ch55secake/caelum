@@ -85,6 +85,9 @@ pub struct GitHubPullRequestDetails {
     pub author: Option<GitHubAuthor>,
     pub base_ref_name: String,
     pub head_ref_name: String,
+    pub head_ref_oid: String,
+    pub mergeable: String,
+    pub merge_state_status: String,
     pub additions: u64,
     pub deletions: u64,
     pub changed_files: u64,
@@ -105,11 +108,29 @@ pub enum GitHubStatusCheck {
         name: String,
         status: String,
         conclusion: Option<String>,
+        #[serde(rename = "detailsUrl")]
+        details_url: Option<String>,
     },
     StatusContext {
         context: String,
         state: String,
+        #[serde(rename = "targetUrl")]
+        target_url: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubMergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubMergeResult {
+    pub merged: bool,
+    pub message: String,
 }
 
 /// Separate staged, unstaged, and untracked diffs for one changed path.

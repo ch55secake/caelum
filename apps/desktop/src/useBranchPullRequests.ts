@@ -9,9 +9,19 @@ type Entry = {
   listeners: Set<(snapshot: Snapshot) => void>;
 };
 const cache = new Map<string, Entry>();
+const mergedUrls = new Set<string>();
 const refreshInterval = 60_000;
 const queue: (() => Promise<void>)[] = [];
 let active = 0;
+
+export function markPullRequestMerged(url: string) {
+  mergedUrls.add(url);
+  for (const entry of cache.values()) {
+    if (entry.snapshot.value?.url !== url) continue;
+    entry.snapshot = { ...entry.snapshot, value: null };
+    entry.listeners.forEach((listener) => listener(entry.snapshot));
+  }
+}
 
 function drain() {
   while (active < 4 && queue.length) {
@@ -43,7 +53,10 @@ function refresh(projectPath: string, branch: string, entry: Entry) {
       projectPath,
       branch,
     }).catch(() => null);
-    publish({ value, loading: false });
+    publish({
+      value: value && !mergedUrls.has(value.url) ? value : null,
+      loading: false,
+    });
   });
   drain();
 }

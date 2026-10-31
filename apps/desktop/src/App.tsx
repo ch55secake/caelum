@@ -112,7 +112,9 @@ export default function App() {
   function showSession() {
     setPullRequest(null);
     setExpanded(false);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    // Leaving a PR already restores focus through the session effect below.
+    if (!activePullRequest)
+      requestAnimationFrame(() => textareaRef.current?.focus());
   }
   function focusSearch() {
     setCollapsed(false);
@@ -191,8 +193,15 @@ export default function App() {
     : null;
   useEffect(() => {
     if (activePullRequest) return;
+    const previousFocus = document.activeElement;
     const frame = requestAnimationFrame(() => {
       if (document.querySelector("dialog[open]")) return;
+      // Respect a newer keyboard or pointer selection made before this frame.
+      if (
+        document.activeElement !== previousFocus &&
+        document.activeElement !== document.body
+      )
+        return;
       const target = activeQuestionKey
         ? questionDockRef.current?.querySelector<HTMLElement>(".question-card")
         : textareaRef.current;
