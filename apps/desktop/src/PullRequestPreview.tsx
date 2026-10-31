@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  ArrowLeft,
   ArrowRight,
   Check,
   CircleDot,
@@ -22,7 +23,6 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
   RefreshCw,
-  X,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Markdown from "react-markdown";
@@ -37,17 +37,18 @@ import {
 import { usePullRequestDetails } from "./usePullRequestDetails.js";
 import { copyAction, useContextMenu } from "./ContextMenu.js";
 
-type Target = {
-  anchor: HTMLButtonElement;
+export type PullRequestTarget = {
   projectPath: string;
   pr: PullRequest;
 };
-type Preview = Target & { scope: string; expanded: boolean };
+type Target = PullRequestTarget & { anchor: HTMLButtonElement };
+type Preview = Target & { scope: string };
 const PreviewContext = createContext<{
   anchor: HTMLButtonElement | null;
+  activeUrl: string | null;
   id: string;
   show: (target: Target, immediate?: boolean) => void;
-  open: (target: Target) => void;
+  open: (target: PullRequestTarget) => void;
   leave: (anchor: HTMLButtonElement) => void;
   release: (anchor: HTMLButtonElement) => void;
   enter: () => void;
@@ -57,9 +58,13 @@ export const usePullRequestPreview = () => useContext(PreviewContext)!;
 export function PullRequestPreviewProvider({
   children,
   scope,
+  activeUrl,
+  onOpen,
 }: {
   children: ReactNode;
   scope: string;
+  activeUrl: string | null;
+  onOpen: (target: PullRequestTarget) => void;
 }) {
   const id = useId();
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -87,8 +92,13 @@ export function PullRequestPreviewProvider({
       restoring.current = false;
     }
   };
+  const open = (target: PullRequestTarget) => {
+    if (document.querySelector("dialog[open]")) return;
+    dismiss();
+    onOpen({ projectPath: target.projectPath, pr: target.pr });
+  };
   const show = (target: Target, immediate = false) => {
-    if (restoring.current || current.current?.expanded) return;
+    if (restoring.current) return;
     clearTimers();
     if (current.current?.anchor === target.anchor) return;
     current.current = null;
@@ -102,7 +112,7 @@ export function PullRequestPreviewProvider({
         document.querySelector("dialog[open]")
       )
         return;
-      const next = { ...target, scope, expanded: false };
+      const next = { ...target, scope };
       current.current = next;
       setPreview(next);
     };
@@ -117,7 +127,7 @@ export function PullRequestPreviewProvider({
       window.clearTimeout(openTimer.current);
       pending.current = null;
     }
-    if (current.current?.anchor !== anchor || current.current.expanded) return;
+    if (current.current?.anchor !== anchor) return;
     hold();
     closeTimer.current = window.setTimeout(() => {
       if (
@@ -133,7 +143,7 @@ export function PullRequestPreviewProvider({
     return clearTimers;
   }, [scope]);
   useEffect(() => {
-    if (!preview || preview.expanded) return;
+    if (!preview) return;
     const outside = (event: Event) => {
       const node = event.target as Node;
       if (!preview.anchor.contains(node) && !popup.current?.contains(node))
@@ -173,19 +183,10 @@ export function PullRequestPreviewProvider({
     <PreviewContext.Provider
       value={{
         anchor: visible?.anchor ?? null,
+        activeUrl,
         id,
         show,
-        open: (target) => {
-          if (
-            !target.anchor.isConnected ||
-            document.querySelector("dialog[open]")
-          )
-            return;
-          clearTimers();
-          const next = { ...target, scope, expanded: true };
-          current.current = next;
-          setPreview(next);
-        },
+        open,
         leave,
         release: (anchor) => {
           if (
@@ -200,49 +201,35 @@ export function PullRequestPreviewProvider({
     >
       {children}
       {visible &&
-        (visible.expanded ? (
-          <PullRequestDialog
-            key={visible.pr.url}
+        createPortal(
+          <PreviewCard
+            key={`${visible.projectPath}\0${visible.pr.url}`}
             id={id}
             target={visible}
-            close={() => dismiss(true)}
-          />
-        ) : (
-          createPortal(
-            <PreviewCard
-              key={`${visible.projectPath}\0${visible.pr.url}`}
-              id={id}
-              target={visible}
-              popup={popup}
-              hold={hold}
-              leave={() => leave(visible.anchor)}
-              exit={(backward) => {
-                if (backward) return dismiss(true);
-                const controls = Array.from(
-                  document.querySelectorAll<HTMLElement>(
-                    "button, a[href], input, select, textarea, [tabindex]",
-                  ),
-                ).filter(
-                  (element) =>
-                    element.tabIndex >= 0 &&
-                    !element.matches(":disabled") &&
-                    element.getClientRects().length > 0 &&
-                    !popup.current?.contains(element),
-                );
-                const next = controls[controls.indexOf(visible.anchor) + 1];
-                dismiss();
-                next?.focus({ preventScroll: true });
-              }}
-              expand={() => {
-                clearTimers();
-                const next = { ...visible, expanded: true };
-                current.current = next;
-                setPreview(next);
-              }}
-            />,
-            document.body,
-          )
-        ))}
+            popup={popup}
+            hold={hold}
+            leave={() => leave(visible.anchor)}
+            exit={(backward) => {
+              if (backward) return dismiss(true);
+              const controls = Array.from(
+                document.querySelectorAll<HTMLElement>(
+                  "button, a[href], input, select, textarea, [tabindex]",
+                ),
+              ).filter(
+                (element) =>
+                  element.tabIndex >= 0 &&
+                  !element.matches(":disabled") &&
+                  element.getClientRects().length > 0 &&
+                  !popup.current?.contains(element),
+              );
+              const next = controls[controls.indexOf(visible.anchor) + 1];
+              dismiss();
+              next?.focus({ preventScroll: true });
+            }}
+            expand={() => open(visible)}
+          />,
+          document.body,
+        )}
     </PreviewContext.Provider>
   );
 }
@@ -312,50 +299,36 @@ function PreviewCard({
   );
 }
 
-function PullRequestDialog({
-  id,
+export function PullRequestScreen({
   target,
-  close,
+  back,
 }: {
-  id: string;
-  target: Target;
-  close: () => void;
+  target: PullRequestTarget;
+  back: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const dismiss = () => {
-    dialog.current?.close();
-    close();
-  };
-  useEffect(() => {
-    const element = dialog.current!;
-    element.showModal();
-    return () => element.close();
-  }, []);
-  return createPortal(
-    <dialog
-      id={id}
-      ref={dialog}
-      className="pr-dialog"
+  const screen = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    screen.current
+      ?.querySelector<HTMLElement>("h1")
+      ?.focus({ preventScroll: true });
+  }, [target.pr.url]);
+  return (
+    <section
+      ref={screen}
+      className="pr-screen"
       aria-label={`Pull request #${target.pr.number}`}
-      onCancel={(event) => {
-        event.preventDefault();
-        dismiss();
-      }}
     >
-      <div className="pr-dialog-heading">
-        <span>Pull request</span>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Close pull request"
-          onClick={dismiss}
-        >
-          <X size={16} />
+      <div className="pr-screen-toolbar">
+        <button type="button" onClick={back}>
+          <ArrowLeft size={14} />
+          Back to session
         </button>
+        <span title={target.pr.url}>
+          {target.pr.url.split("/").slice(-4, -2).join("/")}
+        </span>
       </div>
       <PullRequestContent target={target} expanded />
-    </dialog>,
-    document.body,
+    </section>
   );
 }
 
@@ -364,7 +337,7 @@ function PullRequestContent({
   expanded = false,
   expand,
 }: {
-  target: Target;
+  target: PullRequestTarget;
   expanded?: boolean;
   expand?: () => void;
 }) {
@@ -373,6 +346,7 @@ function PullRequestContent({
   const [linkError, setLinkError] = useState("");
   const menu = useContextMenu();
   const pr = details.value ?? target.pr;
+  const Heading = expanded ? "h1" : "h2";
   const state = pullRequestState(pr);
   const Icon =
     state === "Merged"
@@ -414,7 +388,7 @@ function PullRequestContent({
           <span className="pr-author">by {details.value.author.login}</span>
         )}
       </div>
-      <h2>{pr.title}</h2>
+      <Heading tabIndex={expanded ? -1 : undefined}>{pr.title}</Heading>
       {details.value ? (
         <>
           <div className="pr-branches">

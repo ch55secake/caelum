@@ -254,9 +254,11 @@ function WorktreeDialog({
 export function ProjectWorktrees({
   app,
   project,
+  showSession,
 }: {
   app: WorkspaceController;
   project: ProjectInfo;
+  showSession: () => void;
 }) {
   const [dialog, setDialog] = useState<"create" | GitWorktree | null>(null);
   const catalog = app.worktreeCatalogs[project.path];
@@ -276,7 +278,10 @@ export function ProjectWorktrees({
             member(path) && projectHasActiveTurn(workspace),
         )}
         approval={app.approvals.some((request) => member(request.projectPath))}
-        activate={() => app.activateGroup(project)}
+        activate={() => {
+          showSession();
+          app.activateGroup(project);
+        }}
         close={() => app.closeProject(project.path)}
         worktreeActions={
           catalog
@@ -338,7 +343,10 @@ export function ProjectWorktrees({
                 }
                 disabled={!entry.available || busy}
                 title={`${entry.branch ?? "Detached HEAD"}\n${entry.project.path}${entry.locked != null ? `\nLocked: ${entry.locked}` : ""}`}
-                onClick={() => void app.openWorktree(project, entry)}
+                onClick={() => {
+                  showSession();
+                  void app.openWorktree(project, entry);
+                }}
               >
                 <GitBranch size={12} />
                 <span>{worktreeLabel(entry)}</span>

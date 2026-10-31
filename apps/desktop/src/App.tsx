@@ -26,7 +26,11 @@ import { lastUserMessage } from "./shellMessages.js";
 import { Settings } from "./Settings.js";
 import { useSettings } from "./useSettings.js";
 import { ContextMenuProvider } from "./ContextMenu.js";
-import { PullRequestPreviewProvider } from "./PullRequestPreview.js";
+import {
+  PullRequestPreviewProvider,
+  PullRequestScreen,
+  type PullRequestTarget,
+} from "./PullRequestPreview.js";
 
 export default function App() {
   const preferences = useSettings();
@@ -53,12 +57,17 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [fileRequest, setFileRequest] = useState<InspectorRequest>();
   const fileRequestId = useRef(0);
-  const changesOpen = pane === "changes";
+  const [pullRequest, setPullRequest] = useState<
+    (PullRequestTarget & { scope: string }) | null
+  >(null);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const questionDockRef = useRef<HTMLDivElement>(null);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
+  const activePullRequest =
+    pullRequest?.scope === sessionKey ? pullRequest : null;
+  const changesOpen = !activePullRequest && pane === "changes";
   const currentSessionKey = useRef(sessionKey);
   currentSessionKey.current = sessionKey;
   const title = app.selected
@@ -69,7 +78,10 @@ export default function App() {
       )
     : "New session";
   function toggleChanges() {
-    setPane((value) => (value === "changes" ? null : "changes"));
+    setPullRequest(null);
+    setPane((value) =>
+      !activePullRequest && value === "changes" ? null : "changes",
+    );
     setFileRequest(undefined);
     setExpanded(false);
   }
@@ -77,6 +89,7 @@ export default function App() {
   const openFile = useCallback(
     (location: FileLocation) => {
       if (!projectPath) return;
+      setPullRequest(null);
       setPane("files");
       setFileRequest({
         project: projectPath,
@@ -91,8 +104,14 @@ export default function App() {
     [projectPath, openFile],
   );
   function newSession() {
+    setPullRequest(null);
     app.newSession();
     setSearch("");
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+  function showSession() {
+    setPullRequest(null);
+    setExpanded(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
   function focusSearch() {
@@ -119,6 +138,7 @@ export default function App() {
       ) {
         event.preventDefault();
         const id = ++fileRequestId.current;
+        setPullRequest(null);
         setPane("files");
         setFileRequest({
           project: app.project.path,
@@ -146,6 +166,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   });
   useEffect(() => {
+    setPullRequest(null);
     setExpanded(false);
     setFileRequest(undefined);
   }, [sessionKey]);
@@ -169,6 +190,7 @@ export default function App() {
     ? questionKey(activeQuestions[0])
     : null;
   useEffect(() => {
+    if (activePullRequest) return;
     const frame = requestAnimationFrame(() => {
       if (document.querySelector("dialog[open]")) return;
       const target = activeQuestionKey
@@ -177,14 +199,14 @@ export default function App() {
       target?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [sessionKey, activeQuestionKey]);
+  }, [sessionKey, activeQuestionKey, Boolean(activePullRequest)]);
   const sessionError = app.selected?.error ?? app.providerWorkspace?.error;
   const mac = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   return (
     <FileNavigation.Provider value={fileNavigation}>
       <ContextMenuProvider
         className={`app-shell${mac ? " macos-titlebar-overlay" : ""}${collapsed ? " sidebar-collapsed" : ""}`}
-        scope={`${sessionKey}\0${pane}\0${expanded}\0${settingsOpen}`}
+        scope={`${sessionKey}\0${pane}\0${expanded}\0${settingsOpen}\0${activePullRequest?.pr.url}`}
         reportError={app.setError}
         actions={[
           {
@@ -203,7 +225,11 @@ export default function App() {
       >
         {!collapsed && (
           <PullRequestPreviewProvider
-            scope={`${sessionKey}\0${settingsOpen}\0${pane}\0${expanded}`}
+            scope={`${sessionKey}\0${settingsOpen}\0${pane}\0${expanded}\0${activePullRequest?.pr.url}`}
+            activeUrl={activePullRequest?.pr.url ?? null}
+            onOpen={(target) =>
+              setPullRequest({ ...target, scope: sessionKey })
+            }
           >
             <Sidebar
               app={app}
@@ -215,17 +241,15 @@ export default function App() {
               searchRef={searchRef}
               newSession={newSession}
               changesOpen={changesOpen}
-              filesOpen={pane === "files"}
-              sessionVisible={!expanded || !pane}
+              filesOpen={!activePullRequest && pane === "files"}
+              sessionVisible={!activePullRequest && (!expanded || !pane)}
               openFiles={() => {
+                setPullRequest(null);
                 setPane("files");
                 setExpanded(false);
                 setFileRequest(undefined);
               }}
-              showSession={() => {
-                setExpanded(false);
-                textareaRef.current?.focus();
-              }}
+              showSession={showSession}
               toggleChanges={toggleChanges}
               openSettings={() => setSettingsOpen(true)}
             />
@@ -243,19 +267,25 @@ export default function App() {
                   <PanelLeftOpen size={16} />
                 </button>
               )}
-              <span title={app.project?.path}>
-                {app.rootProject?.name ?? "Caelum"}
+              <span title={activePullRequest ? undefined : app.project?.path}>
+                {activePullRequest
+                  ? "Pull requests"
+                  : (app.rootProject?.name ?? "Caelum")}
               </span>
               <span className="crumb-divider">/</span>
-              {app.currentWorktree && !app.currentWorktree.main && (
-                <>
-                  <span title={app.project?.path}>
-                    {app.currentWorktree.branch ?? "Detached HEAD"}
-                  </span>
-                  <span className="crumb-divider">/</span>
-                </>
-              )}
-              <strong title={title}>{title}</strong>
+              {!activePullRequest &&
+                app.currentWorktree &&
+                !app.currentWorktree.main && (
+                  <>
+                    <span title={app.project?.path}>
+                      {app.currentWorktree.branch ?? "Detached HEAD"}
+                    </span>
+                    <span className="crumb-divider">/</span>
+                  </>
+                )}
+              <strong title={activePullRequest?.pr.title ?? title}>
+                {activePullRequest ? `#${activePullRequest.pr.number}` : title}
+              </strong>
             </div>
             <div className="topbar-actions">
               {collapsed && (
@@ -297,13 +327,14 @@ export default function App() {
                 <button
                   className="approval-shortcut"
                   aria-label={`${app.approvals.length} pending approvals`}
-                  onClick={() =>
+                  onClick={() => {
+                    showSession();
                     app.viewApproval(
                       app.approvals.find(
                         (request) => !activeApprovals.includes(request),
                       ) ?? app.approvals[0],
-                    )
-                  }
+                    );
+                  }}
                 >
                   <ShieldAlert size={14} />
                   {app.approvals.length}
@@ -314,6 +345,7 @@ export default function App() {
                   className="question-shortcut"
                   aria-label={`${app.questions.length} pending questions`}
                   onClick={() => {
+                    setPullRequest(null);
                     setExpanded(false);
                     app.viewQuestion(
                       app.questions.find(
@@ -398,8 +430,16 @@ export default function App() {
               </button>
             </div>
           )}
+          {activePullRequest && (
+            <PullRequestScreen
+              key={activePullRequest.pr.url}
+              target={activePullRequest}
+              back={showSession}
+            />
+          )}
           <div
             className={`session-layout${pane && app.project ? " with-changes" : ""}`}
+            hidden={Boolean(activePullRequest)}
           >
             <div
               className="session-workspace"

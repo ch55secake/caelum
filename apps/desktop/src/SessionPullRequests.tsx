@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { GitPullRequest, GitPullRequestDraft } from "lucide-react";
 import { copyAction, useContextMenu } from "./ContextMenu.js";
 import { usePullRequestPreview } from "./PullRequestPreview.js";
@@ -100,38 +100,20 @@ function SessionPullRequest({
   pr: PullRequest;
   sessions: Session[];
 }) {
-  const trigger = useRef<HTMLButtonElement>(null);
   const preview = usePullRequestPreview();
-  const previewRef = useRef(preview);
-  previewRef.current = preview;
   const menu = useContextMenu();
   const id = useId();
-  useLayoutEffect(() => {
-    const anchor = trigger.current;
-    return () => {
-      if (anchor) previewRef.current.release(anchor);
-    };
-  }, []);
   const Icon = pr.isDraft ? GitPullRequestDraft : GitPullRequest;
   return (
     <button
-      ref={trigger}
       type="button"
       className="session-pr-item"
       data-draft={pr.isDraft}
       aria-label={`View ${pr.isDraft ? "draft " : ""}pull request #${pr.number}: ${pr.title}`}
       aria-describedby={id}
-      aria-haspopup="dialog"
-      aria-expanded={
-        preview.anchor === trigger.current && Boolean(trigger.current)
-      }
-      aria-controls={
-        preview.anchor === trigger.current ? preview.id : undefined
-      }
+      aria-current={preview.activeUrl === pr.url ? "page" : undefined}
       title={`${pr.title}\n${sessions.map((session) => session.title).join("\n")}`}
-      onClick={(event) =>
-        preview.open({ anchor: event.currentTarget, projectPath, pr })
-      }
+      onClick={() => preview.open({ projectPath, pr })}
       onContextMenu={(event) =>
         menu(event, [
           copyAction("Copy pull request URL", pr.url),

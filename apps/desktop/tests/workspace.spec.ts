@@ -6274,7 +6274,7 @@ async function preparePullRequestPreview(page: Page) {
     .getByRole("button", { name: /Open pull request #44/ });
 }
 
-test("PR previews load on demand, stay open across the hover gap, share cached details and expand in app", async ({
+test("PR previews load on demand, stay open across the hover gap, share cached details and open the PR screen", async ({
   page,
 }) => {
   const trigger = await preparePullRequestPreview(page);
@@ -6311,7 +6311,7 @@ test("PR previews load on demand, stay open across the hover gap, share cached d
   await page.screenshot({ path: "test-results/pr-preview.png" });
   await expect(page.locator(".breadcrumbs")).toContainText("New session");
   await card.getByRole("button", { name: "View pull request" }).click();
-  const expanded = page.getByRole("dialog", {
+  const expanded = page.getByRole("region", {
     name: "Pull request #44",
     exact: true,
   });
@@ -6321,6 +6321,10 @@ test("PR previews load on demand, stay open across the hover gap, share cached d
   await expect(
     expanded.getByRole("region", { name: "Pull request checks" }),
   ).toContainText("Preview deploy");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeHidden();
   await page.screenshot({ path: "test-results/pr-overview.png" });
   await expanded.getByRole("link", { name: "GitHub", exact: true }).click();
   await expect
@@ -6333,9 +6337,11 @@ test("PR previews load on demand, stay open across the hover gap, share cached d
       ),
     )
     .toBe(previewPullRequest.url);
-  await expanded.getByRole("button", { name: "Close pull request" }).click();
+  await expanded.getByRole("button", { name: "Back to session" }).click();
   await expect(expanded).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
   await expect(card).toHaveCount(0);
   const sessionTrigger = sessionRow(
     page,
@@ -6421,9 +6427,16 @@ test("PR previews support keyboard access, retry failures and constrain long con
     card.getByRole("button", { name: "View pull request" }),
   ).toBeFocused();
   await page.keyboard.press("Enter");
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(screen.getByRole("heading", { level: 1 })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+  await expect(screen).toBeVisible();
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await trigger.focus();
   await trigger.press("Enter");
   await trigger.press("Tab");
   await page.keyboard.press("Shift+Tab");
@@ -6579,14 +6592,14 @@ test("session PR section groups open sessions and opens an overview without sele
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("Keep this draft while reviewing PRs");
   await shared.click();
-  const dialog = page.getByRole("dialog", {
+  const screen = page.getByRole("region", {
     name: "Pull request #44",
     exact: true,
   });
-  await expect(dialog).toContainText("+128");
-  await page.keyboard.press("Escape");
-  await expect(shared).toBeFocused();
+  await expect(screen).toContainText("+128");
+  await expect(shared).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await screen.getByRole("button", { name: "Back to session" }).click();
   await expect(input).toHaveValue("Keep this draft while reviewing PRs");
   await expect(page.locator(".breadcrumbs")).toContainText("New session");
   expect(
@@ -6599,8 +6612,8 @@ test("session PR section groups open sessions and opens an overview without sele
     ),
   ).toHaveLength(0);
   await shared.press("Enter");
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Close pull request" }).click();
+  await expect(screen).toBeVisible();
+  await page.getByRole("button", { name: "Sessions", exact: true }).click();
   await page.getByRole("textbox", { name: "Search sessions" }).fill("no match");
   await expect(page.locator(".session-list")).toContainText(
     "No matching sessions",
@@ -6635,6 +6648,180 @@ test("session PR section groups open sessions and opens an overview without sele
   await page.clock.runFor(60_100);
   await expect(section.getByRole("button")).toHaveCount(0);
   await expect(section).toContainText("No pull requests for open sessions");
+});
+
+test("PR screen keeps the sidebar usable and preserves the conversation, draft and reading position", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const session = page.getByRole("button", {
+    name: "Refine the session workspace",
+    exact: true,
+  });
+  await session.click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep my session draft");
+  await page
+    .getByRole("button", { name: "Load earlier messages", exact: true })
+    .click();
+  const transcript = page.locator(".transcript");
+  await transcript.evaluate((node) => {
+    node.setAttribute("data-mounted", "yes");
+    node.scrollTop = 250;
+  });
+  await expect(
+    page.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeVisible();
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(screen).toContainText("+128");
+  await expect(screen.getByRole("heading", { level: 1 })).toBeFocused();
+  await expect(entry).toHaveAttribute("aria-current", "page");
+  await expect(session).not.toHaveAttribute("aria-current", "page");
+  await expect(input).toBeHidden();
+  await expect(transcript).toHaveAttribute("data-mounted", "yes");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await emit(page, "item/agentMessage/delta", {
+    threadId: "thread-a",
+    itemId: "pr-background",
+    delta: "Progress while reviewing the pull request",
+  });
+  await expect(screen.getByRole("heading", { level: 1 })).toBeFocused();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await page.screenshot({ path: `test-results/pr-screen-${theme}.png` });
+  }
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(screen).toBeInViewport({ ratio: 1 });
+  expect(
+    await screen.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: "test-results/pr-screen-compact.png" });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(screen).toBeVisible();
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(entry).toHaveAttribute("aria-current", "page");
+  await page.getByRole("button", { name: "Sessions", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await expect(input).toHaveValue("Keep my session draft");
+  await expect(transcript).toHaveAttribute("data-mounted", "yes");
+  await expect
+    .poll(() => transcript.evaluate((node) => node.scrollTop))
+    .toBe(250);
+  await page
+    .getByRole("button", { name: "Jump to latest", exact: true })
+    .click();
+  await expect(
+    page.getByText("Progress while reviewing the pull request", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await entry.click();
+  await session.click();
+  await expect(screen).toHaveCount(0);
+  await expect(input).toHaveValue("Keep my session draft");
+  await entry.click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await expect(
+    page.getByRole("complementary", { name: "Project files", exact: true }),
+  ).toBeVisible();
+  await entry.click();
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Project changes", exact: true }),
+  ).toBeVisible();
+  await expect(screen).toHaveCount(0);
+  await entry.click();
+  await page.keyboard.press("Meta+n");
+  await expect(screen).toHaveCount(0);
+  await expect(input).toHaveValue("");
+  await session.click();
+  await expect(input).toHaveValue("Keep my session draft");
+});
+
+test("PR screen switches between requests, retries refresh failures and rejects stale results after navigation", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    const other = {
+      ...pr,
+      number: 45,
+      title: "Improve provider adapters",
+      url: "https://github.com/example/caelum/pull/45",
+      body: "Independent provider work",
+      additions: 9,
+    };
+    fixture.setPullRequest("fix/provider-adapters", other);
+    fixture.setPullRequestDetails(other.url, other);
+    fixture.hold(`github_pull_request_details:${pr.url}`);
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  const list = page.getByRole("region", { name: "Pull requests", exact: true });
+  const first = list.getByRole("button", { name: /View pull request #44/ });
+  const second = list.getByRole("button", { name: /View pull request #45/ });
+  await first.click();
+  await expect(
+    page.getByRole("region", { name: "Pull request #44", exact: true }),
+  ).toContainText("Loading pull request details");
+  await second.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #45",
+    exact: true,
+  });
+  await expect(screen).toContainText("Independent provider work");
+  await expect(second).toHaveAttribute("aria-current", "page");
+  await expect(first).not.toHaveAttribute("aria-current", "page");
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.release(`github_pull_request_details:${pr.url}`),
+    previewPullRequest,
+  );
+  await expect(screen).not.toContainText("clearer workspace");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      "GitHub unavailable",
+    ),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(screen.getByRole("alert")).toContainText(
+    "Showing the last loaded details",
+  );
+  await expect(screen).toContainText("+9");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      null,
+    ),
+  );
+  await screen.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(screen.getByRole("alert")).toHaveCount(0);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await second.click();
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_details"),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_details"),
+  );
+  await expect(page.locator(".breadcrumbs")).toContainText("other");
+  await expect(page.locator(".pr-screen")).toHaveCount(0);
 });
 
 test("session PR section discovers off-screen sessions with shared bounded lookups", async ({

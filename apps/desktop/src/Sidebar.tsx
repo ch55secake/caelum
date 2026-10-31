@@ -30,6 +30,7 @@ import type { useWorkspace } from "./useWorkspace.js";
 import { ProjectWorktrees } from "./Worktrees.js";
 import { PullRequestIndicator } from "./PullRequestIndicator.js";
 import { SessionPullRequests } from "./SessionPullRequests.js";
+import { usePullRequestPreview } from "./PullRequestPreview.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
 const MIN_SIDEBAR_WIDTH = 180;
@@ -131,6 +132,11 @@ export function Sidebar({
   openSettings: () => void;
 }) {
   const contextMenu = useContextMenu();
+  const { activeUrl } = usePullRequestPreview();
+  const selectSession = (item: SessionSummary, provider: ProviderKind) => {
+    showSession();
+    app.selectSession(item, provider);
+  };
   const sidebar = useRef<HTMLElement>(null);
   const [layoutWidth, setLayoutWidth] = useState(window.innerWidth);
   const drag = useRef<{ x: number; width: number } | null>(null);
@@ -202,7 +208,12 @@ export function Sidebar({
       <nav className="project-list" aria-label="Open projects">
         {app.restoring && <span className="empty-sessions">Restoring…</span>}
         {app.projectGroups.map((project) => (
-          <ProjectWorktrees key={project.path} app={app} project={project} />
+          <ProjectWorktrees
+            key={project.path}
+            app={app}
+            project={project}
+            showSession={showSession}
+          />
         ))}
       </nav>
       <button
@@ -298,13 +309,13 @@ export function Sidebar({
             return (
               <div
                 key={`${app.project?.path}-${item.provider}-${item.id}`}
-                className={`session-row${app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
+                className={`session-row${!activeUrl && app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
                 onContextMenu={(event) =>
                   contextMenu(event, [
                     {
                       text: "Open session",
                       enabled: !archiving,
-                      action: () => app.selectSession(item, item.provider),
+                      action: () => selectSession(item, item.provider),
                     },
                     copyAction("Copy session title", sessionTitle(item)),
                     copyAction("Copy session ID", item.id),
@@ -329,13 +340,14 @@ export function Sidebar({
                     title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
                     aria-label={sessionTitle(item)}
                     aria-current={
+                      !activeUrl &&
                       app.provider === item.provider &&
                       app.selectedId === item.id
                         ? "page"
                         : undefined
                     }
                     disabled={archiving}
-                    onClick={() => app.selectSession(item, item.provider)}
+                    onClick={() => selectSession(item, item.provider)}
                   >
                     <span className="session-heading">
                       <span
