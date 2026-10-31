@@ -4,13 +4,15 @@ use std::{path::PathBuf, sync::Arc};
 
 use caelum_core::{
     approvals::ApprovalBroker, codex::CodexProvider, database::WorkspaceDatabase, files,
-    git::GitClient, opencode::OpenCodeProvider, processes::ProcessRegistry, projects::Project,
+    git::GitClient, github, opencode::OpenCodeProvider, processes::ProcessRegistry,
+    projects::Project,
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
-    GitFileVersions, GitRepositoryStatus, OpenCodeSessionInfo, OpenCodeSessionList,
-    ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProjectSearchMode,
-    ProjectSearchResults, ProviderChoices, SessionDetails, SessionHistoryPage, WorkspaceSnapshot,
+    GitFileVersions, GitHubPullRequest, GitRepositoryStatus, OpenCodeSessionInfo,
+    OpenCodeSessionList, ProjectDirectoryListing, ProjectFileContent, ProjectInfo,
+    ProjectSearchMode, ProjectSearchResults, ProviderChoices, SessionDetails, SessionHistoryPage,
+    WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -80,6 +82,18 @@ async fn git_repository_status(project_path: String) -> Result<GitRepositoryStat
         GitClient::new()
             .repository_status(project_path)
             .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_open_pull_request(
+    project_path: String,
+    branch: String,
+) -> Result<Option<GitHubPullRequest>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::open_pull_request(project_path, &branch).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -711,6 +725,7 @@ pub fn run() {
             startup_project,
             open_project,
             git_repository_status,
+            github_open_pull_request,
             git_file_diff,
             git_file_versions,
             list_project_directory,

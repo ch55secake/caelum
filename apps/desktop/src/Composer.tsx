@@ -30,6 +30,7 @@ export function Composer({
   disabled,
   textareaRef,
   submit,
+  newSession,
   cancel,
   choices,
   model,
@@ -62,6 +63,7 @@ export function Composer({
   disabled: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   submit: () => void;
+  newSession: () => void;
   cancel: () => void;
   choices: ProviderChoices | null;
   model: string;
@@ -85,10 +87,13 @@ export function Composer({
   const recalled = useRef(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
-  const command = provider === "opencode" ? parseSlashCommand(draft) : null;
+  const parsed = parseSlashCommand(draft);
+  const command =
+    provider === "opencode" || parsed?.name === "new" ? parsed : null;
   const slash = useSlashCommands({
     project: projectPath,
-    enabled: provider === "opencode" && !disabled && !submitting,
+    provider,
+    enabled: !disabled && !submitting,
     draft,
     setDraft,
     run: send,
@@ -96,8 +101,16 @@ export function Composer({
   });
   function send(text = draft) {
     if (disabled || submitting) return;
-    const command = provider === "opencode" ? parseSlashCommand(text) : null;
-    if (command?.name === "usage") {
+    const command = parseSlashCommand(text);
+    if (command?.name === "new") {
+      if (command.arguments.trim()) {
+        setCommandError("/new does not take arguments.");
+        return;
+      }
+      setCommandError(null);
+      setDraft("");
+      newSession();
+    } else if (provider === "opencode" && command?.name === "usage") {
       if (command.arguments.trim()) {
         setCommandError("/usage does not take arguments.");
         return;
@@ -105,7 +118,7 @@ export function Composer({
       setCommandError(null);
       setDraft("");
       setUsageOpen(true);
-    } else if (!working || command) submit();
+    } else if (!working || (provider === "opencode" && command)) submit();
   }
   const busy = working || submitting || awaitingApproval;
   const agents = choices?.agents ?? [];
@@ -184,8 +197,8 @@ export function Composer({
         <textarea
           ref={textareaRef}
           aria-label="Message"
-          aria-autocomplete={provider === "opencode" ? "list" : undefined}
-          aria-haspopup={provider === "opencode" ? "listbox" : undefined}
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
           aria-controls={slash.controls}
           aria-activedescendant={slash.activeId}
           aria-keyshortcuts={canCycleAgent ? "Shift+Tab" : undefined}
@@ -193,9 +206,7 @@ export function Composer({
           placeholder={
             working
               ? "Draft your next message…"
-              : provider === "opencode"
-                ? "Ask anything, or type / for commands…"
-                : "Ask anything, or describe a change…"
+              : "Ask anything, or type / for commands…"
           }
           value={draft}
           disabled={disabled}
@@ -385,10 +396,7 @@ export function Composer({
               className="send-button"
               onClick={() => send()}
               disabled={
-                disabled ||
-                submitting ||
-                !draft.trim() ||
-                (provider === "opencode" && draft.trim() === "/")
+                disabled || submitting || !draft.trim() || draft.trim() === "/"
               }
               aria-label={command ? "Run command" : "Send message"}
               title={command ? "Run command" : "Send message"}

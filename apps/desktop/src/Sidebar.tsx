@@ -28,6 +28,7 @@ import type {
 } from "./workspaceState.js";
 import type { useWorkspace } from "./useWorkspace.js";
 import { ProjectItem } from "./ProjectItem.js";
+import { PullRequestIndicator } from "./PullRequestIndicator.js";
 import { projectHasActiveTurn } from "./workspaceState.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
@@ -38,10 +39,12 @@ export function sessionTitle(item: SessionSummary) {
 }
 
 function SessionContext({
+  projectPath,
   details,
   load,
   revision,
 }: {
+  projectPath: string;
   details?: SessionDetails;
   load: () => void;
   revision: number | null;
@@ -69,6 +72,12 @@ function SessionContext({
           <GitBranch size={10} aria-hidden="true" />
           <span>{details.branch}</span>
         </span>
+      )}
+      {details?.branch && (
+        <PullRequestIndicator
+          projectPath={projectPath}
+          branch={details.branch}
+        />
       )}
       {details?.changes && (
         <span
@@ -367,6 +376,7 @@ export function Sidebar({
                   <span className="session-title">{sessionTitle(item)}</span>
                 </span>
                 <SessionContext
+                  projectPath={app.project!.path}
                   details={workspace?.sessionDetails[item.id]}
                   revision={item.updatedAt}
                   load={() => {

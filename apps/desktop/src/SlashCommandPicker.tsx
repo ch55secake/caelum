@@ -8,9 +8,11 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { SlashCommand } from "./slashCommands.js";
+import type { ProviderKind } from "./workspaceState.js";
 
 export function useSlashCommands({
   project,
+  provider,
   enabled,
   draft,
   setDraft,
@@ -18,6 +20,7 @@ export function useSlashCommands({
   input,
 }: {
   project: string;
+  provider: ProviderKind;
   enabled: boolean;
   draft: string;
   setDraft: (text: string) => void;
@@ -38,7 +41,7 @@ export function useSlashCommands({
     : (draft.match(/^\/([^\s]*)$/)?.[1] ?? null);
   const open = enabled && focused && !dismissed && query !== null;
   useEffect(() => {
-    if (!open) return;
+    if (!open || provider !== "opencode") return;
     let disposed = false;
     setLoading(true);
     setError(null);
@@ -56,14 +59,21 @@ export function useSlashCommands({
     return () => {
       disposed = true;
     };
-  }, [project, open, refresh]);
+  }, [project, provider, open, refresh]);
   const matches = [
-    {
-      name: "usage",
-      description:
-        "View OpenCode Go allowances, Console budgets and session context",
-    },
-    ...commands.filter((command) => command.name !== "usage"),
+    { name: "new", description: "Start a new session in this project" },
+    ...(provider === "opencode"
+      ? [
+          {
+            name: "usage",
+            description:
+              "View OpenCode Go allowances, Console budgets and session context",
+          },
+          ...commands.filter(
+            (command) => !["new", "usage"].includes(command.name),
+          ),
+        ]
+      : []),
   ].filter((command) =>
     command.name.toLowerCase().includes((query ?? "").toLowerCase()),
   );

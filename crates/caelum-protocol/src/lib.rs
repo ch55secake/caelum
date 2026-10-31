@@ -41,6 +41,16 @@ pub struct GitRepositoryStatus {
     pub changes: Vec<GitFileStatus>,
 }
 
+/// An open GitHub pull request for a project's branch (including drafts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequest {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub is_draft: bool,
+}
+
 /// Separate staged, unstaged, and untracked diffs for one changed path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

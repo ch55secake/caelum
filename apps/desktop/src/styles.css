@@ -151,6 +151,7 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .session-branch > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-lines { display: flex; flex-shrink: 0; gap: 5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lines-added { color: var(--success); }.lines-deleted { color: var(--deletion); }
+.branch-pr { display: inline-flex; flex-shrink: 0; color: var(--success); }.branch-pr:empty { display: none; }.branch-pr > span { display: inline-flex; }.branch-pr[data-draft="true"] { color: var(--muted); }
 .session-archive { position: absolute; top: 3px; right: 3px; width: 22px; height: 24px; opacity: 0; }
 .session-row:hover .session-archive, .session-row:focus-within .session-archive { opacity: 1; }
 .session-row:hover .session-archive:disabled, .session-row:focus-within .session-archive:disabled { opacity: .45; }

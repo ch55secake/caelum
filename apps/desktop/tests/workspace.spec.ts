@@ -144,6 +144,7 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
         { branch: string | null; repositoryRoot: string | null }
       >();
       const gitErrors = new Map<string, string>();
+      const pullRequests = new Map<string, unknown>();
       let diffVersion = 1;
       const codexHistory = new Map<
         string,
@@ -257,6 +258,13 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
           setGitError: (error: string | null, path = project.path) => {
             if (error) gitErrors.set(path, error);
             else gitErrors.delete(path);
+          },
+          setPullRequest: (
+            branch: string,
+            value: unknown,
+            path = project.path,
+          ) => {
+            pullRequests.set(fileKey(path, branch), value);
           },
           setGitDiff: (
             file: string,
@@ -741,6 +749,18 @@ async function desktop(page: Page, selected: string | null = "thread-a") {
             if (command === "resolve_approval") {
               emit("approval-requests", []);
               return;
+            }
+            if (command === "github_open_pull_request") {
+              const result =
+                pullRequests.get(fileKey(args.projectPath, args.branch)) ??
+                null;
+              const error = commandErrors.get(command);
+              await (
+                gates.get(`${command}:${args.projectPath}:${args.branch}`) ??
+                gates.get(command)
+              )?.promise;
+              if (error) throw new Error(error);
+              return result;
             }
             if (command === "git_repository_status") {
               const error = gitErrors.get(args.projectPath);
@@ -3589,6 +3609,113 @@ test("file and diff context menus copy exact content, reveal paths, and use nati
   ).toBeVisible();
 });
 
+for (const provider of ["codex", "opencode"] as const) {
+  test(`${provider} slash new opens its project draft without sending or interrupting the source session`, async ({
+    page,
+  }) => {
+    await desktop(page, null);
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("A draft already waiting");
+    await setHistory(page, provider, [], true);
+    const title =
+      provider === "codex"
+        ? "Refine the session workspace"
+        : "OpenCode session";
+    const row = sessionRow(page, title);
+    await row.getByRole("button", { name: title, exact: true }).click();
+    await findProjectFile(page, "src/App.tsx");
+    await page
+      .locator(".file-editor-toolbar")
+      .getByRole("button", { name: "Add to prompt", exact: true })
+      .click();
+    await choose(page, "Model", "Fast model provider/fast");
+    await input.fill("/new unexpected");
+    await input.press("Enter");
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "/new does not take arguments." }),
+    ).toBeVisible();
+    await expect(input).toHaveValue("/new unexpected");
+    await expect(attachedContext(page)).toContainText("src/App.tsx");
+    await input.fill("/new");
+    await expect(page.getByRole("option", { name: /^\/new / })).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: "Stop generation", exact: true }),
+    ).toBeVisible();
+    await input.press("Enter");
+    await expect(
+      page.getByRole("heading", { name: "New session", exact: true }),
+    ).toBeVisible();
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("A draft already waiting");
+    await expect(attachedContext(page)).toHaveCount(0);
+    await expect(row.locator(".running-dot")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Provider", exact: true }),
+    ).toContainText(provider === "codex" ? "Codex" : "OpenCode");
+    await row.getByRole("button", { name: title, exact: true }).click();
+    await expect(input).toBeEmpty();
+    await expect(attachedContext(page)).toContainText("src/App.tsx");
+    await expect(
+      page.getByRole("button", { name: "Model", exact: true }),
+    ).toContainText("Fast model");
+    await expect(
+      page.getByRole("button", { name: "Stop generation", exact: true }),
+    ).toBeVisible();
+    // Button submission uses the same local route, even if discovery fails.
+    await page.evaluate(() =>
+      (window as any).fixture.setCommandError(
+        "opencode_commands",
+        "Discovery unavailable",
+      ),
+    );
+    await input.fill("/new ");
+    await page
+      .getByRole("button", { name: "Run command", exact: true })
+      .click();
+    await expect(input).toHaveValue("A draft already waiting");
+    await input.fill("/ne");
+    await input.press("Tab");
+    await expect(input).toHaveValue("/new ");
+    await input.press("Enter");
+    await expect(input).toBeEmpty();
+    await expect(input).toBeFocused();
+    expect(
+      await page.evaluate(() =>
+        (window as any).fixture.calls.filter((call: any) =>
+          /_(start_session|send_prompt|run_command|cancel_turn)$/.test(
+            call.command,
+          ),
+        ),
+      ),
+    ).toHaveLength(0);
+    await input.fill("Start the new task");
+    await input.press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (provider) =>
+            (window as any).fixture.calls.filter(
+              (call: any) => call.command === `${provider}_send_prompt`,
+            ).length,
+          provider,
+        ),
+      )
+      .toBe(1);
+    expect(
+      await page.evaluate(
+        (provider) =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.command === `${provider}_start_session`,
+          ),
+        provider,
+      ),
+    ).toHaveLength(1);
+  });
+}
+
 test("slash picker discovers native commands, preserves agent shortcuts and submits one new goal", async ({
   page,
 }) => {
@@ -3596,8 +3723,10 @@ test("slash picker discovers native commands, preserves agent shortcuts and subm
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("/");
   await expect(
-    page.getByRole("listbox", { name: "Slash commands" }),
-  ).toHaveCount(0);
+    page.getByRole("listbox", { name: "Slash commands" }).getByRole("option"),
+  ).toHaveCount(1);
+  await expect(page.getByRole("option", { name: /^\/new / })).toBeVisible();
+  await input.press("Escape");
   await choose(page, "Provider", "OpenCode");
   await input.fill("/");
   const list = page.getByRole("listbox", { name: "Slash commands" });
@@ -3605,6 +3734,7 @@ test("slash picker discovers native commands, preserves agent shortcuts and subm
   await expect(
     list.getByRole("option", { name: /^\/team\/review/ }),
   ).toBeVisible();
+  await input.press("ArrowDown");
   await input.press("ArrowDown");
   await expect(list.getByRole("option", { name: /^\/init/ })).toHaveAttribute(
     "aria-selected",
@@ -4744,6 +4874,233 @@ test("navigating while first-send creation is pending does not steal the selecte
   await expect(
     page.locator(".session-item").filter({ hasText: "Background task" }),
   ).toContainText("Background task");
+});
+
+test("branch PR indicators share lookups, distinguish drafts and clear closed or unavailable PRs", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page);
+  await page.getByRole("button", { name: /New session/ }).click();
+  await choose(page, "Provider", "OpenCode");
+  const project = page
+    .getByRole("navigation", { name: "Open projects" })
+    .getByRole("button", { name: "caelum", exact: true });
+  const session = sessionRow(page, "Refine the session workspace");
+  const openCode = sessionRow(page, "OpenCode session");
+  await expect(session.locator(".session-branch")).toHaveText(
+    "feat/session-ui-redesign",
+  );
+  await expect(openCode.locator(".session-branch")).toHaveText("main");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("main", {
+      number: 11,
+      title: "Main changes",
+      url: "https://github.com/example/repo/pull/11",
+      isDraft: false,
+    });
+    fixture.setPullRequest("feat/session-ui-redesign", {
+      number: 40,
+      title: "Session UI",
+      url: "https://github.com/example/repo/pull/40",
+      isDraft: true,
+    });
+  });
+  await page.clock.runFor(60_100);
+  await expect(
+    project.getByRole("img", {
+      name: "Open pull request #11: Main changes",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    openCode.getByRole("img", {
+      name: "Open pull request #11: Main changes",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    session.getByRole("img", {
+      name: "Draft pull request #40: Session UI",
+      exact: true,
+    }),
+  ).toHaveAttribute("title", "Draft pull request #40: Session UI");
+  await expect(
+    sessionRow(page, "Review the provider adapters").locator(".branch-pr"),
+  ).toBeEmpty();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) =>
+          call.command === "github_open_pull_request" &&
+          call.args.projectPath === "/work/caelum" &&
+          call.args.branch === "main",
+      ),
+    ),
+  ).toHaveLength(2);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("main", null);
+    fixture.setPullRequest("feat/session-ui-redesign", {
+      number: 40,
+      title: "Ready for review",
+      url: "https://github.com/example/repo/pull/40",
+      isDraft: false,
+    });
+  });
+  await page.clock.runFor(60_100);
+  await expect(project.locator(".branch-pr")).toBeEmpty();
+  await expect(openCode.locator(".branch-pr")).toBeEmpty();
+  await expect(
+    session.getByRole("img", {
+      name: "Open pull request #40: Ready for review",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(
+    session.getByRole("img", {
+      name: "Open pull request #40: Ready for review",
+      exact: true,
+    }),
+  ).toBeInViewport({ ratio: 1 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
+  await page.screenshot({ path: "test-results/branch-pr-indicators.png" });
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_open_pull_request",
+      "GitHub CLI unavailable",
+    ),
+  );
+  await page.clock.runFor(60_100);
+  await expect(session.locator(".branch-pr")).toBeEmpty();
+  await expect(project.locator(".project-changes")).toHaveText("2 changed");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "GitHub CLI unavailable" }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("github_open_pull_request", null),
+  );
+  await page.clock.runFor(60_100);
+  await expect(
+    session.getByRole("img", {
+      name: "Open pull request #40: Ready for review",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
+test("branch PR indicators stay scoped through branch and project changes and delayed responses", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page);
+  const projects = page.getByRole("navigation", { name: "Open projects" });
+  const current = projects.getByRole("button", { name: "caelum", exact: true });
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setGitMetadata({
+      repositoryRoot: "/work/caelum",
+      branch: "feat/shared",
+    });
+    fixture.setPullRequest("feat/shared", {
+      number: 10,
+      title: "Old branch",
+      url: "https://github.com/example/caelum/pull/10",
+      isDraft: false,
+    });
+    fixture.hold("github_open_pull_request:/work/caelum:feat/shared");
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(current.locator(".project-branch")).toHaveText("feat/shared");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).fixture.calls.some(
+          (call: any) =>
+            call.command === "github_open_pull_request" &&
+            call.args.branch === "feat/shared",
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setGitMetadata({
+      repositoryRoot: "/work/caelum",
+      branch: "feat/current",
+    });
+    fixture.setPullRequest("feat/current", {
+      number: 20,
+      title: "Current branch",
+      url: "https://github.com/example/caelum/pull/20",
+      isDraft: false,
+    });
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(
+    current.getByRole("img", {
+      name: "Open pull request #20: Current branch",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.release("github_open_pull_request:/work/caelum:feat/shared");
+    fixture.setGitMetadata(
+      { repositoryRoot: "/work/other", branch: "feat/current" },
+      "/work/other",
+    );
+    fixture.setPullRequest(
+      "feat/current",
+      {
+        number: 30,
+        title: "Other repository",
+        url: "https://github.com/example/other/pull/30",
+        isDraft: false,
+      },
+      "/work/other",
+    );
+  });
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  const other = projects.getByRole("button", { name: "other", exact: true });
+  await expect(
+    other.getByRole("img", {
+      name: "Open pull request #30: Other repository",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    current.getByRole("img", {
+      name: "Open pull request #20: Current branch",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(current.getByRole("img", { name: /Old branch/ })).toHaveCount(0);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setGitMetadata({ repositoryRoot: "/work/caelum", branch: null });
+    fixture.setGitMetadata(
+      { repositoryRoot: null, branch: null },
+      "/work/other",
+    );
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(current.locator(".project-branch")).toHaveText("Detached HEAD");
+  await expect(current.getByRole("img")).toHaveCount(0);
+  await expect(other).toContainText("Not a Git repository");
+  await expect(other.getByRole("img")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) =>
+          call.command === "github_open_pull_request" && !call.args.branch,
+      ),
+    ),
+  ).toHaveLength(0);
 });
 
 test("project rows show scoped live Git details and background activity, including unavailable repositories", async ({

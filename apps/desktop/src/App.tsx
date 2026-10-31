@@ -488,6 +488,7 @@ export default function App() {
                     )
                   }
                   submit={() => void app.submit()}
+                  newSession={newSession}
                   cancel={() => void app.cancel()}
                   choices={app.providerWorkspace?.choices ?? null}
                   choicesError={app.providerWorkspace?.choicesError ?? null}

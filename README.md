@@ -91,8 +91,9 @@ Responses and thinking update live. Expand a thinking row to read the provider's
 
 The composer’s **Context** meter shows the latest reported context usage. Hover or focus it for token counts and the model’s context-window size. Codex supplies usage and its effective limit directly; OpenCode uses the latest assistant step and that model’s reported limit, resetting after compaction. Missing usage or limits are shown as unavailable rather than guessed.
 
-In an OpenCode composer, type **/** to discover native and custom project commands. Filter by name, use **↑/↓** to navigate, **Tab** or click to complete a command for arguments, **Enter** to run it, and **Esc** to close the picker. Commands execute through OpenCode with your selected model/agent and attached file snapshots; their responses appear in the conversation.
+Type **/** in either provider’s composer for local commands; OpenCode also discovers native and custom project commands. Filter by name, use **↑/↓** to navigate, **Tab** or click to complete a command for arguments, **Enter** to run it, and **Esc** to close the picker. Native commands execute through OpenCode with your selected model/agent and attached file snapshots; their responses appear in the conversation.
 
+- **/new** opens a new-session draft in the current project and provider, like **⌘N**. It works during an active turn, keeps attachments and pending settings with their original session, and creates the provider session on your first message.
 - **/goal objective** uses OpenCode’s native goal workflow. **/goal pause**, **/goal resume**, and **/goal clear** also work during active execution; **Stop** remains available.
 - **/usage** opens an **OpenCode Go usage** window with rolling, weekly, and monthly allowance cards, remaining percentages, and reset countdowns. OpenCode Console budgets and the current session’s context are labelled separately; Codex account usage is not included. Refresh keeps the last reported values visible. It works before creating a session and retains attached context.
 - Other commands, such as **/review**, **/init**, and project-defined commands, appear when the connected OpenCode installation reports them.
@@ -106,6 +107,8 @@ Your newest message has an accent rail. Press **↑** in an empty composer to re
 Context compaction appears as a checkpoint in live and restored Codex and OpenCode conversations, including running, completed, failed, and interrupted states. Expand an OpenCode checkpoint to read its summary or error when supplied. Earlier messages stay available, and the agent can keep working after compaction finishes.
 
 Project rows show the folder path, current branch, and changed-file count or clean status. Git details refresh while projects are visible, with running-session and approval indicators for background work. Detached HEAD, non-Git folders, and unavailable Git status are identified explicitly.
+
+Project and session branches show a green pull-request symbol when they have an open GitHub PR, or a muted draft symbol for draft PRs. Hover for the PR number and title. This uses the installed, authenticated **GitHub CLI (`gh`)** and its repository selection; lookups are shared per project/branch and refresh about once a minute while visible. If GitHub is unavailable or no open PR exists, the symbol is hidden.
 
 Drag the left sidebar's right edge to resize it, or focus its divider and use **←/→**, **Home**, and **End**. Its preferred width is saved on this device and restored after collapsing or reopening the app. Narrow windows temporarily constrain the sidebar to leave room for the conversation and inspector.
 
