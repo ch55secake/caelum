@@ -60,7 +60,8 @@ export function useSlashCommands({
   const matches = [
     {
       name: "usage",
-      description: "View context usage, OpenCode allowances and budgets",
+      description:
+        "View OpenCode Go allowances, Console budgets and session context",
     },
     ...commands.filter((command) => command.name !== "usage"),
   ].filter((command) =>

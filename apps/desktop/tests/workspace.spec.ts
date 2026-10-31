@@ -3964,7 +3964,7 @@ test("slash lookup locks submission, preserves newer drafts and stays scoped thr
   });
 });
 
-test("slash usage opens without a session, keeps attachments and supports loading, retry, limits and modal shortcuts", async ({
+test("slash usage identifies OpenCode Go, keeps attachments and reported limits through refresh failures", async ({
   page,
 }) => {
   await desktop(page, null);
@@ -3991,13 +3991,16 @@ test("slash usage opens without a session, keeps attachments and supports loadin
   await input.fill("/usage");
   await input.press("Enter");
   const dialog = page.getByRole("dialog", {
-    name: "OpenCode usage",
+    name: "OpenCode Go usage",
     exact: true,
   });
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByText("Loading usage…", { exact: true }),
+    dialog.getByText("Loading OpenCode Go usage…", { exact: true }),
   ).toBeVisible();
+  await expect(dialog).toHaveAccessibleDescription(
+    "Subscription allowances. Codex usage isn’t included.",
+  );
   await expect(dialog).toContainText("No context usage reported");
   await page.keyboard.press("Meta+n");
   await page.keyboard.press("Meta+p");
@@ -4008,54 +4011,133 @@ test("slash usage opens without a session, keeps attachments and supports loadin
   await page.evaluate(() =>
     (window as any).fixture.release("opencode_usage_limits"),
   );
-  await expect(dialog.getByRole("alert")).toHaveText(
+  await expect(dialog.getByRole("alert")).toContainText(
     "Error: Usage unavailable",
   );
-  await page.evaluate(() => {
+  const resetsAt = Date.now() + 2 * 60 * 60 * 1000;
+  const limits = {
+    workspace: {
+      id: "workspace",
+      name: "My workspace",
+      usageURL: "https://opencode.ai/usage",
+    },
+    go: {
+      rolling: { percent: 42, limited: false, resetsAt },
+      weekly: { percent: 20, limited: false, resetsAt: resetsAt + 86400000 },
+      monthly: {
+        percent: 100,
+        limited: true,
+        resetsAt: resetsAt + 86400000 * 20,
+      },
+    },
+    budgets: [
+      {
+        id: "budget",
+        limit: 25,
+        spent: 4.5,
+        scope: "combined",
+        per: "set",
+        coverage: "all",
+        models: [],
+        vendors: [],
+        shared: true,
+        picked: true,
+        resetsAt: resetsAt + 86400000 * 20,
+      },
+    ],
+  };
+  await page.evaluate((limits) => {
     const fixture = (window as any).fixture;
     fixture.setCommandError("opencode_usage_limits", null);
-    fixture.setUsageLimits({
-      workspace: {
-        id: "workspace",
-        name: "My workspace",
-        usageURL: "https://opencode.ai/usage",
-      },
-      go: {
-        rolling: { percent: 42, limited: false, resetsAt: 1800000000000 },
-        weekly: { percent: 20, limited: false, resetsAt: 1800100000000 },
-        monthly: { percent: 100, limited: true, resetsAt: 1800200000000 },
-      },
-      budgets: [
-        {
-          id: "budget",
-          limit: 25,
-          spent: 4.5,
-          scope: "combined",
-          per: "set",
-          coverage: "all",
-          models: [],
-          vendors: [],
-          shared: true,
-          picked: true,
-          resetsAt: 1800200000000,
-        },
-      ],
-    });
-  });
+    fixture.setUsageLimits(limits);
+  }, limits);
   await dialog
     .getByRole("button", { name: "Retry usage", exact: true })
     .click();
   await expect(dialog).toContainText("My workspace");
   await expect(
     dialog.getByRole("progressbar", {
-      name: "rolling allowance used",
+      name: "OpenCode Go rolling allowance used",
       exact: true,
     }),
   ).toHaveAttribute("value", "42");
-  await expect(dialog).toContainText("100% used · Limit reached");
-  await expect(dialog).toContainText("$4.50 / $25.00");
+  await expect(
+    dialog
+      .getByRole("region", { name: "OpenCode Go allowances", exact: true })
+      .getByRole("progressbar"),
+  ).toHaveCount(3);
+  await expect(dialog).toContainText("58% remaining");
+  await expect(dialog).toContainText("Limit reached");
+  await expect(
+    dialog.locator(".usage-allowance").first().locator("time"),
+  ).toHaveText("Resets in 2h");
+  await expect(
+    dialog.locator(".usage-allowance").first().locator("time"),
+  ).toHaveAttribute("datetime", new Date(resetsAt).toISOString());
+  await expect(
+    dialog.getByRole("region", {
+      name: "OpenCode Console budgets",
+      exact: true,
+    }),
+  ).toContainText("$4.50 / $25.00");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.hold("opencode_usage_limits");
+    fixture.setCommandError("opencode_usage_limits", "Usage refresh failed");
+  });
+  await dialog
+    .getByRole("button", { name: "Refresh usage", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Refreshing…", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    dialog.getByRole("progressbar", {
+      name: "OpenCode Go rolling allowance used",
+      exact: true,
+    }),
+  ).toHaveAttribute("value", "42");
+  await page.evaluate(() =>
+    (window as any).fixture.release("opencode_usage_limits"),
+  );
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Showing the last reported usage.",
+  );
+  await expect(
+    dialog.getByRole("progressbar", {
+      name: "OpenCode Go rolling allowance used",
+      exact: true,
+    }),
+  ).toHaveAttribute("value", "42");
+  await page.evaluate((limits) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("opencode_usage_limits", null);
+    fixture.setUsageLimits({
+      ...limits,
+      go: { ...limits.go, rolling: { ...limits.go.rolling, percent: 57 } },
+    });
+  }, limits);
+  await dialog
+    .getByRole("button", { name: "Retry usage", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("progressbar", {
+      name: "OpenCode Go rolling allowance used",
+      exact: true,
+    }),
+  ).toHaveAttribute("value", "57");
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
   await page.setViewportSize({ width: 800, height: 620 });
   await expect(dialog).toBeInViewport({ ratio: 1 });
+  await expect(
+    dialog.getByRole("region", { name: "OpenCode Go allowances", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  await expect(
+    dialog.getByRole("button", { name: "Done", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  expect(
+    await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
   await page.screenshot({ path: "test-results/slash-usage.png" });
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -4073,6 +4155,19 @@ test("slash usage opens without a session, keeps attachments and supports loadin
       ),
     ),
   ).toHaveLength(0);
+  const settings = await openSettings(page);
+  await settings.getByRole("radio", { name: "Light", exact: true }).check();
+  await settings.getByRole("button", { name: "Done", exact: true }).click();
+  await input.fill("/usage");
+  await input.press("Enter");
+  await expect(
+    dialog.getByRole("progressbar", {
+      name: "OpenCode Go rolling allowance used",
+      exact: true,
+    }),
+  ).toHaveAttribute("value", "57");
+  await page.screenshot({ path: "test-results/slash-usage-light.png" });
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
 });
 
 test("slash usage reports the measured session model and handles missing provider allowances", async ({
@@ -4109,16 +4204,66 @@ test("slash usage reports the measured session model and handles missing provide
   await expect(page.getByRole("option", { name: /^\/usage/ })).toBeVisible();
   await input.press("Enter");
   const dialog = page.getByRole("dialog", {
-    name: "OpenCode usage",
+    name: "OpenCode Go usage",
     exact: true,
   });
   await expect(dialog).toContainText("100,000 / 200,000 tokens");
   await expect(dialog).toContainText("Test model");
-  await expect(dialog).toContainText("No OpenCode Console allowances reported");
+  await expect(
+    dialog.getByRole("region", {
+      name: "OpenCode session context",
+      exact: true,
+    }),
+  ).toContainText("50% of context");
+  await expect(dialog).toContainText("No OpenCode Go allowances reported");
+  await expect(
+    dialog.getByRole("region", {
+      name: "OpenCode Console budgets",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.setUsageLimits({
+      workspace: { id: "console-only", usageURL: "https://opencode.ai/usage" },
+      budgets: [
+        {
+          id: "budget",
+          limit: 10,
+          spent: 3.5,
+          scope: "each",
+          per: "model",
+          coverage: "models",
+          models: [
+            {
+              providerID: "provider",
+              modelID: "model",
+              name: "Test model",
+              spent: 3.5,
+            },
+          ],
+          vendors: [],
+          shared: false,
+          picked: true,
+          resetsAt: Date.now() + 86400000,
+        },
+      ],
+    }),
+  );
   await dialog
     .getByRole("button", { name: "Refresh usage", exact: true })
     .click();
-  await expect(dialog).toContainText("No OpenCode Console allowances reported");
+  await expect(dialog).toContainText("No OpenCode Go allowances reported");
+  await expect(
+    dialog.getByRole("region", {
+      name: "OpenCode Console budgets",
+      exact: true,
+    }),
+  ).toContainText("$3.50 / $10.00");
+  await expect(
+    dialog
+      .getByRole("region", { name: "OpenCode Go allowances", exact: true })
+      .getByRole("progressbar"),
+  ).toHaveCount(0);
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Model", exact: true }),
