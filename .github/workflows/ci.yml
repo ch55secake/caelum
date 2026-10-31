@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        required: true
+      skip_bundle:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - name: Install Rust formatter
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -25,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - name: Install Rust linter
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -43,6 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Install Tauri system dependencies
@@ -56,9 +70,12 @@ jobs:
 
   macos-app:
     name: desktop-bundle-build
+    if: ${{ inputs.skip_bundle != true }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.12.1
@@ -69,13 +86,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @caelum/desktop tauri build --bundles app,dmg
+      - run: pnpm --filter @caelum/desktop tauri build --ci --bundles app,dmg -- --locked
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
 
   desktop-frontend:
     name: desktop-frontend-build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.12.1
@@ -94,5 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
       - run: bash -n scripts/release/package_macos_assets.sh

@@ -97,6 +97,8 @@ class AutomaticReleaseTests(unittest.TestCase):
             self.git(repository, "branch", "-M", "main")
             self.git(repository, "config", "user.name", "Release test")
             self.git(repository, "config", "user.email", "release-test@example.com")
+            self.git(repository, "config", "commit.gpgsign", "false")
+            self.git(repository, "config", "tag.gpgsign", "false")
             subprocess.run(["git", "init", "--bare", "--quiet", str(remote)], check=True)
 
             (repository / "apps/desktop/src-tauri").mkdir(parents=True)
@@ -132,6 +134,7 @@ class AutomaticReleaseTests(unittest.TestCase):
             environment.update(
                 {
                     "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_EVENT_NAME": "push",
                     "GITHUB_SHA": source_commit,
                     "BEFORE_SHA": base_commit,
                     "GITHUB_OUTPUT": str(output_path),
@@ -177,6 +180,53 @@ class AutomaticReleaseTests(unittest.TestCase):
             )
             self.assertEqual(bot_push_outputs["release_tag"], "")
             self.assertEqual(bot_push_outputs["should_release"], "false")
+
+            # Manual recovery resolves the original tag, not the checkout's HEAD,
+            # and never makes another version commit.
+            recovery_output = root / "recovery-output"
+            environment.update({
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "RELEASE_TAG": "v0.1.2",
+                "GITHUB_OUTPUT": str(recovery_output),
+            })
+            subprocess.run([sys.executable, str(script)], cwd=repository, env=environment, check=True)
+            self.assertIn(f"release_commit={release_commit}", recovery_output.read_text())
+            self.assertEqual(self.git(repository, "ls-remote", "origin", "refs/heads/main").split()[0], release_commit)
+
+            for tag in ["v9.9.9", "v0.1.99", "--all"]:
+                if tag == "v9.9.9":
+                    self.git(repository, "tag", tag, release_commit)
+                    self.git(repository, "push", "origin", f"refs/tags/{tag}")
+                environment["RELEASE_TAG"] = tag
+                rejected = subprocess.run([sys.executable, str(script)], cwd=repository, env=environment, capture_output=True, text=True)
+                self.assertNotEqual(rejected.returncode, 0, tag)
+
+            # An older queued merge must not silently release a newer tree.
+            self.git(repository, "checkout", "--detach", release_commit)
+            (repository / "README.md").write_text("first overlapping merge\n")
+            self.git(repository, "commit", "-am", "feat: first overlapping merge")
+            first = self.git(repository, "rev-parse", "HEAD")
+            self.git(repository, "push", "origin", "HEAD:main")
+            (repository / "README.md").write_text("second overlapping merge\n")
+            self.git(repository, "commit", "-am", "feat: second overlapping merge")
+            second = self.git(repository, "rev-parse", "HEAD")
+            self.git(repository, "push", "origin", "HEAD:main")
+            self.git(repository, "checkout", "--detach", first)
+            superseded_output = root / "superseded-output"
+            environment.update({
+                "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": first,
+                "BEFORE_SHA": release_commit, "GITHUB_OUTPUT": str(superseded_output),
+            })
+            subprocess.run([sys.executable, str(script)], cwd=repository, env=environment, check=True)
+            self.assertIn("should_release=false", superseded_output.read_text())
+            self.assertEqual(self.git(repository, "ls-remote", "origin", "refs/heads/main").split()[0], second)
+            self.assertEqual(self.git(repository, "ls-remote", "origin", "refs/tags/v0.1.3"), "")
+
+            self.git(repository, "checkout", "--detach", second)
+            environment.update({"GITHUB_SHA": second, "BEFORE_SHA": first, "GITHUB_OUTPUT": str(root / "latest-output")})
+            subprocess.run([sys.executable, str(script)], cwd=repository, env=environment, check=True)
+            self.assertEqual(self.git(repository, "rev-parse", "v0.1.3^"), second)
+            self.assertEqual(self.git(repository, "show", "v0.1.3:README.md"), "second overlapping merge")
 
 
 if __name__ == "__main__":

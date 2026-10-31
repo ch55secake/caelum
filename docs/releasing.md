@@ -1,45 +1,72 @@
 # Releasing Caelum
 
-Every merge to `main` creates a patch release: the workflow commits the next patch version, tags it, builds Apple Silicon and Intel macOS app DMGs and standalone CLI archives, and publishes a GitHub release with SHA-256 checksums. A merge that already contains an explicit version change uses that version instead. Pushing a matching version tag directly is also supported.
+Merges to `main` trigger automatic patch releases for Apple Silicon and Intel Macs. A deliberate version change uses that version instead. The release contains two DMGs, two standalone CLI archives, and `SHA256SUMS`.
 
-The app builds are currently unsigned and not notarized. macOS may warn users or block opening the downloaded app. No Apple Developer account or signing secrets are needed for these builds.
+## Signing without an Apple Developer account
+
+Release builds use **ad-hoc signing** (`APPLE_SIGNING_IDENTITY="-"`) for the desktop app and CLI. No Apple account, certificate, signing secret, or notarization credential is required. Ad-hoc signatures verify bundle integrity but do not identify an Apple-approved developer; the app is **not notarized**.
+
+After attempting to open the installed app, macOS may require **System Settings → Privacy & Security → Open Anyway**. See [Apple's first-launch instructions](https://support.apple.com/en-us/102445). Release notes include this information and links for each architecture.
+
+## Release flow
+
+1. Prepare an immutable version tag. Ordinary merges create a `chore(release)` version commit updating the Cargo workspace, local lockfile packages, frontend package, and Tauri version together. Explicit version changes must already agree across these files.
+2. Run the shared CI checks against that exact release commit: Rust formatting, Clippy, Rust tests, frontend build/unit/browser checks, and release-script checks. The architecture-specific release builds run alongside these checks.
+3. Build ad-hoc-signed app bundles/DMGs and CLI archives on native Apple Silicon and Intel runners with locked dependencies.
+4. Verify signatures, binary architectures, app version/identifier, extracted CLI version and startup, and mounted DMG contents. The app inside the DMG must match the verified build bundle.
+5. Generate checksums, upload into a **draft** GitHub release, and verify the complete uploaded asset set before publication. Publication requires both CI and both architecture builds to succeed.
+6. When configured, open a separate Homebrew tap update PR.
+
+Main release runs are serialized. GitHub retains only the newest pending run when merges arrive faster than releases finish, so overlapping untagged merges can share a release. A superseded preparation run yields to the newer main workflow rather than silently switching its source tree. Once a version commit/tag exists, retries reuse it. Tags are never moved.
 
 ## Automatic version commit setup
 
-The `main` ruleset requires pull requests and status checks. The release workflow uses a dedicated GitHub App installation token to bypass those rules only for its automated version commit.
+The `main` ruleset requires pull requests and status checks. A dedicated GitHub App installation token permits the automated version commit:
 
-1. Create a private GitHub App under the `ch55secake` account with **Contents: read and write** repository permissions. Disable webhooks; no events are needed.
-2. Install the app on `ch55secake/caelum` only, then generate a private key.
-3. Add the app ID and private key as repository Actions secrets named `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY`.
-4. Add the installed app to the `main` ruleset's bypass list with **Always allow**.
+1. Create a private GitHub App with **Contents: read and write** permission and install it on `ch55secake/caelum`. Webhooks are unnecessary.
+2. Store its app ID and private key in Actions secrets `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY`.
+3. Add the app to the `main` ruleset bypass list with **Always allow**.
 
-The release workflow uses the app token for the version commit and the normal Actions token for the release tag, avoiding a duplicate release run.
+The workflow limits the installation token to this repository. It uses the normal Actions token for tags to avoid a second tag-triggered release. The bot's main push runs the usual CI and its duplicate Release run exits without another bump. Manual tag recovery uses the Actions token and does not require the app's credentials.
 
-## Optional Homebrew setup
+## Publish and recover
 
-To have releases automatically open a pull request in `ch55secake/homebrew-tap`:
+Ordinary releases only need a merge to `main`. For a minor/major release, update `Cargo.toml`, `apps/desktop/package.json`, and `apps/desktop/src-tauri/tauri.conf.json` together and refresh `Cargo.lock` in a PR. Direct pushes of matching `vMAJOR.MINOR.PATCH` or prerelease tags are also supported.
 
-1. Merge the [tap-side Caelum packaging PR](https://github.com/ch55secake/homebrew-tap/pull/1). The release workflow checks out the tap's default branch and runs its renderer.
-2. Create a fine-grained GitHub token with **Contents: read and write** and **Pull requests: read and write** access to `ch55secake/homebrew-tap`.
-3. Store it in this repository as `HOMEBREW_TAP_TOKEN`.
-4. Set the Actions repository variable `HOMEBREW_TAP_UPDATES` to `enabled`.
+For a failed build, partial upload, or missed Homebrew update, run **Actions → Release → Run workflow**, choose the default branch, and supply the **existing** version tag. From the CLI:
 
-The workflow opens a tap PR; it does not merge it. The formula installs the CLI as `caelum`, while the cask installs `Caelum.app` without linking a second executable.
+```sh
+gh workflow run release.yml --ref main -f tag=v0.1.5
+```
 
-## Publish a release
+Recovery validates the remote tag and all project/lockfile versions before using it. Unpublished releases rebuild and run CI against the tagged commit using the current packaging/recovery tooling. A partial draft can have its uploads replaced and verified before publication.
 
-1. For a deliberate minor or major release, update the version in the Cargo workspace, `apps/desktop/src-tauri/tauri.conf.json`, and `apps/desktop/package.json` to the same `MAJOR.MINOR.PATCH` value in a pull request, and refresh `Cargo.lock`. Ordinary merges do not need a version edit.
-2. Merge to `main`. If the merge has no version change, the workflow commits the next patch version to `main`. If it contains an explicit version bump, that version is used. The workflow creates an annotated `vMAJOR.MINOR.PATCH` tag and runs the release build and publish jobs.
+Already published releases are verified and reused without rebuilding or replacing assets or checksums; recovery can then retry the Homebrew update. An incomplete or checksum-mismatched published release fails visibly. Publish a new version to correct released binaries. Stable releases use GitHub's semantic-version-aware latest selection; prereleases are marked separately. Intermediate build artifacts are retained for 14 days.
 
-Each main merge triggers an automatic patch release. Directly pushing a matching version tag remains available for manual releases. The resulting release contains an unsigned DMG for each architecture, a standalone CLI archive for each architecture, and `SHA256SUMS`. If Homebrew updates are enabled, the workflow opens a separate pull request with the updated formula, cask, and tap README.
+## Homebrew setup
+
+The renderer and templates are already merged in [`ch55secake/homebrew-tap`](https://github.com/ch55secake/homebrew-tap). To enable automated update PRs:
+
+1. Create a fine-grained GitHub token limited to `ch55secake/homebrew-tap` with **Contents: read and write** and **Pull requests: read and write** permissions.
+2. Add it directly to this repository's Actions secrets as `HOMEBREW_TAP_TOKEN`.
+3. Set the Actions repository variable `HOMEBREW_TAP_UPDATES` to `enabled`.
+4. Recover the latest published tag to generate its tap update, or wait for the next release.
+
+Merge the generated tap PR to make the version installable. The formula installs the CLI as `caelum`; the cask installs `Caelum.app` without a second executable link. Homebrew installation has the same first-launch behavior as the DMG. Prereleases do not update the stable tap.
 
 ## Install
 
-After the tap update PR is merged, install the desktop app and CLI independently:
+Once a Caelum package PR has been merged into the tap:
 
 ```sh
 brew install --cask ch55secake/tap/caelum
 brew install ch55secake/tap/caelum-cli
 ```
 
-Alternatively, download the matching DMG from the GitHub release to install the app, or download and extract the CLI archive for the machine's architecture.
+For direct installation, download the matching DMG from the GitHub release and drag **Caelum.app** into **Applications**. Extract the matching CLI archive and place `caelum` on your `PATH`. Use `aarch64` for Apple Silicon (M-series) and `x86_64` for Intel.
+
+Download `SHA256SUMS` beside the selected asset and verify it with:
+
+```sh
+shasum -a 256 --ignore-missing -c SHA256SUMS
+```
