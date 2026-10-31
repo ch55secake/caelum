@@ -1,4 +1,10 @@
-import { useId, useRef, useState } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ChangeEvent,
+} from "react";
 import { MessageCircleQuestion } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -8,6 +14,17 @@ import {
   type QuestionPrompt,
   type QuestionValue,
 } from "./questionState.js";
+
+function AnswerText({
+  value,
+  ...props
+}: ComponentProps<"textarea"> & { value: string }) {
+  return (
+    <div className="question-text" data-value={value}>
+      <textarea {...props} className="question-input" rows={1} value={value} />
+    </div>
+  );
+}
 
 export function QuestionCard({
   request,
@@ -32,8 +49,12 @@ export function QuestionCard({
   function change(key: string, value: QuestionValue) {
     setDraft({ ...draft, values: { ...draft.values, [key]: value } });
   }
-  function custom(key: string, value: string) {
-    setDraft({ ...draft, custom: { ...draft.custom, [key]: value } });
+  function custom(key: string, value: string, select = false) {
+    setDraft({
+      ...draft,
+      custom: { ...draft.custom, [key]: value },
+      other: select ? { ...draft.other, [key]: true } : draft.other,
+    });
   }
   return (
     <form
@@ -67,10 +88,9 @@ export function QuestionCard({
       }}
     >
       <div className="question-title">
-        <MessageCircleQuestion size={16} />
+        <MessageCircleQuestion size={14} />
         <strong>{request.title}</strong>
       </div>
-      <p className="question-status">Waiting for your answer</p>
       <fieldset className="question-fields" disabled={submitting}>
         {request.fields
           .filter((field) => result.active.includes(field.key))
@@ -127,6 +147,56 @@ export function QuestionCard({
                     { value: false, label: "No", description: "" },
                   ]
                 : (field.options ?? []);
+            const customChoice =
+              field.type === "string" && field.custom && choices.length > 0;
+            const selectCustom = () => {
+              if (!other)
+                setDraft({
+                  ...draft,
+                  other: { ...draft.other, [field.key]: true },
+                });
+            };
+            const textProps = {
+              ...inputProps,
+              placeholder:
+                field.placeholder ??
+                (customChoice ? "Type your own answer…" : "Your answer…"),
+              maxLength: field.maxLength,
+              value: String((customChoice ? customValue : value) ?? ""),
+              onFocus: customChoice ? selectCustom : undefined,
+              onChange: (
+                event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+              ) =>
+                customChoice
+                  ? custom(field.key, event.target.value, true)
+                  : change(field.key, event.target.value),
+            };
+            const textInput =
+              field.type === "string" && !field.secret && !field.format ? (
+                <AnswerText {...textProps} />
+              ) : ["string", "number", "integer"].includes(field.type) ? (
+                <input
+                  {...textProps}
+                  className="question-input"
+                  autoComplete="off"
+                  type={
+                    field.secret
+                      ? "password"
+                      : field.type === "number" || field.type === "integer"
+                        ? "number"
+                        : field.format === "email"
+                          ? "email"
+                          : field.format === "uri"
+                            ? "url"
+                            : field.format === "date"
+                              ? "date"
+                              : "text"
+                  }
+                  step={field.type === "integer" ? 1 : "any"}
+                  min={field.minimum}
+                  max={field.maximum}
+                />
+              ) : null;
             return (
               <fieldset key={field.key} className="question-field">
                 <legend id={`${fieldId}-title`}>
@@ -179,7 +249,7 @@ export function QuestionCard({
                           });
                       }}
                     />
-                    <span>
+                    <span className="question-option-text">
                       <strong>{option.label}</strong>
                       {option.description && (
                         <small>{option.description}</small>
@@ -187,81 +257,33 @@ export function QuestionCard({
                     </span>
                   </label>
                 ))}
-                {field.custom && choices.length > 0 && !multiple && (
-                  <label className="question-option">
+                {customChoice ? (
+                  <div className="question-option question-custom">
                     <input
                       type="radio"
                       name={fieldId}
+                      aria-label="Type your own answer"
                       checked={other}
-                      onChange={() =>
-                        setDraft({
-                          ...draft,
-                          other: { ...draft.other, [field.key]: true },
-                        })
-                      }
+                      onChange={(event) => {
+                        selectCustom();
+                        event.currentTarget.parentElement
+                          ?.querySelector<HTMLElement>(".question-input")
+                          ?.focus();
+                      }}
                     />
-                    <span>Type your own answer</span>
-                  </label>
-                )}
-                {multiple && field.custom ? (
-                  <textarea
+                    {textInput}
+                  </div>
+                ) : multiple && field.custom ? (
+                  <AnswerText
                     aria-label={`${label}: custom answers`}
                     aria-describedby={inputProps["aria-describedby"]}
                     aria-invalid={Boolean(invalid)}
                     placeholder="Other answers, one per line"
-                    rows={2}
                     value={customValue}
                     onChange={(event) => custom(field.key, event.target.value)}
                   />
-                ) : field.type === "string" &&
-                  !field.secret &&
-                  !field.format &&
-                  (!choices.length || other) ? (
-                  <textarea
-                    {...inputProps}
-                    rows={2}
-                    placeholder={field.placeholder}
-                    maxLength={field.maxLength}
-                    value={String((other ? customValue : value) ?? "")}
-                    onChange={(event) =>
-                      other
-                        ? custom(field.key, event.target.value)
-                        : change(field.key, event.target.value)
-                    }
-                  />
-                ) : (field.type === "string" ||
-                    field.type === "number" ||
-                    field.type === "integer") &&
-                  (!choices.length || other) ? (
-                  <input
-                    {...inputProps}
-                    className="question-input"
-                    autoComplete="off"
-                    type={
-                      field.secret
-                        ? "password"
-                        : field.type === "number" || field.type === "integer"
-                          ? "number"
-                          : field.format === "email"
-                            ? "email"
-                            : field.format === "uri"
-                              ? "url"
-                              : field.format === "date"
-                                ? "date"
-                                : "text"
-                    }
-                    step={field.type === "integer" ? 1 : "any"}
-                    min={field.minimum}
-                    max={field.maximum}
-                    placeholder={field.placeholder}
-                    maxLength={field.maxLength}
-                    value={String((other ? customValue : value) ?? "")}
-                    onChange={(event) =>
-                      other
-                        ? custom(field.key, event.target.value)
-                        : change(field.key, event.target.value)
-                    }
-                  />
+                ) : !choices.length ? (
+                  textInput
                 ) : null}
                 {invalid && (
                   <p

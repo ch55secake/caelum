@@ -1104,10 +1104,27 @@ test("Codex questions preserve drafts across sessions and retry the original req
   await expect(
     card.getByRole("radio", { name: "Large Full rewrite" }),
   ).toBeChecked();
+  const customAnswer = card.getByRole("textbox", { name: "Approach" });
+  await customAnswer.click();
+  await expect(
+    card.getByRole("radio", { name: "Type your own answer" }),
+  ).toBeChecked();
+  await customAnswer.pressSequentially("Incremental refactor");
+  const singleLineHeight = (await customAnswer.boundingBox())!.height;
+  await customAnswer.press("Enter");
+  await customAnswer.pressSequentially("Preserve the existing API.");
+  await expect(customAnswer).toHaveValue(
+    "Incremental refactor\nPreserve the existing API.",
+  );
+  expect((await customAnswer.boundingBox())!.height).toBeGreaterThan(
+    singleLineHeight,
+  );
+  await customAnswer.fill("Incremental refactor");
+  expect((await customAnswer.boundingBox())!.height).toBe(singleLineHeight);
+  await card.getByRole("radio", { name: "Small Focused change" }).check();
+  await expect(customAnswer).toHaveValue("Incremental refactor");
   await card.getByRole("radio", { name: "Type your own answer" }).check();
-  await card
-    .getByRole("textbox", { name: "Approach" })
-    .fill("Incremental refactor");
+  await expect(customAnswer).toBeFocused();
   await card
     .getByRole("textbox", { name: "Details" })
     .fill("Keep compatibility");
