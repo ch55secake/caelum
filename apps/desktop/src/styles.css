@@ -110,6 +110,11 @@ svg { flex-shrink: 0; }
 ::selection { background: var(--accent-selection); }
 * { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .app-shell { display: flex; height: 100dvh; min-height: 620px; overflow: hidden; }
+.context-menu { position: fixed; z-index: 100; display: flex; flex-direction: column; width: max-content; min-width: 190px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow: auto; padding: 5px; border: 1px solid var(--popover-border); border-radius: 8px; color: var(--text); background: var(--popover-bg); box-shadow: 0 12px 40px #0003, 0 2px 8px #0002; user-select: none; }
+.context-menu > button { flex: 0 0 auto; min-height: 29px; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 12px; line-height: 17px; }
+.context-menu > button:focus, .context-menu > button:hover:not(:disabled) { outline: none; background: var(--option-hover); }
+.context-menu > button:disabled { color: var(--muted); }
+.context-menu-separator { flex: 0 0 auto; height: 1px; margin: 4px 5px; background: var(--border); }
 .sidebar { position: relative; display: flex; flex: 0 0 var(--sidebar-width, 238px); min-width: 0; min-height: 0; flex-direction: column; padding: 12px 10px; background: var(--sidebar); border-right: 1px solid var(--border); }
 .macos-titlebar-overlay .sidebar { padding-top: 42px; }
 .macos-titlebar-overlay .topbar { min-height: 80px; padding-top: 30px; }

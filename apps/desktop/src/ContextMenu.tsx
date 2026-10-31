@@ -1,20 +1,21 @@
 import {
+  useCallback,
   createContext,
   useContext,
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
-import { isTauri } from "@tauri-apps/api/core";
-import { LogicalPosition } from "@tauri-apps/api/dpi";
-import { Menu, type PredefinedMenuItemOptions } from "@tauri-apps/api/menu";
+import { createPortal } from "react-dom";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard.js";
+import { editingActions } from "./contextMenuEditing.js";
 
 export type ContextAction =
   | { text: string; enabled?: boolean; action: () => void | Promise<unknown> }
-  | PredefinedMenuItemOptions;
+  | { item: "Separator" };
 type ContextEvent = Pick<
   MouseEvent,
   "target" | "clientX" | "clientY" | "preventDefault" | "stopPropagation"
@@ -52,39 +53,11 @@ export function fileActions(
 function contextualActions(
   target: Element,
   actions: ContextAction[],
-): ContextAction[] {
-  const input = target.closest<HTMLInputElement | HTMLTextAreaElement>(
-    "input, textarea",
-  );
-  const field =
-    input instanceof HTMLTextAreaElement ||
-    (input instanceof HTMLInputElement &&
-      ["text", "search", "url", "email", "tel", "number", "password"].includes(
-        input.type,
-      ))
-      ? input
-      : null;
-  const editableElement = target.closest<HTMLElement>(
-    '[contenteditable="true"]',
-  );
-  if (field || editableElement) {
-    if (field?.disabled) return [];
-    (field ?? editableElement)!.focus({ preventScroll: true });
-    const editable = !field?.readOnly;
-    const secret =
-      field instanceof HTMLInputElement && field.type === "password";
-    return [
-      ...(editable
-        ? ([{ item: "Undo" }, { item: "Redo" }, separator] as ContextAction[])
-        : []),
-      ...(editable && !secret ? ([{ item: "Cut" }] as ContextAction[]) : []),
-      ...(!secret ? ([{ item: "Copy" }] as ContextAction[]) : []),
-      ...(editable ? ([{ item: "Paste" }] as ContextAction[]) : []),
-      separator,
-      { item: "SelectAll" },
-    ];
-  }
-  if (target.closest(".code-viewer")) return actions;
+  current: () => boolean,
+): { items: ContextAction[]; restoreFocus?: () => void } {
+  const editing = editingActions(target, current);
+  if (editing) return editing;
+  if (target.closest(".code-viewer")) return { items: actions };
   const selection = window.getSelection();
   const selected =
     selection && !selection.isCollapsed && selection.containsNode(target, true)
@@ -104,11 +77,152 @@ function contextualActions(
         ]
       : []),
   ];
-  return [
-    ...common,
-    ...(common.length && actions.length ? [separator] : []),
-    ...actions,
-  ];
+  return {
+    items: [
+      ...common,
+      ...(common.length && actions.length ? [separator] : []),
+      ...actions,
+    ],
+  };
+}
+
+type OpenedMenu = {
+  items: ContextAction[];
+  x: number;
+  y: number;
+  target: Element;
+  restoreFocus: () => void;
+  version: number;
+};
+
+function ContextMenu({
+  menu,
+  close,
+  choose,
+}: {
+  menu: OpenedMenu;
+  close: (restore?: boolean) => void;
+  choose: (menu: OpenedMenu, item: ContextAction) => void;
+}) {
+  const popup = useRef<HTMLDivElement>(null);
+  const search = useRef({ text: "", time: 0 });
+  const buttons = () =>
+    Array.from(
+      popup.current!.querySelectorAll<HTMLButtonElement>(
+        "button:not(:disabled)",
+      ),
+    );
+  useLayoutEffect(() => {
+    const element = popup.current!;
+    const rect = element.getBoundingClientRect();
+    element.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - rect.width - 8))}px`;
+    element.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - rect.height - 8))}px`;
+    (buttons()[0] ?? element).focus({ preventScroll: true });
+  }, [menu]);
+  useEffect(() => {
+    const outside = (event: Event) => {
+      if (!popup.current?.contains(event.target as Node)) close();
+    };
+    const scrolled = (event: Event) => {
+      if (event.target instanceof Node && event.target.contains(menu.target))
+        close();
+    };
+    const dismiss = () => close();
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("focusin", outside);
+    document.addEventListener("scroll", scrolled, true);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("blur", dismiss);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("focusin", outside);
+      document.removeEventListener("scroll", scrolled, true);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("blur", dismiss);
+    };
+  }, [close, menu]);
+  return createPortal(
+    <div
+      ref={popup}
+      className="context-menu"
+      role="menu"
+      aria-label="Context menu"
+      tabIndex={-1}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" || event.key === "Tab") {
+          event.preventDefault();
+          event.stopPropagation();
+          close(true);
+          return;
+        }
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
+        const items = buttons();
+        const at = items.indexOf(document.activeElement as HTMLButtonElement);
+        let next: HTMLButtonElement | undefined;
+        if (event.key === "ArrowDown" || event.key === "ArrowUp")
+          next =
+            items[
+              (at + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
+                items.length
+            ];
+        else if (event.key === "Home") next = items[0];
+        else if (event.key === "End") next = items.at(-1);
+        else if (event.key.length === 1 && event.key !== " ") {
+          const now = performance.now();
+          const letter = event.key.toLowerCase();
+          const text =
+            now - search.current.time < 700
+              ? search.current.text + letter
+              : letter;
+          search.current = { text, time: now };
+          const ordered = [...items.slice(at + 1), ...items.slice(0, at + 1)];
+          next =
+            ordered.find((item) =>
+              item.textContent?.toLowerCase().startsWith(text),
+            ) ??
+            ordered.find((item) =>
+              item.textContent?.toLowerCase().startsWith(letter),
+            );
+        } else return;
+        event.preventDefault();
+        event.stopPropagation();
+        next?.focus({ preventScroll: true });
+        next?.scrollIntoView({ block: "nearest" });
+      }}
+    >
+      {menu.items.map((item, index) =>
+        "item" in item ? (
+          <div
+            key={index}
+            className="context-menu-separator"
+            role="separator"
+          />
+        ) : (
+          <button
+            key={index}
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            disabled={item.enabled === false}
+            onPointerMove={(event) => {
+              if (event.pointerType === "mouse")
+                event.currentTarget.focus({ preventScroll: true });
+            }}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => choose(menu, item)}
+          >
+            {item.text}
+          </button>
+        ),
+      )}
+    </div>,
+    // A menu in a modal must belong to its top-layer dialog to stay interactive.
+    menu.target.closest('dialog[open], [role="dialog"]') ?? document.body,
+  );
 }
 
 export function ContextMenuProvider({
@@ -124,65 +238,83 @@ export function ContextMenuProvider({
   scope: string;
   reportError: (message: string) => void;
 }) {
-  const active = useRef<Menu | null>(null);
+  const [menu, setMenu] = useState<OpenedMenu | null>(null);
+  const active = useRef<OpenedMenu | null>(null);
   const revision = useRef(0);
   const options = useRef({ actions, reportError });
   options.current = { actions, reportError };
-  const release = () => {
+  const release = useCallback((restore = false) => {
     revision.current++;
     const previous = active.current;
     active.current = null;
-    void previous?.close().catch(() => {});
-  };
-  useLayoutEffect(() => release, [scope]);
+    setMenu(null);
+    if (restore) previous?.restoreFocus();
+  }, []);
+  const dismiss = useCallback(
+    (restore = false) => {
+      if (active.current) release(restore);
+    },
+    [release],
+  );
+  useLayoutEffect(() => {
+    release();
+    return () => {
+      revision.current++;
+      active.current = null;
+    };
+  }, [scope, release]);
   const open: OpenMenu = (event, actions) => {
-    if (!isTauri() || !(event.target instanceof Element)) return;
+    if (!(event.target instanceof Element)) return;
     event.preventDefault();
     event.stopPropagation();
-    const items = contextualActions(event.target, actions);
     release();
-    if (!items.length) return;
     const version = revision.current;
-    const at = new LogicalPosition(event.clientX, event.clientY);
-    let used = false;
-    void Menu.new({
-      items: items.map((item) =>
-        "item" in item
-          ? item
-          : {
-              text: item.text,
-              enabled: item.enabled,
-              action: () => {
-                if (
-                  used ||
-                  revision.current !== version ||
-                  item.enabled === false
-                )
-                  return;
-                used = true;
-                void Promise.resolve()
-                  .then(item.action)
-                  .catch((reason) =>
-                    options.current.reportError(String(reason)),
-                  );
-              },
-            },
-      ),
-    })
-      .then(async (menu) => {
-        if (revision.current !== version) return menu.close();
-        // popup resolves on display, so retain the resource until the next menu/navigation.
-        active.current = menu;
-        await menu.popup(at);
-      })
-      .catch((reason) => {
-        if (revision.current === version) {
-          release();
-          options.current.reportError(
-            `Could not open context menu: ${String(reason)}`,
-          );
-        }
+    const context = contextualActions(
+      event.target,
+      actions,
+      () => revision.current === version,
+    );
+    if (!context.items.length) return;
+    const trigger =
+      event.target.closest<HTMLElement>(
+        "button, a[href], input, textarea, select, [tabindex]",
+      ) ?? document.activeElement;
+    const next = {
+      items: context.items,
+      x: event.clientX ?? 0,
+      y: event.clientY ?? 0,
+      target: event.target,
+      restoreFocus:
+        context.restoreFocus ??
+        (() => {
+          if (trigger instanceof HTMLElement && trigger.isConnected)
+            trigger.focus({ preventScroll: true });
+        }),
+      version,
+    };
+    active.current = next;
+    setMenu(next);
+  };
+  const choose = (menu: OpenedMenu, item: ContextAction) => {
+    if (
+      active.current !== menu ||
+      revision.current !== menu.version ||
+      !menu.target.isConnected ||
+      "item" in item ||
+      item.enabled === false
+    )
+      return;
+    active.current = null;
+    setMenu(null);
+    menu.restoreFocus();
+    try {
+      void Promise.resolve(item.action()).catch((reason) => {
+        if (revision.current === menu.version)
+          options.current.reportError(String(reason));
       });
+    } catch (reason) {
+      options.current.reportError(String(reason));
+    }
   };
   const show = useRef(open);
   show.current = open;
@@ -191,7 +323,7 @@ export function ContextMenuProvider({
       if (event.defaultPrevented) return;
       const inDialog =
         event.target instanceof Element &&
-        event.target.closest('[role="dialog"]');
+        event.target.closest('dialog, [role="dialog"]');
       show.current(event, inDialog ? [] : options.current.actions);
     };
     const keyboard = (event: KeyboardEvent) => {
@@ -223,6 +355,14 @@ export function ContextMenuProvider({
   return (
     <ContextMenus.Provider value={open}>
       <main className={className}>{children}</main>
+      {menu && (
+        <ContextMenu
+          key={menu.version}
+          menu={menu}
+          close={dismiss}
+          choose={choose}
+        />
+      )}
     </ContextMenus.Provider>
   );
 }

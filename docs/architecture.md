@@ -28,6 +28,10 @@ The desktop groups checkout directories under a logical project while keeping pr
 
 Removal checks active provider sessions and pending requests, then uses `git worktree remove` without forcing or deleting the branch. Successful removal releases checkout-specific connections and app workspace records, including nested project directories. OpenCode's shared background service remains externally owned. Navigation and request revisions prevent delayed responses from switching the active checkout or restoring removed state.
 
+## Context menus
+
+`ContextMenuProvider` composes contextual actions and renders an app-owned React menu using the current theme. Menus are portaled into the active dialog when needed, positioned within the viewport, and support keyboard navigation, dismissal, and focus restoration. Navigation revisions invalidate stale actions. Text editing snapshots the original selection, uses the clipboard plugin for copy/paste, and retains browser undo history; delayed clipboard reads cannot edit a different draft or changed selection.
+
 ## Security boundaries
 
 - Only Rust performs project path validation and future privileged operations.

@@ -161,8 +161,6 @@ async function desktop(
         saveWorktrees();
         return entry;
       };
-      const menus = new Map<number, { items: any[] }>();
-      let menuId: number | null = null;
       let clipboard = "";
       let copyError = false;
       let contextEvent: Event | null = null;
@@ -288,26 +286,11 @@ async function desktop(
             sessionStorage.setItem("questions", JSON.stringify(value));
             if (notify) emit("question-requests", value);
           },
-          menu: () => ({
-            items:
-              menus.get(menuId!)?.items.map(({ text, item, enabled }) => ({
-                text: text ?? item,
-                enabled: enabled !== false,
-              })) ?? [],
-            contextPrevented: contextEvent?.defaultPrevented ?? false,
-          }),
-          pickMenu: (text: string) => {
-            const item = menus
-              .get(menuId!)
-              ?.items.find((item) => (item.text ?? item.item) === text);
-            if (!item || item.enabled === false)
-              throw new Error(`Menu item unavailable: ${text}`);
-            item.handler?.onmessage(text);
-          },
-          captureMenuAction: (text: string) =>
-            menus.get(menuId!)?.items.find((item) => item.text === text)
-              ?.handler?.onmessage,
+          contextPrevented: () => contextEvent?.defaultPrevented ?? false,
           clipboard: () => clipboard,
+          setClipboard: (text: string) => {
+            clipboard = text;
+          },
           failCopy: () => {
             copyError = true;
           },
@@ -460,21 +443,9 @@ async function desktop(
           },
           invoke: async (command: string, args: Record<string, any> = {}) => {
             calls.push({ command, args });
-            if (command === "plugin:menu|new") {
+            if (command === "plugin:clipboard-manager|read_text") {
               await gates.get(command)?.promise;
-              const id = ++sequence;
-              menus.set(id, args.options);
-              return [id, `context-${id}`];
-            }
-            if (command === "plugin:menu|popup") {
-              if (!menus.has(args.rid))
-                throw new Error("Menu was already released");
-              menuId = args.rid;
-              return;
-            }
-            if (command === "plugin:resources|close") {
-              menus.delete(args.rid);
-              return;
+              return clipboard;
             }
             if (command === "plugin:clipboard-manager|write_text") {
               if (copyError) {
@@ -1284,8 +1255,9 @@ const attachedContext = (page: Page) =>
 
 async function createCheckout(page: Page, branch = "feature/search") {
   await page
-    .getByRole("button", { name: "Create worktree for caelum", exact: true })
-    .click();
+    .getByRole("button", { name: "caelum", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Create worktree");
   const dialog = page.getByRole("dialog", {
     name: "Create worktree",
     exact: true,
@@ -1317,6 +1289,10 @@ for (const provider of ["codex", "opencode"] as const) {
     page,
   }) => {
     await desktop(page, null, { worktrees: true });
+    await expect(page.locator(".worktree-list")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Create worktree for caelum" }),
+    ).toHaveCount(0);
     await expect(page.locator(".worktree-row")).toHaveCount(0);
     await expect(
       page.getByRole("combobox", { name: "Session worktree" }),
@@ -1580,8 +1556,9 @@ test("worktrees recover creation failures and delayed selection cannot steal ano
     ),
   );
   await page
-    .getByRole("button", { name: "Create worktree for caelum" })
-    .click();
+    .getByRole("button", { name: "caelum", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Create worktree");
   const dialog = page.getByRole("dialog", {
     name: "Create worktree",
     exact: true,
@@ -1713,9 +1690,11 @@ test("worktrees keep drafts when the active checkout is removed externally", asy
     (path) => (window as any).fixture.addWorktree(path, "feature/search"),
     path,
   );
+  await expect(page.locator(".worktree-list")).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Refresh worktrees for caelum" })
-    .click();
+    .getByRole("button", { name: "caelum", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Refresh worktrees");
   await page
     .getByRole("button", {
       name: "Switch to worktree feature/search",
@@ -4460,29 +4439,274 @@ test("history arriving during streaming preserves new live content", async ({
   ).toBeVisible();
 });
 
-async function nativeMenu(page: Page) {
-  const menu = await page.evaluate(() => (window as any).fixture.menu());
-  expect(menu.contextPrevented).toBe(true);
+async function contextMenu(page: Page) {
+  const menu = page.getByRole("menu", { name: "Context menu", exact: true });
+  await expect(menu).toBeVisible();
   expect(
-    menu.items.some((item: any) =>
-      /inspect|reload|back|forward/i.test(item.text),
-    ),
+    await page.evaluate(() => (window as any).fixture.contextPrevented()),
+  ).toBe(true);
+  const items = await menu
+    .locator('[role="menuitem"], [role="separator"]')
+    .evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        text:
+          node.getAttribute("role") === "separator"
+            ? "Separator"
+            : node.textContent!,
+        enabled: !(node as HTMLButtonElement).disabled,
+      })),
+    );
+  expect(
+    items.some((item) => /inspect|reload|back|forward/i.test(item.text)),
   ).toBe(false);
-  return menu.items as { text: string; enabled: boolean }[];
+  return items;
 }
 
 async function pickMenu(page: Page, text: string) {
-  await expect
-    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
-    .toContain(text);
-  await page.evaluate((text) => (window as any).fixture.pickMenu(text), text);
+  await page.getByRole("menuitem", { name: text, exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Context menu" })).toHaveCount(0);
 }
 
 async function copiedText(page: Page) {
   return page.evaluate(() => (window as any).fixture.clipboard());
 }
 
-test("context menus offer native editing and precise message, code, link and tool actions", async ({
+test("context menus support keyboard navigation, viewport edges, themes and dismissal", async ({
+  page,
+}, testInfo) => {
+  await desktop(page);
+  const project = page.getByRole("button", { name: "caelum", exact: true });
+  const menu = page.getByRole("menu", { name: "Context menu" });
+  await project.focus();
+  await project.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Open project", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("menuitem", { name: "Close project", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("menuitem", { name: "Open project", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.type("cop");
+  await expect(
+    page.getByRole("menuitem", { name: "Copy project path", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => copiedText(page)).toBe("/work/caelum");
+  await expect(menu).toHaveCount(0);
+  await expect(project).toBeFocused();
+  await project.press("ContextMenu");
+  await page.screenshot({ path: testInfo.outputPath("context-menu-dark.png") });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+  });
+  await expect(menu).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await page.screenshot({
+    path: testInfo.outputPath("context-menu-light.png"),
+  });
+  await page.keyboard.press("Escape");
+  await expect(project).toBeFocused();
+  await project.press("Shift+F10");
+  await page.keyboard.press("Tab");
+  await expect(menu).toHaveCount(0);
+  await expect(project).toBeFocused();
+
+  await page
+    .locator("main")
+    .dispatchEvent("contextmenu", { clientX: 1279, clientY: 799 });
+  await expect(menu).toBeVisible();
+  const bounds = (await menu.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(8);
+  expect(bounds.y).toBeGreaterThanOrEqual(8);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(1272);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(792);
+  await project.click();
+  await expect(menu).toHaveCount(0);
+  await project.press("Shift+F10");
+  await page.locator(".transcript").dispatchEvent("scroll");
+  await expect(menu).toBeVisible();
+  await page.locator(".project-list").dispatchEvent("scroll");
+  await expect(menu).toHaveCount(0);
+  await project.press("Shift+F10");
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await expect(menu).toHaveCount(0);
+  await project.press("Shift+F10");
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(menu).toHaveCount(0);
+});
+
+test("context menus edit the original selection with undo and reject delayed paste into newer drafts", async ({
+  page,
+}) => {
+  await desktop(page);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const edit = async (action: string) => {
+    await input.press("Shift+F10");
+    await pickMenu(page, action);
+  };
+  // Seed an existing draft without an initial typing undo group (WebKit coalesces it).
+  await input.evaluate((node: HTMLTextAreaElement) => {
+    Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )!.set!.call(node, "Keep this draft");
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await input.evaluate((node: HTMLTextAreaElement) =>
+    node.setSelectionRange(5, 9),
+  );
+  await edit("Cut");
+  await expect.poll(() => copiedText(page)).toBe("this");
+  await expect(input).toHaveValue("Keep  draft");
+  await edit("Undo");
+  await expect(input).toHaveValue("Keep this draft");
+  await edit("Redo");
+  await expect(input).toHaveValue("Keep  draft");
+  await page.evaluate(() =>
+    (window as any).fixture.setClipboard("another\nlonger"),
+  );
+  await edit("Paste");
+  await expect(input).toHaveValue("Keep another\nlonger draft");
+  await edit("Undo");
+  await expect(input).toHaveValue("Keep  draft");
+  await edit("Select all");
+  expect(
+    await input.evaluate((node: HTMLTextAreaElement) => [
+      node.selectionStart,
+      node.selectionEnd,
+    ]),
+  ).toEqual([0, 11]);
+  await page.evaluate(() => (window as any).fixture.failCopy());
+  await edit("Cut");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Clipboard unavailable" }),
+  ).toBeVisible();
+  await expect(input).toHaveValue("Keep  draft");
+
+  await page.evaluate(() =>
+    (window as any).fixture.hold("plugin:clipboard-manager|read_text"),
+  );
+  await edit("Paste");
+  await input.fill("A newer edit");
+  await page.evaluate(() =>
+    (window as any).fixture.release("plugin:clipboard-manager|read_text"),
+  );
+  await expect(input).toHaveValue("A newer edit");
+  await page.evaluate(() =>
+    (window as any).fixture.hold("plugin:clipboard-manager|read_text"),
+  );
+  await edit("Paste");
+  await page.keyboard.press("Meta+n");
+  await input.fill("New session draft");
+  await page.evaluate(() =>
+    (window as any).fixture.release("plugin:clipboard-manager|read_text"),
+  );
+  await expect(input).toHaveValue("New session draft");
+});
+
+test("context menus edit modal fields and respect password, readonly and disabled inputs", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  const project = page.getByRole("button", { name: "caelum", exact: true });
+  await project.click({ button: "right" });
+  await pickMenu(page, "Create worktree");
+  const dialog = page.getByRole("dialog", {
+    name: "Create worktree",
+    exact: true,
+  });
+  const branch = dialog.getByRole("textbox", { name: "New branch" });
+  await branch.fill("feature/search");
+  await branch.evaluate((node: HTMLInputElement) =>
+    node.setSelectionRange(8, 14),
+  );
+  await branch.press("Shift+F10");
+  await expect(
+    dialog.getByRole("menu", { name: "Context menu" }),
+  ).toBeVisible();
+  await pickMenu(page, "Copy");
+  await expect.poll(() => copiedText(page)).toBe("search");
+  await expect(branch).toBeFocused();
+  expect(
+    await branch.evaluate((node: HTMLInputElement) => [
+      node.selectionStart,
+      node.selectionEnd,
+    ]),
+  ).toEqual([8, 14]);
+  await branch.press("Shift+F10");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  expect(
+    await branch.evaluate((node: HTMLInputElement) => [
+      node.selectionStart,
+      node.selectionEnd,
+    ]),
+  ).toEqual([8, 14]);
+  await branch.press("Shift+F10");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("menuitem", { name: "Cut", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(project).toBeFocused();
+
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  const picker = page.getByRole("dialog", {
+    name: "Choose model",
+    exact: true,
+  });
+  const modelSearch = picker.getByRole("combobox", { name: "Search models" });
+  await modelSearch.fill("fast");
+  await modelSearch.press("ControlOrMeta+a");
+  await modelSearch.press("Shift+F10");
+  await expect(
+    picker.getByRole("menu", { name: "Context menu" }),
+  ).toBeVisible();
+  await pickMenu(page, "Copy");
+  await expect.poll(() => copiedText(page)).toBe("fast");
+  await expect(modelSearch).toBeFocused();
+  await modelSearch.press("Escape");
+  await expect(picker).toHaveCount(0);
+
+  const search = page.locator('input[aria-label="Search sessions"]');
+  await search.fill("secret");
+  await search.evaluate((node: HTMLInputElement) => {
+    node.type = "password";
+    node.select();
+  });
+  await search.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Cut", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Copy", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Paste", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await search.evaluate((node: HTMLInputElement) => {
+    node.type = "text";
+    node.readOnly = true;
+    node.select();
+  });
+  await search.press("Shift+F10");
+  await expect(page.getByRole("menuitem")).toHaveText(["Copy", "Select all"]);
+  await page.keyboard.press("Escape");
+  await search.evaluate((node: HTMLInputElement) => {
+    node.disabled = true;
+  });
+  await search.dispatchEvent("contextmenu");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("context menus offer editing and precise message, code, link and tool actions", async ({
   page,
 }) => {
   await desktop(page);
@@ -4493,7 +4717,7 @@ test("context menus offer native editing and precise message, code, link and too
   );
   await input.press("Shift+F10");
   await expect
-    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
+    .poll(async () => (await contextMenu(page)).map((item) => item.text))
     .toEqual([
       "Undo",
       "Redo",
@@ -4502,8 +4726,10 @@ test("context menus offer native editing and precise message, code, link and too
       "Copy",
       "Paste",
       "Separator",
-      "SelectAll",
+      "Select all",
     ]);
+  await pickMenu(page, "Copy");
+  await expect.poll(() => copiedText(page)).toBe("this");
   await expect(input).toBeFocused();
   expect(
     await input.evaluate((node: HTMLTextAreaElement) => [
@@ -4603,51 +4829,36 @@ test("context menus act on the clicked project or session and reject stale actio
   await expect
     .poll(
       async () =>
-        (await nativeMenu(page)).find((item) => item.text === "Archive session")
-          ?.enabled,
+        (await contextMenu(page)).find(
+          (item) => item.text === "Archive session",
+        )?.enabled,
     )
     .toBe(false);
   await page.getByRole("button", { name: "Stop generation" }).click();
   await page.locator(".user-text").first().click({ button: "right" });
-  await expect
-    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
-    .toContain("Add to draft");
-  await page.evaluate(() => {
-    (window as any).fixture.stale = (window as any).fixture.captureMenuAction(
-      "Add to draft",
-    );
-  });
+  const stale = await page
+    .getByRole("menuitem", { name: "Add to draft", exact: true })
+    .elementHandle();
   await page.keyboard.press("Meta+n");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await input.fill("New draft");
-  await page.evaluate(() => (window as any).fixture.stale());
+  await stale!.evaluate((node: HTMLElement) => node.click());
   await expect(input).toHaveValue("New draft");
 
-  const popups = await page.evaluate(
-    () =>
-      (window as any).fixture.calls.filter(
-        (call: any) => call.command === "plugin:menu|popup",
-      ).length,
-  );
-  await page.evaluate(() => (window as any).fixture.hold("plugin:menu|new"));
   await project.click({ button: "right" });
   await current.click();
-  await page.evaluate(() => (window as any).fixture.release("plugin:menu|new"));
-  await expect
-    .poll(() =>
-      page.evaluate(() => (window as any).fixture.menu().items.length),
-    )
-    .toBe(0);
+  await expect(page.getByRole("menu")).toHaveCount(0);
   expect(
     await page.evaluate(
       () =>
-        (window as any).fixture.calls.filter(
-          (call: any) => call.command === "plugin:menu|popup",
+        (window as any).fixture.calls.filter((call: any) =>
+          call.command.startsWith("plugin:menu|"),
         ).length,
     ),
-  ).toBe(popups);
+  ).toBe(0);
 });
 
-test("file and diff context menus copy exact content, reveal paths, and use native preview actions", async ({
+test("file and diff context menus copy exact content, reveal paths, and use preview actions", async ({
   page,
 }) => {
   await desktop(page);
@@ -4685,7 +4896,7 @@ test("file and diff context menus copy exact content, reveal paths, and use nati
   await pickMenu(page, "Copy full path");
   await expect.poll(() => copiedText(page)).toBe("/work/caelum/src/App.tsx");
   await file.click({ button: "right" });
-  const reveal = (await nativeMenu(page)).find((item) =>
+  const reveal = (await contextMenu(page)).find((item) =>
     item.text.startsWith("Reveal in"),
   )!.text;
   await pickMenu(page, reveal);

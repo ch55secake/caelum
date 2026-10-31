@@ -218,8 +218,24 @@ export function ProjectWorktrees({
         approval={app.approvals.some((request) => member(request.projectPath))}
         activate={() => app.activateGroup(project)}
         close={() => app.closeProject(project.path)}
+        worktreeActions={
+          catalog
+            ? [
+                {
+                  text: "Create worktree",
+                  enabled: !busy,
+                  action: () => setDialog("create"),
+                },
+                {
+                  text: "Refresh worktrees",
+                  enabled: !busy,
+                  action: () => app.refreshWorktrees(project),
+                },
+              ]
+            : []
+        }
       />
-      {catalog && (
+      {worktrees.length > 0 && (
         <div
           className="worktree-list"
           aria-label={`Worktrees for ${project.name}`}
