@@ -3,6 +3,8 @@ import {
   Bot,
   Check,
   Gauge,
+  GitBranch,
+  FolderOpen,
   Layers,
   Monitor,
   Moon,
@@ -18,6 +20,7 @@ import type { WorkspaceController } from "./Sidebar.js";
 import type { useSettings } from "./useSettings.js";
 import type { ProviderKind } from "./workspaceState.js";
 import type { ProviderDefaults } from "./settingsState.js";
+import { open } from "@tauri-apps/plugin-dialog";
 
 type Preferences = ReturnType<typeof useSettings>;
 const providerName = (provider: ProviderKind) =>
@@ -72,9 +75,9 @@ function ProviderSettings({
     <>
       <h2>Providers</h2>
       <p className="settings-description">
-        Defaults for new sessions across your projects. Customize an
-        individual draft in the composer. Star models to keep favourites at
-        the top of both model pickers.
+        Defaults for new sessions across your projects. Customize an individual
+        draft in the composer. Star models to keep favourites at the top of both
+        model pickers.
       </p>
       <div className="setting-row">
         <div>
@@ -145,8 +148,7 @@ function ProviderSettings({
             if (app.project) void app.loadChoices(app.project, provider);
           }}
         >
-          <RefreshCw size={13} className={loading ? "spinning" : ""} />{" "}
-          Refresh
+          <RefreshCw size={13} className={loading ? "spinning" : ""} /> Refresh
         </button>
       </div>
       {error && (
@@ -279,9 +281,9 @@ export function Settings({
   close: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [section, setSection] = useState<"appearance" | "providers">(
-    "appearance",
-  );
+  const [section, setSection] = useState<
+    "appearance" | "providers" | "worktrees"
+  >("appearance");
   const [provider, setProvider] = useState(app.provider);
   useEffect(() => {
     const element = dialog.current!;
@@ -340,13 +342,22 @@ export function Settings({
           >
             <Layers size={15} /> Providers
           </button>
+          <button
+            className="nav-item"
+            aria-current={section === "worktrees" ? "page" : undefined}
+            onClick={() => setSection("worktrees")}
+          >
+            <GitBranch size={15} /> Worktrees
+          </button>
         </nav>
         <section
           className="settings-content"
           aria-label={
             section === "appearance"
               ? "Appearance settings"
-              : "Provider defaults"
+              : section === "worktrees"
+                ? "Worktree settings"
+                : "Provider defaults"
           }
         >
           {section === "appearance" ? (
@@ -391,9 +402,7 @@ export function Settings({
                     <span className="theme-option-name">
                       <Icon size={14} />
                       {name}
-                      {preferences.settings.theme === id && (
-                        <Check size={14} />
-                      )}
+                      {preferences.settings.theme === id && <Check size={14} />}
                     </span>
                   </label>
                 ))}
@@ -421,8 +430,7 @@ export function Settings({
                       className="accent-swatch"
                       style={
                         {
-                          "--swatch-color":
-                            palette[preferences.resolvedTheme],
+                          "--swatch-color": palette[preferences.resolvedTheme],
                         } as CSSProperties
                       }
                       aria-hidden="true"
@@ -443,6 +451,50 @@ export function Settings({
                   {preferences.themeError}
                 </p>
               )}
+            </>
+          ) : section === "worktrees" ? (
+            <>
+              <h2>Worktrees</h2>
+              <p className="settings-description">
+                New checkouts are grouped by project in this folder.
+              </p>
+              <label className="worktree-folder-setting">
+                Worktree folder
+                <input
+                  value={preferences.settings.worktreeDirectory}
+                  placeholder="~/.caelum/worktrees"
+                  onChange={(event) =>
+                    preferences.update((current) => ({
+                      ...current,
+                      worktreeDirectory: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <button
+                className="settings-refresh"
+                onClick={() => {
+                  void open({
+                    directory: true,
+                    multiple: false,
+                    title: "Choose worktree folder",
+                  })
+                    .then((path) => {
+                      if (typeof path === "string")
+                        preferences.update((current) => ({
+                          ...current,
+                          worktreeDirectory: path,
+                        }));
+                    })
+                    .catch((reason) => app.setError(String(reason)));
+                }}
+              >
+                <FolderOpen size={14} /> Choose folder
+              </button>
+              <p className="settings-note">
+                Leave empty to use ~/.caelum/worktrees. Changes apply to newly
+                created worktrees; existing checkouts keep their locations.
+              </p>
             </>
           ) : (
             <ProviderSettings

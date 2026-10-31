@@ -10,7 +10,7 @@ use caelum_protocol::{PersistedProject, ProjectInfo, WorkspaceSnapshot};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 3;
+const CURRENT_SCHEMA_VERSION: i64 = 4;
 const PROVIDERS: [&str; 2] = ["codex", "opencode"];
 
 /// Thread-safe access to Caelum's app-owned workspace metadata database.
@@ -45,7 +45,7 @@ impl WorkspaceDatabase {
     pub fn restore(&self) -> Result<WorkspaceSnapshot, DatabaseError> {
         let connection = self.lock();
         let mut statement = connection.prepare(
-            "SELECT path, name, provider
+            "SELECT path, name, provider, root_path, selected_worktree_path
              FROM projects
              WHERE is_open = 1
              ORDER BY open_order ASC, last_opened_at DESC, path ASC",
@@ -55,12 +55,14 @@ impl WorkspaceDatabase {
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })?;
 
         let mut projects = Vec::new();
         for row in rows {
-            let (path, name, provider) = row?;
+            let (path, name, provider, root_path, selected_worktree_path) = row?;
             validate_provider(&provider)?;
             let mut provider_statement = connection.prepare(
                 "SELECT provider, selected_session_id
@@ -102,6 +104,8 @@ impl WorkspaceDatabase {
 
             projects.push(PersistedProject {
                 project: ProjectInfo { name, path },
+                root_path,
+                selected_worktree_path,
                 provider,
                 codex_session_id,
                 opencode_session_id,
@@ -127,25 +131,67 @@ impl WorkspaceDatabase {
 
     /// Record a project as open and move it to the front of the restore order.
     pub fn remember_project(&self, project: &ProjectInfo) -> Result<(), DatabaseError> {
-        validate_nonempty("project path", &project.path)?;
-        validate_nonempty("project name", &project.name)?;
         let mut connection = self.lock();
         let transaction = connection.transaction()?;
-        let now = unix_timestamp();
-        transaction.execute(
-            "UPDATE projects SET open_order = open_order + 1 WHERE is_open = 1",
-            [],
-        )?;
-        transaction.execute(
-            "INSERT INTO projects (path, name, is_open, open_order, last_opened_at)
-             VALUES (?1, ?2, 1, 0, ?3)
-             ON CONFLICT(path) DO UPDATE SET
-                 name = excluded.name,
-                 is_open = 1,
-                 open_order = 0,
-                 last_opened_at = excluded.last_opened_at",
-            params![project.path, project.name, now],
-        )?;
+        remember_project_in_transaction(&transaction, project)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Keep provider metadata keyed by the checkout directory while grouping it
+    /// under its original project. The caller validates Git membership first.
+    pub fn remember_worktree(
+        &self,
+        root: &ProjectInfo,
+        checkout: &ProjectInfo,
+    ) -> Result<(), DatabaseError> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        remember_project_in_transaction(&transaction, root)?;
+        if root.path != checkout.path {
+            remember_project_in_transaction(&transaction, checkout)?;
+            transaction.execute(
+                "UPDATE projects SET root_path = ?2 WHERE path = ?1",
+                params![checkout.path, root.path],
+            )?;
+            transaction.execute(
+                "UPDATE projects SET selected_worktree_path = ?1 WHERE path = ?2
+                 AND EXISTS(SELECT 1 FROM app_metadata WHERE key = 'active_project_path' AND value = ?1)",
+                params![checkout.path, root.path],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn remove_worktree(&self, checkout: &str) -> Result<(), DatabaseError> {
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        let directories = {
+            let mut statement = transaction.prepare("SELECT path, root_path FROM projects")?;
+            let rows = statement.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (path, root) in directories
+            .into_iter()
+            .filter(|(path, _)| Path::new(path).starts_with(checkout))
+        {
+            transaction.execute(
+                "UPDATE projects SET is_open = 0, root_path = NULL WHERE path = ?1",
+                [&path],
+            )?;
+            transaction.execute("UPDATE projects SET selected_worktree_path = NULL WHERE selected_worktree_path = ?1", [&path])?;
+            if let Some(root) = root {
+                transaction.execute("UPDATE app_metadata SET value = ?2 WHERE key = 'active_project_path' AND value = ?1", params![path, root])?;
+            } else {
+                transaction.execute(
+                    "DELETE FROM app_metadata WHERE key = 'active_project_path' AND value = ?1",
+                    [&path],
+                )?;
+            }
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -159,7 +205,10 @@ impl WorkspaceDatabase {
         validate_nonempty("project path", path)?;
         let mut connection = self.lock();
         let transaction = connection.transaction()?;
-        transaction.execute("UPDATE projects SET is_open = 0 WHERE path = ?1", [path])?;
+        transaction.execute(
+            "UPDATE projects SET is_open = 0 WHERE path = ?1 OR root_path = ?1",
+            [path],
+        )?;
         set_active_project_in_transaction(&transaction, next_active_project_path)?;
         transaction.commit()?;
         Ok(())
@@ -327,6 +376,29 @@ impl WorkspaceDatabase {
     }
 }
 
+fn remember_project_in_transaction(
+    transaction: &Transaction<'_>,
+    project: &ProjectInfo,
+) -> Result<(), DatabaseError> {
+    validate_nonempty("project path", &project.path)?;
+    validate_nonempty("project name", &project.name)?;
+    transaction.execute(
+        "UPDATE projects SET open_order = open_order + 1 WHERE is_open = 1",
+        [],
+    )?;
+    transaction.execute(
+        "INSERT INTO projects (path, name, is_open, open_order, last_opened_at)
+         VALUES (?1, ?2, 1, 0, ?3)
+         ON CONFLICT(path) DO UPDATE SET name = excluded.name, is_open = 1, open_order = 0, last_opened_at = excluded.last_opened_at",
+        params![project.path, project.name, unix_timestamp()],
+    )?;
+    transaction.execute(
+        "UPDATE projects SET is_open = 1 WHERE root_path = ?1",
+        [&project.path],
+    )?;
+    Ok(())
+}
+
 fn set_active_project_in_transaction(
     transaction: &Transaction<'_>,
     path: Option<&str>,
@@ -344,6 +416,11 @@ fn set_active_project_in_transaction(
         transaction.execute(
             "INSERT INTO app_metadata (key, value) VALUES ('active_project_path', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [path],
+        )?;
+        transaction.execute(
+            "UPDATE projects SET selected_worktree_path = ?1
+             WHERE path = COALESCE((SELECT root_path FROM projects WHERE path = ?1), ?1)",
             [path],
         )?;
     } else {
@@ -439,6 +516,16 @@ fn migrate(connection: &mut Connection) -> Result<(), DatabaseError> {
             )?;
         }
         transaction.pragma_update(None, "user_version", 3)?;
+        transaction.commit()?;
+    }
+    if version < 4 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE projects ADD COLUMN root_path TEXT;
+             ALTER TABLE projects ADD COLUMN selected_worktree_path TEXT;
+             CREATE INDEX project_root_idx ON projects(root_path);",
+        )?;
+        transaction.pragma_update(None, "user_version", 4)?;
         transaction.commit()?;
     }
     Ok(())
@@ -583,6 +670,103 @@ mod tests {
     }
 
     #[test]
+    fn worktrees_restore_group_selection_and_independent_provider_sessions() {
+        let directory = TestDirectory::new("worktree-groups");
+        let path = directory.database_path();
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        let root = project("/work/main", "project");
+        let child = project("/work/feature", "project");
+        database.remember_worktree(&root, &child).unwrap();
+        for project in [&root, &child] {
+            database
+                .select_session(&project.path, "codex", Some("same-id"))
+                .unwrap();
+            database
+                .select_session(&project.path, "opencode", Some("ses-one"))
+                .unwrap();
+        }
+        database.set_provider(&child.path, "opencode").unwrap();
+        database.set_active_project(Some(&child.path)).unwrap();
+        drop(database);
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        let snapshot = database.restore().unwrap();
+        assert_eq!(
+            snapshot.active_project_path.as_deref(),
+            Some(child.path.as_str())
+        );
+        let restored_root = snapshot
+            .projects
+            .iter()
+            .find(|entry| entry.project.path == root.path)
+            .unwrap();
+        assert_eq!(
+            restored_root.selected_worktree_path.as_deref(),
+            Some(child.path.as_str())
+        );
+        let restored_child = snapshot
+            .projects
+            .iter()
+            .find(|entry| entry.project.path == child.path)
+            .unwrap();
+        assert_eq!(
+            restored_child.root_path.as_deref(),
+            Some(root.path.as_str())
+        );
+        assert_eq!(restored_child.provider, "opencode");
+        database.close_project(&root.path, None).unwrap();
+        assert!(database.restore().unwrap().projects.is_empty());
+        database.remember_project(&root).unwrap();
+        assert_eq!(database.restore().unwrap().projects.len(), 2);
+        database.remove_worktree(&child.path).unwrap();
+        database.remember_project(&root).unwrap();
+        let snapshot = database.restore().unwrap();
+        assert_eq!(snapshot.projects.len(), 1);
+        assert_eq!(
+            snapshot.projects[0].codex_session_id.as_deref(),
+            Some("same-id")
+        );
+        assert_eq!(snapshot.projects[0].selected_worktree_path, None);
+    }
+
+    #[test]
+    fn worktree_removal_cleans_nested_projects_without_touching_similar_paths() {
+        let directory = TestDirectory::new("nested-worktrees");
+        let database = WorkspaceDatabase::open(directory.database_path()).unwrap();
+        let root = project("/work/main/src", "src");
+        let child = project("/work/feature/src", "src");
+        let sibling = project("/work/feature-other", "other");
+        database.remember_project(&sibling).unwrap();
+        database.remember_worktree(&root, &child).unwrap();
+        database.set_active_project(Some(&child.path)).unwrap();
+        database.remove_worktree("/work/feature").unwrap();
+        database.remember_project(&root).unwrap();
+        let snapshot = database.restore().unwrap();
+        assert_eq!(snapshot.projects.len(), 2);
+        assert_eq!(
+            snapshot.active_project_path.as_deref(),
+            Some(root.path.as_str())
+        );
+        assert!(snapshot
+            .projects
+            .iter()
+            .all(|entry| entry.selected_worktree_path.is_none()));
+        assert!(snapshot
+            .projects
+            .iter()
+            .any(|entry| entry.project == sibling));
+    }
+
+    #[test]
+    fn remembering_a_worktree_rolls_back_if_checkout_metadata_is_invalid() {
+        let directory = TestDirectory::new("worktree-transaction");
+        let database = WorkspaceDatabase::open(directory.database_path()).unwrap();
+        assert!(database
+            .remember_worktree(&project("/work/main", "main"), &project("/work/linked", ""))
+            .is_err());
+        assert!(database.restore().unwrap().projects.is_empty());
+    }
+
+    #[test]
     fn reports_unavailable_storage_without_panicking() {
         let directory = TestDirectory::new("unavailable");
         let blocking_file = directory.0.join("not-a-directory");
@@ -648,6 +832,9 @@ mod tests {
              );
              CREATE INDEX sessions_recent_idx ON sessions(project_path, provider, last_opened_at DESC);
              INSERT INTO sessions VALUES ('/work/kept', 'opencode', 'ses_kept', 10, 20, 'Keep this label');
+             DROP INDEX project_root_idx;
+             ALTER TABLE projects DROP COLUMN root_path;
+             ALTER TABLE projects DROP COLUMN selected_worktree_path;
              PRAGMA user_version = 2;",
         ).unwrap();
         assert!(database

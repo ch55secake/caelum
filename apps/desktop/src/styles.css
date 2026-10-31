@@ -275,6 +275,31 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .question-dock { flex: 0 1 auto; min-height: 100px; max-height: 45vh; overflow: auto; }
 .question-card { padding: 10px 12px; border: 1px solid var(--composer-border); border-radius: 8px; background: var(--composer-bg); font-size: 12px; }
 .question-card:focus { outline: none; }
+.worktree-list { margin: 2px 0 8px 12px; border-left: 1px solid var(--border); padding-left: 7px; }
+.worktree-heading { display: flex; align-items: center; gap: 3px; padding: 2px 3px; color: var(--muted); font-size: 10px; }
+.worktree-heading > span { flex: 1; }
+.worktree-heading .icon-button { width: 21px; height: 21px; }
+.worktree-row { display: flex; align-items: center; min-width: 0; }
+.worktree-item { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding: 5px 6px; border: 0; background: transparent; font-size: 11px; text-align: left; }
+.worktree-item > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-item.selected { background: var(--accent-soft); color: var(--accent); }
+.worktree-item small { color: var(--muted); font-size: 10px; }
+.worktree-delete { width: 23px; height: 23px; opacity: 0; }
+.worktree-row:hover .worktree-delete, .worktree-row:focus-within .worktree-delete { opacity: 1; }
+.worktree-load-error { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; padding: 3px 8px; }
+.worktree-load-error button { font-size: 10px; }
+.worktree-dialog { position: fixed; inset: 0; margin: auto; width: min(480px, calc(100vw - 48px)); max-height: 85vh; overflow: auto; padding: 0; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 24px 100px #0005; }
+.worktree-dialog::backdrop { background: #0008; }
+.worktree-dialog .settings-footer { justify-content: flex-end; }
+.worktree-dialog-body { display: grid; gap: 14px; padding: 20px; font-size: 12px; }
+.worktree-dialog-body label, .worktree-folder-setting { display: grid; gap: 6px; font-size: 12px; }
+.worktree-dialog-body input, .worktree-dialog-body select, .worktree-folder-setting input, .session-worktree select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; }
+.worktree-folder-setting { margin-bottom: 12px; }
+.worktree-location-label { color: var(--muted); font-size: 11px; }
+.worktree-destination { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.worktree-error { color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
+.worktree-remove { color: var(--danger); }
+.session-worktree { display: flex; align-items: center; gap: 8px; margin: 18px auto 0; max-width: 320px; color: var(--muted); font-size: 12px; }
 .question-card + .question-card { margin-top: 8px; }
 .question-title { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--accent); font-size: 11px; }
 .question-fields, .question-field { min-width: 0; border: 0; padding: 0; margin: 0; }

@@ -121,6 +121,16 @@ Session rows show a branch and added/deleted lines from the latest turn when ava
 - Approvals appear in the requesting conversation; the sidebar and header identify pending background requests.
 - A disconnected session offers **Reconnect**. A failed submission restores its text and attached context in the composer.
 
+## Project worktrees
+
+Git projects show their **Original checkout** and linked worktrees beneath the project in the sidebar. Use **+** beside **Worktrees** to create a new branch from a local or remote-tracking base branch. Existing Git worktrees are discovered automatically; **Refresh** updates the list immediately.
+
+Choose a checkout in the sidebar or the **Worktree** selector on a new session. Each checkout can have multiple Codex and OpenCode sessions, with independent drafts and file tabs. **Files** and **Changes** follow the selected checkout, and the selected worktree restores when you restart. Projects opened at a repository subdirectory keep that scope in each checkout.
+
+New worktrees default to `~/.caelum/worktrees/<project>-<repo-id>/<worktree>/`. Change the parent folder in **Settings → Worktrees**; existing checkouts keep their locations. Separate clones get separate storage directories.
+
+Hover a linked worktree to remove its checkout. Its branch and commits are retained. Stop running sessions and resolve pending agent requests first; Git refuses removal of dirty or locked worktrees. Closing a project only closes its sidebar group.
+
 ## Files and prompt context
 
 **Files** and **Changes** share a resizable inspector beside the conversation. Drag its divider or use the arrow keys while the divider is focused; expand it for a larger preview and restore the conversation layout when finished. The file tree has its own draggable, keyboard-accessible divider, with its preferred width saved per project and fitted to the available space. **Sessions** stays highlighted whenever the conversation is visible alongside either pane.
@@ -140,6 +150,7 @@ Open **Settings** from the sidebar, the header when the sidebar is collapsed, or
 
 - **Appearance:** choose Dark, Light, or System, and a Violet, Blue, Teal, Green, Amber, or Rose accent. Accent shades adapt to the theme across highlights, links, controls, activity indicators, and code selections. System follows your device’s appearance; themes also cover conversations, tools, Git review, and native window chrome.
 - **Providers:** choose a default provider for new projects and save independent Codex/OpenCode model and reasoning-effort defaults, plus an OpenCode agent. Defaults apply to new sessions; the composer can override them for an individual draft. Each existing session keeps its own configured model and effort.
+- **Worktrees:** choose the parent folder for new checkouts, or leave it empty to use `~/.caelum/worktrees`.
 - Star models in the composer or Settings to pin favourites above the provider-grouped model list. Favourites save per device, separately for Codex and OpenCode. OpenCode models are grouped by their supplying provider (including custom and routed services); search by model name, model ID, or provider name.
 - Provider status and available choices are checked against the selected project. Use **Refresh** after updating your local provider setup, or **Reset defaults** to use the provider’s own settings.
 

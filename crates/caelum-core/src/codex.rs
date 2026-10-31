@@ -130,6 +130,13 @@ impl CodexProvider {
     ) -> Result<CodexSessionList, CodexError> {
         let project = Project::open(project_path)?;
         let connection = self.connection(&project)?;
+        Self::list_sessions_on(&project, &connection)
+    }
+
+    fn list_sessions_on(
+        project: &Project,
+        connection: &CodexConnection,
+    ) -> Result<CodexSessionList, CodexError> {
         let mut cursor = Value::Null;
         let mut seen_cursors = HashSet::new();
         let mut threads = Vec::new();
@@ -531,6 +538,53 @@ impl CodexProvider {
             Some(thread_id),
         );
         Ok(())
+    }
+
+    pub fn ensure_checkout_idle(&self, checkout: &Path) -> Result<(), CodexError> {
+        let connections: Vec<_> = self
+            .inner
+            .lock_connections()
+            .iter()
+            .filter(|(path, connection)| {
+                path.starts_with(checkout) && connection.alive.load(Ordering::Acquire)
+            })
+            .map(|(path, connection)| (path.clone(), Arc::clone(connection)))
+            .collect();
+        for (path, connection) in connections {
+            let starting = !connection
+                .pending_turns
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_empty();
+            if starting
+                || Self::list_sessions_on(&Project::open(&path)?, &connection)?
+                    .threads
+                    .iter()
+                    .any(|thread| thread.is_working)
+            {
+                return Err(CodexError::Protocol(
+                    "Stop running Codex sessions before removing this worktree.".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn release_checkout(&self, checkout: &Path) {
+        let mut connections = self.inner.lock_connections();
+        let paths: Vec<_> = connections
+            .keys()
+            .filter(|path| path.starts_with(checkout))
+            .cloned()
+            .collect();
+        for path in paths {
+            if let Some(connection) = connections.remove(&path) {
+                self.inner
+                    .questions
+                    .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
+                let _ = self.inner.processes.terminate(connection.process_id);
+            }
+        }
     }
 
     /// Terminate every app-server process owned by this provider.
@@ -1523,7 +1577,7 @@ for raw in sys.stdin:
         result = {'userAgent': 'fake-codex'}
     elif method == 'thread/list':
         assert params['archived'] is False
-        result = {'data': [] if 'thread-existing' in archived else [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123}], 'nextCursor': None}
+        result = {'data': [] if 'thread-existing' in archived else [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123, 'status': {'type': 'active' if os.path.exists('active-thread') else 'idle'}}], 'nextCursor': None}
     elif method == 'thread/read':
         result = {'thread': {'id': params['threadId'], 'cwd': os.path.dirname(os.getcwd()) if params['threadId'] == 'foreign-thread' else os.getcwd(), 'gitInfo': {'branch': 'feature/sidebar'}, 'status': {'type': 'active' if os.path.exists('active-thread') else 'idle'}}}
     elif method in ['thread/archive', 'thread/unarchive']:
@@ -1666,6 +1720,56 @@ for raw in sys.stdin:
             provider.list_sessions(&project_path).unwrap().threads[0].id,
             "thread-existing"
         );
+        provider.shutdown();
+    }
+
+    #[test]
+    fn checkout_cleanup_rejects_active_turns_and_releases_only_its_connections() {
+        let directory = TestDirectory::new();
+        let project = Project::open(directory.project()).unwrap();
+        let nested = project.path().join("src");
+        let other = directory.0.join("project-other");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let processes = Arc::new(ProcessRegistry::default());
+        let provider = CodexProvider::with_executable(
+            Arc::clone(&processes),
+            ApprovalBroker::default(),
+            QuestionBroker::default(),
+            directory.fake_codex(true),
+        );
+        for path in [project.path(), &nested, &other] {
+            provider.list_sessions(path).unwrap();
+        }
+        fs::write(nested.join("active-thread"), "").unwrap();
+        assert!(provider.ensure_checkout_idle(project.path()).is_err());
+        fs::remove_file(nested.join("active-thread")).unwrap();
+        let connection = provider.connection(&project).unwrap();
+        connection.queue_turn("thread-existing");
+        assert!(provider.ensure_checkout_idle(project.path()).is_err());
+        connection.remove_pending_turn("thread-existing");
+        provider.ensure_checkout_idle(project.path()).unwrap();
+        let nested_connection = Arc::clone(provider.inner.lock_connections().get(&nested).unwrap());
+        nested_connection.alive.store(false, Ordering::Release);
+        provider.ensure_checkout_idle(project.path()).unwrap();
+        assert_eq!(
+            provider
+                .inner
+                .lock_connections()
+                .get(&nested)
+                .unwrap()
+                .process_id,
+            nested_connection.process_id
+        );
+        provider.release_checkout(project.path());
+        assert_eq!(provider.inner.lock_connections().len(), 1);
+        for connection in [connection, nested_connection] {
+            assert!(matches!(
+                processes.terminate(connection.process_id),
+                Err(crate::processes::ProcessError::UnknownProcess)
+            ));
+        }
+        provider.list_sessions(&other).unwrap();
         provider.shutdown();
     }
 

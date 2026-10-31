@@ -20,6 +20,14 @@ See [security.md](security.md) for current permission boundaries and process lif
 See [codex.md](codex.md) for Codex CLI setup and app-server protocol behavior.
 See [opencode.md](opencode.md) for OpenCode server setup and HTTP/SSE behavior.
 
+## Projects and worktrees
+
+`caelum-core::worktrees` discovers checkouts with Git's NUL-delimited porcelain output and creates new branches with `git worktree add`. Storage is grouped by the original checkout name and a stable hash of the canonical common Git directory, so linked checkouts share an identity and separate clones stay independent. A project opened below the repository root retains its relative directory in other checkouts; unavailable directories and paths resolving outside a checkout cannot be selected.
+
+The desktop groups checkout directories under a logical project while keeping provider connections, sessions, drafts, file tabs, and Git review keyed by the working directory. SQLite schema v4 records the root project and preferred checkout alongside the existing per-directory session metadata. Conversation history stays provider-owned.
+
+Removal checks active provider sessions and pending requests, then uses `git worktree remove` without forcing or deleting the branch. Successful removal releases checkout-specific connections and app workspace records, including nested project directories. OpenCode's shared background service remains externally owned. Navigation and request revisions prevent delayed responses from switching the active checkout or restoring removed state.
+
 ## Security boundaries
 
 - Only Rust performs project path validation and future privileged operations.
