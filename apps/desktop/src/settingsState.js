@@ -7,6 +7,7 @@ export function defaultSettings() {
     theme: "dark",
     accentColor: "violet",
     defaultProvider: "codex",
+    worktreeDirectory: "",
     favoriteModels: { codex: [], opencode: [] },
     providers: {
       codex: { model: "", effort: "", agent: "" },
@@ -26,6 +27,8 @@ export function normalizeSettings(value) {
     settings.accentColor = value.accentColor;
   if (["codex", "opencode"].includes(value?.defaultProvider))
     settings.defaultProvider = value.defaultProvider;
+  if (typeof value?.worktreeDirectory === "string")
+    settings.worktreeDirectory = value.worktreeDirectory;
   for (const provider of ["codex", "opencode"]) {
     const favorites = value?.favoriteModels?.[provider];
     if (Array.isArray(favorites))

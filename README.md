@@ -85,7 +85,7 @@ Open a project and send a message to create a session. Choose the provider and a
 
 OpenCode’s **Build** and **Plan** controls sit below the message box in new and existing sessions. Click either to choose the agent for your next message, or press **Shift+Tab** in the message box to cycle through available agents without moving the caret. **More** opens the full agent picker, including custom agents. A subtle animated underline marks the selected quick control, an animated ring identifies the running agent, an idle dot marks the current agent, and **Next** marks a pending change. Reduced-motion settings keep these indicators static, and screen readers announce the current and next agents. Pending selections stay with their session, and a failed agent switch keeps your draft ready to retry.
 
-Right-click for native, context-aware actions: edit text fields; copy messages, code, selections, links, tool input/output, and diffs; add messages or selected code to your draft; open or archive sessions; and copy paths, reveal files in Finder, or open and close projects. **Shift+F10** opens the menu for the focused item.
+Right-click for Caelum's themed, context-aware menus: edit text fields; copy messages, code, selections, links, tool input/output, and diffs; add messages or selected code to your draft; open or archive sessions; and copy paths, reveal files in Finder, or manage projects and worktrees. **Shift+F10** opens the menu for the focused item; use arrow keys to navigate, **Enter** to choose, and **Esc** to dismiss.
 
 Responses and thinking update live. Expand a thinking row to read the provider's summary or trace. A subtle composer outline pulses throughout work, including long-running commands and tool calls, which show elapsed time. OpenCode activity follows its runtime active-session state, so quiet gaps and history refreshes keep the running indicator steady until execution ends. Reduced-motion settings keep the outline static. Sending a message returns the transcript to the latest response. OpenCode connects to its existing local background service when available.
 
@@ -121,6 +121,16 @@ Session rows show a branch and added/deleted lines from the latest turn when ava
 - Approvals appear in the requesting conversation; the sidebar and header identify pending background requests.
 - A disconnected session offers **Reconnect**. A failed submission restores its text and attached context in the composer.
 
+## Project worktrees
+
+Right-click a project and choose **Create worktree** to get started. The **Worktrees** section appears once linked worktrees exist, with a **+** button for creating more. Only created, linked worktrees appear in that section; click the project itself to return to its original directory. New worktrees use a generated, editable branch name and `main` as the default base when available; you can choose another local or remote-tracking base branch. Existing Git worktrees are discovered automatically; **Refresh worktrees** in the project menu or **Refresh** beside the section updates the list immediately.
+
+Choose a checkout in the sidebar or the **Worktree** selector on a new session. Each checkout can have multiple Codex and OpenCode sessions, with independent drafts and file tabs. **Files** and **Changes** follow the selected checkout, and the selected worktree restores when you restart. Projects opened at a repository subdirectory keep that scope in each checkout.
+
+New worktrees default to `~/.caelum/worktrees/<project>-<repo-id>/<worktree>/`. Change the parent folder in **Settings → Worktrees**; existing checkouts keep their locations. Separate clones get separate storage directories.
+
+Hover a linked worktree to remove its checkout. Its branch and commits are retained. Stop running sessions and resolve pending agent requests first; Git refuses removal of dirty or locked worktrees. Closing a project only closes its sidebar group.
+
 ## Files and prompt context
 
 **Files** and **Changes** share a resizable inspector beside the conversation. Drag its divider or use the arrow keys while the divider is focused; expand it for a larger preview and restore the conversation layout when finished. The file tree has its own draggable, keyboard-accessible divider, with its preferred width saved per project and fitted to the available space. **Sessions** stays highlighted whenever the conversation is visible alongside either pane.
@@ -140,6 +150,7 @@ Open **Settings** from the sidebar, the header when the sidebar is collapsed, or
 
 - **Appearance:** choose Dark, Light, or System, and a Violet, Blue, Teal, Green, Amber, or Rose accent. Accent shades adapt to the theme across highlights, links, controls, activity indicators, and code selections. System follows your device’s appearance; themes also cover conversations, tools, Git review, and native window chrome.
 - **Providers:** choose a default provider for new projects and save independent Codex/OpenCode model and reasoning-effort defaults, plus an OpenCode agent. Defaults apply to new sessions; the composer can override them for an individual draft. Each existing session keeps its own configured model and effort.
+- **Worktrees:** choose the parent folder for new checkouts, or leave it empty to use `~/.caelum/worktrees`.
 - Star models in the composer or Settings to pin favourites above the provider-grouped model list. Favourites save per device, separately for Codex and OpenCode. OpenCode models are grouped by their supplying provider (including custom and routed services); search by model name, model ID, or provider name.
 - Provider status and available choices are checked against the selected project. Use **Refresh** after updating your local provider setup, or **Reset defaults** to use the provider’s own settings.
 

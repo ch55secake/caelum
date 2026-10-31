@@ -16,6 +16,29 @@ pub struct ProjectInfo {
     pub path: String,
 }
 
+/// A Git checkout and the corresponding directory for this logical project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktree {
+    pub path: String,
+    pub project: ProjectInfo,
+    pub branch: Option<String>,
+    pub main: bool,
+    pub locked: Option<String>,
+    pub prunable: Option<String>,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktrees {
+    pub project: ProjectInfo,
+    pub storage_directory: String,
+    pub branches: Vec<String>,
+    pub default_base: String,
+    pub worktrees: Vec<GitWorktree>,
+}
+
 /// A changed path reported by Git's porcelain status format.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +163,10 @@ pub struct ProjectSearchResults {
 #[serde(rename_all = "camelCase")]
 pub struct PersistedProject {
     pub project: ProjectInfo,
+    #[serde(default)]
+    pub root_path: Option<String>,
+    #[serde(default)]
+    pub selected_worktree_path: Option<String>,
     pub provider: String,
     pub codex_session_id: Option<String>,
     pub opencode_session_id: Option<String>,
@@ -470,6 +497,8 @@ mod tests {
                     path: "/workspace/project".into(),
                 },
                 provider: "opencode".into(),
+                root_path: None,
+                selected_worktree_path: None,
                 codex_session_id: Some("thread-1".into()),
                 opencode_session_id: None,
                 codex_session_ids: vec!["thread-1".into()],
@@ -484,6 +513,8 @@ mod tests {
                 "projects": [{
                     "project": { "name": "project", "path": "/workspace/project" },
                     "provider": "opencode",
+                    "rootPath": null,
+                    "selectedWorktreePath": null,
                     "codexSessionId": "thread-1",
                     "opencodeSessionId": null,
                     "codexSessionIds": ["thread-1"],

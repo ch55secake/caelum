@@ -27,9 +27,8 @@ import type {
   SessionDetails,
 } from "./workspaceState.js";
 import type { useWorkspace } from "./useWorkspace.js";
-import { ProjectItem } from "./ProjectItem.js";
+import { ProjectWorktrees } from "./Worktrees.js";
 import { PullRequestIndicator } from "./PullRequestIndicator.js";
-import { projectHasActiveTurn } from "./workspaceState.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
 const MIN_SIDEBAR_WIDTH = 180;
@@ -201,18 +200,8 @@ export function Sidebar({
       </div>
       <nav className="project-list" aria-label="Open projects">
         {app.restoring && <span className="empty-sessions">Restoring…</span>}
-        {app.projects.map((project) => (
-          <ProjectItem
-            key={project.path}
-            project={project}
-            selected={app.project?.path === project.path}
-            working={projectHasActiveTurn(app.workspaces[project.path])}
-            approval={app.approvals.some(
-              (request) => request.projectPath === project.path,
-            )}
-            activate={() => app.activateProject(project)}
-            close={() => app.closeProject(project.path)}
-          />
+        {app.projectGroups.map((project) => (
+          <ProjectWorktrees key={project.path} app={app} project={project} />
         ))}
       </nav>
       <button

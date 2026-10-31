@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { QuestionPrompt } from "../src/questionState.js";
+import type { GitWorktree } from "../src/worktreeState.js";
 
 async function desktop(
   page: Page,
@@ -7,10 +8,11 @@ async function desktop(
   questionOptions: {
     initialQuestions?: QuestionPrompt[];
     holdQuestions?: boolean;
+    worktrees?: boolean;
   } = {},
 ) {
   await page.addInitScript(
-    ({ selected, initialQuestions, holdQuestions }) => {
+    ({ selected, initialQuestions, holdQuestions, worktrees }) => {
       const callbacks = new Map<number, (event: unknown) => void>();
       const listeners = new Map<string, number[]>();
       const project = { name: "caelum", path: "/work/caelum" };
@@ -69,8 +71,96 @@ async function desktop(
         },
       ];
       const calls: { command: string; args: Record<string, unknown> }[] = [];
-      const menus = new Map<number, { items: any[] }>();
-      let menuId: number | null = null;
+      let checkouts: GitWorktree[] = JSON.parse(
+        sessionStorage.getItem("worktrees") ?? "null",
+      ) ?? [
+        {
+          path: project.path,
+          project,
+          branch: "main",
+          main: true,
+          available: true,
+          locked: null,
+          prunable: null,
+        },
+      ];
+      const savedWorkspace = JSON.parse(
+        sessionStorage.getItem("worktree-workspace") ?? "null",
+      );
+      const savedProjects = new Map<string, any>(
+        savedWorkspace?.projects?.map((entry: any) => [
+          entry.project.path,
+          entry,
+        ]) ?? [
+          [
+            project.path,
+            {
+              project,
+              rootPath: null,
+              provider: "codex",
+              codexSessionId: selected,
+              opencodeSessionId: null,
+              codexSessionIds: threads.map((entry) => entry.id),
+              opencodeSessionIds: [],
+            },
+          ],
+        ],
+      );
+      let activeWorktree = savedWorkspace?.activeProjectPath ?? project.path;
+      const saveWorktrees = () => {
+        sessionStorage.setItem("worktrees", JSON.stringify(checkouts));
+        sessionStorage.setItem(
+          "worktree-workspace",
+          JSON.stringify({
+            projects: [...savedProjects.values()],
+            activeProjectPath: activeWorktree,
+          }),
+        );
+      };
+      const checkoutProject = (path: string) => ({
+        name: path === otherProject.path ? "other" : "caelum",
+        path,
+      });
+      const rememberCheckout = (path: string) => {
+        if (!savedProjects.has(path))
+          savedProjects.set(path, {
+            project: checkoutProject(path),
+            rootPath:
+              path === project.path || path === otherProject.path
+                ? null
+                : project.path,
+            provider: "codex",
+            codexSessionId: null,
+            opencodeSessionId: null,
+            codexSessionIds: [],
+            opencodeSessionIds: [],
+          });
+        saveWorktrees();
+      };
+      const addWorktree = (
+        path: string,
+        branch: string | null,
+        options: Partial<GitWorktree> = {},
+      ) => {
+        const entry = {
+          path,
+          project: checkoutProject(path),
+          branch,
+          main: false,
+          available: true,
+          locked: null,
+          prunable: null,
+          ...options,
+        };
+        checkouts = [...checkouts.filter((item) => item.path !== path), entry];
+        projectFiles.set(
+          fileKey(path, "src/App.tsx"),
+          `export const checkout = ${JSON.stringify(branch)};\n`,
+        );
+        projectFiles.set(fileKey(path, "README.md"), `# ${branch}\n`);
+        saveWorktrees();
+        return entry;
+      };
       let clipboard = "";
       let copyError = false;
       let contextEvent: Event | null = null;
@@ -185,32 +275,22 @@ async function desktop(
         isTauri: true,
         fixture: {
           calls,
+          addWorktree,
+          forgetWorktree: (path: string) => {
+            checkouts = checkouts.filter((entry) => entry.path !== path);
+            saveWorktrees();
+          },
           emit,
           setQuestions: (value: QuestionPrompt[], notify = true) => {
             questions = value;
             sessionStorage.setItem("questions", JSON.stringify(value));
             if (notify) emit("question-requests", value);
           },
-          menu: () => ({
-            items:
-              menus.get(menuId!)?.items.map(({ text, item, enabled }) => ({
-                text: text ?? item,
-                enabled: enabled !== false,
-              })) ?? [],
-            contextPrevented: contextEvent?.defaultPrevented ?? false,
-          }),
-          pickMenu: (text: string) => {
-            const item = menus
-              .get(menuId!)
-              ?.items.find((item) => (item.text ?? item.item) === text);
-            if (!item || item.enabled === false)
-              throw new Error(`Menu item unavailable: ${text}`);
-            item.handler?.onmessage(text);
-          },
-          captureMenuAction: (text: string) =>
-            menus.get(menuId!)?.items.find((item) => item.text === text)
-              ?.handler?.onmessage,
+          contextPrevented: () => contextEvent?.defaultPrevented ?? false,
           clipboard: () => clipboard,
+          setClipboard: (text: string) => {
+            clipboard = text;
+          },
           failCopy: () => {
             copyError = true;
           },
@@ -363,21 +443,9 @@ async function desktop(
           },
           invoke: async (command: string, args: Record<string, any> = {}) => {
             calls.push({ command, args });
-            if (command === "plugin:menu|new") {
+            if (command === "plugin:clipboard-manager|read_text") {
               await gates.get(command)?.promise;
-              const id = ++sequence;
-              menus.set(id, args.options);
-              return [id, `context-${id}`];
-            }
-            if (command === "plugin:menu|popup") {
-              if (!menus.has(args.rid))
-                throw new Error("Menu was already released");
-              menuId = args.rid;
-              return;
-            }
-            if (command === "plugin:resources|close") {
-              menus.delete(args.rid);
-              return;
+              return clipboard;
             }
             if (command === "plugin:clipboard-manager|write_text") {
               if (copyError) {
@@ -402,6 +470,76 @@ async function desktop(
               ].includes(command)
             )
               return;
+            if (command === "git_worktrees") {
+              if (!worktrees || args.projectPath === otherProject.path)
+                return null;
+              if (
+                checkouts.find(
+                  (entry) => entry.project.path === args.projectPath,
+                )?.available === false
+              )
+                throw new Error("Project folder unavailable");
+              const error = commandErrors.get(command);
+              const snapshot = {
+                project,
+                storageDirectory: `${args.baseDirectory || "/home/oscar/.caelum/worktrees"}/caelum-a1b2`,
+                branches: ["main", "release"],
+                defaultBase: "main",
+                worktrees: structuredClone(checkouts),
+              };
+              await gates.get(command)?.promise;
+              if (error) throw new Error(error);
+              return snapshot;
+            }
+            if (command === "worktree_destination") {
+              if (!args.branch || /\s|\.\./.test(args.branch))
+                throw new Error("Enter a valid new Git branch name.");
+              return `${args.baseDirectory || "/home/oscar/.caelum/worktrees"}/caelum-a1b2/${args.branch.replaceAll("/", "-")}`;
+            }
+            if (
+              ["create_worktree", "open_worktree", "remove_worktree"].includes(
+                command,
+              )
+            ) {
+              const error = commandErrors.get(command);
+              await gates.get(command)?.promise;
+              if (error) throw new Error(error);
+              if (command === "create_worktree") {
+                const path = `${args.baseDirectory || "/home/oscar/.caelum/worktrees"}/caelum-a1b2/${args.branch.replaceAll("/", "-")}`;
+                if (
+                  checkouts.some(
+                    (entry) =>
+                      entry.path === path || entry.branch === args.branch,
+                  )
+                )
+                  throw new Error("Branch or destination already exists");
+                const entry = addWorktree(path, args.branch);
+                rememberCheckout(path);
+                return entry;
+              }
+              const entry = checkouts.find(
+                (entry) => entry.path === args.worktreePath,
+              );
+              if (!entry) throw new Error("Worktree unavailable");
+              if (command === "open_worktree") {
+                rememberCheckout(project.path);
+                rememberCheckout(entry.project.path);
+                return entry.project;
+              }
+              checkouts = checkouts.filter(
+                (entry) => entry.path !== args.worktreePath,
+              );
+              savedProjects.delete(entry.project.path);
+              if (activeWorktree === entry.project.path)
+                activeWorktree = project.path;
+              saveWorktrees();
+              return;
+            }
+            if (command === "restore_workspace" && worktrees)
+              return {
+                projects: [...savedProjects.values()],
+                activeProjectPath: activeWorktree,
+              };
             if (command === "restore_workspace")
               return {
                 projects: [
@@ -428,6 +566,17 @@ async function desktop(
                 activeProjectPath: project.path,
               };
             if (command === "startup_project") return null;
+            if (command === "open_project" && worktrees) {
+              if (
+                checkouts.find((entry) => entry.project.path === args.path)
+                  ?.available === false
+              )
+                throw new Error("Project folder unavailable");
+              return {
+                ...checkoutProject(args.path),
+                name: args.path.split("/").at(-1),
+              };
+            }
             if (command === "open_project")
               return args.path === otherProject.path ? otherProject : project;
             if (command === "plugin:dialog|open") return otherProject.path;
@@ -588,7 +737,20 @@ async function desktop(
             if (command === "codex_list_sessions") {
               const snapshot = {
                 project,
-                threads: threads.filter(
+                threads: (worktrees
+                  ? (
+                      savedProjects.get(args.projectPath)?.codexSessionIds ?? []
+                    ).map(
+                      (id: string) =>
+                        threads.find((entry) => entry.id === id) ?? {
+                          id,
+                          name: "Worktree session",
+                          preview: "",
+                          updatedAt: 124,
+                        },
+                    )
+                  : threads
+                ).filter(
                   (item) =>
                     !archived.has(
                       sessionKey(args.projectPath, "codex", item.id),
@@ -601,9 +763,17 @@ async function desktop(
             if (command === "opencode_list_sessions") {
               const snapshot = {
                 project,
-                sessions: [
-                  { id: "ses-a", title: "OpenCode session", updatedAt: 123 },
-                ].filter(
+                sessions: (worktrees
+                  ? (
+                      savedProjects.get(args.projectPath)?.opencodeSessionIds ??
+                      []
+                    ).map((id: string) => ({
+                      id,
+                      title: "OpenCode session",
+                      updatedAt: 124,
+                    }))
+                  : [{ id: "ses-a", title: "OpenCode session", updatedAt: 123 }]
+                ).filter(
                   (item) =>
                     !archived.has(
                       sessionKey(args.projectPath, "opencode", item.id),
@@ -718,21 +888,27 @@ async function desktop(
             }
             if (command.endsWith("_start_session")) {
               if (startGate) await startGate;
-              const id = command.startsWith("codex") ? "thread-new" : "ses-new";
+              const id =
+                (command.startsWith("codex") ? "thread-new" : "ses-new") +
+                (worktrees ? `-${sequence++}` : "");
               const model = args.model || "provider/model";
               models.set(id, model);
               if (command.startsWith("opencode"))
                 setAgent(args.projectPath, id, args.agent || "build");
               return command.startsWith("codex")
                 ? {
-                    project,
+                    project: worktrees
+                      ? checkoutProject(args.projectPath)
+                      : project,
                     model,
-                    thread: { id: "thread-new", name: null, preview: "" },
+                    thread: { id, name: null, preview: "" },
                   }
                 : {
-                    project,
+                    project: worktrees
+                      ? checkoutProject(args.projectPath)
+                      : project,
                     session: {
-                      id: "ses-new",
+                      id,
                       title: null,
                       model,
                       agent: agentFor(args.projectPath, id),
@@ -764,7 +940,7 @@ async function desktop(
               if (args.effort != null) efforts.set(id, args.effort);
               if (command.startsWith("codex"))
                 emit("codex-event", {
-                  projectPath: project.path,
+                  projectPath: worktrees ? args.projectPath : project.path,
                   method: "turn/started",
                   params: {
                     threadId: args.threadId,
@@ -777,13 +953,13 @@ async function desktop(
               if (command.startsWith("opencode")) {
                 openWorking = false;
                 emit("opencode-event", {
-                  projectPath: project.path,
+                  projectPath: worktrees ? args.projectPath : project.path,
                   eventType: "session.execution.interrupted",
                   data: { sessionID: args.sessionId, reason: "abort" },
                 });
               } else
                 emit("codex-event", {
-                  projectPath: project.path,
+                  projectPath: worktrees ? args.projectPath : project.path,
                   method: "turn/completed",
                   params: {
                     threadId: args.threadId,
@@ -940,8 +1116,44 @@ async function desktop(
                 "forget_project_session",
                 "close_project_record",
               ].includes(command)
-            )
+            ) {
+              if (worktrees) {
+                if (command === "remember_project")
+                  rememberCheckout(args.project.path);
+                if (command === "set_active_project") {
+                  activeWorktree = args.projectPath;
+                  const record = savedProjects.get(args.projectPath);
+                  if (record)
+                    savedProjects.get(
+                      record.rootPath ?? args.projectPath,
+                    ).selectedWorktreePath = args.projectPath;
+                }
+                const record = savedProjects.get(args.projectPath);
+                if (record && command === "set_project_provider")
+                  record.provider = args.provider;
+                if (record && command === "select_project_session") {
+                  record[`${args.provider}SessionId`] = args.sessionId;
+                  if (
+                    args.sessionId &&
+                    !record[`${args.provider}SessionIds`].includes(
+                      args.sessionId,
+                    )
+                  )
+                    record[`${args.provider}SessionIds`].push(args.sessionId);
+                }
+                if (command === "close_project_record") {
+                  for (const [path, entry] of savedProjects)
+                    if (
+                      path === args.projectPath ||
+                      entry.rootPath === args.projectPath
+                    )
+                      savedProjects.delete(path);
+                  activeWorktree = args.activeProjectPath;
+                }
+                saveWorktrees();
+              }
               return;
+            }
             throw new Error(`Unhandled fixture command: ${command}`);
           },
         },
@@ -1040,6 +1252,525 @@ async function findProjectFile(page: Page, path: string) {
 
 const attachedContext = (page: Page) =>
   page.locator('.composer [aria-label="Attached context"]');
+
+async function createCheckout(page: Page, branch = "feature/search") {
+  await page
+    .getByRole("button", { name: "caelum", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Create worktree");
+  const dialog = page.getByRole("dialog", {
+    name: "Create worktree",
+    exact: true,
+  });
+  await dialog
+    .getByRole("textbox", { name: "New branch", exact: true })
+    .fill(branch);
+  await dialog
+    .getByRole("combobox", { name: "Start from", exact: true })
+    .selectOption("release");
+  await expect(dialog.locator(".worktree-destination")).toContainText(
+    branch.replaceAll("/", "-"),
+  );
+  const destination = await dialog
+    .locator(".worktree-destination")
+    .textContent();
+  await dialog
+    .getByRole("button", { name: "Create worktree", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("combobox", { name: "Session worktree" }),
+  ).toHaveValue(destination!);
+  return destination!;
+}
+
+for (const provider of ["codex", "opencode"] as const) {
+  test(`${provider} worktrees group checkouts, isolate drafts and files, support multiple sessions and restore selection`, async ({
+    page,
+  }) => {
+    await desktop(page, null, { worktrees: true });
+    await expect(page.locator(".worktree-list")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Create worktree for caelum" }),
+    ).toHaveCount(0);
+    await expect(page.locator(".worktree-row")).toHaveCount(0);
+    await expect(
+      page.getByRole("combobox", { name: "Session worktree" }),
+    ).toHaveCount(0);
+    const message = page.getByRole("textbox", { name: "Message", exact: true });
+    await message.fill("Original checkout draft");
+    const settings = await openSettings(page, "Worktrees");
+    await settings
+      .getByRole("textbox", { name: "Worktree folder" })
+      .fill("/custom/checkouts");
+    await settings.getByRole("button", { name: "Done", exact: true }).click();
+    const path = await createCheckout(page);
+    expect(path).toBe("/custom/checkouts/caelum-a1b2/feature-search");
+    await expect(page.locator(".worktree-row")).toHaveCount(1);
+    await expect(
+      page
+        .getByRole("combobox", { name: "Session worktree" })
+        .locator("option"),
+    ).toHaveText(["feature/search"]);
+    await expect(page.locator(".project-group")).toHaveCount(1);
+    await expect(page.locator(".breadcrumbs")).toContainText("feature/search");
+    await findProjectFile(page, "src/App.tsx");
+    await expect(page.locator(".code-viewer")).toContainText(
+      'checkout = "feature/search"',
+    );
+    await page.evaluate((path) => {
+      const fixture = (window as any).fixture;
+      fixture.setGitFiles(
+        [{ path: "src/App.tsx", indexStatus: " ", worktreeStatus: "M" }],
+        path,
+      );
+      fixture.setGitDiff(
+        "src/App.tsx",
+        { unstaged: "@@ -1 +1 @@\n-original checkout\n+worktree change" },
+        path,
+      );
+    }, path);
+    await page.getByRole("button", { name: "Changes", exact: true }).click();
+    await expect(
+      page.getByRole("region", { name: "Unstaged diff", exact: true }),
+    ).toContainText("worktree change");
+    await page
+      .getByRole("button", {
+        name: "caelum",
+        exact: true,
+      })
+      .click();
+    await expect(message).toHaveValue("Original checkout draft");
+    await findProjectFile(page, "src/App.tsx");
+    await expect(page.locator(".code-viewer")).toContainText("ready = true");
+    await page
+      .getByRole("combobox", { name: "Session worktree" })
+      .selectOption(path);
+    await expect(message).toHaveValue("");
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    await message.fill("First worktree task");
+    await message.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Stop generation" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Remove worktree feature/search",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await message.fill("First session draft");
+    await page.getByRole("button", { name: "New session" }).click();
+    await message.fill("Second worktree task");
+    await message.press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (provider) =>
+            (window as any).fixture.calls.filter(
+              (call: any) => call.command === `${provider}_start_session`,
+            ).length,
+          provider,
+        ),
+      )
+      .toBe(2);
+    const calls = await page.evaluate(
+      (provider) =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === `${provider}_send_prompt`,
+        ),
+      provider,
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call: any) => call.args.projectPath)).toEqual([
+      path,
+      path,
+    ]);
+    expect(calls[0].args.threadId ?? calls[0].args.sessionId).not.toBe(
+      calls[1].args.threadId ?? calls[1].args.sessionId,
+    );
+    await page
+      .getByRole("button", {
+        name: "caelum",
+        exact: true,
+      })
+      .click();
+    await expect(message).toHaveValue("Original checkout draft");
+    await page
+      .getByRole("button", {
+        name: "Switch to worktree feature/search",
+        exact: true,
+      })
+      .click();
+    await expect(page.locator(".provider-label")).toHaveText(
+      provider === "codex" ? "Codex" : "OpenCode",
+    );
+    await page.reload();
+    await expect(message).toBeEnabled();
+    await expect(page.locator(".project-group")).toHaveCount(1);
+    await expect(page.locator(".breadcrumbs > span").first()).toHaveText(
+      "caelum",
+    );
+    await expect(
+      page.getByRole("button", {
+        name: "Switch to worktree feature/search",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(page.locator(".provider-label")).toHaveText(
+      provider === "codex" ? "Codex" : "OpenCode",
+    );
+    const restored = await openSettings(page, "Worktrees");
+    await expect(
+      restored.getByRole("textbox", { name: "Worktree folder" }),
+    ).toHaveValue("/custom/checkouts");
+  });
+}
+
+test("worktrees discover external checkouts, reject removal failures and ignore stale inventory after removal", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  const path = await createCheckout(page, "fix/layout");
+  const message = page.getByRole("textbox", { name: "Message", exact: true });
+  await message.fill("Keep this draft until removal succeeds");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.addWorktree("/external/locked", "locked", {
+      locked: "another task",
+    });
+    fixture.addWorktree("/external/missing", null, {
+      available: false,
+      prunable: "directory missing",
+    });
+  });
+  await page
+    .getByRole("button", { name: "Refresh worktrees for caelum" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Remove worktree locked", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree missing",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "remove_worktree",
+      "Git: contains modified or untracked files",
+    ),
+  );
+  await page
+    .getByRole("button", { name: "Remove worktree fix/layout", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Remove worktree",
+    exact: true,
+  });
+  await expect(dialog).toContainText(path);
+  await dialog
+    .getByRole("button", { name: "Remove worktree", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "modified or untracked",
+  );
+  await expect(message).toHaveValue("Keep this draft until removal succeeds");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("remove_worktree", null);
+    fixture.hold("git_worktrees");
+  });
+  await page
+    .getByRole("button", { name: "Refresh worktrees for caelum" })
+    .click();
+  await page
+    .getByRole("button", { name: "Remove worktree fix/layout", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "Remove worktree", exact: true })
+    .click();
+  await page.evaluate(() => (window as any).fixture.release("git_worktrees"));
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree fix/layout",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "caelum",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(message).toBeEnabled();
+  await page.evaluate((path) => {
+    const fixture = (window as any).fixture;
+    fixture.emit("codex-event", {
+      projectPath: path,
+      method: "thread/name/updated",
+      params: { threadId: "late", threadName: "Late result" },
+    });
+    fixture.addWorktree(path, "fix/layout");
+  }, path);
+  await page
+    .getByRole("button", { name: "Refresh worktrees for caelum" })
+    .click();
+  await page
+    .getByRole("button", { name: "Switch to worktree fix/layout", exact: true })
+    .click();
+  await expect(message).toHaveValue("");
+  await page
+    .getByRole("button", { name: "Remove worktree fix/layout", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "Remove worktree", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await page.reload();
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree fix/layout",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "caelum",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
+test("worktrees recover creation failures and delayed selection cannot steal another project", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "create_worktree",
+      "Git: branch already exists",
+    ),
+  );
+  await page
+    .getByRole("button", { name: "caelum", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Create worktree");
+  const dialog = page.getByRole("dialog", {
+    name: "Create worktree",
+    exact: true,
+  });
+  const branch = await dialog
+    .getByRole("textbox", { name: "New branch" })
+    .inputValue();
+  expect(branch).not.toBe("");
+  await expect(
+    dialog.getByRole("combobox", { name: "Start from" }),
+  ).toHaveValue("main");
+  await dialog
+    .getByRole("button", { name: "Create worktree", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "branch already exists",
+  );
+  await expect(dialog.getByRole("textbox", { name: "New branch" })).toHaveValue(
+    branch,
+  );
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("create_worktree", null),
+  );
+  await dialog
+    .getByRole("button", { name: "Create worktree", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls
+          .filter((call: any) => call.command === "create_worktree")
+          .at(-1).args,
+    ),
+  ).toMatchObject({ branch, base: "main" });
+  await page
+    .getByRole("button", { name: "Create worktree for caelum" })
+    .click();
+  await expect(
+    dialog.getByRole("textbox", { name: "New branch" }),
+  ).not.toHaveValue(branch);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "caelum",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "caelum",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.evaluate(() => (window as any).fixture.hold("open_worktree"));
+  await page
+    .getByRole("button", {
+      name: `Switch to worktree ${branch}`,
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(page.locator(".breadcrumbs")).toContainText("other");
+  await page.evaluate(() => (window as any).fixture.release("open_worktree"));
+  await expect(page.locator(".breadcrumbs")).toContainText("other");
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "caelum",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.evaluate(() => (window as any).fixture.hold("open_worktree"));
+  await page
+    .getByRole("button", {
+      name: `Switch to worktree ${branch}`,
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "Close caelum", exact: true }).click();
+  await expect(page.locator(".project-group")).toHaveCount(1);
+  await page.evaluate(() => (window as any).fixture.release("open_worktree"));
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        JSON.parse(sessionStorage.getItem("worktree-workspace")!).projects.map(
+          (entry: any) => entry.project.path,
+        ),
+      ),
+    )
+    .toEqual(["/work/other"]);
+  await page.reload();
+  await expect(
+    page.getByRole("button", {
+      name: `Switch to worktree ${branch}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+});
+
+test("worktrees keep drafts when the active checkout is removed externally", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  const path = await createCheckout(page);
+  const message = page.getByRole("textbox", { name: "Message", exact: true });
+  await message.fill("Retain the draft");
+  await page.evaluate(
+    (path) => (window as any).fixture.forgetWorktree(path),
+    path,
+  );
+  await page
+    .getByRole("button", { name: "Refresh worktrees for caelum" })
+    .click();
+  await expect(message).toBeDisabled();
+  await expect(
+    page.getByText(
+      "This worktree is unavailable. Choose another checkout from the sidebar.",
+    ),
+  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "caelum",
+      exact: true,
+    })
+    .click();
+  await expect(message).toBeEnabled();
+  await page.evaluate(
+    (path) => (window as any).fixture.addWorktree(path, "feature/search"),
+    path,
+  );
+  await expect(page.locator(".worktree-list")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "caelum", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Refresh worktrees");
+  await page
+    .getByRole("button", {
+      name: "Switch to worktree feature/search",
+      exact: true,
+    })
+    .click();
+  await expect(message).toHaveValue("Retain the draft");
+});
+
+test("worktrees restore their project group when the original project directory is missing", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  await createCheckout(page);
+  await page.evaluate(() =>
+    (window as any).fixture.addWorktree("/work/caelum", "main", {
+      main: true,
+      available: false,
+    }),
+  );
+  await page.reload();
+  await expect(page.locator(".project-group")).toHaveCount(1);
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree Original checkout",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree feature/search",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".breadcrumbs > span").first()).toHaveText(
+    "caelum",
+  );
+  await createCheckout(page, "feature/second");
+  await page.evaluate(() =>
+    (window as any).fixture.addWorktree("/external/checkout", "external"),
+  );
+  await page
+    .getByRole("button", { name: "Refresh worktrees for caelum" })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree external",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  for (const branch of ["feature/second", "feature/search"]) {
+    await page
+      .getByRole("button", { name: `Remove worktree ${branch}`, exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "Remove worktree",
+      exact: true,
+    });
+    await dialog
+      .getByRole("button", { name: "Remove worktree", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+  }
+  await page
+    .getByRole("button", { name: "Switch to worktree external", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree external",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
+});
 
 const question = (overrides: Partial<QuestionPrompt> = {}): QuestionPrompt => ({
   provider: "codex",
@@ -3708,29 +4439,274 @@ test("history arriving during streaming preserves new live content", async ({
   ).toBeVisible();
 });
 
-async function nativeMenu(page: Page) {
-  const menu = await page.evaluate(() => (window as any).fixture.menu());
-  expect(menu.contextPrevented).toBe(true);
+async function contextMenu(page: Page) {
+  const menu = page.getByRole("menu", { name: "Context menu", exact: true });
+  await expect(menu).toBeVisible();
   expect(
-    menu.items.some((item: any) =>
-      /inspect|reload|back|forward/i.test(item.text),
-    ),
+    await page.evaluate(() => (window as any).fixture.contextPrevented()),
+  ).toBe(true);
+  const items = await menu
+    .locator('[role="menuitem"], [role="separator"]')
+    .evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        text:
+          node.getAttribute("role") === "separator"
+            ? "Separator"
+            : node.textContent!,
+        enabled: !(node as HTMLButtonElement).disabled,
+      })),
+    );
+  expect(
+    items.some((item) => /inspect|reload|back|forward/i.test(item.text)),
   ).toBe(false);
-  return menu.items as { text: string; enabled: boolean }[];
+  return items;
 }
 
 async function pickMenu(page: Page, text: string) {
-  await expect
-    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
-    .toContain(text);
-  await page.evaluate((text) => (window as any).fixture.pickMenu(text), text);
+  await page.getByRole("menuitem", { name: text, exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Context menu" })).toHaveCount(0);
 }
 
 async function copiedText(page: Page) {
   return page.evaluate(() => (window as any).fixture.clipboard());
 }
 
-test("context menus offer native editing and precise message, code, link and tool actions", async ({
+test("context menus support keyboard navigation, viewport edges, themes and dismissal", async ({
+  page,
+}, testInfo) => {
+  await desktop(page);
+  const project = page.getByRole("button", { name: "caelum", exact: true });
+  const menu = page.getByRole("menu", { name: "Context menu" });
+  await project.focus();
+  await project.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Open project", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("menuitem", { name: "Close project", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("menuitem", { name: "Open project", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.type("cop");
+  await expect(
+    page.getByRole("menuitem", { name: "Copy project path", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => copiedText(page)).toBe("/work/caelum");
+  await expect(menu).toHaveCount(0);
+  await expect(project).toBeFocused();
+  await project.press("ContextMenu");
+  await page.screenshot({ path: testInfo.outputPath("context-menu-dark.png") });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+  });
+  await expect(menu).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await page.screenshot({
+    path: testInfo.outputPath("context-menu-light.png"),
+  });
+  await page.keyboard.press("Escape");
+  await expect(project).toBeFocused();
+  await project.press("Shift+F10");
+  await page.keyboard.press("Tab");
+  await expect(menu).toHaveCount(0);
+  await expect(project).toBeFocused();
+
+  await page
+    .locator("main")
+    .dispatchEvent("contextmenu", { clientX: 1279, clientY: 799 });
+  await expect(menu).toBeVisible();
+  const bounds = (await menu.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(8);
+  expect(bounds.y).toBeGreaterThanOrEqual(8);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(1272);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(792);
+  await project.click();
+  await expect(menu).toHaveCount(0);
+  await project.press("Shift+F10");
+  await page.locator(".transcript").dispatchEvent("scroll");
+  await expect(menu).toBeVisible();
+  await page.locator(".project-list").dispatchEvent("wheel");
+  await expect(menu).toHaveCount(0);
+  await project.press("Shift+F10");
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await expect(menu).toHaveCount(0);
+  await project.press("Shift+F10");
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(menu).toHaveCount(0);
+});
+
+test("context menus edit the original selection with undo and reject delayed paste into newer drafts", async ({
+  page,
+}) => {
+  await desktop(page);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const edit = async (action: string) => {
+    await input.press("Shift+F10");
+    await pickMenu(page, action);
+  };
+  // Seed an existing draft without an initial typing undo group (WebKit coalesces it).
+  await input.evaluate((node: HTMLTextAreaElement) => {
+    Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )!.set!.call(node, "Keep this draft");
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await input.evaluate((node: HTMLTextAreaElement) =>
+    node.setSelectionRange(5, 9),
+  );
+  await edit("Cut");
+  await expect.poll(() => copiedText(page)).toBe("this");
+  await expect(input).toHaveValue("Keep  draft");
+  await edit("Undo");
+  await expect(input).toHaveValue("Keep this draft");
+  await edit("Redo");
+  await expect(input).toHaveValue("Keep  draft");
+  await page.evaluate(() =>
+    (window as any).fixture.setClipboard("another\nlonger"),
+  );
+  await edit("Paste");
+  await expect(input).toHaveValue("Keep another\nlonger draft");
+  await edit("Undo");
+  await expect(input).toHaveValue("Keep  draft");
+  await edit("Select all");
+  expect(
+    await input.evaluate((node: HTMLTextAreaElement) => [
+      node.selectionStart,
+      node.selectionEnd,
+    ]),
+  ).toEqual([0, 11]);
+  await page.evaluate(() => (window as any).fixture.failCopy());
+  await edit("Cut");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Clipboard unavailable" }),
+  ).toBeVisible();
+  await expect(input).toHaveValue("Keep  draft");
+
+  await page.evaluate(() =>
+    (window as any).fixture.hold("plugin:clipboard-manager|read_text"),
+  );
+  await edit("Paste");
+  await input.fill("A newer edit");
+  await page.evaluate(() =>
+    (window as any).fixture.release("plugin:clipboard-manager|read_text"),
+  );
+  await expect(input).toHaveValue("A newer edit");
+  await page.evaluate(() =>
+    (window as any).fixture.hold("plugin:clipboard-manager|read_text"),
+  );
+  await edit("Paste");
+  await page.keyboard.press("Meta+n");
+  await input.fill("New session draft");
+  await page.evaluate(() =>
+    (window as any).fixture.release("plugin:clipboard-manager|read_text"),
+  );
+  await expect(input).toHaveValue("New session draft");
+});
+
+test("context menus edit modal fields and respect password, readonly and disabled inputs", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  const project = page.getByRole("button", { name: "caelum", exact: true });
+  await project.click({ button: "right" });
+  await pickMenu(page, "Create worktree");
+  const dialog = page.getByRole("dialog", {
+    name: "Create worktree",
+    exact: true,
+  });
+  const branch = dialog.getByRole("textbox", { name: "New branch" });
+  await branch.fill("feature/search");
+  await branch.evaluate((node: HTMLInputElement) =>
+    node.setSelectionRange(8, 14),
+  );
+  await branch.press("Shift+F10");
+  await expect(
+    dialog.getByRole("menu", { name: "Context menu" }),
+  ).toBeVisible();
+  await pickMenu(page, "Copy");
+  await expect.poll(() => copiedText(page)).toBe("search");
+  await expect(branch).toBeFocused();
+  expect(
+    await branch.evaluate((node: HTMLInputElement) => [
+      node.selectionStart,
+      node.selectionEnd,
+    ]),
+  ).toEqual([8, 14]);
+  await branch.press("Shift+F10");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  expect(
+    await branch.evaluate((node: HTMLInputElement) => [
+      node.selectionStart,
+      node.selectionEnd,
+    ]),
+  ).toEqual([8, 14]);
+  await branch.press("Shift+F10");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("menuitem", { name: "Cut", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(project).toBeFocused();
+
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  const picker = page.getByRole("dialog", {
+    name: "Choose model",
+    exact: true,
+  });
+  const modelSearch = picker.getByRole("combobox", { name: "Search models" });
+  await modelSearch.fill("fast");
+  await modelSearch.press("ControlOrMeta+a");
+  await modelSearch.press("Shift+F10");
+  await expect(
+    picker.getByRole("menu", { name: "Context menu" }),
+  ).toBeVisible();
+  await pickMenu(page, "Copy");
+  await expect.poll(() => copiedText(page)).toBe("fast");
+  await expect(modelSearch).toBeFocused();
+  await modelSearch.press("Escape");
+  await expect(picker).toHaveCount(0);
+
+  const search = page.locator('input[aria-label="Search sessions"]');
+  await search.fill("secret");
+  await search.evaluate((node: HTMLInputElement) => {
+    node.type = "password";
+    node.select();
+  });
+  await search.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Cut", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Copy", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Paste", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await search.evaluate((node: HTMLInputElement) => {
+    node.type = "text";
+    node.readOnly = true;
+    node.select();
+  });
+  await search.press("Shift+F10");
+  await expect(page.getByRole("menuitem")).toHaveText(["Copy", "Select all"]);
+  await page.keyboard.press("Escape");
+  await search.evaluate((node: HTMLInputElement) => {
+    node.disabled = true;
+  });
+  await search.dispatchEvent("contextmenu");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("context menus offer editing and precise message, code, link and tool actions", async ({
   page,
 }) => {
   await desktop(page);
@@ -3741,7 +4717,7 @@ test("context menus offer native editing and precise message, code, link and too
   );
   await input.press("Shift+F10");
   await expect
-    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
+    .poll(async () => (await contextMenu(page)).map((item) => item.text))
     .toEqual([
       "Undo",
       "Redo",
@@ -3750,8 +4726,10 @@ test("context menus offer native editing and precise message, code, link and too
       "Copy",
       "Paste",
       "Separator",
-      "SelectAll",
+      "Select all",
     ]);
+  await pickMenu(page, "Copy");
+  await expect.poll(() => copiedText(page)).toBe("this");
   await expect(input).toBeFocused();
   expect(
     await input.evaluate((node: HTMLTextAreaElement) => [
@@ -3851,51 +4829,36 @@ test("context menus act on the clicked project or session and reject stale actio
   await expect
     .poll(
       async () =>
-        (await nativeMenu(page)).find((item) => item.text === "Archive session")
-          ?.enabled,
+        (await contextMenu(page)).find(
+          (item) => item.text === "Archive session",
+        )?.enabled,
     )
     .toBe(false);
   await page.getByRole("button", { name: "Stop generation" }).click();
   await page.locator(".user-text").first().click({ button: "right" });
-  await expect
-    .poll(async () => (await nativeMenu(page)).map((item) => item.text))
-    .toContain("Add to draft");
-  await page.evaluate(() => {
-    (window as any).fixture.stale = (window as any).fixture.captureMenuAction(
-      "Add to draft",
-    );
-  });
+  const stale = await page
+    .getByRole("menuitem", { name: "Add to draft", exact: true })
+    .elementHandle();
   await page.keyboard.press("Meta+n");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await input.fill("New draft");
-  await page.evaluate(() => (window as any).fixture.stale());
+  await stale!.evaluate((node: HTMLElement) => node.click());
   await expect(input).toHaveValue("New draft");
 
-  const popups = await page.evaluate(
-    () =>
-      (window as any).fixture.calls.filter(
-        (call: any) => call.command === "plugin:menu|popup",
-      ).length,
-  );
-  await page.evaluate(() => (window as any).fixture.hold("plugin:menu|new"));
   await project.click({ button: "right" });
   await current.click();
-  await page.evaluate(() => (window as any).fixture.release("plugin:menu|new"));
-  await expect
-    .poll(() =>
-      page.evaluate(() => (window as any).fixture.menu().items.length),
-    )
-    .toBe(0);
+  await expect(page.getByRole("menu")).toHaveCount(0);
   expect(
     await page.evaluate(
       () =>
-        (window as any).fixture.calls.filter(
-          (call: any) => call.command === "plugin:menu|popup",
+        (window as any).fixture.calls.filter((call: any) =>
+          call.command.startsWith("plugin:menu|"),
         ).length,
     ),
-  ).toBe(popups);
+  ).toBe(0);
 });
 
-test("file and diff context menus copy exact content, reveal paths, and use native preview actions", async ({
+test("file and diff context menus copy exact content, reveal paths, and use preview actions", async ({
   page,
 }) => {
   await desktop(page);
@@ -3933,7 +4896,7 @@ test("file and diff context menus copy exact content, reveal paths, and use nati
   await pickMenu(page, "Copy full path");
   await expect.poll(() => copiedText(page)).toBe("/work/caelum/src/App.tsx");
   await file.click({ button: "right" });
-  const reveal = (await nativeMenu(page)).find((item) =>
+  const reveal = (await contextMenu(page)).find((item) =>
     item.text.startsWith("Reveal in"),
   )!.text;
   await pickMenu(page, reveal);

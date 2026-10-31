@@ -110,6 +110,11 @@ svg { flex-shrink: 0; }
 ::selection { background: var(--accent-selection); }
 * { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .app-shell { display: flex; height: 100dvh; min-height: 620px; overflow: hidden; }
+.context-menu { position: fixed; z-index: 100; display: flex; flex-direction: column; width: max-content; min-width: 190px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow: auto; padding: 5px; border: 1px solid var(--popover-border); border-radius: 8px; color: var(--text); background: var(--popover-bg); box-shadow: 0 12px 40px #0003, 0 2px 8px #0002; user-select: none; }
+.context-menu > button { flex: 0 0 auto; min-height: 29px; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 12px; line-height: 17px; }
+.context-menu > button:focus, .context-menu > button:hover:not(:disabled) { outline: none; background: var(--option-hover); }
+.context-menu > button:disabled { color: var(--muted); }
+.context-menu-separator { flex: 0 0 auto; height: 1px; margin: 4px 5px; background: var(--border); }
 .sidebar { position: relative; display: flex; flex: 0 0 var(--sidebar-width, 238px); min-width: 0; min-height: 0; flex-direction: column; padding: 12px 10px; background: var(--sidebar); border-right: 1px solid var(--border); }
 .macos-titlebar-overlay .sidebar { padding-top: 42px; }
 .macos-titlebar-overlay .topbar { min-height: 80px; padding-top: 30px; }
@@ -275,6 +280,57 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .question-dock { flex: 0 1 auto; min-height: 100px; max-height: 45vh; overflow: auto; }
 .question-card { padding: 10px 12px; border: 1px solid var(--composer-border); border-radius: 8px; background: var(--composer-bg); font-size: 12px; }
 .question-card:focus { outline: none; }
+.worktree-list { margin: 2px 0 8px 12px; border-left: 1px solid var(--border); padding-left: 7px; }
+.worktree-heading { display: flex; align-items: center; gap: 3px; padding: 2px 3px; color: var(--muted); font-size: 10px; }
+.worktree-heading > span { flex: 1; }
+.worktree-heading .icon-button { width: 21px; height: 21px; }
+.worktree-row { display: flex; align-items: center; min-width: 0; }
+.worktree-item { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding: 5px 6px; border: 0; background: transparent; font-size: 11px; text-align: left; }
+.worktree-item > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-item.selected { background: var(--accent-soft); color: var(--accent); }
+.worktree-item small { color: var(--muted); font-size: 10px; }
+.worktree-delete { width: 23px; height: 23px; opacity: 0; }
+.worktree-row:hover .worktree-delete, .worktree-row:focus-within .worktree-delete { opacity: 1; }
+.worktree-load-error { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; padding: 3px 8px; }
+.worktree-load-error button { font-size: 10px; }
+.worktree-dialog { position: fixed; inset: 0; margin: auto; width: min(520px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 0; color: var(--text); background: var(--panel); border: 1px solid var(--popover-border); border-radius: 12px; box-shadow: 0 24px 100px #0005; }
+.worktree-dialog::backdrop { background: #0006; backdrop-filter: blur(3px); }
+.worktree-dialog .worktree-dialog-heading { gap: 12px; padding: 20px 24px; }
+.worktree-dialog-heading > div { flex: 1; min-width: 0; }
+.worktree-dialog-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.worktree-dialog-icon { display: grid; width: 36px; height: 36px; flex-shrink: 0; place-items: center; border: 1px solid var(--composer-focus); border-radius: 9px; color: var(--accent); background: var(--accent-soft); }
+.worktree-dialog .settings-footer { justify-content: flex-end; gap: 8px; padding: 14px 24px; }
+.worktree-dialog .settings-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 13px; border-radius: 6px; }
+.worktree-dialog .worktree-create { color: var(--accent-contrast); background: var(--accent-solid); border-color: transparent; }
+.worktree-dialog .worktree-create:hover:not(:disabled) { background: var(--accent-solid-hover); }
+.worktree-dialog-body { display: grid; gap: 22px; min-width: 0; padding: 24px; font-size: 12px; }
+.worktree-field { display: grid; gap: 8px; min-width: 0; }
+.worktree-field > label { font-size: 12px; font-weight: 500; }
+.worktree-control { position: relative; display: flex; align-items: center; min-width: 0; border: 1px solid var(--composer-border); border-radius: 7px; background: var(--bg); transition: border-color .15s, box-shadow .15s; }
+.worktree-control > svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
+.worktree-control > .worktree-select-chevron { left: auto; right: 12px; }
+.worktree-control input, .worktree-control select { width: 100%; min-width: 0; min-height: 42px; padding: 10px 12px 10px 36px; border: 0; border-radius: inherit; outline: none; color: var(--text); background: transparent; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.worktree-control select { appearance: none; -webkit-appearance: none; padding-right: 36px; cursor: pointer; }
+.worktree-control option { color: var(--text); background: var(--panel); }
+.worktree-control input::placeholder { color: var(--muted); }
+.worktree-control:hover { border-color: var(--muted); }
+.worktree-control:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.worktree-control:focus-within > svg { color: var(--accent); }
+.worktree-control:has([aria-invalid="true"]) { border-color: var(--danger); }
+.worktree-control:has([aria-invalid="true"]):focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent); }
+.worktree-control:has(:disabled) { border-color: var(--composer-border); opacity: .55; }
+.worktree-control :disabled { cursor: default; }
+.worktree-field-hint { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.worktree-folder-setting { display: grid; gap: 6px; font-size: 12px; }
+.worktree-folder-setting input, .session-worktree select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; }
+.worktree-folder-setting { margin-bottom: 12px; }
+.worktree-location { display: grid; gap: 8px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--sidebar); }
+.worktree-location-label { display: flex; align-items: center; gap: 7px; color: var(--secondary-text); font-size: 11px; font-weight: 500; }
+.worktree-destination { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.worktree-location .worktree-destination { margin: 0; color: var(--secondary-text); font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.worktree-error { color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
+.worktree-remove { color: var(--danger); }
+.session-worktree { display: flex; align-items: center; gap: 8px; margin: 18px auto 0; max-width: 320px; color: var(--muted); font-size: 12px; }
 .question-card + .question-card { margin-top: 8px; }
 .question-title { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--accent); font-size: 11px; }
 .question-fields, .question-field { min-width: 0; border: 0; padding: 0; margin: 0; }

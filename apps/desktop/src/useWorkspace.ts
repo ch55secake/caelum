@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
+import type { GitWorktree, GitWorktrees } from "./worktreeState.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
 import { contextUsageSince, openCodeHistoryUsage } from "./contextUsage.js";
 import {
@@ -32,6 +33,7 @@ import {
   applyOpenCodeEvent,
   createProjectWorkspace,
   createSessionWorkspace,
+  projectHasActiveTurn,
   restoreProjectWorkspace,
   updateProjectWorkspace,
   updateProviderWorkspace,
@@ -57,6 +59,8 @@ export type ApprovalPrompt = {
 };
 type PersistedProject = Parameters<typeof restoreProjectWorkspace>[0] & {
   project: ProjectInfo;
+  rootPath?: string | null;
+  selectedWorktreePath?: string | null;
 };
 type ArchivedSession = {
   project: ProjectInfo;
@@ -146,6 +150,29 @@ function generationOptions(
 export function useWorkspace(settings: AppSettings) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  const openProjects = useRef(projects);
+  openProjects.current = projects;
+  const activeProject = useRef(project);
+  activeProject.current = project;
+  const [projectRoots, setProjectRoots] = useState<Record<string, string>>({});
+  const roots = useRef(projectRoots);
+  roots.current = projectRoots;
+  const [selectedWorktrees, setSelectedWorktrees] = useState<
+    Record<string, string>
+  >({});
+  const [worktreeCatalogs, setWorktreeCatalogs] = useState<
+    Record<string, GitWorktrees | null>
+  >({});
+  const catalogs = useRef(worktreeCatalogs);
+  catalogs.current = worktreeCatalogs;
+  const [worktreeErrors, setWorktreeErrors] = useState<Record<string, string>>(
+    {},
+  );
+  const [worktreeBusy, setWorktreeBusy] = useState<Record<string, boolean>>({});
+  const worktreeVersions = useRef(new Map<string, number>());
+  const worktreeOperations = useRef(new Set<string>());
+  const removedDirectories = useRef(new Set<string>());
+  const checkoutVersions = useRef(new Map<string, number>());
   const [workspaces, setWorkspaces] = useState<WorkspaceMap>({});
   const state = useRef(workspaces);
   const [error, setError] = useState<string | null>(null);
@@ -195,6 +222,317 @@ export function useWorkspace(settings: AppSettings) {
   );
   const preferences = useRef(settings);
   preferences.current = settings;
+  const rootPath = project
+    ? (projectRoots[project.path] ?? project.path)
+    : null;
+  const rootProject =
+    projects.find((item) => item.path === rootPath) ?? project;
+  const projectGroups = projects.filter(
+    (item) => !projectRoots[item.path] || projectRoots[item.path] === item.path,
+  );
+  const currentWorktree = rootPath
+    ? worktreeCatalogs[rootPath]?.worktrees.find(
+        (entry) => entry.project.path === project?.path,
+      )
+    : undefined;
+  const checkoutUnavailable = Boolean(
+    rootPath && worktreeCatalogs[rootPath] && !currentWorktree?.available,
+  );
+
+  function assignRoots(mapping: Record<string, string>) {
+    if (
+      Object.entries(mapping).every(
+        ([path, root]) => roots.current[path] === root,
+      )
+    )
+      return;
+    roots.current = { ...roots.current, ...mapping };
+    setProjectRoots(roots.current);
+  }
+
+  function worktreeSource(root: ProjectInfo) {
+    return (
+      catalogs.current[root.path]?.worktrees.find((entry) => entry.available)
+        ?.project ?? root
+    );
+  }
+
+  function receiveWorktrees(
+    target: ProjectInfo,
+    snapshot: GitWorktrees | null,
+  ) {
+    const root = snapshot?.project ?? target;
+    setWorktreeCatalogs((current) => ({ ...current, [root.path]: snapshot }));
+    setWorktreeErrors((current) => ({ ...current, [root.path]: "" }));
+    const mappings = Object.fromEntries(
+      (snapshot?.worktrees ?? []).map((entry) => [
+        entry.project.path,
+        root.path,
+      ]),
+    );
+    const previousRoot = roots.current[target.path];
+    assignRoots({ [target.path]: root.path, ...mappings });
+    if (snapshot && root.path !== target.path) {
+      setProjects((current) => addOpenProject(current, root));
+      if (previousRoot !== root.path) {
+        const checkout = snapshot.worktrees.find(
+          (entry) => entry.project.path === target.path,
+        );
+        if (checkout?.available)
+          void persist("open_worktree", {
+            projectPath: target.path,
+            worktreePath: checkout.path,
+          });
+      }
+    }
+  }
+
+  async function refreshWorktrees(target: ProjectInfo) {
+    if (!isTauri()) return;
+    const key = roots.current[target.path] ?? target.path;
+    const version = (worktreeVersions.current.get(key) ?? 0) + 1;
+    worktreeVersions.current.set(key, version);
+    try {
+      const snapshot = await invoke<GitWorktrees | null>("git_worktrees", {
+        projectPath: worktreeSource(target).path,
+        baseDirectory: preferences.current.worktreeDirectory,
+      }).catch(async (reason: unknown) => {
+        // A subproject may only exist on a linked branch. Its original path
+        // remains the group identity, while discovery uses an open checkout.
+        const fallback = openProjects.current.find(
+          (item) =>
+            item.path !== target.path && roots.current[item.path] === key,
+        );
+        if (!fallback) throw reason;
+        return invoke<GitWorktrees | null>("git_worktrees", {
+          projectPath: fallback.path,
+          baseDirectory: preferences.current.worktreeDirectory,
+        });
+      });
+      if (
+        version !== worktreeVersions.current.get(key) ||
+        !openProjects.current.some((item) => item.path === target.path)
+      )
+        return;
+      receiveWorktrees(target, snapshot);
+    } catch (reason) {
+      if (version === worktreeVersions.current.get(key))
+        setWorktreeErrors((current) => ({ ...current, [key]: String(reason) }));
+    }
+  }
+
+  useEffect(() => {
+    if (restoring || !isTauri()) return;
+    const refresh = () => {
+      if (document.hidden) return;
+      for (const target of projectGroups) void refreshWorktrees(target);
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 15000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(timer);
+    };
+  }, [projects, projectRoots, restoring, settings.worktreeDirectory]);
+
+  async function openWorktree(
+    root: ProjectInfo,
+    entry: GitWorktree,
+    fresh = false,
+  ) {
+    if (worktreeOperations.current.has(root.path)) return;
+    const version = ++navigation.current;
+    try {
+      const pending = queue.current.then(() =>
+        invoke<ProjectInfo>("open_worktree", {
+          projectPath: worktreeSource(root).path,
+          worktreePath: entry.path,
+        }),
+      );
+      queue.current = pending.catch(() => {});
+      const target = await pending;
+      if (!openProjects.current.some((item) => item.path === root.path)) return;
+      setProjects((current) => addOpenProject(current, target));
+      assignRoots({ [target.path]: root.path });
+      if (navigation.current !== version) return;
+      activateProject(target);
+      if (fresh) newSession(target);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  function activateGroup(root: ProjectInfo) {
+    const path = selectedWorktrees[root.path] ?? root.path;
+    const entry =
+      worktreeCatalogs[root.path]?.worktrees.find(
+        (entry) => entry.main && entry.available,
+      ) ??
+      worktreeCatalogs[root.path]?.worktrees.find(
+        (entry) => entry.project.path === path && entry.available,
+      ) ??
+      worktreeCatalogs[root.path]?.worktrees.find((entry) => entry.available);
+    if (entry) void openWorktree(root, entry);
+    else activateProject(root);
+  }
+
+  function worktreeInUse(entry: GitWorktree) {
+    return (
+      Object.entries(state.current).some(
+        ([path, workspace]) =>
+          (path === entry.path || path.startsWith(`${entry.path}/`)) &&
+          (projectHasActiveTurn(workspace) ||
+            Object.values(workspace.providers).some(
+              (value) =>
+                value.isCreating ||
+                value.archivingSessionIds.length > 0 ||
+                value.sessions.some(
+                  (session) =>
+                    value.sessionsById[session.id]?.isWorking ??
+                    session.isWorking,
+                ),
+            )),
+      ) ||
+      [...approvals, ...questions].some(
+        (request) =>
+          request.projectPath === entry.path ||
+          request.projectPath.startsWith(`${entry.path}/`),
+      )
+    );
+  }
+
+  async function createWorktree(
+    root: ProjectInfo,
+    branch: string,
+    base: string,
+  ) {
+    if (worktreeOperations.current.has(root.path))
+      throw new Error("A worktree operation is already in progress.");
+    worktreeOperations.current.add(root.path);
+    setWorktreeBusy((current) => ({ ...current, [root.path]: true }));
+    worktreeVersions.current.set(
+      root.path,
+      (worktreeVersions.current.get(root.path) ?? 0) + 1,
+    );
+    const version = navigation.current;
+    try {
+      const entry = await invoke<GitWorktree>("create_worktree", {
+        projectPath: worktreeSource(root).path,
+        branch,
+        base,
+        baseDirectory: preferences.current.worktreeDirectory,
+      });
+      setProjects((current) => addOpenProject(current, entry.project));
+      assignRoots({ [entry.project.path]: root.path });
+      setWorktreeCatalogs((current) => {
+        const catalog = current[root.path];
+        return catalog
+          ? {
+              ...current,
+              [root.path]: {
+                ...catalog,
+                worktrees: [
+                  ...catalog.worktrees.filter(
+                    (item) => item.path !== entry.path,
+                  ),
+                  entry,
+                ],
+              },
+            }
+          : current;
+      });
+      if (entry.available && navigation.current === version) {
+        activateProject(entry.project);
+        newSession(entry.project);
+      }
+    } finally {
+      worktreeOperations.current.delete(root.path);
+      setWorktreeBusy((current) => ({ ...current, [root.path]: false }));
+      void refreshWorktrees(root);
+    }
+  }
+
+  async function removeWorktree(root: ProjectInfo, entry: GitWorktree) {
+    if (worktreeInUse(entry))
+      throw new Error(
+        "Stop running sessions and resolve pending requests before removing this worktree.",
+      );
+    if (worktreeOperations.current.has(root.path))
+      throw new Error("A worktree operation is already in progress.");
+    worktreeOperations.current.add(root.path);
+    setWorktreeBusy((current) => ({ ...current, [root.path]: true }));
+    worktreeVersions.current.set(
+      root.path,
+      (worktreeVersions.current.get(root.path) ?? 0) + 1,
+    );
+    try {
+      await queue.current;
+      await invoke("remove_worktree", {
+        projectPath: worktreeSource(root).path,
+        worktreePath: entry.path,
+      });
+      const removed = (path: string) =>
+        path === entry.path || path.startsWith(`${entry.path}/`);
+      for (const [path, workspace] of Object.entries(state.current)) {
+        if (!removed(path)) continue;
+        removedDirectories.current.add(path);
+        checkoutVersions.current.set(
+          path,
+          (checkoutVersions.current.get(path) ?? 0) + 1,
+        );
+        for (const kind of ["codex", "opencode"] as const) {
+          invalidateSession(path, kind, "");
+          for (const id of Object.keys(workspace.providers[kind].sessionsById))
+            invalidateSession(path, kind, id);
+        }
+      }
+      update((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([path]) => !removed(path)),
+        ),
+      );
+      setProjects((current) => current.filter((item) => !removed(item.path)));
+      setWorktreeCatalogs((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([path, catalog]) => [
+            path,
+            catalog
+              ? {
+                  ...catalog,
+                  worktrees: catalog.worktrees.filter(
+                    (item) => !removed(item.path),
+                  ),
+                }
+              : catalog,
+          ]),
+        ),
+      );
+      setSelectedWorktrees((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([, path]) => !removed(path)),
+        ),
+      );
+      setArchivedSession((current) =>
+        current && removed(current.project.path) ? null : current,
+      );
+      if (activeProject.current && removed(activeProject.current.path)) {
+        const fallback = catalogs.current[root.path]?.worktrees.find(
+          (item) =>
+            item.available &&
+            !removed(item.project.path) &&
+            openProjects.current.some(
+              (project) => project.path === item.project.path,
+            ),
+        );
+        activateProject(fallback?.project ?? root);
+      }
+      await refreshWorktrees(root);
+    } finally {
+      worktreeOperations.current.delete(root.path);
+      setWorktreeBusy((current) => ({ ...current, [root.path]: false }));
+    }
+  }
 
   function update(fn: (current: WorkspaceMap) => WorkspaceMap) {
     state.current = fn(state.current);
@@ -205,6 +543,7 @@ export function useWorkspace(settings: AppSettings) {
     kind: ProviderKind,
     fn: Parameters<typeof updateProviderWorkspace>[3],
   ) {
+    if (removedDirectories.current.has(path)) return;
     update((current) => updateProviderWorkspace(current, path, kind, fn));
   }
   function mutateSession(
@@ -213,6 +552,7 @@ export function useWorkspace(settings: AppSettings) {
     id: string,
     fn: Parameters<typeof updateSessionWorkspace>[4],
   ) {
+    if (removedDirectories.current.has(path)) return;
     update((current) => updateSessionWorkspace(current, path, kind, id, fn));
   }
   function persist(command: string, args: Record<string, unknown>) {
@@ -232,6 +572,7 @@ export function useWorkspace(settings: AppSettings) {
   function unavailable(path: string, kind: ProviderKind, id: string) {
     const current = state.current[path]?.providers[kind];
     return (
+      removedDirectories.current.has(path) ||
       !current ||
       current.archivingSessionIds.includes(id) ||
       current.archivedSessionIds.includes(id)
@@ -239,6 +580,9 @@ export function useWorkspace(settings: AppSettings) {
   }
 
   function receiveQuestions(requests: QuestionPrompt[]) {
+    requests = requests.filter(
+      (request) => !removedDirectories.current.has(request.projectPath),
+    );
     questionRevision.current++;
     pendingQuestions.current = requests;
     setQuestions(requests);
@@ -335,6 +679,7 @@ export function useWorkspace(settings: AppSettings) {
       subscribe<Parameters<typeof applyCodexEvent>[1]>(
         "codex-event",
         (event) => {
+          if (removedDirectories.current.has(event.projectPath)) return;
           update((current) => applyCodexEvent(current, event));
           if (
             event.method === "item/completed" &&
@@ -358,6 +703,7 @@ export function useWorkspace(settings: AppSettings) {
       subscribe<Parameters<typeof applyOpenCodeEvent>[1]>(
         "opencode-event",
         (event) => {
+          if (removedDirectories.current.has(event.projectPath)) return;
           update((current) => applyOpenCodeEvent(current, event));
           if (
             [
@@ -396,7 +742,11 @@ export function useWorkspace(settings: AppSettings) {
       ),
       subscribe<ApprovalPrompt[]>("approval-requests", (payload) => {
         approvalRevision++;
-        setApprovals(payload);
+        setApprovals(
+          payload.filter(
+            (request) => !removedDirectories.current.has(request.projectPath),
+          ),
+        );
       }),
       subscribe<QuestionPrompt[]>("question-requests", receiveQuestions),
     ])
@@ -410,7 +760,13 @@ export function useWorkspace(settings: AppSettings) {
           invoke<QuestionPrompt[]>("pending_questions"),
         ]);
         if (!disposed) {
-          if (revision === approvalRevision) setApprovals(snapshot);
+          if (revision === approvalRevision)
+            setApprovals(
+              snapshot.filter(
+                (request) =>
+                  !removedDirectories.current.has(request.projectPath),
+              ),
+            );
           if (questionsVersion === questionRevision.current)
             receiveQuestions(pending);
         }
@@ -469,7 +825,15 @@ export function useWorkspace(settings: AppSettings) {
         const restored = available.filter(
           (entry): entry is PersistedProject => entry !== null,
         );
-        const nextProjects = restored.map((entry) => entry.project);
+        const groupRoots = entries.filter(
+          (entry) =>
+            !restored.some(
+              (item) => item.project.path === entry.project.path,
+            ) && restored.some((item) => item.rootPath === entry.project.path),
+        );
+        const nextProjects = [...restored, ...groupRoots].map(
+          (entry) => entry.project,
+        );
         update(() =>
           Object.fromEntries(
             restored.map((entry) => [
@@ -479,6 +843,23 @@ export function useWorkspace(settings: AppSettings) {
           ),
         );
         setProjects(nextProjects);
+        assignRoots(
+          Object.fromEntries(
+            restored
+              .filter((entry) => entry.rootPath)
+              .map((entry) => [entry.project.path, entry.rootPath!]),
+          ),
+        );
+        setSelectedWorktrees(
+          Object.fromEntries(
+            restored
+              .filter((entry) => entry.selectedWorktreePath)
+              .map((entry) => [
+                entry.project.path,
+                entry.selectedWorktreePath!,
+              ]),
+          ),
+        );
         const active =
           nextProjects.find(
             (item) =>
@@ -515,6 +896,7 @@ export function useWorkspace(settings: AppSettings) {
 
   function activateProject(target: ProjectInfo | null) {
     navigation.current++;
+    if (target) removedDirectories.current.delete(target.path);
     const fresh = target && !state.current[target.path];
     if (target)
       update((current) =>
@@ -534,6 +916,11 @@ export function useWorkspace(settings: AppSettings) {
         provider: preferences.current.defaultProvider,
       });
     setProject(target);
+    if (target)
+      setSelectedWorktrees((current) => ({
+        ...current,
+        [roots.current[target.path] ?? target.path]: target.path,
+      }));
     void persist("set_active_project", { projectPath: target?.path ?? null });
   }
   async function chooseProject() {
@@ -560,13 +947,33 @@ export function useWorkspace(settings: AppSettings) {
     }
   }
   function closeProject(path: string) {
-    const next = closeOpenProject(projects, project?.path ?? null, path);
+    const root = roots.current[path] ?? path;
+    if (worktreeOperations.current.has(root)) return;
+    const members = projects.filter(
+      (item) => (roots.current[item.path] ?? item.path) === root,
+    );
+    let next = { projects, activeProject: project };
+    for (const member of members)
+      next = closeOpenProject(
+        next.projects,
+        next.activeProject?.path ?? null,
+        member.path,
+      );
     setProjects(next.projects);
+    roots.current = Object.fromEntries(
+      Object.entries(roots.current).filter(([, value]) => value !== root),
+    );
+    setProjectRoots(roots.current);
+    worktreeVersions.current.set(
+      root,
+      (worktreeVersions.current.get(root) ?? 0) + 1,
+    );
     void persist("close_project_record", {
-      projectPath: path,
+      projectPath: root,
       activeProjectPath: next.activeProject?.path ?? null,
     });
-    if (path === project?.path) activateProject(next.activeProject);
+    if (members.some((item) => item.path === project?.path))
+      activateProject(next.activeProject);
   }
   function changeProvider(kind: ProviderKind, fresh = true) {
     if (!project) return;
@@ -593,21 +1000,24 @@ export function useWorkspace(settings: AppSettings) {
       provider: kind,
     });
   }
-  function newSession() {
-    if (!project) return;
+  function newSession(target = project) {
+    if (!target) return;
+    const kind = state.current[target.path]?.provider ?? provider;
     navigation.current++;
-    mutateProvider(project.path, provider, (value) => ({
+    mutateProvider(target.path, kind, (value) => ({
       ...value,
       selectedSessionId: null,
       error: null,
     }));
     void persist("select_project_session", {
-      projectPath: project.path,
-      provider,
+      projectPath: target.path,
+      provider: kind,
       sessionId: null,
     });
   }
   async function loadChoices(target: ProjectInfo, kind: ProviderKind) {
+    if (removedDirectories.current.has(target.path)) return;
+    const version = checkoutVersions.current.get(target.path);
     const key = `choices:${keyFor(target.path, kind)}`;
     if (locks.current.has(key) || !isTauri()) return;
     locks.current.add(key);
@@ -621,22 +1031,25 @@ export function useWorkspace(settings: AppSettings) {
         projectPath: target.path,
         provider: kind,
       });
+      if (checkoutVersions.current.get(target.path) !== version) return;
       mutateProvider(target.path, kind, (value) => ({
         ...value,
         choices,
         choicesError: null,
       }));
     } catch (reason) {
-      mutateProvider(target.path, kind, (value) => ({
-        ...value,
-        choicesError: String(reason),
-      }));
+      if (checkoutVersions.current.get(target.path) === version)
+        mutateProvider(target.path, kind, (value) => ({
+          ...value,
+          choicesError: String(reason),
+        }));
     } finally {
       locks.current.delete(key);
-      mutateProvider(target.path, kind, (value) => ({
-        ...value,
-        isLoadingChoices: false,
-      }));
+      if (checkoutVersions.current.get(target.path) === version)
+        mutateProvider(target.path, kind, (value) => ({
+          ...value,
+          isLoadingChoices: false,
+        }));
     }
   }
   function setOption(key: "model" | "agent" | "effort", value: string) {
@@ -675,6 +1088,7 @@ export function useWorkspace(settings: AppSettings) {
       });
   }
   async function loadSessions(target: ProjectInfo, kind: ProviderKind) {
+    if (removedDirectories.current.has(target.path)) return;
     const scope = keyFor(target.path, kind);
     const version = revision(scope);
     const key = `list:${keyFor(target.path, kind)}`;
@@ -1159,7 +1573,14 @@ export function useWorkspace(settings: AppSettings) {
     void connectSession(project, kind, thread);
   }
   useEffect(() => {
-    if (!project || !providerWorkspace || !ready || restoring || !isTauri())
+    if (
+      !project ||
+      !providerWorkspace ||
+      !ready ||
+      restoring ||
+      checkoutUnavailable ||
+      !isTauri()
+    )
       return;
     if (!providerWorkspace.sessionsLoaded && !providerWorkspace.error)
       void loadSessions(project, provider);
@@ -1179,6 +1600,7 @@ export function useWorkspace(settings: AppSettings) {
     selectedId,
     ready,
     restoring,
+    checkoutUnavailable,
   ]);
   useEffect(() => {
     if (project && selectedId && selected?.unread)
@@ -1189,7 +1611,8 @@ export function useWorkspace(settings: AppSettings) {
   }, [project?.path, provider, selectedId, selected?.unread]);
 
   useEffect(() => {
-    if (!project || !selectedId || !ready || !isTauri()) return;
+    if (!project || !selectedId || !ready || checkoutUnavailable || !isTauri())
+      return;
     const path = project.path,
       kind = provider,
       id = selectedId;
@@ -1219,7 +1642,7 @@ export function useWorkspace(settings: AppSettings) {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [project?.path, provider, selectedId, ready]);
+  }, [project?.path, provider, selectedId, ready, checkoutUnavailable]);
 
   function setDraft(draft: string) {
     if (!project) return;
@@ -1286,6 +1709,11 @@ export function useWorkspace(settings: AppSettings) {
     }, ask);
   }
   async function submit() {
+    if (
+      checkoutUnavailable ||
+      (rootPath && worktreeOperations.current.has(rootPath))
+    )
+      return;
     if (
       pendingQuestions.current.some(
         (request) =>
@@ -1642,6 +2070,22 @@ export function useWorkspace(settings: AppSettings) {
   }
   return {
     projects,
+    projectGroups,
+    projectRoots,
+    rootProject,
+    worktreeCatalogs,
+    worktreeErrors,
+    worktreeBusy,
+    currentWorktree,
+    checkoutUnavailable,
+    worktreeSource,
+    worktreeDirectory: settings.worktreeDirectory,
+    refreshWorktrees,
+    openWorktree,
+    activateGroup,
+    createWorktree,
+    removeWorktree,
+    worktreeInUse,
     project,
     workspaces,
     workspace,

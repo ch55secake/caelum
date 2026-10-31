@@ -19,6 +19,7 @@ import { Sidebar, sessionTitle } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
 import { QuestionCard } from "./QuestionCard.js";
+import { SessionWorktree } from "./Worktrees.js";
 import { questionKey } from "./questionState.js";
 import { projectHasActiveTurn } from "./workspaceState.js";
 import { lastUserMessage } from "./shellMessages.js";
@@ -238,9 +239,17 @@ export default function App() {
                 </button>
               )}
               <span title={app.project?.path}>
-                {app.project?.name ?? "Caelum"}
+                {app.rootProject?.name ?? "Caelum"}
               </span>
               <span className="crumb-divider">/</span>
+              {app.currentWorktree && !app.currentWorktree.main && (
+                <>
+                  <span title={app.project?.path}>
+                    {app.currentWorktree.branch ?? "Detached HEAD"}
+                  </span>
+                  <span className="crumb-divider">/</span>
+                </>
+              )}
               <strong title={title}>{title}</strong>
             </div>
             <div className="topbar-actions">
@@ -351,6 +360,12 @@ export default function App() {
               >
                 <X size={13} />
               </button>
+            </div>
+          )}
+          {app.checkoutUnavailable && (
+            <div className="connection-banner" role="status">
+              This worktree is unavailable. Choose another checkout from the
+              sidebar.
             </div>
           )}
           {app.archivedSession && (
@@ -491,6 +506,7 @@ export default function App() {
                 <div className="session-empty">
                   <h1>New session</h1>
                   <p>What would you like to work on?</p>
+                  <SessionWorktree app={app} />
                 </div>
               )}
               {activeQuestions.length > 0 ? (
@@ -556,6 +572,11 @@ export default function App() {
                       false
                     }
                     disabled={
+                      app.checkoutUnavailable ||
+                      Boolean(
+                        app.rootProject &&
+                          app.worktreeBusy[app.rootProject.path],
+                      ) ||
                       Boolean(
                         app.selectedId &&
                           (!app.selected ||

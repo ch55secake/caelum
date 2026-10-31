@@ -10,3 +10,4 @@ pub mod opencode;
 pub mod processes;
 pub mod projects;
 pub mod questions;
+pub mod worktrees;
