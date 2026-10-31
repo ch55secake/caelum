@@ -38,6 +38,8 @@ Removal checks active provider sessions and pending requests, then uses `git wor
 
 `PullRequestPreviewProvider` owns the sidebar's single portaled hover card and expanded overview dialog. Icons are separate buttons beside the project/session selection controls. Hover delays, viewport positioning, keyboard entry, focus restoration, and navigation-scoped dismissal keep previews usable without selecting a different checkout or session. Detail requests are deduplicated and cached by URL for a minute, with inactive cache entries bounded; unsubscribing a view prevents late results from replacing a different PR. Refresh failures preserve the last successful snapshot and expose retry locally.
 
+`SessionPullRequests` lists unique PR URLs attached to the current checkout's unarchived sessions beneath the session list. It loads session branch metadata in small batches, including off-screen sessions, without connecting their conversations. `useBranchPullRequests` shares discovery subscriptions and a four-request queue with the inline indicators. Session filtering does not affect the PR list; project changes and archive/restore update its membership. Each list row opens the existing overview directly and restores focus to that row when dismissed.
+
 ## Security boundaries
 
 - Only Rust performs project path validation and future privileged operations.

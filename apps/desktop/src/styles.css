@@ -152,7 +152,20 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .session-search:focus-within { border-color: var(--accent); }
 .session-search input { width: 0; flex: 1; padding: 0; border: 0; outline: 0; font-size: 11px; background: transparent; }
 .session-search input::placeholder { color: var(--muted); }
-.session-list { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: auto; gap: 2px; }
+.sidebar-session-lists { display: flex; flex: 1; min-height: 150px; flex-direction: column; }
+.session-list { display: flex; flex: 1; min-height: 56px; flex-direction: column; overflow: auto; gap: 2px; }
+.session-pr-section { display: flex; flex: 0 1 auto; min-height: 88px; max-height: 50%; flex-direction: column; margin-top: 6px; }
+.session-pr-section .section-heading { flex: 0 0 auto; margin-top: 0; }
+.session-pr-count { font-size: 10px; font-variant-numeric: tabular-nums; }
+.session-pr-list { min-height: 0; overflow: auto; }
+.session-pr-item { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 8px; border: 0; background: transparent; text-align: left; }
+.session-pr-item:focus-visible { outline-offset: -2px; }
+.session-pr-item[aria-expanded="true"] { background: var(--accent-soft); }
+.session-pr-item > svg { margin-top: 1px; color: var(--success); }.session-pr-item[data-draft="true"] > svg { color: var(--muted); }
+.session-pr-text { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.session-pr-title, .session-pr-context { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-pr-title { font-size: 12px; }.session-pr-context { color: var(--muted); font-size: 10px; }
+.session-pr-section .empty-sessions { font-size: 11px; }
 .session-row { position: relative; flex: 0 0 auto; border-radius: 5px; }
 .session-row.selected { color: var(--text); background: var(--accent-soft); }
 .session-item { display: flex; width: 100%; min-width: 0; min-height: 50px; flex-direction: column; gap: 5px; padding: 8px; border: 0; background: transparent; text-align: left; color: var(--muted); font-size: 12px; }
@@ -517,6 +530,7 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .provider-connection { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }.provider-connection > div { flex: 1; min-width: 0; }.provider-connection-status { display: flex; align-items: center; gap: 7px; font-size: 12px; }.connection-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }[data-state="ready"] .connection-dot { background: var(--success); }[data-state="error"] .connection-dot { background: var(--danger); }
 .settings-refresh { display: flex; gap: 6px; align-items: center; flex-shrink: 0; padding: 6px 8px; font-size: 11px; color: var(--muted); }.settings-provider-error { margin: 12px 0; color: var(--danger); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }.settings-reset { margin-top: 18px; padding: 6px 8px; font-size: 11px; color: var(--muted); }
 @media (max-width: 980px) { .transcript-content { padding: 20px; }.composer-wrap { padding: 0 20px 16px; }.topbar { padding-inline: 16px; }.git-review-grid { grid-template-columns: 175px minmax(0, 1fr); }.composer-hint { font-size: 9px; } }
+@media (max-height: 700px) { .section-heading { margin-top: 8px; }.new-session { margin: 8px 0 6px; }.sidebar-settings { margin-top: 6px; } }
 @container (max-width: 560px) { .composer-hint { display: none; }.transcript-content { padding: 18px 16px; }.composer-wrap { padding: 0 14px 16px; }.tool-status { font-size: 9px; } }
 @container (max-width: 360px) { .transcript-content { padding-inline: 12px; }.composer-wrap { padding-inline: 10px; }.choice-trigger { max-width: 160px; }.tool-details, .tool-patch-preview { margin-left: 14px; } }
 @media (prefers-reduced-motion: reduce) { .spinning, .agent-icon[data-running="true"]::after, .composer[data-working="true"]::before, .tool-activity[data-running="true"] .tool-status::before { animation: none; } .agent-mode, .agent-mode::after { transition: none; } }

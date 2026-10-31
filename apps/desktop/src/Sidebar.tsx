@@ -29,6 +29,7 @@ import type {
 import type { useWorkspace } from "./useWorkspace.js";
 import { ProjectWorktrees } from "./Worktrees.js";
 import { PullRequestIndicator } from "./PullRequestIndicator.js";
+import { SessionPullRequests } from "./SessionPullRequests.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
 const MIN_SIDEBAR_WIDTH = 180;
@@ -154,19 +155,19 @@ export function Sidebar({
   );
   const resize = (value: number) =>
     setPreferredWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(maximum, value)));
-  const sessions = (["codex", "opencode"] as ProviderKind[])
+  const allSessions = (["codex", "opencode"] as ProviderKind[])
     .flatMap((provider) =>
       (app.workspace?.providers[provider].sessions ?? []).map((session) => ({
         ...session,
         provider,
       })),
     )
-    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-    .filter((item) =>
-      `${sessionTitle(item)} ${item.provider} ${app.workspace?.providers[item.provider].sessionDetails[item.id]?.branch ?? ""}`
-        .toLowerCase()
-        .includes(search.toLowerCase()),
-    );
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const sessions = allSessions.filter((item) =>
+    `${sessionTitle(item)} ${item.provider} ${app.workspace?.providers[item.provider].sessionDetails[item.id]?.branch ?? ""}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  );
   return (
     <aside
       ref={sidebar}
@@ -271,141 +272,155 @@ export function Sidebar({
         />
         <kbd>⌘K</kbd>
       </label>
-      <div className="session-list">
-        {app.providerWorkspace?.isLoadingSessions && sessions.length === 0 && (
-          <div className="empty-sessions">Connecting…</div>
-        )}
-        {sessions.length === 0 && !app.providerWorkspace?.isLoadingSessions && (
-          <div className="empty-sessions">
-            {search ? "No matching sessions" : "No sessions yet"}
-          </div>
-        )}
-        {sessions.map((item) => {
-          const workspace = app.workspace?.providers[item.provider];
-          const state = workspace?.sessionsById[item.id];
-          const archiving = workspace?.archivingSessionIds.includes(item.id);
-          const working = state?.isWorking ?? item.isWorking;
-          const approval = app.approvals.some(
-            (request) =>
-              request.projectPath === app.project?.path &&
-              request.provider === item.provider &&
-              request.sessionId === item.id,
-          );
-          return (
-            <div
-              key={`${app.project?.path}-${item.provider}-${item.id}`}
-              className={`session-row${app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
-              onContextMenu={(event) =>
-                contextMenu(event, [
-                  {
-                    text: "Open session",
-                    enabled: !archiving,
-                    action: () => app.selectSession(item, item.provider),
-                  },
-                  copyAction("Copy session title", sessionTitle(item)),
-                  copyAction("Copy session ID", item.id),
-                  { item: "Separator" },
-                  {
-                    text: "Archive session",
-                    enabled: !(
-                      archiving ||
-                      working ||
-                      state?.isSubmitting ||
-                      state?.connection === "connecting" ||
-                      approval
-                    ),
-                    action: () => app.archiveSession(item, item.provider),
-                  },
-                ])
-              }
-            >
-              <div className="session-item">
-                <button
-                  className="sidebar-row-select"
-                  title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
-                  aria-label={sessionTitle(item)}
-                  aria-current={
-                    app.provider === item.provider && app.selectedId === item.id
-                      ? "page"
-                      : undefined
-                  }
-                  disabled={archiving}
-                  onClick={() => app.selectSession(item, item.provider)}
-                >
-                  <span className="session-heading">
-                    <span
-                      className="session-status"
-                      title={approval ? "Approval required" : undefined}
-                    >
-                      {approval ? (
-                        <ShieldAlert
-                          size={13}
-                          className="approval-indicator"
-                          aria-label="Approval required"
-                        />
-                      ) : working ? (
-                        <span
-                          className="running-dot"
-                          aria-label="Running"
-                          title="Running"
-                        />
-                      ) : state?.unread ? (
-                        <span
-                          className="unread-dot"
-                          aria-label="Unread"
-                          title="Unread"
-                        />
-                      ) : state?.connection === "disconnected" ? (
-                        <span
-                          className="disconnected-dot"
-                          aria-label="Disconnected"
-                          title="Disconnected"
-                        />
-                      ) : null}
-                    </span>
-                    <span className="session-title">{sessionTitle(item)}</span>
-                  </span>
-                </button>
-                <SessionContext
-                  projectPath={app.project!.path}
-                  details={workspace?.sessionDetails[item.id]}
-                  revision={item.updatedAt}
-                  load={() => {
-                    if (app.project)
-                      void app.loadSessionDetails(
-                        app.project.path,
-                        item.provider,
-                        item.id,
-                      );
-                  }}
-                />
+      <div className="sidebar-session-lists">
+        <div className="session-list">
+          {app.providerWorkspace?.isLoadingSessions &&
+            sessions.length === 0 && (
+              <div className="empty-sessions">Connecting…</div>
+            )}
+          {sessions.length === 0 &&
+            !app.providerWorkspace?.isLoadingSessions && (
+              <div className="empty-sessions">
+                {search ? "No matching sessions" : "No sessions yet"}
               </div>
-              <button
-                className="icon-button session-archive"
-                aria-label="Archive session"
-                title={
-                  working || state?.isSubmitting || approval
-                    ? "Stop the running turn before archiving"
-                    : `Archive ${sessionTitle(item)}`
+            )}
+          {sessions.map((item) => {
+            const workspace = app.workspace?.providers[item.provider];
+            const state = workspace?.sessionsById[item.id];
+            const archiving = workspace?.archivingSessionIds.includes(item.id);
+            const working = state?.isWorking ?? item.isWorking;
+            const approval = app.approvals.some(
+              (request) =>
+                request.projectPath === app.project?.path &&
+                request.provider === item.provider &&
+                request.sessionId === item.id,
+            );
+            return (
+              <div
+                key={`${app.project?.path}-${item.provider}-${item.id}`}
+                className={`session-row${app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
+                onContextMenu={(event) =>
+                  contextMenu(event, [
+                    {
+                      text: "Open session",
+                      enabled: !archiving,
+                      action: () => app.selectSession(item, item.provider),
+                    },
+                    copyAction("Copy session title", sessionTitle(item)),
+                    copyAction("Copy session ID", item.id),
+                    { item: "Separator" },
+                    {
+                      text: "Archive session",
+                      enabled: !(
+                        archiving ||
+                        working ||
+                        state?.isSubmitting ||
+                        state?.connection === "connecting" ||
+                        approval
+                      ),
+                      action: () => app.archiveSession(item, item.provider),
+                    },
+                  ])
                 }
-                disabled={
-                  archiving ||
-                  working ||
-                  state?.isSubmitting ||
-                  state?.connection === "connecting" ||
-                  approval
-                }
-                onClick={() => void app.archiveSession(item, item.provider)}
               >
-                {archiving ? (
-                  <LoaderCircle size={13} className="spinning" />
-                ) : (
-                  <Archive size={13} />
-                )}
-              </button>
-            </div>
-          );
-        })}
+                <div className="session-item">
+                  <button
+                    className="sidebar-row-select"
+                    title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
+                    aria-label={sessionTitle(item)}
+                    aria-current={
+                      app.provider === item.provider &&
+                      app.selectedId === item.id
+                        ? "page"
+                        : undefined
+                    }
+                    disabled={archiving}
+                    onClick={() => app.selectSession(item, item.provider)}
+                  >
+                    <span className="session-heading">
+                      <span
+                        className="session-status"
+                        title={approval ? "Approval required" : undefined}
+                      >
+                        {approval ? (
+                          <ShieldAlert
+                            size={13}
+                            className="approval-indicator"
+                            aria-label="Approval required"
+                          />
+                        ) : working ? (
+                          <span
+                            className="running-dot"
+                            aria-label="Running"
+                            title="Running"
+                          />
+                        ) : state?.unread ? (
+                          <span
+                            className="unread-dot"
+                            aria-label="Unread"
+                            title="Unread"
+                          />
+                        ) : state?.connection === "disconnected" ? (
+                          <span
+                            className="disconnected-dot"
+                            aria-label="Disconnected"
+                            title="Disconnected"
+                          />
+                        ) : null}
+                      </span>
+                      <span className="session-title">
+                        {sessionTitle(item)}
+                      </span>
+                    </span>
+                  </button>
+                  <SessionContext
+                    projectPath={app.project!.path}
+                    details={workspace?.sessionDetails[item.id]}
+                    revision={item.updatedAt}
+                    load={() => {
+                      if (app.project)
+                        void app.loadSessionDetails(
+                          app.project.path,
+                          item.provider,
+                          item.id,
+                        );
+                    }}
+                  />
+                </div>
+                <button
+                  className="icon-button session-archive"
+                  aria-label="Archive session"
+                  title={
+                    working || state?.isSubmitting || approval
+                      ? "Stop the running turn before archiving"
+                      : `Archive ${sessionTitle(item)}`
+                  }
+                  disabled={
+                    archiving ||
+                    working ||
+                    state?.isSubmitting ||
+                    state?.connection === "connecting" ||
+                    approval
+                  }
+                  onClick={() => void app.archiveSession(item, item.provider)}
+                >
+                  {archiving ? (
+                    <LoaderCircle size={13} className="spinning" />
+                  ) : (
+                    <Archive size={13} />
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <SessionPullRequests
+          app={app}
+          sessions={allSessions.map((session) => ({
+            ...session,
+            title: sessionTitle(session),
+          }))}
+        />
       </div>
       <button
         className="nav-item sidebar-settings"

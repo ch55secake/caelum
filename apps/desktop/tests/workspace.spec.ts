@@ -349,6 +349,9 @@ async function desktop(
           setSessionDetails: (provider: string, id: string, value: unknown) => {
             sessionDetails.set(`${provider}:${id}`, value);
           },
+          addSession: (id: string, name: string) => {
+            threads.push({ id, name, preview: "", updatedAt: 1 });
+          },
           setGitFiles: (files: GitChange[], path = project.path) => {
             gitProjects.set(path, files);
           },
@@ -6543,6 +6546,220 @@ test("PR preview details are shared with linked worktrees and cannot select thei
   await expect(card).toHaveCount(0);
 });
 
+test("session PR section groups open sessions and opens an overview without selecting a session", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("main", pr);
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.setPullRequestDetails(pr.url, pr);
+    fixture.setPullRequest("fix/provider-adapters", {
+      ...pr,
+      number: 45,
+      title: "Improve provider adapters",
+      url: "https://github.com/example/caelum/pull/45",
+      isDraft: true,
+    });
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(section.getByRole("button")).toHaveCount(2);
+  const shared = section.getByRole("button", { name: /View pull request #44/ });
+  await expect(shared).toHaveAccessibleDescription("#44 · 2 sessions");
+  await expect(
+    section.getByRole("button", { name: /View draft pull request #45/ }),
+  ).toHaveAccessibleDescription("#45 · Review the provider adapters");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep this draft while reviewing PRs");
+  await shared.click();
+  const dialog = page.getByRole("dialog", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(dialog).toContainText("+128");
+  await page.keyboard.press("Escape");
+  await expect(shared).toBeFocused();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(input).toHaveValue("Keep this draft while reviewing PRs");
+  await expect(page.locator(".breadcrumbs")).toContainText("New session");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter((call: any) =>
+        ["codex_resume_session", "opencode_resume_session"].includes(
+          call.command,
+        ),
+      ),
+    ),
+  ).toHaveLength(0);
+  await shared.press("Enter");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Close pull request" }).click();
+  await page.getByRole("textbox", { name: "Search sessions" }).fill("no match");
+  await expect(page.locator(".session-list")).toContainText(
+    "No matching sessions",
+  );
+  await expect(section.getByRole("button")).toHaveCount(2);
+  await page.getByRole("textbox", { name: "Search sessions" }).fill("");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await page.screenshot({
+      path: `test-results/session-pr-list-${theme}.png`,
+    });
+  }
+  const first = sessionRow(page, "Refine the session workspace");
+  await first
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(shared).toHaveAccessibleDescription("#44 · OpenCode session");
+  await sessionRow(page, "OpenCode session")
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(shared).toHaveCount(0);
+  await expect(page.locator(".project-row .branch-pr-trigger")).toBeVisible();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(shared).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("main", null);
+    fixture.setPullRequest("fix/provider-adapters", null);
+  });
+  await page.clock.runFor(60_100);
+  await expect(section.getByRole("button")).toHaveCount(0);
+  await expect(section).toContainText("No pull requests for open sessions");
+});
+
+test("session PR section discovers off-screen sessions with shared bounded lookups", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await page.setViewportSize({ width: 800, height: 620 });
+  const before = await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.hold("github_open_pull_request");
+    for (let index = 0; index < 18; index++) {
+      fixture.addSession(`background-${index}`, `Background task ${index}`);
+      fixture.setSessionDetails("codex", `background-${index}`, {
+        branch: `feature/background-${index}`,
+        branchIsCurrent: false,
+        changes: null,
+      });
+      if (index === 17)
+        fixture.setPullRequest(`feature/background-${index}`, pr);
+    }
+    return fixture.calls.length;
+  }, previewPullRequest);
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (before) =>
+          (window as any).fixture.calls
+            .slice(before)
+            .filter(
+              (call: any) =>
+                call.command === "session_details" &&
+                call.args.sessionId === "background-17",
+            ).length,
+        before,
+      ),
+    )
+    .toBe(1);
+  const lookups = await page.evaluate(
+    (before) =>
+      (window as any).fixture.calls
+        .slice(before)
+        .filter((call: any) => call.command === "github_open_pull_request"),
+    before,
+  );
+  expect(lookups.length).toBeGreaterThan(0);
+  expect(lookups.length).toBeLessThanOrEqual(4);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_open_pull_request"),
+  );
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  const row = section.getByRole("button", { name: /View pull request #44/ });
+  await expect(row).toBeVisible();
+  await expect(row).toHaveAccessibleDescription("#44 · Background task 17");
+  await expect(sessionRow(page, "Background task 17")).not.toBeInViewport();
+  await expect(row).toBeInViewport({ ratio: 1 });
+  const calls = await page.evaluate(
+    (before) => (window as any).fixture.calls.slice(before),
+    before,
+  );
+  expect(
+    calls.filter(
+      (call: any) =>
+        call.command === "github_open_pull_request" &&
+        call.args.branch === "feature/background-17",
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter((call: any) => call.command === "codex_resume_session"),
+  ).toHaveLength(0);
+  expect(
+    await section.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/session-pr-list-many-sessions.png",
+  });
+});
+
+test("session PR section ignores delayed results from a different project", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.hold(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
+    fixture.setPullRequest(
+      "other-project",
+      {
+        ...pr,
+        url: "https://github.com/example/other/pull/44",
+        title: "Other project changes",
+      },
+      "/work/other",
+    );
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(
+    section.getByRole("button", { name: /Other project changes/ }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.release(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    ),
+  );
+  await expect(section.getByRole("button")).toHaveCount(1);
+  await expect(section).not.toContainText(previewPullRequest.title);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(
+    section.getByRole("button", { name: /Improve project navigation/ }),
+  ).toBeVisible();
+  await expect(section).not.toContainText("Other project changes");
+});
+
 test("branch PR indicators share lookups, distinguish drafts and clear closed or unavailable PRs", async ({
   page,
 }) => {
@@ -6627,6 +6844,12 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
     }),
   ).toBeVisible();
   await page.setViewportSize({ width: 800, height: 620 });
+  await session
+    .getByRole("button", {
+      name: "Open pull request #40: Ready for review",
+      exact: true,
+    })
+    .scrollIntoViewIfNeeded();
   await expect(
     session.getByRole("button", {
       name: "Open pull request #40: Ready for review",

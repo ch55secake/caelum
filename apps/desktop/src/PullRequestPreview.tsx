@@ -47,6 +47,7 @@ const PreviewContext = createContext<{
   anchor: HTMLButtonElement | null;
   id: string;
   show: (target: Target, immediate?: boolean) => void;
+  open: (target: Target) => void;
   leave: (anchor: HTMLButtonElement) => void;
   release: (anchor: HTMLButtonElement) => void;
   enter: () => void;
@@ -174,6 +175,17 @@ export function PullRequestPreviewProvider({
         anchor: visible?.anchor ?? null,
         id,
         show,
+        open: (target) => {
+          if (
+            !target.anchor.isConnected ||
+            document.querySelector("dialog[open]")
+          )
+            return;
+          clearTimers();
+          const next = { ...target, scope, expanded: true };
+          current.current = next;
+          setPreview(next);
+        },
         leave,
         release: (anchor) => {
           if (
