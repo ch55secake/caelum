@@ -125,6 +125,7 @@ svg { flex-shrink: 0; }
 .icon-button:hover { color: var(--text); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 32px; margin: 12px 5px 2px; font-size: 11px; font-weight: 500; color: var(--muted); }
 .project-list { display: flex; flex-direction: column; overflow: auto; max-height: 22vh; gap: 2px; }
+.project-list button:focus-visible { outline-offset: -2px; }
 .project-row { position: relative; flex: 0 0 auto; border-radius: 5px; }
 .project-row.selected { background: var(--panel); }
 .project-item { display: flex; width: 100%; min-width: 0; flex-direction: column; gap: 5px; padding: 8px; border: 0; background: transparent; text-align: left; font-size: 12px; }
