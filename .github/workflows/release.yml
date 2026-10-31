@@ -5,12 +5,19 @@ on:
     branches: [main]
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to recover or sync to Homebrew (for example v0.1.5)
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.sha }}
+  # Version-bump pushes must not replace a queued merge's release run.
+  group: release-${{ github.workflow }}-${{ inputs.tag || (github.event.head_commit.author.name == 'github-actions[bot]' && github.sha) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -23,30 +30,51 @@ jobs:
       release_tag: ${{ steps.tag.outputs.release_tag }}
       release_commit: ${{ steps.tag.outputs.release_commit }}
       should_release: ${{ steps.tag.outputs.should_release }}
+      published: ${{ steps.release.outputs.published }}
     steps:
       - uses: actions/create-github-app-token@v2
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         id: release-app-token
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: caelum
 
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ steps.release-app-token.outputs.token }}
+          token: ${{ steps.release-app-token.outputs.token || github.token }}
 
       - name: Bump patch version, tag, and prepare release
         id: tag
         env:
           BEFORE_SHA: ${{ github.event.before }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: python3 scripts/release/create_version_tag.py
+
+      - name: Check for an already published release
+        if: ${{ steps.tag.outputs.should_release == 'true' }}
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.release_tag }}
+        run: python3 scripts/release/publish_release.py --check
+
+  checks:
+    name: Check release commit
+    needs: prepare
+    if: ${{ needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.published != 'true' }}
+    uses: ./.github/workflows/ci.yml
+    with:
+      revision: ${{ needs.prepare.outputs.release_commit }}
+      skip_bundle: true
 
   build:
     name: Build ${{ matrix.arch }} release assets
     needs: prepare
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    if: ${{ needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.published != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +90,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.release_commit }}
+
+      # Use the current recovery/packaging tools even when rebuilding an older tag.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tools
+          sparse-checkout: scripts/release
 
       - name: Verify release tag matches project version
         env:
@@ -110,66 +145,57 @@ jobs:
         run: cargo build --locked --release -p caelum-cli --target "${{ matrix.target }}"
 
       - name: Build desktop app
-        run: pnpm --filter @caelum/desktop tauri build --bundles app,dmg --target "${{ matrix.target }}"
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: pnpm --filter @caelum/desktop tauri build --ci --bundles app,dmg --target "${{ matrix.target }}" -- --locked
 
       - name: Package architecture-specific release assets
         env:
           TARGET: ${{ matrix.target }}
           ARCH: ${{ matrix.arch }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: scripts/release/package_macos_assets.sh
+        run: bash release-tools/scripts/release/package_macos_assets.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.arch }}
           path: ${{ runner.temp }}/release/*
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
   publish:
     name: Publish GitHub release
-    needs: [prepare, build]
+    needs: [prepare, checks, build]
+    if: ${{ !cancelled() && needs.prepare.outputs.should_release == 'true' && (needs.prepare.outputs.published == 'true' || (needs.checks.result == 'success' && needs.build.result == 'success')) }}
+    concurrency:
+      group: publish-${{ github.repository }}-${{ needs.prepare.outputs.release_tag }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.release_commit }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - uses: actions/download-artifact@v4
+        if: ${{ needs.prepare.outputs.published != 'true' }}
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
 
-      - name: Generate SHA-256 checksums
-        working-directory: dist
-        run: sha256sum ./* > SHA256SUMS
-
-      - name: Publish tagged release
+      - name: Verify assets and publish or resume the tagged release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: |
-          if [[ "$RELEASE_TAG" == *-* ]]; then
-            gh release create "$RELEASE_TAG" dist/* \
-              --verify-tag \
-              --title "$RELEASE_TAG" \
-              --generate-notes \
-              --prerelease
-          else
-            gh release create "$RELEASE_TAG" dist/* \
-              --verify-tag \
-              --title "$RELEASE_TAG" \
-              --generate-notes
-          fi
+        run: python3 scripts/release/publish_release.py --assets dist
 
   update-homebrew-tap:
     name: Open Homebrew tap update
     needs: [prepare, publish]
-    if: ${{ vars.HOMEBREW_TAP_UPDATES == 'enabled' && !contains(needs.prepare.outputs.release_tag, '-') }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.publish.result == 'success' && vars.HOMEBREW_TAP_UPDATES == 'enabled' && !contains(needs.prepare.outputs.release_tag, '-') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download release checksums
@@ -205,8 +231,8 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           branch: automation/caelum-${{ needs.prepare.outputs.release_tag }}
           delete-branch: true
-          commit-message: "caelum: update packages to ${{ needs.prepare.outputs.release_tag }}"
-          title: "caelum: update Homebrew packages to ${{ needs.prepare.outputs.release_tag }}"
+          commit-message: "chore(caelum): update packages to ${{ needs.prepare.outputs.release_tag }}"
+          title: "chore(caelum): update Homebrew packages to ${{ needs.prepare.outputs.release_tag }}"
           body: |
             Update the Caelum CLI formula and desktop cask for the latest release.
 

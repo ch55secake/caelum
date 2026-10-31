@@ -195,6 +195,11 @@ def automatic_release_commit(source_commit: str, root: Path) -> tuple[str, str]:
             return validate_version(existing), existing
 
         base_commit = git("rev-parse", "origin/main")
+        if base_commit != source_commit:
+            raise SupersededRelease(
+                f"Main advanced from {source_commit} to {base_commit}; "
+                "the newer merge's workflow will release the combined changes."
+            )
         subprocess.run(["git", "checkout", "--detach", base_commit], check=True)
         version = bump_patch_version(validate_version("HEAD"))
         update_version_files(root, version)
@@ -234,6 +239,22 @@ def automatic_release_commit(source_commit: str, root: Path) -> tuple[str, str]:
     raise AssertionError("unreachable")
 
 
+class SupersededRelease(Exception):
+    pass
+
+
+def resolve_release_tag(tag: str) -> str:
+    if not re.fullmatch(r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", tag):
+        raise SystemExit(f"Expected a version tag such as v1.2.3 or v1.2.3-rc.1, got {tag!r}")
+    commit = remote_tag_commit(tag)
+    if commit is None:
+        raise SystemExit(f"Release tag {tag} does not exist on origin.")
+    subprocess.run(["git", "fetch", "origin", f"refs/tags/{tag}"], check=True)
+    if validate_version(commit) != tag[1:]:
+        raise SystemExit(f"Tag {tag} does not match the project and lockfile versions.")
+    return commit
+
+
 def create_tag(tag: str, commit: str) -> None:
     existing_commit = remote_tag_commit(tag)
     if existing_commit is not None and existing_commit != commit:
@@ -266,11 +287,16 @@ def create_tag(tag: str, commit: str) -> None:
 def main() -> None:
     ref = os.environ["GITHUB_REF"]
     commit = os.environ["GITHUB_SHA"]
+    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        tag = os.environ.get("RELEASE_TAG", "")
+        set_outputs(tag, True, resolve_release_tag(tag))
+        return
     if ref.startswith("refs/tags/"):
         tag = os.environ.get("GITHUB_REF_NAME", ref.removeprefix("refs/tags/"))
-        if not tag.startswith("v"):
-            raise SystemExit(f"Unexpected release tag: {tag}")
-        set_outputs(tag, True, commit)
+        resolved = resolve_release_tag(tag)
+        if resolved != git("rev-parse", f"{commit}^{{commit}}"):
+            raise SystemExit(f"Release tag {tag} moved after this workflow started.")
+        set_outputs(tag, True, resolved)
         return
 
     if ref != "refs/heads/main":
@@ -281,11 +307,18 @@ def main() -> None:
         set_outputs("", False, commit)
         return
 
-    current = project_versions("HEAD")
+    if git("rev-parse", "HEAD") != commit:
+        raise SystemExit("The checkout must match the triggering commit.")
+    current = project_versions(commit)
     before = os.environ.get("BEFORE_SHA", "")
     previous = None if not before or set(before) == {"0"} else project_versions(before)
     if previous == current:
-        version, commit = automatic_release_commit(commit, Path.cwd())
+        try:
+            version, commit = automatic_release_commit(commit, Path.cwd())
+        except SupersededRelease as error:
+            print(error)
+            set_outputs("", False, commit)
+            return
     else:
         version = validate_version("HEAD")
 
