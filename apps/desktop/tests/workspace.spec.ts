@@ -1089,6 +1089,9 @@ test("Codex questions preserve drafts across sessions and retry the original req
   await expect(
     page.getByRole("form", { name: "Message composer" }),
   ).toHaveCount(0);
+  await expect(card).toBeFocused();
+  await expect(card.locator("input:checked")).toHaveCount(0);
+  await page.keyboard.press("Tab");
   await expect(
     card.getByRole("radio", { name: "Small Focused change" }),
   ).toBeFocused();
@@ -1111,7 +1114,7 @@ test("Codex questions preserve drafts across sessions and retry the original req
   ).toBeChecked();
   await customAnswer.pressSequentially("Incremental refactor");
   const singleLineHeight = (await customAnswer.boundingBox())!.height;
-  await customAnswer.press("Enter");
+  await customAnswer.press("Shift+Enter");
   await customAnswer.pressSequentially("Preserve the existing API.");
   await expect(customAnswer).toHaveValue(
     "Incremental refactor\nPreserve the existing API.",
@@ -1141,6 +1144,18 @@ test("Codex questions preserve drafts across sessions and retry the original req
   await expect(card.getByRole("textbox", { name: "Approach" })).toHaveValue(
     "Incremental refactor",
   );
+  await customAnswer.focus();
+  await customAnswer.dispatchEvent("keydown", {
+    key: "Enter",
+    isComposing: true,
+  });
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "resolve_question",
+      ),
+    ),
+  ).toHaveLength(0);
   await page.evaluate(() => {
     (window as any).fixture.setCommandError(
       "resolve_question",
@@ -1148,7 +1163,7 @@ test("Codex questions preserve drafts across sessions and retry the original req
     );
     (window as any).fixture.hold("resolve_question");
   });
-  await card.getByRole("button", { name: "Submit answers" }).click();
+  await customAnswer.press("Enter");
   await expect(card.getByRole("button", { name: "Sending…" })).toBeDisabled();
   await expect(card.getByRole("textbox", { name: "Details" })).toBeDisabled();
   await page.evaluate(() =>
@@ -1159,8 +1174,7 @@ test("Codex questions preserve drafts across sessions and retry the original req
   await page.evaluate(() =>
     (window as any).fixture.setCommandError("resolve_question", null),
   );
-  await card.getByRole("button", { name: "Retry answer" }).focus();
-  await page.keyboard.press("Enter");
+  await card.getByRole("textbox", { name: "Details" }).press("Enter");
   await expect(card).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
@@ -1187,7 +1201,7 @@ test("Codex questions preserve drafts across sessions and retry the original req
     ),
   ).toHaveLength(0);
   await setQuestions(page, [question()]);
-  await card.getByRole("button", { name: "Cancel questions" }).click();
+  await card.getByRole("button", { name: "Cancel questions" }).press("Enter");
   await expect(message).toHaveValue("Next message draft");
   await expect(message).toBeFocused();
 });
@@ -1244,15 +1258,18 @@ test("OpenCode questions submit multiple and custom answers with typed condition
   await card.getByRole("checkbox", { name: "macOS" }).check();
   await card.getByRole("checkbox", { name: "Linux" }).focus();
   await page.keyboard.press("Space");
-  await card
-    .getByRole("textbox", { name: "Targets: custom answers" })
-    .fill("Windows\nFreeBSD");
+  const customAnswers = card.getByRole("textbox", {
+    name: "Targets: custom answers",
+  });
+  await customAnswers.fill("Windows");
+  await customAnswers.press("Shift+Enter");
+  await customAnswers.pressSequentially("FreeBSD");
   await expect(
     card.getByRole("spinbutton", { name: "Batch size" }),
   ).toHaveCount(0);
   await card.getByRole("radio", { name: "Yes", exact: true }).check();
   await card.getByRole("spinbutton", { name: "Batch size" }).fill("3");
-  await card.getByRole("button", { name: "Submit answers" }).click();
+  await customAnswers.press("Enter");
   await expect(card).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),

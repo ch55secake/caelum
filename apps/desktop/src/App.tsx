@@ -169,12 +169,10 @@ export default function App() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       if (document.querySelector("dialog[open]")) return;
-      const input = activeQuestionKey
-        ? questionDockRef.current?.querySelector<HTMLElement>(
-            "input:not(:disabled), textarea:not(:disabled), button:not(:disabled)",
-          )
+      const target = activeQuestionKey
+        ? questionDockRef.current?.querySelector<HTMLElement>(".question-card")
         : textareaRef.current;
-      input?.focus({ preventScroll: true });
+      target?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [sessionKey, activeQuestionKey]);

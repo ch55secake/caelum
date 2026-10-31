@@ -60,13 +60,16 @@ export function QuestionCard({
     <form
       ref={form}
       className="question-card"
+      tabIndex={-1}
       aria-label={request.title}
-      aria-keyshortcuts="Control+Enter Meta+Enter"
+      aria-keyshortcuts="Enter Control+Enter Meta+Enter"
       onKeyDown={(event) => {
         if (
           event.key === "Enter" &&
-          (event.metaKey || event.ctrlKey) &&
-          !event.nativeEvent.isComposing
+          !event.nativeEvent.isComposing &&
+          (event.metaKey ||
+            event.ctrlKey ||
+            (event.target instanceof HTMLTextAreaElement && !event.shiftKey))
         ) {
           event.preventDefault();
           form.current?.requestSubmit();
