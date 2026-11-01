@@ -137,3 +137,12 @@ export function mergeStatus(pr) {
     };
   return { enabled: true, text: `Ready to merge into ${pr.baseRefName}` };
 }
+
+export function canUpdateBranch(pr) {
+  return (
+    pr.state === "OPEN" &&
+    pr.mergeable === "MERGEABLE" &&
+    pr.mergeStateStatus !== "DIRTY" &&
+    /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(pr.headRefOid ?? "")
+  );
+}

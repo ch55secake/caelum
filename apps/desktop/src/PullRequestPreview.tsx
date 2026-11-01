@@ -485,6 +485,9 @@ function PullRequestContent({
                 error={details.mergeError}
                 lastMethod={details.mergeMethod}
                 merge={details.merge}
+                updating={details.updating}
+                updateError={details.updateError}
+                updateBranch={details.updateBranch}
               />
             </div>
           )}
@@ -510,7 +513,7 @@ function PullRequestContent({
               primaryAction.current?.focus({ preventScroll: true });
               details.refresh();
             }}
-            disabled={details.loading || details.merging}
+            disabled={details.loading || details.merging || details.updating}
           >
             Retry
           </button>
@@ -526,7 +529,7 @@ function PullRequestContent({
           <button
             ref={primaryAction}
             type="button"
-            disabled={details.loading || details.merging}
+            disabled={details.loading || details.merging || details.updating}
             onClick={details.refresh}
           >
             <RefreshCw

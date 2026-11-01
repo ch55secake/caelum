@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   checkSummary,
   checkStatus,
+  canUpdateBranch,
   mergeStatus,
   pullRequestState,
   reviewStatus,
@@ -118,4 +119,33 @@ test("merge availability follows GitHub rules and the displayed head, not option
     mergeStatus({ ...pr, state: "MERGED", isDraft: true }).text,
     "Merged into main",
   );
+});
+
+test("branch updates allow drafts and blocked reviews but require an open, conflict-free head", () => {
+  const pr = {
+    state: "OPEN",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "BEHIND",
+    headRefOid: "a".repeat(40),
+  };
+  for (const change of [
+    {},
+    { isDraft: true },
+    { mergeStateStatus: "BLOCKED", reviewDecision: "CHANGES_REQUESTED" },
+    { mergeStateStatus: "CLEAN" },
+  ])
+    assert.equal(canUpdateBranch({ ...pr, ...change }), true);
+  for (const change of [
+    { state: "MERGED" },
+    { state: "CLOSED" },
+    { mergeable: "CONFLICTING" },
+    { mergeable: "UNKNOWN" },
+    { mergeStateStatus: "DIRTY" },
+    { headRefOid: "" },
+  ])
+    assert.equal(
+      canUpdateBranch({ ...pr, ...change }),
+      false,
+      JSON.stringify(change),
+    );
 });

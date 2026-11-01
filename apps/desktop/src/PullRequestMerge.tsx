@@ -1,8 +1,9 @@
 import { useId, useState } from "react";
-import { GitMerge, LoaderCircle } from "lucide-react";
+import { GitMerge, LoaderCircle, RefreshCw } from "lucide-react";
 import { ChoicePicker } from "./ChoicePicker.js";
 import {
   mergeStatus,
+  canUpdateBranch,
   type MergeMethod,
   type PullRequestDetails,
 } from "./pullRequestState.js";
@@ -40,6 +41,9 @@ export function PullRequestMerge({
   error,
   lastMethod,
   merge,
+  updating,
+  updateError,
+  updateBranch,
 }: {
   pr: PullRequestDetails;
   loading: boolean;
@@ -47,6 +51,9 @@ export function PullRequestMerge({
   error: string | null;
   lastMethod: MergeMethod | null;
   merge: (method: MergeMethod) => Promise<void>;
+  updating: boolean;
+  updateError: string | null;
+  updateBranch: () => Promise<void>;
 }) {
   const [method, setMethod] = useState<MergeMethod>(lastMethod ?? "merge");
   const id = useId();
@@ -58,51 +65,82 @@ export function PullRequestMerge({
       className="pr-merge"
       aria-label="Merge pull request"
       data-merged={pr.state === "MERGED"}
-      data-ready={status.enabled}
+      data-ready={status.enabled && !updating}
     >
       <div className="pr-merge-status" role="status">
-        {merging ? (
+        {merging || updating ? (
           <LoaderCircle size={16} className="spinning" aria-hidden="true" />
         ) : (
           <GitMerge size={16} aria-hidden="true" />
         )}
-        <span id={id}>{merging ? "Merging pull request…" : status.text}</span>
+        <span id={id}>
+          {merging
+            ? "Merging pull request…"
+            : updating
+              ? `Updating branch from ${pr.baseRefName}…`
+              : status.text}
+        </span>
       </div>
       {!terminal && (
-        <div
-          className="pr-merge-button"
-          role="group"
-          aria-label="Merge actions"
-        >
+        <div className="pr-merge-controls">
           <button
-            className="pr-merge-action"
+            className="pr-update-branch"
             type="button"
-            disabled={!status.enabled || loading || merging}
-            aria-describedby={id}
-            onClick={() => void merge(method)}
+            disabled={!canUpdateBranch(pr) || loading || merging || updating}
+            title={`Merge the latest changes from ${pr.baseRefName} into ${pr.headRefName} on GitHub`}
+            onClick={() => void updateBranch()}
           >
-            {merging ? (
-              <LoaderCircle size={14} className="spinning" aria-hidden="true" />
-            ) : (
-              <GitMerge size={14} aria-hidden="true" />
-            )}
-            {merging ? "Merging…" : selected.action}
+            <RefreshCw
+              size={14}
+              className={updating ? "spinning" : undefined}
+              aria-hidden="true"
+            />
+            {updating ? "Updating…" : "Update branch"}
           </button>
-          <ChoicePicker
-            label="Merge method"
-            icon={null}
-            triggerName=""
-            value={method}
-            choices={methods}
-            align="end"
-            disabled={merging}
-            onChange={(value) => setMethod(value as MergeMethod)}
-          />
+          <div
+            className="pr-merge-button"
+            role="group"
+            aria-label="Merge actions"
+          >
+            <button
+              className="pr-merge-action"
+              type="button"
+              disabled={!status.enabled || loading || merging || updating}
+              aria-describedby={id}
+              onClick={() => void merge(method)}
+            >
+              {merging ? (
+                <LoaderCircle
+                  size={14}
+                  className="spinning"
+                  aria-hidden="true"
+                />
+              ) : (
+                <GitMerge size={14} aria-hidden="true" />
+              )}
+              {merging ? "Merging…" : selected.action}
+            </button>
+            <ChoicePicker
+              label="Merge method"
+              icon={null}
+              triggerName=""
+              value={method}
+              choices={methods}
+              align="end"
+              disabled={merging || updating}
+              onChange={(value) => setMethod(value as MergeMethod)}
+            />
+          </div>
         </div>
       )}
       {error && (
         <p className="pr-error" role="alert">
           Could not merge this pull request. {error}
+        </p>
+      )}
+      {updateError && (
+        <p className="pr-error" role="alert">
+          Could not update this branch. {updateError}
         </p>
       )}
     </section>

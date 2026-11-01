@@ -1015,6 +1015,18 @@ async function desktop(
               }
               return;
             }
+            if (command === "github_update_pull_request_branch") {
+              const error = commandErrors.get(command);
+              await (gates.get(`${command}:${args.url}`) ?? gates.get(command))
+                ?.promise;
+              if (error) throw new Error(error);
+              const pr = pullRequests.get(args.url) as any;
+              if (!pr || pr.headRefOid !== args.headOid)
+                throw new Error("Head branch was modified (HTTP 422)");
+              // Like GitHub's 202 response, acceptance does not change the head
+              // until a later detail response reports the completed update.
+              return;
+            }
             if (command === "git_repository_status") {
               const error = gitErrors.get(args.projectPath);
               const snapshot = {
@@ -7077,6 +7089,9 @@ test("PR merge is shared across navigation, pins the head and removes merged row
   await expect(
     screen.getByRole("button", { name: "Refresh", exact: true }),
   ).toBeDisabled();
+  await expect(
+    screen.getByRole("button", { name: "Update branch", exact: true }),
+  ).toBeDisabled();
   await screen.getByRole("button", { name: "Back to session" }).click();
   await first.click();
   await expect(
@@ -7235,6 +7250,13 @@ test("PR merge explains draft, blocked, conflicting and unknown states without s
     await expect(
       merge.getByRole("button", { name: "Merge pull request", exact: true }),
     ).toBeDisabled();
+    await expect(
+      merge.getByRole("button", { name: "Update branch", exact: true }),
+    ).toBeEnabled({
+      enabled: !["CONFLICTING", "UNKNOWN"].includes(
+        (change as { mergeable?: string }).mergeable ?? "",
+      ),
+    });
   }
   await page.evaluate(
     (pr) =>
@@ -7260,6 +7282,252 @@ test("PR merge explains draft, blocked, conflicting and unknown states without s
       ),
     ),
   ).toHaveLength(0);
+});
+
+test("PR branch updates preserve progress across navigation and wait for the new head before merging", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      mergeStateStatus: "BEHIND",
+    });
+    fixture.hold("github_update_pull_request_branch");
+  }, previewPullRequest);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await expect(
+    merge.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await merge
+    .getByRole("button", { name: "Update branch", exact: true })
+    .click();
+  await expect(merge.getByRole("status")).toHaveText(
+    "Updating branch from main…",
+  );
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    merge
+      .getByRole("button", { name: "Updating…", exact: true })
+      .locator(".spinning"),
+  ).toBeVisible();
+  await expect(
+    merge.getByRole("button", { name: "Merge method", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeDisabled();
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await entry.click();
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_update_pull_request_branch",
+    ),
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args).toEqual({
+    projectPath: "/work/caelum",
+    url: previewPullRequest.url,
+    headOid: previewPullRequest.headRefOid,
+  });
+
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_update_pull_request_branch"),
+  );
+  await page.clock.runFor(10_100);
+  // An accepted update with unchanged metadata must not unlock either action.
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    merge.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        headRefOid: "b".repeat(40),
+        mergeStateStatus: "BLOCKED",
+        statusCheckRollup: [
+          {
+            __typename: "CheckRun",
+            name: "Tests",
+            status: "IN_PROGRESS",
+            conclusion: null,
+          },
+        ],
+      }),
+    previewPullRequest,
+  );
+  await page.clock.runFor(10_100);
+  await expect(
+    merge.getByRole("button", { name: "Update branch", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    merge.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    screen.getByRole("region", { name: "Pull request checks" }),
+  ).toContainText("In progress");
+  await expect(entry).toBeVisible();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        headRefOid: "b".repeat(40),
+        statusCheckRollup: [pr.statusCheckRollup[0]],
+      }),
+    previewPullRequest,
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await merge
+    .getByRole("button", { name: "Merge pull request", exact: true })
+    .click();
+  await expect(merge.getByRole("status")).toHaveText("Merged into main");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.find(
+          (call: any) => call.command === "github_merge_pull_request",
+        ).args.headOid,
+    ),
+  ).toBe("b".repeat(40));
+});
+
+test("PR branch update failures retain the PR and refresh stale heads for retry", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  const update = merge.getByRole("button", {
+    name: "Update branch",
+    exact: true,
+  });
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_update_pull_request_branch",
+      "Write access required (HTTP 403)",
+    ),
+  );
+  await update.click();
+  await expect(merge.getByRole("alert")).toContainText("Write access required");
+  await expect(update).toBeEnabled();
+  await expect(entry).toBeVisible();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_update_pull_request_branch", null);
+    fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      headRefOid: "b".repeat(40),
+    });
+  }, previewPullRequest);
+  await update.click();
+  await expect(merge.getByRole("alert")).toContainText(
+    "Head branch was modified",
+  );
+  await expect(update).toBeEnabled();
+  await update.click();
+  await expect(merge.getByRole("alert")).toHaveCount(0);
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        headRefOid: "c".repeat(40),
+      }),
+    previewPullRequest,
+  );
+  await page.clock.runFor(10_100);
+  await expect(update).toBeEnabled();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_update_pull_request_branch",
+    ),
+  );
+  expect(calls).toHaveLength(3);
+  expect(calls[2].args.headOid).toBe("b".repeat(40));
+  await expect(entry).toBeVisible();
+});
+
+test("PR branch updates recover from unconfirmed updates and refresh failures", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await merge
+    .getByRole("button", { name: "Update branch", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      "Network unavailable",
+    ),
+  );
+  await page.clock.runFor(100_100);
+  await expect(merge.getByRole("alert")).toContainText(
+    "GitHub has not confirmed the branch update yet",
+  );
+  await expect(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      null,
+    ),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(
+    merge.getByRole("button", { name: "Update branch", exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_update_pull_request_branch",
+      ),
+    ),
+  ).toHaveLength(1);
 });
 
 test("session PR section discovers off-screen sessions with shared bounded lookups", async ({

@@ -82,10 +82,7 @@ fn merge_request(
     timeout: Duration,
 ) -> Result<(), GitHubError> {
     let parsed = pull_request_url(url)?;
-    if !matches!(head_oid.len(), 40 | 64) || !head_oid.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(GitHubError::InvalidHead);
-    }
+    validate_head(head_oid)?;
     let segments: Vec<_> = parsed
         .path_segments()
         .ok_or(GitHubError::InvalidUrl)?
@@ -118,6 +115,62 @@ fn merge_request(
     let response: GitHubMergeResult = serde_json::from_slice(&output.stdout)?;
     if !response.merged {
         return Err(GitHubError::Command(response.message));
+    }
+    Ok(())
+}
+
+pub fn update_pull_request_branch(
+    project_path: impl AsRef<Path>,
+    url: &str,
+    head_oid: &str,
+) -> Result<(), GitHubError> {
+    update_branch_request(
+        &gh_executable(),
+        project_path,
+        url,
+        head_oid,
+        Duration::from_secs(30),
+    )
+}
+
+fn update_branch_request(
+    executable: &Path,
+    project_path: impl AsRef<Path>,
+    url: &str,
+    head_oid: &str,
+    timeout: Duration,
+) -> Result<(), GitHubError> {
+    let parsed = pull_request_url(url)?;
+    validate_head(head_oid)?;
+    let segments: Vec<_> = parsed
+        .path_segments()
+        .ok_or(GitHubError::InvalidUrl)?
+        .collect();
+    let project = Project::open(project_path)?;
+    let mut command = github_command(executable, project.path());
+    command.args([
+        "api",
+        "--hostname",
+        parsed.host_str().ok_or(GitHubError::InvalidUrl)?,
+        "--method",
+        "PUT",
+        &format!(
+            "repos/{}/{}/pulls/{}/update-branch",
+            segments[0], segments[1], segments[3]
+        ),
+        "-f",
+        &format!("expected_head_sha={head_oid}"),
+    ]);
+    // GitHub merges the latest base into the remote PR branch asynchronously.
+    // A successful request is only acceptance; the UI waits for a new head.
+    checked_output(command, timeout)?;
+    Ok(())
+}
+
+fn validate_head(head_oid: &str) -> Result<(), GitHubError> {
+    if !matches!(head_oid.len(), 40 | 64) || !head_oid.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(GitHubError::InvalidHead);
     }
     Ok(())
 }
@@ -646,5 +699,85 @@ printf '%s' '{"merged":true,"message":"Pull Request successfully merged"}'
             ),
             Err(GitHubError::Response(_))
         ));
+    }
+
+    #[test]
+    fn branch_update_targets_the_canonical_repository_and_displayed_head() {
+        let fixture = Fixture::new(
+            r#"
+printf '%s\n' "$@" > arguments
+pwd > directory
+printf '%s' "$GH_PROMPT_DISABLED" > no-prompts
+printf '%s' '{"message":"Updating pull request branch.","url":"https://git.example.com/upstream/repo/pull/43"}'
+"#,
+        );
+        let sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+        update_branch_request(
+            &fixture.0.join("gh"),
+            &fixture.0,
+            "https://git.example.com/upstream/repo/pull/43",
+            sha,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), format!("api\n--hostname\ngit.example.com\n--method\nPUT\nrepos/upstream/repo/pulls/43/update-branch\n-f\nexpected_head_sha={sha}\n"));
+        assert_eq!(
+            fs::read_to_string(fixture.0.join("directory"))
+                .unwrap()
+                .trim(),
+            fixture.0.to_str().unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.0.join("no-prompts")).unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn branch_update_rejects_invalid_targets_and_heads_before_execution() {
+        let fixture = Fixture::new("exit 99");
+        let executable = fixture.0.join("missing");
+        assert!(matches!(
+            update_branch_request(
+                &executable,
+                &fixture.0,
+                "--help",
+                &"a".repeat(40),
+                Duration::from_secs(1)
+            ),
+            Err(GitHubError::InvalidUrl)
+        ));
+        for sha in ["", "HEAD", "--help", "$(touch unexpected)", &"z".repeat(40)] {
+            assert!(matches!(
+                update_branch_request(
+                    &executable,
+                    &fixture.0,
+                    "https://github.com/owner/repo/pull/43",
+                    sha,
+                    Duration::from_secs(1)
+                ),
+                Err(GitHubError::InvalidHead)
+            ));
+        }
+        assert!(!fixture.0.join("unexpected").exists());
+    }
+
+    #[test]
+    fn branch_update_preserves_permission_conflict_and_stale_head_errors() {
+        for message in [
+            "Write access required (HTTP 403)",
+            "Merge conflict (HTTP 422)",
+            "Head branch was modified (HTTP 422)",
+        ] {
+            let fixture = Fixture::new(&format!("printf '%s' '{message}' >&2\nexit 1"));
+            let result = update_branch_request(
+                &fixture.0.join("gh"),
+                &fixture.0,
+                "https://github.com/owner/repo/pull/43",
+                &"a".repeat(40),
+                Duration::from_secs(2),
+            );
+            assert!(matches!(result, Err(GitHubError::Command(error)) if error == message));
+        }
     }
 }

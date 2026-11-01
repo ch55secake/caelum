@@ -44,6 +44,8 @@ Removal checks active provider sessions and pending requests, then uses `git wor
 
 `PullRequestMerge` presents GitHub's mergeability state and a split merge button, using the shared `ChoicePicker` for merge/squash/rebase options. The typed `github_merge_pull_request` command uses authenticated `gh api` against the canonical PR host/repository and pins the merge to the displayed head commit. GitHub enforces permissions, enabled merge methods, and repository rules; only a confirmed API merge counts as success. Merge progress and errors live in the URL-keyed detail cache, so navigation preserves in-flight actions and duplicate submissions are suppressed. Successful merges update the detail snapshot and remove matching discovery entries, including delayed branch lookups; failures retain the PR and reload its latest metadata for retry.
 
+`github_update_pull_request_branch` requests a remote base-into-head merge through the canonical PR repository's `update-branch` API, pinned with `expected_head_sha`. Branch-update progress and errors share the detail cache with merges, preventing concurrent mutations across navigation. The API accepts updates asynchronously, so the active screen refreshes every five seconds until the head changes or the PR closes. An unconfirmed update stops waiting after 90 seconds and exposes a refresh/retry message; a failed refresh retains the previous details.
+
 ## Security boundaries
 
 - Only Rust performs project path validation and future privileged operations.

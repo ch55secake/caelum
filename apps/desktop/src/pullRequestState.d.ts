@@ -50,3 +50,4 @@ export function mergeStatus(pr: PullRequestDetails): {
   enabled: boolean;
   text: string;
 };
+export function canUpdateBranch(pr: PullRequestDetails): boolean;
