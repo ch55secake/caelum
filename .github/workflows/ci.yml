@@ -66,7 +66,16 @@ jobs:
             build-essential curl file libayatana-appindicator3-dev libssl-dev \
             librsvg2-dev libwebkit2gtk-4.1-dev libxdo-dev wget
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
+      - run: /usr/bin/time -p cargo test --workspace
+      - name: Install Blaze for comparison
+        run: curl -fsSL https://ix.dev/blaze | sh -s -- --version 0.20261030.1 --no-toolchain
+      - name: Compare workspace test runtime with Blaze
+        continue-on-error: true
+        env:
+          BLAZE_HOME: ${{ runner.temp }}/blaze-home
+          BLAZE_TESTS: all
+          CARGO_TARGET_DIR: ${{ runner.temp }}/blaze-target
+        run: /usr/bin/time -p blaze test --workspace
 
   macos-app:
     name: desktop-bundle-build
