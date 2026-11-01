@@ -166,6 +166,7 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .session-pr-title, .session-pr-context { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-pr-title { font-size: 12px; }.session-pr-context { color: var(--muted); font-size: 10px; }
 .session-pr-section .empty-sessions { font-size: 11px; }
+.session-pr-error { display: flex; align-items: center; gap: 8px; padding: 8px; color: var(--muted); font-size: 11px; line-height: 1.5; }.session-pr-error span { flex: 1; min-width: 0; }.session-pr-error button { flex-shrink: 0; padding: 4px 6px; font-size: 11px; }
 .session-row { position: relative; flex: 0 0 auto; border-radius: 5px; }
 .session-row.selected { color: var(--text); background: var(--accent-soft); }
 .session-item { display: flex; width: 100%; min-width: 0; min-height: 50px; flex-direction: column; gap: 5px; padding: 8px; border: 0; background: transparent; text-align: left; color: var(--muted); font-size: 12px; }

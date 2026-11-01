@@ -2,7 +2,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import { GitPullRequest, GitPullRequestDraft } from "lucide-react";
 import { copyAction, useContextMenu } from "./ContextMenu.js";
 import { usePullRequestPreview } from "./PullRequestPreview.js";
-import { useBranchPullRequests } from "./useBranchPullRequests.js";
+import {
+  refreshBranchPullRequests,
+  useBranchPullRequests,
+} from "./useBranchPullRequests.js";
 import type { PullRequest } from "./pullRequestState.js";
 import type { ProviderKind, SessionSummary } from "./workspaceState.js";
 import type { WorkspaceController } from "./Sidebar.js";
@@ -62,6 +65,7 @@ export function SessionPullRequests({
   const loading =
     loadingDetails ||
     branches.some((branch) => !requests[branch] || requests[branch].loading);
+  const error = branches.map((branch) => requests[branch]?.error).find(Boolean);
   return (
     <section className="session-pr-section" aria-label="Pull requests">
       <div className="section-heading">
@@ -71,19 +75,35 @@ export function SessionPullRequests({
         )}
       </div>
       <div className="session-pr-list">
-        {entries.size ? (
-          [...entries.values()].map((entry) => (
-            <SessionPullRequest
-              key={`${path}\0${entry.pr.url}`}
-              projectPath={path}
-              {...entry}
-            />
-          ))
-        ) : (
-          <div className="empty-sessions">
-            {loading
-              ? "Finding pull requests…"
-              : "No pull requests for open sessions"}
+        {entries.size
+          ? [...entries.values()].map((entry) => (
+              <SessionPullRequest
+                key={`${path}\0${entry.pr.url}`}
+                projectPath={path}
+                {...entry}
+              />
+            ))
+          : !error && (
+              <div className="empty-sessions">
+                {loading
+                  ? "Finding pull requests…"
+                  : "No pull requests for open sessions"}
+              </div>
+            )}
+        {error && (
+          <div className="session-pr-error" role="status" title={error}>
+            <span>
+              {entries.size
+                ? "Could not refresh all PRs. Showing last known results."
+                : "Could not load pull requests."}
+            </span>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => refreshBranchPullRequests(path)}
+            >
+              {loading ? "Retrying…" : "Retry"}
+            </button>
           </div>
         )}
       </div>

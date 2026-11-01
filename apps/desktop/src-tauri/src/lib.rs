@@ -13,6 +13,7 @@ use caelum_core::{
     processes::ProcessRegistry,
     projects::Project,
     questions::{Answer, QuestionBroker},
+    session_branches::SessionBranches,
     worktrees::WorktreeClient,
 };
 use caelum_protocol::{
@@ -486,20 +487,25 @@ async fn forget_project_session(
 async fn session_details(
     codex: State<'_, CodexProvider>,
     opencode: State<'_, OpenCodeProvider>,
+    branches: State<'_, SessionBranches>,
     project_path: String,
     provider: String,
     session_id: String,
 ) -> Result<SessionDetails, String> {
     let codex = codex.inner().clone();
     let opencode = opencode.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
-        "codex" => codex
-            .session_details(project_path, &session_id)
-            .map_err(|error| error.to_string()),
-        "opencode" => opencode
-            .session_details(project_path, &session_id)
-            .map_err(|error| error.to_string()),
-        _ => Err("Unknown provider".into()),
+    let branches = branches.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let details = match provider.as_str() {
+            "codex" => codex
+                .session_details(&project_path, &session_id)
+                .map_err(|error| error.to_string()),
+            "opencode" => opencode
+                .session_details(&project_path, &session_id)
+                .map_err(|error| error.to_string()),
+            _ => Err("Unknown provider".into()),
+        }?;
+        Ok(branches.details(&project_path, &provider, &session_id, details))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -903,6 +909,9 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir();
             app.manage(WorktreeClient::new(app.path().home_dir()?));
             app.manage(PersistenceState::open(app_data_dir));
+            app.manage(SessionBranches::new(
+                app.state::<PersistenceState>().database().ok(),
+            ));
             let startup_project = std::env::args_os()
                 .skip(1)
                 .map(PathBuf::from)
@@ -947,9 +956,11 @@ pub fn run() {
             });
 
             let codex_updates = app.state::<CodexProvider>().subscribe();
+            let branches = app.state::<SessionBranches>().inner().clone();
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(event) = codex_updates.recv() {
+                    branches.codex_event(&event);
                     if handle.emit("codex-event", event).is_err() {
                         break;
                     }
@@ -957,9 +968,11 @@ pub fn run() {
             });
 
             let opencode_updates = app.state::<OpenCodeProvider>().subscribe();
+            let branches = app.state::<SessionBranches>().inner().clone();
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(event) = opencode_updates.recv() {
+                    branches.opencode_event(&event);
                     if handle.emit("opencode-event", event).is_err() {
                         break;
                     }

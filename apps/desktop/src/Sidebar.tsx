@@ -260,9 +260,7 @@ export function Sidebar({
           title="Refresh sessions"
           aria-label="Refresh sessions"
           disabled={!app.project || app.providerWorkspace?.isLoadingSessions}
-          onClick={() => {
-            if (app.project) void app.loadSessions(app.project, app.provider);
-          }}
+          onClick={() => void app.refreshSessions()}
         >
           <RefreshCw
             size={13}

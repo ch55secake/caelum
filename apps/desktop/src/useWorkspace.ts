@@ -6,6 +6,7 @@ import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
 import type { GitWorktree, GitWorktrees } from "./worktreeState.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
 import { contextUsageSince, openCodeHistoryUsage } from "./contextUsage.js";
+import { refreshBranchPullRequests } from "./useBranchPullRequests.js";
 import {
   questionKey,
   questionDraft,
@@ -202,6 +203,7 @@ export function useWorkspace(settings: AppSettings) {
   const locks = useRef(new Set<string>());
   const historyRefreshes = useRef(new Set<string>());
   const detailsRefreshes = useRef(new Set<string>());
+  const detailsLoads = useRef(new Map<string, Promise<void>>());
   const detailsChecked = useRef(new Map<string, number>());
   // Archive/Undo invalidates snapshots already in flight, including snapshots
   // for the same session ID after it has been restored.
@@ -689,14 +691,13 @@ export function useWorkspace(settings: AppSettings) {
           )
             void loadHistory(event.projectPath, "codex", event.params.threadId);
           if (
-            event.method === "turn/completed" &&
+            ["turn/started", "turn/completed"].includes(event.method) &&
             typeof event.params.threadId === "string"
           )
-            void loadSessionDetails(
+            void refreshSessionPullRequest(
               event.projectPath,
               "codex",
               event.params.threadId,
-              true,
             );
         },
       ),
@@ -720,22 +721,23 @@ export function useWorkspace(settings: AppSettings) {
             );
           if (
             [
+              "session.execution.started",
               "session.execution.succeeded",
               "session.execution.failed",
               "session.execution.interrupted",
             ].includes(event.eventType) &&
             typeof event.data.sessionID === "string"
           ) {
-            void loadHistory(
+            if (event.eventType !== "session.execution.started")
+              void loadHistory(
+                event.projectPath,
+                "opencode",
+                event.data.sessionID,
+              );
+            void refreshSessionPullRequest(
               event.projectPath,
               "opencode",
               event.data.sessionID,
-            );
-            void loadSessionDetails(
-              event.projectPath,
-              "opencode",
-              event.data.sessionID,
-              true,
             );
           }
         },
@@ -1155,11 +1157,16 @@ export function useWorkspace(settings: AppSettings) {
           (item) => item.id,
         ),
       });
-      for (const { id } of state.current[target.path].providers[kind].sessions)
-        if (
-          detailsChecked.current.has(`details:${keyFor(target.path, kind, id)}`)
-        )
-          void loadSessionDetails(target.path, kind, id, true);
+      await Promise.all(
+        state.current[target.path].providers[kind].sessions
+          .filter(({ id }) => {
+            const key = `details:${keyFor(target.path, kind, id)}`;
+            return (
+              detailsChecked.current.has(key) || detailsLoads.current.has(key)
+            );
+          })
+          .map(({ id }) => loadSessionDetails(target.path, kind, id, true)),
+      );
     } catch (reason) {
       if (revision(scope) === version)
         mutateProvider(target.path, kind, (value) => ({
@@ -1175,12 +1182,39 @@ export function useWorkspace(settings: AppSettings) {
       if (revision(scope) !== version) void loadSessions(target, kind);
     }
   }
+  async function refreshSessions() {
+    if (!project) return;
+    const path = project.path;
+    // Invalidate discovery at the click, before slower provider metadata reads.
+    refreshBranchPullRequests(path);
+    await Promise.all(
+      (["codex", "opencode"] as const)
+        .filter(
+          (kind) =>
+            kind === provider ||
+            state.current[path]?.providers[kind].sessionsLoaded,
+        )
+        .map((kind) => loadSessions(project, kind)),
+    );
+  }
+
+  async function refreshSessionPullRequest(
+    path: string,
+    kind: ProviderKind,
+    id: string,
+  ) {
+    await loadSessionDetails(path, kind, id, true);
+    const branch =
+      state.current[path]?.providers[kind].sessionDetails[id]?.branch;
+    if (branch) refreshBranchPullRequests(path, [branch]);
+  }
+
   async function loadSessionDetails(
     path: string,
     kind: ProviderKind,
     id: string,
     force = false,
-  ) {
+  ): Promise<void> {
     if (
       !isTauri() ||
       unavailable(path, kind, id) ||
@@ -1191,34 +1225,45 @@ export function useWorkspace(settings: AppSettings) {
       return;
     const scope = keyFor(path, kind, id);
     const key = `details:${scope}`;
-    if (locks.current.has(key)) {
+    const pending = detailsLoads.current.get(key);
+    if (pending) {
       if (force) detailsRefreshes.current.add(key);
-      return;
+      return pending;
     }
     if (!force && Date.now() - (detailsChecked.current.get(key) ?? 0) < 15_000)
       return;
     const version = revision(scope);
-    locks.current.add(key);
-    try {
-      const details = await invoke<SessionDetails>("session_details", {
-        projectPath: path,
-        provider: kind,
-        sessionId: id,
-      });
-      if (revision(scope) !== version || unavailable(path, kind, id)) return;
-      mutateProvider(path, kind, (value) => ({
-        ...value,
-        sessionDetails: { ...value.sessionDetails, [id]: details },
-      }));
-    } catch {
-      // Optional sidebar context must not block opening a session.
-    } finally {
-      locks.current.delete(key);
-      if (revision(scope) === version)
-        detailsChecked.current.set(key, Date.now());
-      if (detailsRefreshes.current.delete(key) || revision(scope) !== version)
-        void loadSessionDetails(path, kind, id, true);
-    }
+    const request = (async () => {
+      try {
+        const details = await invoke<SessionDetails>("session_details", {
+          projectPath: path,
+          provider: kind,
+          sessionId: id,
+        });
+        if (
+          revision(scope) !== version ||
+          unavailable(path, kind, id) ||
+          detailsRefreshes.current.has(key)
+        )
+          return;
+        mutateProvider(path, kind, (value) => ({
+          ...value,
+          sessionDetails: { ...value.sessionDetails, [id]: details },
+        }));
+      } catch {
+        // Optional sidebar context must not block opening a session.
+      } finally {
+        detailsLoads.current.delete(key);
+        if (revision(scope) === version)
+          detailsChecked.current.set(key, Date.now());
+        // All callers wait for the queued fresh read, including execution events
+        // that need its branch before invalidating cached PR discovery.
+        if (detailsRefreshes.current.delete(key) || revision(scope) !== version)
+          await loadSessionDetails(path, kind, id, true);
+      }
+    })();
+    detailsLoads.current.set(key, request);
+    return request;
   }
   async function archiveSession(thread: SessionSummary, kind: ProviderKind) {
     if (!project || unavailable(project.path, kind, thread.id)) return;
@@ -2118,6 +2163,7 @@ export function useWorkspace(settings: AppSettings) {
     newSession,
     selectSession,
     loadSessions,
+    refreshSessions,
     loadSessionDetails,
     loadHistory,
     connectSession,

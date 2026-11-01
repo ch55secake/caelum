@@ -488,19 +488,6 @@ impl OpenCodeProvider {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
         self.session(&server, &project, session_id)?;
-        let query = [(
-            "location[directory]",
-            project.path().to_string_lossy().into_owned(),
-        )];
-        let branch = server
-            .request_json(Method::GET, "/api/vcs", &query, None)
-            .ok()
-            .and_then(|response| {
-                response
-                    .pointer("/data/branch/current")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            });
         let changes = server
             .request_json(
                 Method::GET,
@@ -518,8 +505,10 @@ impl OpenCodeProvider {
                 Some(total)
             });
         Ok(SessionDetails {
-            branch,
-            branch_is_current: true,
+            // VCS metadata belongs to the directory, not this session. The
+            // desktop supplies the branch recorded during session execution.
+            branch: None,
+            branch_is_current: false,
             changes,
         })
     }
@@ -2607,8 +2596,8 @@ server.serve_forever()
         assert_eq!(reply["decision"], "once");
 
         let details = provider.session_details(&project_path, "ses_fake").unwrap();
-        assert_eq!(details.branch.as_deref(), Some("feature/current"));
-        assert!(details.branch_is_current);
+        assert_eq!(details.branch, None);
+        assert!(!details.branch_is_current);
         assert_eq!(
             details.changes,
             Some(LineChanges {

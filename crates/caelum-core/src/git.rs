@@ -28,6 +28,12 @@ pub struct GitClient {
     executable: OsString,
 }
 
+/// The checkout identity and its current branch, without reading file changes.
+pub struct GitBranchContext {
+    pub root: PathBuf,
+    pub branch: Option<String>,
+}
+
 impl Default for GitClient {
     fn default() -> Self {
         Self::new()
@@ -72,6 +78,23 @@ impl GitClient {
             branch: (!branch.is_empty()).then_some(branch),
             changes: self.project_status_changes(&project, &repository_root)?,
         })
+    }
+
+    pub fn branch_context(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<Option<GitBranchContext>, GitError> {
+        let project = Project::open(project_path)?;
+        let Some(root) = self.repository_root(&project)? else {
+            return Ok(None);
+        };
+        let output = self.run(&project, &["branch", "--show-current"])?;
+        self.require_success(&output, "read current branch")?;
+        let branch = output_text(&output.stdout).trim().to_owned();
+        Ok(Some(GitBranchContext {
+            root,
+            branch: (!branch.is_empty()).then_some(branch),
+        }))
     }
 
     pub fn file_diff(

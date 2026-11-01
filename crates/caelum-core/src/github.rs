@@ -210,11 +210,14 @@ fn query_pull_request(
     }
     let mut command = github_command(executable, project.path());
     command
-        .args(["pr", "list", "--state=open", "--limit=1"])
+        .args(["pr", "list", "--state=open", "--limit=2"])
         .arg(format!("--head={branch}"))
         .args(["--json", "number,title,url,isDraft"]);
     let output = checked_output(command, timeout)?;
     let requests: Vec<GitHubPullRequest> = serde_json::from_slice(&output.stdout)?;
+    if requests.len() > 1 {
+        return Err(GitHubError::Command(format!("Multiple open pull requests match branch '{branch}'; the session association is ambiguous")));
+    }
     Ok(requests.into_iter().next())
 }
 
@@ -397,7 +400,7 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
         let pr = fixture.query("feat/$(touch unexpected)").unwrap().unwrap();
         assert_eq!(pr.number, 40);
         assert!(pr.is_draft);
-        assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), "pr\nlist\n--state=open\n--limit=1\n--head=feat/$(touch unexpected)\n--json\nnumber,title,url,isDraft\n");
+        assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), "pr\nlist\n--state=open\n--limit=2\n--head=feat/$(touch unexpected)\n--json\nnumber,title,url,isDraft\n");
         assert_eq!(
             fs::read_to_string(fixture.0.join("directory"))
                 .unwrap()
@@ -435,6 +438,16 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
             ),
             Err(GitHubError::Io(_))
         ));
+    }
+
+    #[test]
+    fn ambiguous_branch_matches_are_not_silently_assigned_to_a_session() {
+        let fixture = Fixture::new(
+            r#"printf '%s' '[{"number":1,"title":"One","url":"https://github.com/example/repo/pull/1","isDraft":false},{"number":2,"title":"Two","url":"https://github.com/example/repo/pull/2","isDraft":false}]'"#,
+        );
+        assert!(
+            matches!(fixture.query("feature/shared"), Err(GitHubError::Command(message)) if message.contains("ambiguous"))
+        );
     }
 
     #[test]

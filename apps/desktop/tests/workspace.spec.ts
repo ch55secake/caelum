@@ -599,7 +599,7 @@ async function desktop(
                           : args.sessionId === "thread-a"
                             ? "feat/session-ui-redesign"
                             : "fix/provider-adapters",
-                    branchIsCurrent: args.provider === "opencode",
+                    branchIsCurrent: false,
                     changes: {
                       additions: args.sessionId === "thread-a" ? 42 : 7,
                       deletions: 3,
@@ -3706,7 +3706,7 @@ for (const provider of ["codex", "opencode"]) {
       "title",
       provider === "codex"
         ? "Session branch: feat/session-ui-redesign"
-        : "Current working-directory branch: main",
+        : "Session branch: main",
     );
     await expect(row.locator(".session-lines")).toHaveAttribute(
       "title",
@@ -3881,7 +3881,7 @@ test("late listings, history and metadata cannot overwrite an archived and resto
     fixture.setOpenWorking(false);
     fixture.setSessionDetails("opencode", "ses-a", {
       branch: "fresh-branch",
-      branchIsCurrent: true,
+      branchIsCurrent: false,
       changes: { additions: 19, deletions: 4 },
     });
   });
@@ -6611,7 +6611,7 @@ test("session PR previews share details across linked worktrees without selectin
     ).args.threadId;
     fixture.setSessionDetails("codex", id, {
       branch: "feature/navigation",
-      branchIsCurrent: true,
+      branchIsCurrent: false,
       changes: null,
     });
   });
@@ -7841,7 +7841,7 @@ test("session PR section ignores delayed results from a different project", asyn
   await expect(section).not.toContainText("Other project changes");
 });
 
-test("session PR indicators share lookups, distinguish drafts and clear closed or unavailable PRs", async ({
+test("session PR indicators share lookups, distinguish drafts and preserve matches through unavailable lookups", async ({
   page,
 }) => {
   await page.clock.install();
@@ -7942,7 +7942,19 @@ test("session PR indicators share lookups, distinguish drafts and clear closed o
     ),
   );
   await page.clock.runFor(60_100);
-  await expect(session.locator(".branch-pr")).toBeEmpty();
+  await expect(
+    session.getByRole("button", {
+      name: "Open pull request #40: Ready for review",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(section.getByRole("status")).toContainText(
+    "Showing last known results",
+  );
   await expect(project.locator(".project-changes")).toHaveText("2 changed");
   await expect(
     page.getByRole("alert").filter({ hasText: "GitHub CLI unavailable" }),
@@ -7950,7 +7962,8 @@ test("session PR indicators share lookups, distinguish drafts and clear closed o
   await page.evaluate(() =>
     (window as any).fixture.setCommandError("github_open_pull_request", null),
   );
-  await page.clock.runFor(60_100);
+  await section.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(section.getByRole("status")).toHaveCount(0);
   await expect(
     session.getByRole("button", {
       name: "Open pull request #40: Ready for review",
@@ -7958,6 +7971,326 @@ test("session PR indicators share lookups, distinguish drafts and clear closed o
     }),
   ).toBeVisible();
 });
+
+test("session PR refresh bypasses cached misses for both providers and preserves results during outages", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.setPullRequest("main", {
+      ...pr,
+      number: 45,
+      url: pr.url.replace("44", "45"),
+      title: "OpenCode changes",
+    });
+  }, previewPullRequest);
+  const refresh = page.getByRole("button", {
+    name: "Refresh sessions",
+    exact: true,
+  });
+  await refresh.click();
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(section.locator(".session-pr-item")).toHaveCount(2);
+  const codex = sessionRow(page, "Refine the session workspace").getByRole(
+    "button",
+    { name: /pull request #44/ },
+  );
+  const opencode = sessionRow(page, "OpenCode session").getByRole("button", {
+    name: /pull request #45/,
+  });
+  await expect(codex).toBeVisible();
+  await expect(opencode).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_open_pull_request", "Network unavailable");
+    fixture.hold("github_open_pull_request");
+  });
+  await refresh.click();
+  await expect(codex).toBeVisible();
+  await expect(opencode).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_open_pull_request"),
+  );
+  await expect(section.getByRole("status")).toContainText(
+    "Showing last known results",
+  );
+  await expect(section).not.toContainText("No pull requests for open sessions");
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await page.clock.runFor(60_100);
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(codex).toBeVisible();
+  await expect(opencode).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_open_pull_request", null);
+    fixture.setPullRequest("feat/session-ui-redesign", null);
+  });
+  await page.clock.runFor(15_100);
+  await expect(section.getByRole("status")).toHaveCount(0);
+  await expect(codex).toHaveCount(0);
+  await expect(opencode).toBeVisible();
+  await expect(section.locator(".session-pr-item")).toHaveCount(1);
+});
+
+test("session PR explicit refresh discards older in-flight discovery and picks up changed branch metadata", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.hold(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) =>
+              call.command === "github_open_pull_request" &&
+              call.args.branch === "feat/session-ui-redesign",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequest("feat/session-ui-redesign", {
+      ...pr,
+      number: 45,
+      url: pr.url.replace("44", "45"),
+      title: "Fresh pull request",
+    });
+    (window as any).fixture.hold("session_details");
+  }, previewPullRequest);
+  const refresh = page.getByRole("button", {
+    name: "Refresh sessions",
+    exact: true,
+  });
+  await refresh.click();
+  await expect(refresh).toBeDisabled();
+  await page.evaluate(() => {
+    const command =
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign";
+    (window as any).fixture.release(command);
+    (window as any).fixture.hold(command);
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) =>
+              call.command === "github_open_pull_request" &&
+              call.args.branch === "feat/session-ui-redesign",
+          ).length,
+      ),
+    )
+    .toBe(3);
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(
+    section.getByRole("button", { name: /View pull request #44/ }),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).fixture.release(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
+    (window as any).fixture.release("session_details");
+  });
+  await expect(
+    section.getByRole("button", { name: /View pull request #45/ }),
+  ).toBeVisible();
+  await expect(refresh).toBeEnabled();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setSessionDetails("codex", "thread-a", {
+      branch: "feature/new",
+      branchIsCurrent: false,
+      changes: null,
+    });
+    fixture.setPullRequest("feature/new", {
+      ...pr,
+      number: 46,
+      url: pr.url.replace("44", "46"),
+      title: "New branch",
+    });
+  }, previewPullRequest);
+  await refresh.click();
+  await expect(
+    section.getByRole("button", { name: /View pull request #46/ }),
+  ).toBeVisible();
+  await expect(
+    section.getByRole("button", { name: /View pull request #45/ }),
+  ).toHaveCount(0);
+});
+
+for (const provider of ["codex", "opencode"] as const) {
+  test(`${provider} session PR discovery refreshes immediately when execution finishes`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await desktop(page);
+    if (provider === "opencode") {
+      await page.getByRole("button", { name: /^New session/ }).click();
+      await choose(page, "Provider", "OpenCode");
+      await page
+        .getByRole("button", { name: "OpenCode session", exact: true })
+        .click();
+    }
+    const branch = provider === "codex" ? "feat/session-ui-redesign" : "main";
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (branch) =>
+            (window as any).fixture.calls.some(
+              (call: any) =>
+                call.command === "github_open_pull_request" &&
+                call.args.branch === branch,
+            ),
+          branch,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(
+      ({ pr, branch }) => (window as any).fixture.setPullRequest(branch, pr),
+      { pr: previewPullRequest, branch },
+    );
+    if (provider === "codex")
+      await emit(page, "turn/completed", {
+        threadId: "thread-a",
+        turn: { id: "turn-1", status: "completed" },
+      });
+    else
+      await emit(
+        page,
+        "session.execution.succeeded",
+        { sessionID: "ses-a" },
+        "opencode",
+      );
+    await expect(
+      page
+        .getByRole("region", { name: "Pull requests", exact: true })
+        .getByRole("button", { name: /View pull request #44/ }),
+    ).toBeVisible();
+  });
+
+  test(`${provider} session PR discovery waits for fresh metadata when execution overlaps a read`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await desktop(page, null);
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    const id = provider === "codex" ? "thread-a" : "ses-a";
+    const row = sessionRow(
+      page,
+      provider === "codex"
+        ? "Refine the session workspace"
+        : "OpenCode session",
+    );
+    await expect(row.locator(".session-branch")).toHaveText(
+      provider === "codex" ? "feat/session-ui-redesign" : "main",
+    );
+    const branch = "fix/provider-adapters";
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (branch) =>
+            (window as any).fixture.calls.some(
+              (call: any) =>
+                call.command === "github_open_pull_request" &&
+                call.args.branch === branch,
+            ),
+          branch,
+        ),
+      )
+      .toBe(true);
+    const reads = await page.evaluate(
+      ({ provider, id }) =>
+        (window as any).fixture.calls.filter(
+          (call: any) =>
+            call.command === "session_details" &&
+            call.args.provider === provider &&
+            call.args.sessionId === id,
+        ).length,
+      { provider, id },
+    );
+    await page.evaluate(() => (window as any).fixture.hold("session_details"));
+    if (provider === "codex")
+      await emit(page, "turn/started", {
+        threadId: id,
+        turn: { id: "turn-1" },
+      });
+    else
+      await emit(
+        page,
+        "session.execution.started",
+        { sessionID: id },
+        "opencode",
+      );
+    await expect
+      .poll(() =>
+        page.evaluate(
+          ({ provider, id }) =>
+            (window as any).fixture.calls.filter(
+              (call: any) =>
+                call.command === "session_details" &&
+                call.args.provider === provider &&
+                call.args.sessionId === id,
+            ).length,
+          { provider, id },
+        ),
+      )
+      .toBe(reads + 1);
+    await page.evaluate(
+      ({ provider, id, branch, pr }) => {
+        (window as any).fixture.setSessionDetails(provider, id, {
+          branch,
+          branchIsCurrent: false,
+          changes: null,
+        });
+        (window as any).fixture.setPullRequest(branch, pr);
+      },
+      { provider, id, branch, pr: previewPullRequest },
+    );
+    if (provider === "codex")
+      await emit(page, "turn/completed", {
+        threadId: id,
+        turn: { id: "turn-1", status: "completed" },
+      });
+    else
+      await emit(
+        page,
+        "session.execution.succeeded",
+        { sessionID: id },
+        "opencode",
+      );
+    await page.evaluate(() =>
+      (window as any).fixture.release("session_details"),
+    );
+    await expect(row.locator(".session-branch")).toHaveText(branch);
+    await expect(
+      row.getByRole("button", { name: /pull request #44/ }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "Pull requests", exact: true })
+        .getByRole("button", { name: /View pull request #44/ }),
+    ).toContainText("2 sessions");
+  });
+}
 
 test("session PR indicators stay scoped through branch and project changes and delayed responses", async ({
   page,
