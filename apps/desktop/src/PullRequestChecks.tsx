@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Check,
   CircleHelp,
@@ -9,6 +10,7 @@ import {
 import {
   checkStatus,
   checkSummary,
+  checkTiming,
   type StatusCheck,
 } from "./pullRequestState.js";
 
@@ -45,6 +47,22 @@ export function PullRequestChecks({
   checks: StatusCheck[] | null;
   open: (url: string) => void;
 }) {
+  const [now, setNow] = useState(Date.now);
+  const timings = (checks ?? []).map((check) => checkTiming(check, now));
+  const running = timings.some((timing) => timing?.running);
+  useEffect(() => {
+    if (!running) return;
+    const tick = () => {
+      if (!document.hidden) setNow(Date.now());
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [running]);
   const summary = checkSummary(checks);
   return (
     <section className="pr-checks" aria-label="Pull request checks">
@@ -63,6 +81,7 @@ export function PullRequestChecks({
         <ul className="pr-check-list">
           {checks.map((check, index) => {
             const result = checkStatus(check);
+            const timing = timings[index];
             return (
               <li className="pr-check" key={index}>
                 <span className="pr-check-icon" data-tone={result.tone}>
@@ -87,6 +106,24 @@ export function PullRequestChecks({
                 <span className="pr-check-result" data-tone={result.tone}>
                   {result.text}
                 </span>
+                {timing ? (
+                  <time
+                    className="pr-check-duration"
+                    dateTime={`PT${timing.seconds}S`}
+                    title={`${timing.running ? "Elapsed time" : "Duration"}: ${timing.text}`}
+                    aria-label={`${timing.running ? "Elapsed time" : "Duration"}: ${timing.text}`}
+                  >
+                    {timing.text}
+                  </time>
+                ) : (
+                  <span
+                    className="pr-check-duration"
+                    title="Timing unavailable"
+                    aria-label="Timing unavailable"
+                  >
+                    —
+                  </span>
+                )}
               </li>
             );
           })}

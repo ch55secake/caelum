@@ -11,6 +11,8 @@ export type StatusCheck =
       status: string;
       conclusion: string | null;
       detailsUrl?: string | null;
+      startedAt?: string | null;
+      completedAt?: string | null;
     }
   | {
       __typename: "StatusContext";
@@ -46,6 +48,14 @@ export function checkSummary(checks: StatusCheck[] | null): {
   tone: string;
   text: string;
 };
+export function checkTiming(
+  check: StatusCheck,
+  now?: number,
+): {
+  seconds: number;
+  text: string;
+  running: boolean;
+} | null;
 export function mergeStatus(pr: PullRequestDetails): {
   enabled: boolean;
   text: string;

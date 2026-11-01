@@ -470,7 +470,7 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
             "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
             "reviewDecision": "APPROVED",
             "statusCheckRollup": [
-                { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/example/repo/actions/runs/1" },
+                { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/example/repo/actions/runs/1", "startedAt": "2026-11-01T12:00:00Z", "completedAt": "2026-11-01T12:02:14Z" },
                 { "__typename": "StatusContext", "context": "Deploy", "state": "PENDING", "targetUrl": "https://deploy.example.com/1" }
             ]
         }).to_string()
@@ -507,6 +507,14 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
         assert_eq!(
             serialized["statusCheckRollup"][1]["targetUrl"],
             "https://deploy.example.com/1"
+        );
+        assert_eq!(
+            serialized["statusCheckRollup"][0]["startedAt"],
+            "2026-11-01T12:00:00Z"
+        );
+        assert_eq!(
+            serialized["statusCheckRollup"][0]["completedAt"],
+            "2026-11-01T12:02:14Z"
         );
         assert_eq!(result.author.unwrap().login, "contributor");
         assert_eq!(result.status_check_rollup.unwrap().len(), 2);
@@ -558,6 +566,19 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
 
     #[test]
     fn details_preserve_missing_metadata_and_report_failures() {
+        let missing: caelum_protocol::GitHubStatusCheck =
+            serde_json::from_value(serde_json::json!({
+                "__typename": "CheckRun", "name": "Queued", "status": "QUEUED", "completedAt": null
+            }))
+            .unwrap();
+        assert!(matches!(
+            missing,
+            caelum_protocol::GitHubStatusCheck::CheckRun {
+                started_at: None,
+                completed_at: None,
+                ..
+            }
+        ));
         let url = "https://github.com/owner/repo/pull/43";
         let mut response: serde_json::Value = serde_json::from_str(&details_response(url)).unwrap();
         response["author"] = serde_json::Value::Null;

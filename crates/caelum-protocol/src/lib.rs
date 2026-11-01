@@ -110,6 +110,10 @@ pub enum GitHubStatusCheck {
         conclusion: Option<String>,
         #[serde(rename = "detailsUrl")]
         details_url: Option<String>,
+        #[serde(rename = "startedAt")]
+        started_at: Option<String>,
+        #[serde(rename = "completedAt")]
+        completed_at: Option<String>,
     },
     StatusContext {
         context: String,

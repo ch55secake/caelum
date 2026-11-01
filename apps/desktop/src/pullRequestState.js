@@ -80,6 +80,32 @@ export function checkStatus(check) {
   return { ...base, tone: "unknown", text: "Unknown" };
 }
 
+export function checkTiming(check, now = Date.now()) {
+  if (check.__typename !== "CheckRun") return null;
+  const running = check.status === "IN_PROGRESS";
+  if (!running && check.status !== "COMPLETED") return null;
+  const start = Date.parse(check.startedAt ?? "");
+  const end = running ? now : Date.parse(check.completedAt ?? "");
+  // gh represents absent timestamps as null or its zero date (year 0001).
+  if (
+    !Number.isFinite(start) ||
+    start <= 0 ||
+    !Number.isFinite(end) ||
+    end <= 0 ||
+    (!running && end < start)
+  )
+    return null;
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const text =
+    seconds < 60
+      ? `${seconds}s`
+      : seconds < 3600
+        ? `${minutes}m ${seconds % 60}s`
+        : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
+  return { seconds, text, running };
+}
+
 export function checkSummary(checks) {
   const values = (checks ?? []).map(checkStatus);
   if (!values.length) return { tone: "neutral", text: "No checks reported" };

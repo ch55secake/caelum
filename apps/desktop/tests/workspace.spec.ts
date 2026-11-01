@@ -6290,6 +6290,8 @@ const previewPullRequest = {
       name: "Tests",
       status: "COMPLETED",
       conclusion: "SUCCESS",
+      startedAt: "2026-11-01T12:00:00Z",
+      completedAt: "2026-11-01T12:02:14Z",
       detailsUrl: "https://github.com/example/caelum/actions/runs/123",
     },
     {
@@ -6885,6 +6887,8 @@ test("PR checks show live pending animations, passed ticks and linked results in
           name: "macOS build",
           status: "IN_PROGRESS",
           conclusion: null,
+          startedAt: new Date(Date.now() - 65_000).toISOString(),
+          completedAt: null,
         },
         {
           __typename: "CheckRun",
@@ -6897,6 +6901,8 @@ test("PR checks show live pending animations, passed ticks and linked results in
           name: "Lint",
           status: "COMPLETED",
           conclusion: "FAILURE",
+          startedAt: "2026-11-01T12:00:00Z",
+          completedAt: "2026-11-01T12:00:12Z",
           detailsUrl: "javascript:alert(1)",
         },
         {
@@ -7032,6 +7038,100 @@ test("PR checks show live pending animations, passed ticks and linked results in
       ),
     ),
   ).toHaveLength(0);
+});
+
+test("PR check timers tick locally, resume from server timestamps and stop on completion", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.clock.pauseAt(new Date("2030-01-01T12:00:00Z"));
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      statusCheckRollup: [
+        pr.statusCheckRollup[0],
+        {
+          __typename: "CheckRun",
+          name: "Build",
+          status: "IN_PROGRESS",
+          conclusion: null,
+          startedAt: "2030-01-01T11:58:55Z",
+          completedAt: "0001-01-01T00:00:00Z",
+        },
+        {
+          __typename: "CheckRun",
+          name: "Queued",
+          status: "QUEUED",
+          conclusion: null,
+          startedAt: "0001-01-01T00:00:00Z",
+          completedAt: null,
+        },
+        pr.statusCheckRollup[1],
+      ],
+    });
+  }, previewPullRequest);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const rows = screen
+    .getByRole("region", { name: "Pull request checks" })
+    .getByRole("listitem");
+  const completed = rows.filter({ hasText: "Tests" }).locator("time");
+  const running = rows.filter({ hasText: "Build" }).locator("time");
+  await expect(completed).toHaveText("2m 14s");
+  await expect(completed).toHaveAttribute("datetime", "PT134S");
+  await expect(running).toHaveText("1m 5s");
+  await expect(running).toHaveAttribute("aria-label", "Elapsed time: 1m 5s");
+  await expect(rows.filter({ hasText: "Queued" }).locator("time")).toHaveCount(
+    0,
+  );
+  await expect(
+    rows.filter({ hasText: "Preview deploy" }).locator("time"),
+  ).toHaveCount(0);
+  const detailCalls = () =>
+    page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "github_pull_request_details",
+        ).length,
+    );
+  const requests = await detailCalls();
+  await page.clock.runFor(3000);
+  await expect(running).toHaveText("1m 8s");
+  await expect(completed).toHaveText("2m 14s");
+  expect(await detailCalls()).toBe(requests);
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await page.clock.runFor(10_000);
+  await entry.click();
+  await expect(running).toHaveText("1m 18s");
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        statusCheckRollup: [
+          pr.statusCheckRollup[0],
+          {
+            __typename: "CheckRun",
+            name: "Build",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            startedAt: "2030-01-01T11:58:55Z",
+            completedAt: "2030-01-01T12:00:05Z",
+          },
+        ],
+      }),
+    previewPullRequest,
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(running).toHaveText("1m 10s");
+  await expect(running).toHaveAttribute("aria-label", "Duration: 1m 10s");
+  await page.clock.runFor(5000);
+  await expect(running).toHaveText("1m 10s");
 });
 
 test("PR merge is shared across navigation, pins the head and removes merged rows despite delayed discovery", async ({

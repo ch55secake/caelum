@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   checkSummary,
   checkStatus,
+  checkTiming,
   canUpdateBranch,
   mergeStatus,
   pullRequestState,
@@ -80,6 +81,85 @@ test("check rows distinguish running, queued and terminal states and only link w
       targetUrl: "https://deploy.example.com/1",
     }).url,
     "https://deploy.example.com/1",
+  );
+});
+
+test("check timing uses server timestamps, freezes completed durations and formats hours", () => {
+  const start = Date.parse("2026-11-01T12:00:00Z");
+  const run = {
+    __typename: "CheckRun",
+    status: "IN_PROGRESS",
+    startedAt: new Date(start).toISOString(),
+    completedAt: "0001-01-01T00:00:00Z",
+  };
+  assert.deepEqual(checkTiming(run, start + 134_999), {
+    seconds: 134,
+    text: "2m 14s",
+    running: true,
+  });
+  assert.deepEqual(checkTiming(run, start + 3_661_000), {
+    seconds: 3661,
+    text: "1h 1m 1s",
+    running: true,
+  });
+  assert.deepEqual(checkTiming(run, start - 1000), {
+    seconds: 0,
+    text: "0s",
+    running: true,
+  });
+  const done = {
+    ...run,
+    status: "COMPLETED",
+    completedAt: new Date(start + 12_500).toISOString(),
+  };
+  for (const conclusion of [
+    "SUCCESS",
+    "FAILURE",
+    "CANCELLED",
+    "TIMED_OUT",
+    "SKIPPED",
+  ])
+    assert.deepEqual(checkTiming({ ...done, conclusion }, start + 90_000), {
+      seconds: 12,
+      text: "12s",
+      running: false,
+    });
+  assert.equal(checkTiming({ ...done, completedAt: run.startedAt }).text, "0s");
+});
+
+test("check timing does not invent runtimes for queued checks, legacy statuses or missing timestamps", () => {
+  const run = {
+    __typename: "CheckRun",
+    status: "COMPLETED",
+    startedAt: "2026-11-01T12:00:00Z",
+    completedAt: "2026-11-01T12:02:00Z",
+  };
+  for (const change of [
+    { status: "QUEUED" },
+    { status: "WAITING" },
+    { status: "REQUESTED" },
+    { startedAt: undefined },
+    { startedAt: null },
+    { startedAt: "invalid" },
+    { startedAt: "0001-01-01T00:00:00Z" },
+    { completedAt: null },
+    { completedAt: "invalid" },
+    { completedAt: "0001-01-01T00:00:00Z" },
+    { completedAt: "2026-11-01T11:59:00Z" },
+  ])
+    assert.equal(
+      checkTiming({ ...run, ...change }),
+      null,
+      JSON.stringify(change),
+    );
+  assert.equal(
+    checkTiming({
+      __typename: "StatusContext",
+      state: "SUCCESS",
+      startedAt: run.startedAt,
+      completedAt: run.completedAt,
+    }),
+    null,
   );
 });
 
