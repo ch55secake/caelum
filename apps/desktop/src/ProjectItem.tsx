@@ -17,6 +17,8 @@ import {
 
 export function ProjectItem({
   project,
+  checkout,
+  subtitle,
   selected,
   working,
   approval,
@@ -26,6 +28,8 @@ export function ProjectItem({
   disclosure,
 }: {
   project: ProjectInfo;
+  checkout: ProjectInfo;
+  subtitle: string;
   selected: boolean;
   working: boolean;
   approval: boolean;
@@ -42,14 +46,14 @@ export function ProjectItem({
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!isTauri()) return;
-    const unsubscribe = subscribeGitStatus(project.path, (result) => {
+    const unsubscribe = subscribeGitStatus(checkout.path, (result) => {
       setStatus(result.status);
       setError(result.error);
     });
     let visible = false;
     const refresh = () => {
       if (visible && !document.hidden)
-        void readGitStatus(project.path).catch(() => {});
+        void readGitStatus(checkout.path).catch(() => {});
     };
     const observer = new IntersectionObserver(
       (entries) => {
@@ -72,7 +76,7 @@ export function ProjectItem({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [project.path, selected, working]);
+  }, [checkout.path, selected, working]);
   const branch = status?.branch ?? "Detached HEAD";
   const count = status?.changes.length ?? 0;
   return (
@@ -97,7 +101,8 @@ export function ProjectItem({
         className="project-item"
         details={
           <span className="project-details">
-            <span className="project-path">{project.path}</span>
+            <span className="project-path">{checkout.path}</span>
+            <span className="project-session-detail">{subtitle}</span>
             {working && <span>Running session</span>}
             {approval && <span>Approval required</span>}
           </span>
@@ -128,6 +133,7 @@ export function ProjectItem({
               />
             )}
           </span>
+          <span className="project-session">{subtitle}</span>
           <span id={metadataId} className="project-context">
             {error ? (
               <span title={error}>Git unavailable</span>

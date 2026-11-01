@@ -4168,6 +4168,120 @@ test("sidebar shows project details and stacked activity lists with independent 
   await page.screenshot({ path: "test-results/stacked-sidebar-small.png" });
 });
 
+test("project subtitles restore selected sessions across providers without resuming background conversations", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  await page.evaluate(() => {
+    sessionStorage.setItem(
+      "worktree-workspace",
+      JSON.stringify({
+        activeProjectPath: "/work/other",
+        projects: [
+          {
+            project: { name: "caelum", path: "/work/caelum" },
+            provider: "codex",
+            codexSessionId: "thread-b",
+            opencodeSessionId: null,
+            codexSessionIds: ["thread-a", "thread-b"],
+            opencodeSessionIds: [],
+          },
+          {
+            project: { name: "other", path: "/work/other" },
+            provider: "opencode",
+            codexSessionId: null,
+            opencodeSessionId: "ses-a",
+            codexSessionIds: [],
+            opencodeSessionIds: ["ses-a"],
+          },
+        ],
+      }),
+    );
+  });
+  await page.reload();
+  const projects = page.getByRole("navigation", { name: "Open projects" });
+  const first = projects.getByRole("button", { name: "caelum", exact: true });
+  const second = projects.getByRole("button", { name: "other", exact: true });
+  await expect(first.locator(".project-session")).toHaveText(
+    "Review the provider adapters",
+  );
+  await expect(second.locator(".project-session")).toHaveText(
+    "OpenCode session",
+  );
+  await expect(second).toHaveAttribute("aria-current", "page");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) =>
+          call.args.projectPath === "/work/caelum" &&
+          ["codex_resume_session", "codex_session_history"].includes(
+            call.command,
+          ),
+      ),
+    ),
+  ).toHaveLength(0);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.emit("codex-event", {
+      projectPath: "/work/caelum",
+      method: "thread/name/updated",
+      params: {
+        threadId: "thread-b",
+        threadName: "Review deployment adapters",
+      },
+    });
+    fixture.emit("opencode-event", {
+      projectPath: "/work/other",
+      eventType: "session.renamed",
+      data: { sessionID: "ses-a", title: "Improve the release workflow" },
+    });
+  });
+  await expect(first.locator(".project-session")).toHaveText(
+    "Review deployment adapters",
+  );
+  await expect(second.locator(".project-session")).toHaveText(
+    "Improve the release workflow",
+  );
+  await page
+    .locator(".sidebar")
+    .screenshot({ path: "test-results/project-subtitles.png" });
+  await first.click();
+  await expect(sessionRow(page, "Review deployment adapters")).toHaveClass(
+    /selected/,
+  );
+  await sessionRow(page, "Refine the session workspace")
+    .getByRole("button", {
+      name: "Refine the session workspace",
+      exact: true,
+    })
+    .click();
+  await emit(page, "thread/name/updated", {
+    threadId: "thread-b",
+    threadName: "Background session renamed again",
+  });
+  await second.click();
+  await expect(first.locator(".project-session")).toHaveText(
+    "Refine the session workspace",
+  );
+  await expect(second.locator(".project-session")).toHaveText(
+    "Improve the release workflow",
+  );
+  await page.mouse.move(700, 50);
+  await first.focus();
+  await expect(page.locator(".sidebar-details-tooltip")).toContainText(
+    "Refine the session workspace",
+  );
+  await expect(first).toHaveAccessibleDescription(
+    /Refine the session workspace/,
+  );
+  const divider = page.getByRole("separator", { name: "Resize sidebar" });
+  await divider.focus();
+  await divider.press("Home");
+  await page
+    .locator(".sidebar")
+    .screenshot({ path: "test-results/project-subtitles-narrow.png" });
+});
+
 test("sidebar resizes, retains its preferred width and keeps session details usable at the minimum window size", async ({
   page,
 }) => {

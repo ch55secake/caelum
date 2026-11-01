@@ -27,6 +27,7 @@ import type {
   SessionSummary,
   SessionDetails,
 } from "./workspaceState.js";
+import { sessionTitle } from "./workspaceState.js";
 import type { useWorkspace } from "./useWorkspace.js";
 import { ProjectWorktrees } from "./Worktrees.js";
 import { PullRequestIndicator } from "./PullRequestIndicator.js";
@@ -40,10 +41,6 @@ import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
 const MIN_SIDEBAR_WIDTH = 180;
 const MAX_SIDEBAR_WIDTH = 480;
-export function sessionTitle(item: SessionSummary) {
-  return item.name || item.preview || "Untitled session";
-}
-
 function SessionContext({
   projectPath,
   details,

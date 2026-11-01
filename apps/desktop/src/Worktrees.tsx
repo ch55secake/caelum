@@ -12,7 +12,11 @@ import {
   X,
 } from "lucide-react";
 import { ProjectItem } from "./ProjectItem.js";
-import { projectHasActiveTurn, type ProjectInfo } from "./workspaceState.js";
+import {
+  projectHasActiveTurn,
+  sessionTitle,
+  type ProjectInfo,
+} from "./workspaceState.js";
 import type { WorkspaceController } from "./Sidebar.js";
 import { worktreeLabel, type GitWorktree } from "./worktreeState.js";
 import { copyAction, revealAction, useContextMenu } from "./ContextMenu.js";
@@ -269,6 +273,42 @@ export function ProjectWorktrees({
   const member = (path: string) =>
     (app.projectRoots[path] ?? path) === project.path;
   const active = member(app.project?.path ?? "");
+  const checkout = app.groupWorktree(project)?.project ?? project;
+  const workspace = app.workspaces[checkout.path];
+  const provider = workspace?.provider;
+  const sessions = provider ? workspace.providers[provider] : undefined;
+  const selectedId = sessions?.selectedSessionId;
+  const session = selectedId
+    ? (sessions?.sessions.find((item) => item.id === selectedId) ??
+      sessions?.sessionsById[selectedId]?.session.thread)
+    : undefined;
+  const subtitle = !selectedId
+    ? "New session"
+    : session?.name || session?.preview
+      ? sessionTitle(session)
+      : !sessions?.sessionsLoaded && !sessions?.error
+        ? "Loading session…"
+        : "Untitled session";
+  useEffect(() => {
+    if (
+      app.ready &&
+      !app.restoring &&
+      provider &&
+      selectedId &&
+      !sessions?.sessionsLoaded &&
+      !sessions?.error
+    )
+      // Restore background project titles without opening their conversations.
+      void app.loadSessions(checkout, provider);
+  }, [
+    app.ready,
+    app.restoring,
+    checkout.path,
+    provider,
+    selectedId,
+    sessions?.sessionsLoaded,
+    sessions?.error,
+  ]);
   const [expanded, setExpanded] = useState(() => {
     try {
       const stored = JSON.parse(
@@ -303,7 +343,10 @@ export function ProjectWorktrees({
   return (
     <div className="project-group">
       <ProjectItem
+        key={checkout.path}
         project={project}
+        checkout={checkout}
+        subtitle={subtitle}
         selected={active}
         disclosure={
           worktrees.length > 0 ? (

@@ -8,6 +8,7 @@ export type SessionSummary = {
   updatedAt: number | null;
   isWorking?: boolean;
 };
+export function sessionTitle(session: SessionSummary): string;
 export type SessionDetails = {
   branch: string | null;
   branchIsCurrent: boolean;

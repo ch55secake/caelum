@@ -365,16 +365,21 @@ export function useWorkspace(settings: AppSettings) {
     }
   }
 
-  function activateGroup(root: ProjectInfo) {
+  function groupWorktree(root: ProjectInfo) {
     const path = selectedWorktrees[root.path] ?? root.path;
-    const entry =
+    return (
       worktreeCatalogs[root.path]?.worktrees.find(
         (entry) => entry.main && entry.available,
       ) ??
       worktreeCatalogs[root.path]?.worktrees.find(
         (entry) => entry.project.path === path && entry.available,
       ) ??
-      worktreeCatalogs[root.path]?.worktrees.find((entry) => entry.available);
+      worktreeCatalogs[root.path]?.worktrees.find((entry) => entry.available)
+    );
+  }
+
+  function activateGroup(root: ProjectInfo) {
+    const entry = groupWorktree(root);
     if (entry) void openWorktree(root, entry);
     else activateProject(root);
   }
@@ -2166,6 +2171,7 @@ export function useWorkspace(settings: AppSettings) {
     currentWorktree,
     checkoutUnavailable,
     worktreeSource,
+    groupWorktree,
     worktreeDirectory: settings.worktreeDirectory,
     refreshWorktrees,
     openWorktree,
@@ -2184,6 +2190,7 @@ export function useWorkspace(settings: AppSettings) {
     error,
     setError,
     restoring,
+    ready,
     selecting,
     approvals,
     resolving,
