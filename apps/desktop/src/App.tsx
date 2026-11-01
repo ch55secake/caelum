@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   FolderOpen,
@@ -63,6 +70,12 @@ export default function App() {
   >(null);
   const sidebarView = useSidebarView(app.project?.path ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
+  const [searchFocus, setSearchFocus] = useState(0);
+  useLayoutEffect(() => {
+    if (!searchFocus) return;
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  }, [searchFocus]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const questionDockRef = useRef<HTMLDivElement>(null);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
@@ -122,10 +135,7 @@ export default function App() {
   function focusSearch() {
     setCollapsed(false);
     sidebarView.update({ tab: "sessions", searchOpen: true });
-    requestAnimationFrame(() => {
-      searchRef.current?.focus();
-      searchRef.current?.select();
-    });
+    setSearchFocus((request) => request + 1);
   }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -251,6 +261,7 @@ export default function App() {
               collapse={() => setCollapsed(true)}
               view={sidebarView}
               searchRef={searchRef}
+              focusSearch={focusSearch}
               newSession={newSession}
               changesOpen={changesOpen}
               filesOpen={!activePullRequest && pane === "files"}

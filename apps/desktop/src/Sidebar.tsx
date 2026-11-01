@@ -110,6 +110,7 @@ export function Sidebar({
   collapse,
   view,
   searchRef,
+  focusSearch,
   newSession,
   changesOpen,
   filesOpen,
@@ -125,6 +126,7 @@ export function Sidebar({
   collapse: () => void;
   view: SidebarView;
   searchRef: RefObject<HTMLInputElement | null>;
+  focusSearch: () => void;
   newSession: () => void;
   changesOpen: boolean;
   filesOpen: boolean;
@@ -163,11 +165,7 @@ export function Sidebar({
   };
   const openSearch = () => {
     selectTab("sessions");
-    view.update({ searchOpen: true });
-    requestAnimationFrame(() => {
-      searchRef.current?.focus();
-      searchRef.current?.select();
-    });
+    focusSearch();
   };
   const closeSearch = () => {
     view.update({ search: "", searchOpen: false });
