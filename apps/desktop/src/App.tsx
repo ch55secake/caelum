@@ -15,6 +15,7 @@ import { ProjectInspector, type InspectorRequest } from "./ProjectInspector.js";
 import { FileNavigation } from "./FileNavigation.js";
 import type { FileLocation } from "./fileContext.js";
 import { useWorkspace } from "./useWorkspace.js";
+import { useSidebarView } from "./useSidebarView.js";
 import { Sidebar, sessionTitle } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
@@ -60,7 +61,7 @@ export default function App() {
   const [pullRequest, setPullRequest] = useState<
     (PullRequestTarget & { scope: string }) | null
   >(null);
-  const [search, setSearch] = useState("");
+  const sidebarView = useSidebarView(app.project?.path ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const questionDockRef = useRef<HTMLDivElement>(null);
@@ -108,7 +109,7 @@ export default function App() {
   function newSession() {
     setPullRequest(null);
     app.newSession();
-    setSearch("");
+    sidebarView.update({ tab: "sessions", search: "", searchOpen: false });
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
   function showSession() {
@@ -120,6 +121,7 @@ export default function App() {
   }
   function focusSearch() {
     setCollapsed(false);
+    sidebarView.update({ tab: "sessions", searchOpen: true });
     requestAnimationFrame(() => {
       searchRef.current?.focus();
       searchRef.current?.select();
@@ -247,8 +249,7 @@ export default function App() {
               preferredWidth={sidebarWidth}
               setPreferredWidth={setSidebarWidth}
               collapse={() => setCollapsed(true)}
-              search={search}
-              setSearch={setSearch}
+              view={sidebarView}
               searchRef={searchRef}
               newSession={newSession}
               changesOpen={changesOpen}

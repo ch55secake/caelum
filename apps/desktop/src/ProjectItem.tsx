@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { FolderGit2, GitBranch, ShieldAlert, X } from "lucide-react";
 import {
@@ -7,6 +7,7 @@ import {
   type GitRepositoryStatus,
 } from "./gitStatus.js";
 import type { ProjectInfo } from "./workspaceState.js";
+import { SidebarDetails } from "./SidebarDetails.js";
 import {
   useContextMenu,
   copyAction,
@@ -22,6 +23,7 @@ export function ProjectItem({
   activate,
   close,
   worktreeActions,
+  disclosure,
 }: {
   project: ProjectInfo;
   selected: boolean;
@@ -30,6 +32,7 @@ export function ProjectItem({
   activate: () => void;
   close: () => void;
   worktreeActions: ContextAction[];
+  disclosure?: ReactNode;
 }) {
   const detailsId = useId();
   const contextMenu = useContextMenu();
@@ -87,17 +90,49 @@ export function ProjectItem({
         ])
       }
     >
-      <div className="project-item">
+      {disclosure}
+      <SidebarDetails
+        id={detailsId}
+        className="project-item"
+        details={
+          <span className="project-details">
+            <span className="project-path">{project.path}</span>
+            <span className="project-context">
+              {error ? (
+                <span title={error}>Git unavailable</span>
+              ) : !status ? (
+                <span>{isTauri() ? "Checking Git…" : "Local folder"}</span>
+              ) : !status.repositoryRoot ? (
+                <span>Not a Git repository</span>
+              ) : (
+                <>
+                  <span
+                    className="project-branch"
+                    title={`Current branch: ${branch}`}
+                  >
+                    <GitBranch size={10} aria-hidden="true" />
+                    <span>{branch}</span>
+                  </span>
+                  <span className={`project-changes${count ? " dirty" : ""}`}>
+                    {count ? `${count} changed` : "Clean"}
+                  </span>
+                </>
+              )}
+            </span>
+            {working && <span>Running session</span>}
+            {approval && <span>Approval required</span>}
+          </span>
+        }
+      >
         <button
           className="sidebar-row-select"
-          title={project.path}
           aria-label={project.name}
           aria-describedby={detailsId}
           aria-current={selected ? "page" : undefined}
           onClick={activate}
         >
           <span className="project-heading">
-            <FolderGit2 size={14} aria-hidden="true" />
+            {!disclosure && <FolderGit2 size={14} aria-hidden="true" />}
             <span className="project-name">{project.name}</span>
             {working && (
               <span
@@ -115,41 +150,7 @@ export function ProjectItem({
             )}
           </span>
         </button>
-        <span id={detailsId} className="project-details">
-          <span className="project-path">{project.path}</span>
-          <span className="project-context">
-            {error ? (
-              <span title={error}>Git unavailable</span>
-            ) : !status ? (
-              <span>{isTauri() ? "Checking Git…" : "Local folder"}</span>
-            ) : !status.repositoryRoot ? (
-              <span>Not a Git repository</span>
-            ) : (
-              <>
-                <span
-                  className="project-branch"
-                  title={`Current branch: ${branch}`}
-                >
-                  <GitBranch size={10} aria-hidden="true" />
-                  <span>{branch}</span>
-                </span>
-                <span
-                  className={`project-changes${count ? " dirty" : ""}`}
-                  title={
-                    count
-                      ? `${count} changed ${count === 1 ? "file" : "files"} in this project, including staged, unstaged, and untracked changes`
-                      : "Working tree clean"
-                  }
-                >
-                  {count ? `${count} changed` : "Clean"}
-                </span>
-              </>
-            )}
-          </span>
-          {working && <span className="sr-only">Running session</span>}
-          {approval && <span className="sr-only">Approval required</span>}
-        </span>
-      </div>
+      </SidebarDetails>
       <button
         className="icon-button project-close"
         aria-label={`Close ${project.name}`}

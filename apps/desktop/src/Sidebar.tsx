@@ -3,7 +3,6 @@ import {
   FileCode2,
   GitBranch,
   LoaderCircle,
-  MessageSquare,
   MessageSquarePlus,
   Orbit,
   PanelLeftClose,
@@ -12,9 +11,11 @@ import {
   Search,
   ShieldAlert,
   Settings,
+  X,
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -29,7 +30,11 @@ import type {
 import type { useWorkspace } from "./useWorkspace.js";
 import { ProjectWorktrees } from "./Worktrees.js";
 import { PullRequestIndicator } from "./PullRequestIndicator.js";
-import { SessionPullRequests } from "./SessionPullRequests.js";
+import {
+  SessionPullRequests,
+  useSessionPullRequests,
+} from "./SessionPullRequests.js";
+import type { SidebarView } from "./useSidebarView.js";
 import { usePullRequestPreview } from "./PullRequestPreview.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 export type WorkspaceController = ReturnType<typeof useWorkspace>;
@@ -103,8 +108,7 @@ export function Sidebar({
   preferredWidth,
   setPreferredWidth,
   collapse,
-  search,
-  setSearch,
+  view,
   searchRef,
   newSession,
   changesOpen,
@@ -119,8 +123,7 @@ export function Sidebar({
   preferredWidth: number | null;
   setPreferredWidth: (width: number) => void;
   collapse: () => void;
-  search: string;
-  setSearch: (text: string) => void;
+  view: SidebarView;
   searchRef: RefObject<HTMLInputElement | null>;
   newSession: () => void;
   changesOpen: boolean;
@@ -140,6 +143,36 @@ export function Sidebar({
   const sidebar = useRef<HTMLElement>(null);
   const [layoutWidth, setLayoutWidth] = useState(window.innerWidth);
   const drag = useRef<{ x: number; width: number } | null>(null);
+  const activityId = useId();
+  const sessionList = useRef<HTMLDivElement>(null);
+  const requestList = useRef<HTMLDivElement>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const restoration = useRef<{
+    key: string;
+    top: number;
+    pending: boolean;
+  } | null>(null);
+  const { search, searchOpen, tab } = view;
+  const path = app.project?.path ?? "";
+  const selectTab = (next: SidebarView["tab"]) => {
+    const list = tab === "sessions" ? sessionList.current : requestList.current;
+    // Scroll events arrive on the next frame, which can be after a tab is hidden.
+    if (list && !restoration.current?.pending)
+      view.positions.current.set(`${path}\0${tab}`, list.scrollTop);
+    view.update({ tab: next });
+  };
+  const openSearch = () => {
+    selectTab("sessions");
+    view.update({ searchOpen: true });
+    requestAnimationFrame(() => {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    });
+  };
+  const closeSearch = () => {
+    view.update({ search: "", searchOpen: false });
+    searchButton.current?.focus();
+  };
   useLayoutEffect(() => {
     const container = sidebar.current?.parentElement;
     if (!container) return;
@@ -174,6 +207,42 @@ export function Sidebar({
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
+  const pullRequests = useSessionPullRequests(
+    app,
+    allSessions.map((session) => ({
+      ...session,
+      title: sessionTitle(session),
+    })),
+  );
+  useLayoutEffect(() => {
+    const key = `${path}\0${tab}`;
+    if (restoration.current?.key !== key) {
+      restoration.current = {
+        key,
+        top: view.positions.current.get(key) ?? 0,
+        pending: true,
+      };
+    }
+    const restore = restoration.current;
+    const list = tab === "sessions" ? sessionList.current : requestList.current;
+    if (!restore.pending || !list) return;
+    list.scrollTop = restore.top;
+    // Discovery rehydrates asynchronously when the sidebar is reopened. Wait
+    // for rows before accepting a scroll position clamped by an empty panel.
+    const loading =
+      tab === "sessions"
+        ? app.providerWorkspace?.isLoadingSessions
+        : pullRequests.loading;
+    if (Math.abs(list.scrollTop - restore.top) < 1 || !loading)
+      restore.pending = false;
+  }, [
+    path,
+    tab,
+    sessions.length,
+    pullRequests.entries.size,
+    pullRequests.loading,
+    app.providerWorkspace?.isLoadingSessions,
+  ]);
   return (
     <aside
       ref={sidebar}
@@ -216,45 +285,105 @@ export function Sidebar({
           />
         ))}
       </nav>
-      <button
-        className="new-session"
-        onClick={newSession}
-        disabled={!app.project}
-      >
-        <MessageSquarePlus size={15} />
-        <span>New session</span>
-        <kbd>⌘N</kbd>
-      </button>
       <nav className="side-nav" aria-label="Workspace">
         <button
-          className={`nav-item${sessionVisible ? " active" : ""}`}
-          aria-pressed={sessionVisible}
-          onClick={showSession}
+          className="new-session"
+          onClick={newSession}
+          disabled={!app.project}
+          title="New session (⌘N)"
         >
-          <MessageSquare size={15} />
-          Sessions
+          <MessageSquarePlus size={15} />
+          <span>New session</span>
         </button>
         <button
-          className={`nav-item${filesOpen ? " active" : ""}`}
+          className={`icon-button${filesOpen ? " active" : ""}`}
+          aria-label="Files"
+          title="Files (⌘P)"
           aria-pressed={filesOpen}
           disabled={!app.project}
           onClick={openFiles}
         >
           <FileCode2 size={15} />
-          Files
         </button>
         <button
-          className={`nav-item${changesOpen ? " active" : ""}`}
+          className={`icon-button${changesOpen ? " active" : ""}`}
+          aria-label="Changes"
+          title="Changes"
           disabled={!app.project}
           onClick={toggleChanges}
           aria-pressed={changesOpen}
         >
           <GitBranch size={15} />
-          Changes
         </button>
       </nav>
-      <div className="section-heading sessions-heading">
-        <span>Sessions</span>
+      <div className="sidebar-activity-heading">
+        <div
+          role="tablist"
+          aria-label="Project activity"
+          className="sidebar-activity-tabs"
+        >
+          {(["sessions", "requests"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              id={`${activityId}-${value}-tab`}
+              aria-controls={`${activityId}-${value}`}
+              aria-selected={tab === value}
+              aria-label={value === "sessions" ? "Sessions" : "Pull requests"}
+              tabIndex={tab === value ? 0 : -1}
+              onClick={() => selectTab(value)}
+              onKeyDown={(event) => {
+                if (
+                  !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                    event.key,
+                  )
+                )
+                  return;
+                event.preventDefault();
+                const next =
+                  event.key === "Home"
+                    ? "sessions"
+                    : event.key === "End"
+                      ? "requests"
+                      : value === "sessions"
+                        ? "requests"
+                        : "sessions";
+                selectTab(next);
+                document.getElementById(`${activityId}-${next}-tab`)?.focus();
+              }}
+            >
+              {value === "sessions" ? "Sessions" : "Pull requests"}
+              <span>
+                {value === "sessions"
+                  ? allSessions.length
+                  : pullRequests.entries.size}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="sidebar-list-tools">
+        <span>
+          {tab === "sessions"
+            ? search
+              ? `${sessions.length} matching`
+              : "Recent sessions"
+            : "Open pull requests"}
+        </span>
+        <button
+          ref={searchButton}
+          type="button"
+          className="icon-button"
+          aria-label="Search sessions"
+          title="Search sessions (⌘K)"
+          aria-expanded={searchOpen && tab === "sessions"}
+          aria-controls={`${activityId}-search`}
+          disabled={!app.project}
+          onClick={openSearch}
+        >
+          <Search size={13} />
+        </button>
         <button
           className="icon-button"
           title="Refresh sessions"
@@ -270,19 +399,51 @@ export function Sidebar({
           />
         </button>
       </div>
-      <label className="session-search">
+      <label
+        id={`${activityId}-search`}
+        className="session-search"
+        hidden={!searchOpen || tab !== "sessions"}
+      >
         <Search size={13} />
         <input
           ref={searchRef}
           placeholder="Search sessions…"
           aria-label="Search sessions"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => view.update({ search: event.target.value })}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeSearch();
+            }
+          }}
         />
-        <kbd>⌘K</kbd>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Close session search"
+          onClick={closeSearch}
+        >
+          <X size={12} />
+        </button>
       </label>
       <div className="sidebar-session-lists">
-        <div className="session-list">
+        <div
+          ref={sessionList}
+          id={`${activityId}-sessions`}
+          role="tabpanel"
+          aria-labelledby={`${activityId}-sessions-tab`}
+          hidden={tab !== "sessions"}
+          className="session-list"
+          tabIndex={0}
+          onScroll={(event) => {
+            if (tab === "sessions" && !restoration.current?.pending)
+              view.positions.current.set(
+                `${path}\0sessions`,
+                event.currentTarget.scrollTop,
+              );
+          }}
+        >
           {app.providerWorkspace?.isLoadingSessions &&
             sessions.length === 0 && (
               <div className="empty-sessions">Connecting…</div>
@@ -424,13 +585,24 @@ export function Sidebar({
             );
           })}
         </div>
-        <SessionPullRequests
-          app={app}
-          sessions={allSessions.map((session) => ({
-            ...session,
-            title: sessionTitle(session),
-          }))}
-        />
+        <div
+          ref={requestList}
+          id={`${activityId}-requests`}
+          role="tabpanel"
+          aria-labelledby={`${activityId}-requests-tab`}
+          hidden={tab !== "requests"}
+          className="sidebar-request-panel"
+          tabIndex={0}
+          onScroll={(event) => {
+            if (tab === "requests" && !restoration.current?.pending)
+              view.positions.current.set(
+                `${path}\0requests`,
+                event.currentTarget.scrollTop,
+              );
+          }}
+        >
+          <SessionPullRequests result={pullRequests} />
+        </div>
       </div>
       <button
         className="nav-item sidebar-settings"

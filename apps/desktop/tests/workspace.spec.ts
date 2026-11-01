@@ -352,6 +352,8 @@ async function desktop(
           },
           addSession: (id: string, name: string) => {
             threads.push({ id, name, preview: "", updatedAt: 1 });
+            if (worktrees)
+              savedProjects.get(project.path)?.codexSessionIds.push(id);
           },
           setGitFiles: (files: GitChange[], path = project.path) => {
             gitProjects.set(path, files);
@@ -1277,6 +1279,11 @@ async function choose(page: Page, label: string, option: string) {
     .click();
 }
 
+async function showPullRequests(page: Page) {
+  await page.getByRole("tab", { name: "Pull requests", exact: true }).click();
+  return page.getByRole("region", { name: "Pull requests", exact: true });
+}
+
 async function setHistory(
   page: Page,
   provider: string,
@@ -1379,7 +1386,7 @@ for (const provider of ["codex", "opencode"] as const) {
     await settings.getByRole("button", { name: "Done", exact: true }).click();
     const path = await createCheckout(page);
     expect(path).toBe("/custom/checkouts/caelum-a1b2/feature-search");
-    await expect(page.locator(".worktree-row")).toHaveCount(1);
+    await expect(page.locator(".worktree-row")).toHaveCount(2);
     await expect(
       page
         .getByRole("combobox", { name: "Session worktree" })
@@ -1795,7 +1802,7 @@ test("worktrees restore their project group when the original project directory 
       name: "Switch to worktree Original checkout",
       exact: true,
     }),
-  ).toHaveCount(0);
+  ).toBeDisabled();
   await expect(
     page.getByRole("button", {
       name: "Switch to worktree feature/search",
@@ -2186,8 +2193,8 @@ test("Files searches filenames and contents beside the conversation, handles ign
     exact: true,
   });
   await expect(
-    navigation.getByRole("button", { name: "Sessions", exact: true }),
-  ).toHaveClass(/active/);
+    page.getByRole("tab", { name: "Sessions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(
     navigation.getByRole("button", { name: "Changes", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -2201,11 +2208,8 @@ test("Files searches filenames and contents beside the conversation, handles ign
   await input.fill("Keep this draft visible");
   await findProjectFile(page, "src/App.tsx");
   await expect(
-    navigation.getByRole("button", { name: "Sessions", exact: true }),
-  ).toHaveClass(/active/);
-  await expect(
-    navigation.getByRole("button", { name: "Sessions", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.getByRole("tab", { name: "Sessions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(
     navigation.getByRole("button", { name: "Files", exact: true }),
   ).toHaveClass(/active/);
@@ -2487,8 +2491,8 @@ test("Files inspector resizes and expands while keeping the conversation mounted
   await expect.poll(treeWidth).toBe(preferredTreeWidth);
   await expect(input).toBeHidden();
   await expect(
-    page.getByRole("button", { name: "Sessions", exact: true }),
-  ).not.toHaveClass(/active/);
+    page.getByRole("tab", { name: "Sessions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByRole("button", { name: "Files", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -2501,8 +2505,8 @@ test("Files inspector resizes and expands while keeping the conversation mounted
     .click();
   await expect(input).toHaveValue("Keep my place");
   await expect(
-    page.getByRole("button", { name: "Sessions", exact: true }),
-  ).toHaveClass(/active/);
+    page.getByRole("tab", { name: "Sessions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".transcript")).toHaveAttribute(
     "data-mounted",
     "yes",
@@ -3997,6 +4001,163 @@ test("sidebar metadata and archiving stay scoped when projects reuse a session I
   ]);
 });
 
+test("compact sidebar keeps projects visible and remembers activity tabs, search and scrolling per checkout", async ({
+  page,
+}) => {
+  await desktop(page, "thread-a", { worktrees: true });
+  const message = page.getByRole("textbox", { name: "Message", exact: true });
+  await message.fill("Project A draft");
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.addWorktree("/work/sidebar", "feature/sidebar");
+    for (let index = 0; index < 24; index++) {
+      fixture.addSession(`sidebar-${index}`, `Background task ${index}`);
+      fixture.setSessionDetails("codex", `sidebar-${index}`, {
+        branch: `feature/task-${index}`,
+        branchIsCurrent: false,
+        changes: null,
+      });
+      fixture.setPullRequest(`feature/task-${index}`, {
+        ...pr,
+        number: 100 + index,
+        title: `Task ${index}`,
+        url: `https://github.com/example/caelum/pull/${100 + index}`,
+      });
+    }
+  }, previewPullRequest);
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  const disclosure = page.getByRole("button", {
+    name: "Worktrees for caelum",
+    exact: true,
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await disclosure.focus();
+  await disclosure.press("Enter");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await message.fill("Project B draft");
+  const projects = page.getByRole("navigation", { name: "Open projects" });
+  const first = projects.getByRole("button", { name: "caelum", exact: true });
+  const second = projects.getByRole("button", { name: "other", exact: true });
+  await expect(first).toBeInViewport({ ratio: 1 });
+  await expect(second).toBeInViewport({ ratio: 1 });
+  expect(
+    await projects
+      .locator(".project-row")
+      .first()
+      .evaluate((node) => node.clientHeight),
+  ).toBeLessThanOrEqual(36);
+  await first.focus();
+  await expect(page.locator(".sidebar-details-tooltip")).toContainText(
+    "/work/caelum",
+  );
+  await first.press("Escape");
+  await expect(page.locator(".sidebar-details-tooltip")).toHaveCount(0);
+  await first.press("Enter");
+  await expect(message).toHaveValue("Project A draft");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  const sessionsTab = page.getByRole("tab", { name: "Sessions", exact: true });
+  const requestsTab = page.getByRole("tab", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(requestsTab).toContainText("24");
+  const sessions = page.getByRole("tabpanel", {
+    name: "Sessions",
+    exact: true,
+  });
+  await sessions.evaluate((node) => (node.scrollTop = 500));
+  await expect
+    .poll(() => sessions.evaluate((node) => node.scrollTop))
+    .toBe(500);
+  await sessionsTab.focus();
+  await sessionsTab.press("ArrowRight");
+  await expect(requestsTab).toBeFocused();
+  const requests = page.getByRole("tabpanel", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await requests.evaluate((node) => (node.scrollTop = 300));
+  await expect
+    .poll(() => requests.evaluate((node) => node.scrollTop))
+    .toBe(300);
+  await requestsTab.press("ArrowLeft");
+  await expect(sessionsTab).toBeFocused();
+  await expect
+    .poll(() => sessions.evaluate((node) => node.scrollTop))
+    .toBe(500);
+  await page.keyboard.press("Meta+k");
+  const search = page.getByRole("textbox", {
+    name: "Search sessions",
+    exact: true,
+  });
+  await expect(search).toBeFocused();
+  await search.fill("Background task 2");
+  await expect(sessions.locator(".session-row")).toHaveCount(5);
+  await requestsTab.click();
+  await expect
+    .poll(() => requests.evaluate((node) => node.scrollTop))
+    .toBe(300);
+  await second.click();
+  await expect(sessionsTab).toHaveAttribute("aria-selected", "true");
+  await expect(message).toHaveValue("Project B draft");
+  await page.keyboard.press("Meta+k");
+  await search.fill("adapters");
+  await first.click();
+  await expect(requestsTab).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(() => requests.evaluate((node) => node.scrollTop))
+    .toBe(300);
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect
+    .poll(() => requests.evaluate((node) => node.scrollTop))
+    .toBe(300);
+  await page.keyboard.press("Meta+k");
+  await expect(search).toHaveValue("Background task 2");
+  await search.press("Escape");
+  await expect(search).toBeHidden();
+  await expect(
+    page
+      .locator(".sidebar")
+      .getByRole("button", { name: "Search sessions", exact: true }),
+  ).toBeFocused();
+  await expect(sessions.locator(".session-row")).toHaveCount(26);
+  await disclosure.click();
+  await expect(
+    page.getByRole("button", {
+      name: "Switch to worktree feature/sidebar",
+      exact: true,
+    }),
+  ).toBeVisible();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    await page.screenshot({
+      path: `test-results/compact-sidebar-${theme}.png`,
+    });
+  }
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(first).toBeInViewport({ ratio: 1 });
+  await expect(second).toBeInViewport({ ratio: 1 });
+  await expect(
+    page.getByRole("button", { name: "Settings", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  expect(await sessions.evaluate((node) => node.clientHeight)).toBeGreaterThan(
+    170,
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    800,
+  );
+  await page.screenshot({ path: "test-results/compact-sidebar-small.png" });
+});
+
 test("sidebar resizes, retains its preferred width and keeps session details usable at the minimum window size", async ({
   page,
 }) => {
@@ -4042,6 +4203,7 @@ test("sidebar resizes, retains its preferred width and keeps session details usa
   );
   const row = sessionRow(page, "Refine the session workspace");
   await expect(row.locator(".lines-added")).toHaveText("+42");
+  await page.keyboard.press("Meta+k");
   await page
     .getByRole("textbox", { name: "Search sessions" })
     .fill("fix/provider-adapters");
@@ -4763,6 +4925,7 @@ test("context menus edit modal fields and respect password, readonly and disable
   await modelSearch.press("Escape");
   await expect(picker).toHaveCount(0);
 
+  await page.keyboard.press("Meta+k");
   const search = page.locator('input[aria-label="Search sessions"]');
   await search.fill("secret");
   await search.evaluate((node: HTMLInputElement) => {
@@ -6037,6 +6200,7 @@ test("Shift+Tab cycles available agents without changing the draft or other keyb
   await input.press("Tab");
   await expect(input).not.toBeFocused();
   await expect(status).toHaveText("Next: Build");
+  await page.keyboard.press("Meta+k");
   const search = page.getByRole("textbox", {
     name: "Search sessions",
     exact: true,
@@ -6493,8 +6657,7 @@ async function preparePullRequestReview(
   await page
     .getByRole("button", { name: "Refresh sessions", exact: true })
     .click();
-  await page
-    .getByRole("region", { name: "Pull requests", exact: true })
+  await (await showPullRequests(page))
     .getByRole("button", { name: /View pull request #44/ })
     .click();
   return page.getByRole("region", { name: "Pull request #44", exact: true });
@@ -7434,8 +7597,7 @@ for (const provider of ["codex", "opencode"] as const) {
     await page
       .getByRole("textbox", { name: "Message", exact: true })
       .fill("Keep my next task draft.");
-    await page
-      .getByRole("region", { name: "Pull requests", exact: true })
+    await (await showPullRequests(page))
       .getByRole("button", { name: /View pull request #44/ })
       .click();
     await screen
@@ -7546,14 +7708,14 @@ test("PR comments require an idle existing session, retain failed sends and resp
       exact: true,
     }),
   ).toBeDisabled();
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await page
     .getByRole("button", { name: "Refine the session workspace", exact: true })
     .click();
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Untouched draft");
-  await page
-    .getByRole("region", { name: "Pull requests", exact: true })
+  await (await showPullRequests(page))
     .getByRole("button", { name: /View pull request #44/ })
     .click();
   await screen
@@ -7588,6 +7750,7 @@ test("PR comments require an idle existing session, retain failed sends and resp
   await expect(
     screen.getByRole("button", { name: "Sending…", exact: true }),
   ).toBeDisabled();
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await page
     .getByRole("button", { name: "Review the provider adapters", exact: true })
     .click();
@@ -8144,10 +8307,7 @@ test("session PR section groups open sessions and opens an overview without sele
     });
   }, previewPullRequest);
   await page.clock.runFor(60_100);
-  const section = page.getByRole("region", {
-    name: "Pull requests",
-    exact: true,
-  });
+  const section = await showPullRequests(page);
   await expect(section.getByRole("button")).toHaveCount(2);
   const shared = section.getByRole("button", { name: /View pull request #44/ });
   await expect(shared).toHaveAccessibleDescription("#44 · 2 sessions");
@@ -8181,12 +8341,15 @@ test("session PR section groups open sessions and opens an overview without sele
   await expect(shared).toBeFocused();
   await shared.press("Enter");
   await expect(screen).toBeVisible();
-  await page.getByRole("button", { name: "Sessions", exact: true }).click();
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await page.keyboard.press("Meta+k");
   await page.getByRole("textbox", { name: "Search sessions" }).fill("no match");
   await expect(page.locator(".session-list")).toContainText(
     "No matching sessions",
   );
+  await showPullRequests(page);
   await expect(section.getByRole("button")).toHaveCount(2);
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await page.getByRole("textbox", { name: "Search sessions" }).fill("");
   for (const theme of ["dark", "light"]) {
     await page.evaluate((theme) => {
@@ -8200,10 +8363,13 @@ test("session PR section groups open sessions and opens an overview without sele
   await first
     .getByRole("button", { name: "Archive session", exact: true })
     .click();
+  await showPullRequests(page);
   await expect(shared).toHaveAccessibleDescription("#44 · OpenCode session");
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await sessionRow(page, "OpenCode session")
     .getByRole("button", { name: "Archive session", exact: true })
     .click();
+  await showPullRequests(page);
   await expect(shared).toHaveCount(0);
   await expect(
     page
@@ -8245,9 +8411,9 @@ test("PR screen keeps the sidebar usable and preserves the conversation, draft a
   await expect(
     page.getByRole("button", { name: "Jump to latest", exact: true }),
   ).toBeVisible();
-  const entry = page
-    .getByRole("region", { name: "Pull requests", exact: true })
-    .getByRole("button", { name: /View pull request #44/ });
+  const entry = (await showPullRequests(page)).getByRole("button", {
+    name: /View pull request #44/,
+  });
   await entry.click();
   const screen = page.getByRole("region", {
     name: "Pull request #44",
@@ -8256,7 +8422,7 @@ test("PR screen keeps the sidebar usable and preserves the conversation, draft a
   await expect(screen).toContainText("+128");
   await expect(screen.getByRole("heading", { level: 1 })).toBeFocused();
   await expect(entry).toHaveAttribute("aria-current", "page");
-  await expect(session).not.toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".session-row.selected")).toHaveCount(0);
   await expect(input).toBeHidden();
   await expect(transcript).toHaveAttribute("data-mounted", "yes");
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -8283,7 +8449,7 @@ test("PR screen keeps the sidebar usable and preserves the conversation, draft a
   await expect(screen).toBeVisible();
   await page.getByRole("button", { name: "Expand sidebar" }).click();
   await expect(entry).toHaveAttribute("aria-current", "page");
-  await page.getByRole("button", { name: "Sessions", exact: true }).click();
+  await screen.getByRole("button", { name: "Back to session" }).click();
   await expect(screen).toHaveCount(0);
   await expect(input).toHaveValue("Keep my session draft");
   await expect(transcript).toHaveAttribute("data-mounted", "yes");
@@ -8299,9 +8465,11 @@ test("PR screen keeps the sidebar usable and preserves the conversation, draft a
     }),
   ).toBeVisible();
   await entry.click();
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await session.click();
   await expect(screen).toHaveCount(0);
   await expect(input).toHaveValue("Keep my session draft");
+  await showPullRequests(page);
   await entry.click();
   await page.getByRole("button", { name: "Files", exact: true }).click();
   await expect(screen).toHaveCount(0);
@@ -8341,7 +8509,7 @@ test("PR screen switches between requests, retries refresh failures and rejects 
     fixture.hold(`github_pull_request_details:${pr.url}`);
   }, previewPullRequest);
   await page.clock.runFor(60_100);
-  const list = page.getByRole("region", { name: "Pull requests", exact: true });
+  const list = await showPullRequests(page);
   const first = list.getByRole("button", { name: /View pull request #44/ });
   const second = list.getByRole("button", { name: /View pull request #45/ });
   await first.click();
@@ -8441,8 +8609,7 @@ test("PR checks show live pending animations, passed ticks and linked results in
       ],
     });
   }, previewPullRequest);
-  await page
-    .getByRole("region", { name: "Pull requests", exact: true })
+  await (await showPullRequests(page))
     .getByRole("button", { name: /View pull request #44/ })
     .click();
   const screen = page.getByRole("region", {
@@ -8596,9 +8763,9 @@ test("PR check timers tick locally, resume from server timestamps and stop on co
       ],
     });
   }, previewPullRequest);
-  const entry = page
-    .getByRole("region", { name: "Pull requests", exact: true })
-    .getByRole("button", { name: /View pull request #44/ });
+  const entry = (await showPullRequests(page)).getByRole("button", {
+    name: /View pull request #44/,
+  });
   await entry.click();
   const screen = page.getByRole("region", {
     name: "Pull request #44",
@@ -8664,7 +8831,7 @@ test("PR merge is shared across navigation, pins the head and removes merged row
   page,
 }) => {
   await preparePullRequestPreview(page);
-  const list = page.getByRole("region", { name: "Pull requests", exact: true });
+  const list = await showPullRequests(page);
   const first = list.getByRole("button", { name: /View pull request #44/ });
   await first.click();
   const screen = page.getByRole("region", {
@@ -8794,9 +8961,9 @@ test("PR merge reports failures, reloads changed heads and confirms a successful
   page,
 }) => {
   await preparePullRequestPreview(page);
-  const entry = page
-    .getByRole("region", { name: "Pull requests", exact: true })
-    .getByRole("button", { name: /View pull request #44/ });
+  const entry = (await showPullRequests(page)).getByRole("button", {
+    name: /View pull request #44/,
+  });
   await entry.click();
   const screen = page.getByRole("region", {
     name: "Pull request #44",
@@ -8868,8 +9035,7 @@ test("PR merge explains draft, blocked, conflicting and unknown states without s
   page,
 }) => {
   await preparePullRequestPreview(page);
-  await page
-    .getByRole("region", { name: "Pull requests", exact: true })
+  await (await showPullRequests(page))
     .getByRole("button", { name: /View pull request #44/ })
     .click();
   const screen = page.getByRole("region", {
@@ -8965,9 +9131,9 @@ test("PR branch updates preserve progress across navigation and wait for the new
     });
     fixture.hold("github_update_pull_request_branch");
   }, previewPullRequest);
-  const entry = page
-    .getByRole("region", { name: "Pull requests", exact: true })
-    .getByRole("button", { name: /View pull request #44/ });
+  const entry = (await showPullRequests(page)).getByRole("button", {
+    name: /View pull request #44/,
+  });
   await entry.click();
   const screen = page.getByRole("region", {
     name: "Pull request #44",
@@ -9086,9 +9252,9 @@ test("PR branch update failures retain the PR and refresh stale heads for retry"
   page,
 }) => {
   await preparePullRequestPreview(page);
-  const entry = page
-    .getByRole("region", { name: "Pull requests", exact: true })
-    .getByRole("button", { name: /View pull request #44/ });
+  const entry = (await showPullRequests(page)).getByRole("button", {
+    name: /View pull request #44/,
+  });
   await entry.click();
   const screen = page.getByRole("region", {
     name: "Pull request #44",
@@ -9156,8 +9322,7 @@ test("PR branch updates recover from unconfirmed updates and refresh failures", 
   page,
 }) => {
   await preparePullRequestPreview(page);
-  await page
-    .getByRole("region", { name: "Pull requests", exact: true })
+  await (await showPullRequests(page))
     .getByRole("button", { name: /View pull request #44/ })
     .click();
   const screen = page.getByRole("region", {
@@ -9251,10 +9416,7 @@ test("session PR section discovers off-screen sessions with shared bounded looku
   await page.evaluate(() =>
     (window as any).fixture.release("github_open_pull_request"),
   );
-  const section = page.getByRole("region", {
-    name: "Pull requests",
-    exact: true,
-  });
+  const section = await showPullRequests(page);
   const row = section.getByRole("button", { name: /View pull request #44/ });
   await expect(row).toBeVisible();
   await expect(row).toHaveAccessibleDescription("#44 · Background task 17");
@@ -9305,10 +9467,7 @@ test("session PR section ignores delayed results from a different project", asyn
   }, previewPullRequest);
   await page.clock.runFor(60_100);
   await page.getByRole("button", { name: "Open project", exact: true }).click();
-  const section = page.getByRole("region", {
-    name: "Pull requests",
-    exact: true,
-  });
+  const section = await showPullRequests(page);
   await expect(
     section.getByRole("button", { name: /Other project changes/ }),
   ).toBeVisible();
@@ -9320,6 +9479,7 @@ test("session PR section ignores delayed results from a different project", asyn
   await expect(section.getByRole("button")).toHaveCount(1);
   await expect(section).not.toContainText(previewPullRequest.title);
   await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await showPullRequests(page);
   await expect(
     section.getByRole("button", { name: /Improve project navigation/ }),
   ).toBeVisible();
@@ -9433,10 +9593,7 @@ test("session PR indicators share lookups, distinguish drafts and preserve match
       exact: true,
     }),
   ).toBeVisible();
-  const section = page.getByRole("region", {
-    name: "Pull requests",
-    exact: true,
-  });
+  const section = await showPullRequests(page);
   await expect(section.getByRole("status")).toContainText(
     "Showing last known results",
   );
@@ -9449,6 +9606,7 @@ test("session PR indicators share lookups, distinguish drafts and preserve match
   );
   await section.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(section.getByRole("status")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(
     session.getByRole("button", {
       name: "Open pull request #40: Ready for review",
@@ -9478,11 +9636,9 @@ test("session PR refresh bypasses cached misses for both providers and preserves
     exact: true,
   });
   await refresh.click();
-  const section = page.getByRole("region", {
-    name: "Pull requests",
-    exact: true,
-  });
+  const section = await showPullRequests(page);
   await expect(section.locator(".session-pr-item")).toHaveCount(2);
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   const codex = sessionRow(page, "Refine the session workspace").getByRole(
     "button",
     { name: /pull request #44/ },
@@ -9503,6 +9659,7 @@ test("session PR refresh bypasses cached misses for both providers and preserves
   await page.evaluate(() =>
     (window as any).fixture.release("github_open_pull_request"),
   );
+  await showPullRequests(page);
   await expect(section.getByRole("status")).toContainText(
     "Showing last known results",
   );
@@ -9510,6 +9667,7 @@ test("session PR refresh bypasses cached misses for both providers and preserves
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await page.clock.runFor(60_100);
   await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(codex).toBeVisible();
   await expect(opencode).toBeVisible();
   await page.evaluate(() => {
@@ -9518,9 +9676,12 @@ test("session PR refresh bypasses cached misses for both providers and preserves
     fixture.setPullRequest("feat/session-ui-redesign", null);
   });
   await page.clock.runFor(15_100);
+  await showPullRequests(page);
   await expect(section.getByRole("status")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(codex).toHaveCount(0);
   await expect(opencode).toBeVisible();
+  await showPullRequests(page);
   await expect(section.locator(".session-pr-item")).toHaveCount(1);
 });
 
@@ -9582,10 +9743,7 @@ test("session PR explicit refresh discards older in-flight discovery and picks u
       ),
     )
     .toBe(3);
-  const section = page.getByRole("region", {
-    name: "Pull requests",
-    exact: true,
-  });
+  const section = await showPullRequests(page);
   await expect(
     section.getByRole("button", { name: /View pull request #44/ }),
   ).toHaveCount(0);
@@ -9666,9 +9824,9 @@ for (const provider of ["codex", "opencode"] as const) {
         "opencode",
       );
     await expect(
-      page
-        .getByRole("region", { name: "Pull requests", exact: true })
-        .getByRole("button", { name: /View pull request #44/ }),
+      (await showPullRequests(page)).getByRole("button", {
+        name: /View pull request #44/,
+      }),
     ).toBeVisible();
   });
 
@@ -9770,9 +9928,9 @@ for (const provider of ["codex", "opencode"] as const) {
       row.getByRole("button", { name: /pull request #44/ }),
     ).toBeVisible();
     await expect(
-      page
-        .getByRole("region", { name: "Pull requests", exact: true })
-        .getByRole("button", { name: /View pull request #44/ }),
+      (await showPullRequests(page)).getByRole("button", {
+        name: /View pull request #44/,
+      }),
     ).toContainText("2 sessions");
   });
 }

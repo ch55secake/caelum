@@ -12,13 +12,10 @@ import type { WorkspaceController } from "./Sidebar.js";
 
 type Session = SessionSummary & { provider: ProviderKind; title: string };
 
-export function SessionPullRequests({
-  app,
-  sessions,
-}: {
-  app: WorkspaceController;
-  sessions: Session[];
-}) {
+export function useSessionPullRequests(
+  app: WorkspaceController,
+  sessions: Session[],
+) {
   const path = app.project?.path ?? "";
   const sessionKey = JSON.stringify(
     sessions.map(({ id, provider, updatedAt }) => [provider, id, updatedAt]),
@@ -66,14 +63,17 @@ export function SessionPullRequests({
     loadingDetails ||
     branches.some((branch) => !requests[branch] || requests[branch].loading);
   const error = branches.map((branch) => requests[branch]?.error).find(Boolean);
+  return { path, entries, loading, error };
+}
+
+export function SessionPullRequests({
+  result,
+}: {
+  result: ReturnType<typeof useSessionPullRequests>;
+}) {
+  const { path, entries, loading, error } = result;
   return (
     <section className="session-pr-section" aria-label="Pull requests">
-      <div className="section-heading">
-        <span>Pull requests</span>
-        {entries.size > 0 && (
-          <span className="session-pr-count">{entries.size}</span>
-        )}
-      </div>
       <div className="session-pr-list">
         {entries.size
           ? [...entries.values()].map((entry) => (
