@@ -18,7 +18,8 @@ use caelum_core::{
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
-    GitFileVersions, GitHubMergeMethod, GitHubPullRequest, GitHubPullRequestDetails,
+    GitFileVersions, GitHubFeedbackKind, GitHubMergeMethod, GitHubPullRequest,
+    GitHubPullRequestDetails, GitHubPullRequestFeedback, GitHubPullRequestFiles,
     GitRepositoryStatus, GitWorktree, GitWorktrees, OpenCodeSessionInfo, OpenCodeSessionList,
     ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProjectSearchMode,
     ProjectSearchResults, ProviderChoices, QuestionPrompt, SessionDetails, SessionHistoryPage,
@@ -256,6 +257,45 @@ async fn github_pull_request_details(
 ) -> Result<GitHubPullRequestDetails, String> {
     tauri::async_runtime::spawn_blocking(move || {
         github::pull_request_details(project_path, &url).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_pull_request_files(
+    project_path: String,
+    url: String,
+    head_oid: String,
+    page: u32,
+) -> Result<GitHubPullRequestFiles, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::pull_request_files(project_path, &url, &head_oid, page)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_pull_request_feedback(
+    project_path: String,
+    url: String,
+    head_oid: String,
+    kind: GitHubFeedbackKind,
+    cursor: Option<String>,
+    thread_id: Option<String>,
+) -> Result<GitHubPullRequestFeedback, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::pull_request_feedback(
+            project_path,
+            &url,
+            &head_oid,
+            kind,
+            cursor.as_deref(),
+            thread_id.as_deref(),
+        )
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -992,6 +1032,8 @@ pub fn run() {
             git_repository_status,
             github_open_pull_request,
             github_pull_request_details,
+            github_pull_request_files,
+            github_pull_request_feedback,
             github_merge_pull_request,
             github_update_pull_request_branch,
             git_file_diff,

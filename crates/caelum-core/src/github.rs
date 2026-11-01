@@ -14,6 +14,9 @@ use thiserror::Error;
 
 use crate::projects::{Project, ProjectError};
 
+mod review;
+pub use review::{pull_request_feedback, pull_request_files};
+
 /// Uses gh's existing authentication and repository/remote selection. Network
 /// lookups stay separate from local Git status and never open an auth prompt.
 pub fn open_pull_request(

@@ -67,6 +67,8 @@ export default function App() {
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
   const activePullRequest =
     pullRequest?.scope === sessionKey ? pullRequest : null;
+  const currentPullRequest = useRef(activePullRequest);
+  currentPullRequest.current = activePullRequest;
   const changesOpen = !activePullRequest && pane === "changes";
   const currentSessionKey = useRef(sessionKey);
   currentSessionKey.current = sessionKey;
@@ -444,6 +446,43 @@ export default function App() {
               key={activePullRequest.pr.url}
               target={activePullRequest}
               back={showSession}
+              session={
+                app.selected && app.selectedId
+                  ? {
+                      name: title,
+                      disabledReason:
+                        app.checkoutUnavailable ||
+                        Boolean(
+                          app.rootProject &&
+                            app.worktreeBusy[app.rootProject.path],
+                        )
+                          ? "This checkout is unavailable or busy."
+                          : app.selected.connection !== "connected"
+                            ? "Reconnect this session to address feedback."
+                            : app.selected.isWorking ||
+                                app.selected.isSubmitting
+                              ? "Wait for the current turn to finish."
+                              : activeQuestions.length || activeApprovals.length
+                                ? "Answer the session's pending request first."
+                                : app.providerWorkspace?.archivingSessionIds.includes(
+                                      app.selectedId,
+                                    )
+                                  ? "This session is being archived."
+                                  : null,
+                      address: async (prompt) => {
+                        const sent = await app.submit(prompt);
+                        if (
+                          sent &&
+                          currentSessionKey.current === sessionKey &&
+                          currentPullRequest.current?.pr.url ===
+                            activePullRequest.pr.url
+                        )
+                          showSession();
+                        return sent;
+                      },
+                    }
+                  : undefined
+              }
             />
           )}
           <div

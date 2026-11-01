@@ -100,6 +100,71 @@ pub struct GitHubAuthor {
     pub login: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestFile {
+    #[serde(alias = "filename")]
+    pub path: String,
+    pub status: String,
+    #[serde(alias = "previous_filename")]
+    pub previous_path: Option<String>,
+    pub additions: u64,
+    pub deletions: u64,
+    pub patch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestFiles {
+    pub files: Vec<GitHubPullRequestFile>,
+    pub base_oid: String,
+    pub next_page: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubFeedbackKind {
+    Discussion,
+    Reviews,
+    Threads,
+    Replies,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubReviewComment {
+    pub id: String,
+    pub body: String,
+    pub url: String,
+    pub author: Option<GitHubAuthor>,
+    pub created_at: String,
+    pub state: Option<String>,
+    pub diff_hunk: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubReviewThread {
+    pub id: String,
+    pub path: String,
+    pub line: Option<u64>,
+    pub start_line: Option<u64>,
+    pub original_line: Option<u64>,
+    pub diff_side: String,
+    pub is_resolved: bool,
+    pub is_outdated: bool,
+    pub comments: Vec<GitHubReviewComment>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestFeedback {
+    pub comments: Vec<GitHubReviewComment>,
+    pub threads: Vec<GitHubReviewThread>,
+    pub next_cursor: Option<String>,
+}
+
 /// GitHub exposes both Actions check runs and legacy commit statuses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "__typename")]

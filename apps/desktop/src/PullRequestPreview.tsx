@@ -36,6 +36,11 @@ import {
 import { usePullRequestDetails } from "./usePullRequestDetails.js";
 import { CheckStatusIcon, PullRequestChecks } from "./PullRequestChecks.js";
 import { PullRequestMerge } from "./PullRequestMerge.js";
+import {
+  PullRequestFiles,
+  PullRequestComments,
+  type ReviewSession,
+} from "./PullRequestReview.js";
 import { copyAction, useContextMenu } from "./ContextMenu.js";
 
 export type PullRequestTarget = {
@@ -303,9 +308,11 @@ function PreviewCard({
 export function PullRequestScreen({
   target,
   back,
+  session,
 }: {
   target: PullRequestTarget;
   back: () => void;
+  session?: ReviewSession;
 }) {
   const screen = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -328,7 +335,7 @@ export function PullRequestScreen({
           {target.pr.url.split("/").slice(-4, -2).join("/")}
         </span>
       </div>
-      <PullRequestContent target={target} expanded />
+      <PullRequestContent target={target} expanded session={session} />
     </section>
   );
 }
@@ -337,10 +344,12 @@ function PullRequestContent({
   target,
   expanded = false,
   expand,
+  session,
 }: {
   target: PullRequestTarget;
   expanded?: boolean;
   expand?: () => void;
+  session?: ReviewSession;
 }) {
   const details = usePullRequestDetails(
     target.projectPath,
@@ -348,6 +357,14 @@ function PullRequestContent({
     expanded,
   );
   const primaryAction = useRef<HTMLButtonElement>(null);
+  const [tab, setTab] = useState<"overview" | "files" | "comments">("overview");
+  const [visited, setVisited] = useState({ files: false, comments: false });
+  const selectTab = (value: typeof tab) => {
+    setTab(value);
+    if (value !== "overview")
+      setVisited((current) => ({ ...current, [value]: true }));
+  };
+  const tabId = useId();
   const [linkError, setLinkError] = useState("");
   const menu = useContextMenu();
   const pr = details.value ?? target.pr;
@@ -374,9 +391,7 @@ function PullRequestContent({
       : details.value?.reviewDecision === "CHANGES_REQUESTED"
         ? "failure"
         : "neutral";
-  const description = details.value?.body
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .trim();
+  const description = details.value?.body.trim();
   const open = (url: string) => {
     setLinkError("");
     void openUrl(url).catch(() =>
@@ -424,85 +439,177 @@ function PullRequestContent({
               {details.value.baseRefName}
             </code>
           </div>
-          <div
-            className={`pr-description markdown${expanded ? "" : " pr-excerpt"}`}
-          >
-            {description ? (
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                skipHtml
-                components={{
-                  img: ({ alt }) => <span>{alt}</span>,
-                  table: ({ children }) => (
-                    <div className="markdown-table">
-                      <table>{children}</table>
-                    </div>
-                  ),
-                  a: ({ href, children }) =>
-                    expanded && href && /^https?:\/\//i.test(href) ? (
-                      <a
-                        href={href}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          open(href);
-                        }}
-                      >
-                        {children}
-                      </a>
-                    ) : (
-                      <span>{children}</span>
-                    ),
-                }}
-              >
-                {expanded ? description : description.slice(0, 1200)}
-              </Markdown>
-            ) : (
-              <p className="pr-muted">No description provided.</p>
-            )}
-          </div>
-          <div
-            className="pr-changes"
-            aria-label={`${details.value.additions} lines added, ${details.value.deletions} lines deleted, ${details.value.changedFiles} files changed`}
-          >
-            <span className="lines-added">
-              +{details.value.additions.toLocaleString()}
-            </span>
-            <span className="lines-deleted">
-              −{details.value.deletions.toLocaleString()}
-            </span>
-            <span>
-              <FileDiff size={13} />
-              {details.value.changedFiles.toLocaleString()}{" "}
-              {details.value.changedFiles === 1 ? "file" : "files"} changed
-            </span>
-          </div>
-          {!expanded && (
-            <div className="pr-status" data-tone={checks.tone}>
-              <CheckStatusIcon tone={checks.tone} size={13} />
-              <span>{checks.text}</span>
+          {expanded && (
+            <div
+              className="pr-tabs"
+              role="tablist"
+              aria-label="Pull request views"
+              onKeyDown={(event) => {
+                const names = ["overview", "files", "comments"] as const;
+                const index = names.indexOf(tab);
+                const next =
+                  event.key === "ArrowRight"
+                    ? (index + 1) % names.length
+                    : event.key === "ArrowLeft"
+                      ? (index + names.length - 1) % names.length
+                      : event.key === "Home"
+                        ? 0
+                        : event.key === "End"
+                          ? names.length - 1
+                          : null;
+                if (next === null) return;
+                event.preventDefault();
+                selectTab(names[next]);
+                event.currentTarget
+                  .querySelectorAll<HTMLButtonElement>("button")
+                  [next]?.focus();
+              }}
+            >
+              {(["overview", "files", "comments"] as const).map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  role="tab"
+                  id={`${tabId}-${name}`}
+                  aria-controls={`${tabId}-${name}-panel`}
+                  aria-selected={tab === name}
+                  tabIndex={tab === name ? 0 : -1}
+                  onClick={() => selectTab(name)}
+                >
+                  {name === "overview"
+                    ? "Overview"
+                    : name === "files"
+                      ? `Files changed (${details.value!.changedFiles})`
+                      : "Comments"}
+                </button>
+              ))}
             </div>
           )}
-          <div className="pr-status" data-tone={reviewTone}>
-            <CheckStatusIcon tone={reviewTone} size={13} />
-            <span>{reviewStatus(details.value.reviewDecision)}</span>
+          <div
+            hidden={expanded && tab !== "overview"}
+            role={expanded ? "tabpanel" : undefined}
+            id={`${tabId}-overview-panel`}
+            aria-labelledby={expanded ? `${tabId}-overview` : undefined}
+          >
+            <div
+              className={`pr-description markdown${expanded ? "" : " pr-excerpt"}`}
+            >
+              {description ? (
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  skipHtml
+                  components={{
+                    img: ({ alt }) => <span>{alt}</span>,
+                    table: ({ children }) => (
+                      <div className="markdown-table">
+                        <table>{children}</table>
+                      </div>
+                    ),
+                    a: ({ href, children }) =>
+                      expanded && href && /^https?:\/\//i.test(href) ? (
+                        <a
+                          href={href}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            open(href);
+                          }}
+                        >
+                          {children}
+                        </a>
+                      ) : (
+                        <span>{children}</span>
+                      ),
+                  }}
+                >
+                  {expanded ? description : description.slice(0, 1200)}
+                </Markdown>
+              ) : (
+                <p className="pr-muted">No description provided.</p>
+              )}
+            </div>
+            <div
+              className="pr-changes"
+              aria-label={`${details.value.additions} lines added, ${details.value.deletions} lines deleted, ${details.value.changedFiles} files changed`}
+            >
+              <span className="lines-added">
+                +{details.value.additions.toLocaleString()}
+              </span>
+              <span className="lines-deleted">
+                −{details.value.deletions.toLocaleString()}
+              </span>
+              <span>
+                <FileDiff size={13} />
+                {details.value.changedFiles.toLocaleString()}{" "}
+                {details.value.changedFiles === 1 ? "file" : "files"} changed
+              </span>
+            </div>
+            {!expanded && (
+              <div className="pr-status" data-tone={checks.tone}>
+                <CheckStatusIcon tone={checks.tone} size={13} />
+                <span>{checks.text}</span>
+              </div>
+            )}
+            <div className="pr-status" data-tone={reviewTone}>
+              <CheckStatusIcon tone={reviewTone} size={13} />
+              <span>{reviewStatus(details.value.reviewDecision)}</span>
+            </div>
+            {expanded && (
+              <div className="pr-readiness">
+                <PullRequestChecks
+                  checks={details.value.statusCheckRollup}
+                  open={open}
+                />
+                <PullRequestMerge
+                  pr={details.value}
+                  ready={ready}
+                  loading={details.loading}
+                  merging={details.merging}
+                  error={details.mergeError}
+                  lastMethod={details.mergeMethod}
+                  merge={details.merge}
+                  updating={details.updating}
+                  updateError={details.updateError}
+                  updateBranch={details.updateBranch}
+                />
+              </div>
+            )}
           </div>
-          {expanded && (
-            <div className="pr-readiness">
-              <PullRequestChecks
-                checks={details.value.statusCheckRollup}
+          {expanded && visited.files && (
+            <div
+              hidden={tab !== "files"}
+              role="tabpanel"
+              id={`${tabId}-files-panel`}
+              aria-labelledby={`${tabId}-files`}
+            >
+              <PullRequestFiles
+                key={details.value.headRefOid}
+                projectPath={target.projectPath}
+                pr={details.value}
                 open={open}
               />
-              <PullRequestMerge
+            </div>
+          )}
+          {expanded && visited.comments && (
+            <div
+              hidden={tab !== "comments"}
+              role="tabpanel"
+              id={`${tabId}-comments-panel`}
+              aria-labelledby={`${tabId}-comments`}
+            >
+              <PullRequestComments
+                key={details.value.headRefOid}
+                projectPath={target.projectPath}
                 pr={details.value}
-                ready={ready}
-                loading={details.loading}
-                merging={details.merging}
-                error={details.mergeError}
-                lastMethod={details.mergeMethod}
-                merge={details.merge}
-                updating={details.updating}
-                updateError={details.updateError}
-                updateBranch={details.updateBranch}
+                open={open}
+                session={
+                  session && {
+                    ...session,
+                    disabledReason:
+                      details.loading || details.merging || details.updating
+                        ? "Wait for the pull request update to finish."
+                        : session.disabledReason,
+                  }
+                }
               />
             </div>
           )}

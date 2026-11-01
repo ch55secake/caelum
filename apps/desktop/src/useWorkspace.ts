@@ -1753,12 +1753,12 @@ export function useWorkspace(settings: AppSettings) {
       return [...rest, file];
     }, ask);
   }
-  async function submit() {
+  async function submit(message?: string): Promise<boolean> {
     if (
       checkoutUnavailable ||
       (rootPath && worktreeOperations.current.has(rootPath))
     )
-      return;
+      return false;
     if (
       pendingQuestions.current.some(
         (request) =>
@@ -1767,13 +1767,16 @@ export function useWorkspace(settings: AppSettings) {
           request.sessionId === selectedId,
       )
     )
-      return;
-    if (!project) return;
+      return false;
+    if (!project) return false;
     const target = project,
       kind = provider;
     const snapshot = state.current[target.path].providers[kind];
     let id = snapshot.selectedSessionId;
     const cached = id ? snapshot.sessionsById[id] : null;
+    // Review actions target the existing session and preserve its pending draft
+    // and attached files. Normal composer submissions keep their usual behavior.
+    if (message !== undefined && !id) return false;
     const model = cached?.model ?? null;
     const pendingAgent = kind === "opencode" ? (cached?.agent ?? null) : null;
     const {
@@ -1786,10 +1789,16 @@ export function useWorkspace(settings: AppSettings) {
       snapshot,
       cached,
     );
-    const rawText = cached?.draft ?? snapshot.draft;
-    const command = kind === "opencode" ? parseSlashCommand(rawText) : null;
+    const rawText = message ?? cached?.draft ?? snapshot.draft;
+    const command =
+      kind === "opencode" && message === undefined
+        ? parseSlashCommand(rawText)
+        : null;
     const text = command ? rawText : rawText.trim();
-    const fileContext = cached?.fileContext ?? snapshot.fileContext;
+    const fileContext =
+      message === undefined
+        ? (cached?.fileContext ?? snapshot.fileContext)
+        : [];
     const contextIds = new Set(fileContext.map((file) => file.id));
     const prompt = command ? "" : promptWithFileContext(text, fileContext);
     const key = `send:${keyFor(target.path, kind, id ?? "new")}`;
@@ -1802,7 +1811,7 @@ export function useWorkspace(settings: AppSettings) {
       cached?.isSubmitting ||
       (id && (!cached || cached.connection !== "connected"))
     )
-      return;
+      return false;
     locks.current.add(key);
     const nav = navigation.current;
     const creating = !id;
@@ -1882,7 +1891,8 @@ export function useWorkspace(settings: AppSettings) {
       prepared = true;
       mutateSession(target.path, kind, sessionId, (value) => ({
         ...value,
-        draft: value.draft === rawText ? "" : value.draft,
+        draft:
+          message === undefined && value.draft === rawText ? "" : value.draft,
         fileContext: value.fileContext.filter(
           (file) => !contextIds.has(file.id),
         ),
@@ -1975,12 +1985,13 @@ export function useWorkspace(settings: AppSettings) {
           effort:
             value.effort === (cached?.effort ?? effort) ? null : value.effort,
         }));
+      return true;
     } catch (reason) {
       if (id)
         mutateSession(target.path, kind, id, (value) => ({
           ...value,
           draft:
-            !prepared || value.draft === text
+            message !== undefined || !prepared || value.draft === text
               ? value.draft
               : value.draft
                 ? `${text}\n\n${value.draft}`
@@ -2006,6 +2017,8 @@ export function useWorkspace(settings: AppSettings) {
           ...value,
           error: String(reason),
         }));
+      if (message !== undefined) throw reason;
+      return false;
     } finally {
       locks.current.delete(key);
       if (id)

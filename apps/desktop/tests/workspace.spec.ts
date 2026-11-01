@@ -253,6 +253,7 @@ async function desktop(
       >();
       const gitErrors = new Map<string, string>();
       const pullRequests = new Map<string, unknown>();
+      const pullRequestPages = new Map<string, unknown>();
       let diffVersion = 1;
       const codexHistory = new Map<
         string,
@@ -374,6 +375,14 @@ async function desktop(
           },
           setPullRequestDetails: (url: string, value: unknown) => {
             pullRequests.set(url, value);
+          },
+          setPullRequestPage: (
+            url: string,
+            kind: string,
+            cursor: string | number,
+            value: unknown,
+          ) => {
+            pullRequestPages.set(`${url}:${kind}:${cursor}`, value);
           },
           setGitDiff: (
             file: string,
@@ -987,6 +996,27 @@ async function desktop(
                 gates.get(`${command}:${args.projectPath}:${args.branch}`) ??
                 gates.get(command)
               )?.promise;
+              if (error) throw new Error(error);
+              return result;
+            }
+            if (
+              [
+                "github_pull_request_files",
+                "github_pull_request_feedback",
+              ].includes(command)
+            ) {
+              const kind =
+                command === "github_pull_request_files" ? "files" : args.kind;
+              const result =
+                pullRequestPages.get(
+                  `${args.url}:${kind}:${args.page ?? args.cursor ?? ""}`,
+                ) ??
+                (kind === "files"
+                  ? { files: [], baseOid: "base", nextPage: null }
+                  : { comments: [], threads: [], nextCursor: null });
+              const error = commandErrors.get(command);
+              await (gates.get(`${command}:${args.url}`) ?? gates.get(command))
+                ?.promise;
               if (error) throw new Error(error);
               return result;
             }
@@ -1853,6 +1883,7 @@ async function setQuestions(
 
 test("Codex questions preserve drafts across sessions and retry the original request", async ({
   page,
+  browserName,
 }) => {
   await desktop(page);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
@@ -1865,7 +1896,12 @@ test("Codex questions preserve drafts across sessions and retry the original req
   ).toHaveCount(0);
   await expect(card).toBeFocused();
   await expect(card.locator("input:checked")).toHaveCount(0);
-  await page.keyboard.press("Tab");
+  // macOS WebKit uses Option+Tab to include radio buttons in tab navigation.
+  await page.keyboard.press(
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab",
+  );
   await expect(
     card.getByRole("radio", { name: "Small Focused change" }),
   ).toBeFocused();
@@ -6317,6 +6353,617 @@ async function preparePullRequestPreview(page: Page, worktrees = true) {
     name: /Open pull request #44/,
   });
 }
+
+async function preparePullRequestReview(
+  page: Page,
+  provider: "codex" | "opencode" = "codex",
+  selected = true,
+) {
+  await page.clock.install();
+  await desktop(page, selected && provider === "codex" ? "thread-a" : null);
+  if (provider === "opencode") {
+    await choose(page, "Provider", "OpenCode");
+    if (selected)
+      await page
+        .getByRole("button", { name: "OpenCode session", exact: true })
+        .click();
+  }
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.setPullRequest("main", pr);
+    fixture.setPullRequestDetails(pr.url, { ...pr, changedFiles: 3 });
+    const comment = (id: string, body: string) => ({
+      id,
+      body,
+      url: `${pr.url}#discussion_${id}`,
+      author: { login: "reviewer" },
+      createdAt: "2026-11-01T12:00:00Z",
+      state: null,
+      diffHunk: null,
+    });
+    fixture.setPullRequestPage(pr.url, "files", 1, {
+      baseOid: "base",
+      files: [
+        {
+          path: "src/new name.ts",
+          previousPath: "src/old name.ts",
+          status: "renamed",
+          additions: 1,
+          deletions: 1,
+          patch:
+            "@@ -1 +1 @@\n-const oldValue = false;\n+const newValue = true;",
+        },
+        {
+          path: "assets/logo.png",
+          previousPath: null,
+          status: "added",
+          additions: 0,
+          deletions: 0,
+          patch: null,
+        },
+      ],
+      nextPage: 2,
+    });
+    fixture.setPullRequestPage(pr.url, "files", 2, {
+      baseOid: "base",
+      files: [
+        {
+          path: "README.md",
+          previousPath: null,
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: "@@ -1 +1,2 @@\n # Project\n+More documentation",
+        },
+      ],
+      nextPage: null,
+    });
+    fixture.setPullRequestPage(pr.url, "discussion", "", {
+      comments: [comment("discussion", "Please update the documentation.")],
+      threads: [],
+      nextCursor: "discussion-next",
+    });
+    fixture.setPullRequestPage(pr.url, "discussion", "discussion-next", {
+      comments: [comment("later", "Also include an example.")],
+      threads: [],
+      nextCursor: null,
+    });
+    fixture.setPullRequestPage(pr.url, "reviews", "", {
+      comments: [
+        {
+          ...comment("review", "Please handle **empty input**."),
+          state: "CHANGES_REQUESTED",
+        },
+      ],
+      threads: [],
+      nextCursor: null,
+    });
+    const thread = {
+      id: "inline",
+      path: "src/new name.ts",
+      line: 3,
+      startLine: 2,
+      originalLine: 3,
+      diffSide: "RIGHT",
+      isResolved: false,
+      isOutdated: false,
+      nextCursor: "replies-next",
+      comments: [
+        {
+          ...comment(
+            "inline-first",
+            "Preserve the return value.\n```suggestion\nreturn value;\n```",
+          ),
+          diffHunk: "@@ -2 +2 @@\n-old\n+value",
+        },
+      ],
+    };
+    fixture.setPullRequestPage(pr.url, "threads", "", {
+      comments: [],
+      threads: [
+        thread,
+        {
+          ...thread,
+          id: "resolved",
+          path: "resolved.ts",
+          isResolved: true,
+          nextCursor: null,
+          comments: [comment("resolved-comment", "Already addressed.")],
+        },
+        {
+          ...thread,
+          id: "outdated",
+          path: "outdated.ts",
+          isOutdated: true,
+          nextCursor: null,
+          comments: [comment("outdated-comment", "Old implementation.")],
+        },
+      ],
+      nextCursor: null,
+    });
+    fixture.setPullRequestPage(pr.url, "replies", "replies-next", {
+      comments: [
+        comment("reply", "This also needs to preserve Unicode: 空白."),
+      ],
+      threads: [],
+      nextCursor: null,
+    });
+  }, previewPullRequest);
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  return page.getByRole("region", { name: "Pull request #44", exact: true });
+}
+
+test("PR files load on demand with themed diffs, renames, pagination and retained errors", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter((call: any) =>
+        ["github_pull_request_files", "github_pull_request_feedback"].includes(
+          call.command,
+        ),
+      ),
+    ),
+  ).toHaveLength(0);
+  await screen.getByRole("tab", { name: "Overview", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    screen.getByRole("tab", { name: "Files changed (3)" }),
+  ).toBeFocused();
+  await expect(
+    screen.getByRole("tab", { name: "Files changed (3)" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(screen.locator(".pr-file-heading")).toContainText(
+    "Renamed from src/old name.ts",
+  );
+  await expect(screen.locator(".diff-line.added")).toContainText("newValue");
+  await expect(screen.locator(".diff-line.removed")).toContainText("oldValue");
+  await screen
+    .getByRole("navigation", { name: "Changed files" })
+    .getByRole("button", { name: /assets\/logo.png/ })
+    .click();
+  await expect(screen).toContainText("GitHub did not provide a text patch");
+  await screen
+    .getByRole("button", { name: "Load more files", exact: true })
+    .click();
+  await screen
+    .getByRole("navigation", { name: "Changed files" })
+    .getByRole("button", { name: /README.md/ })
+    .click();
+  await expect(screen.locator(".diff-line.added")).toContainText(
+    "More documentation",
+  );
+  await expect(
+    screen.getByRole("button", { name: "Load more files", exact: true }),
+  ).toHaveCount(0);
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    expect(
+      await screen.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    ).toBe(true);
+  }
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_files",
+      "Network unavailable",
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh files", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toContainText(
+    "Showing the last loaded results",
+  );
+  await expect(screen.locator(".diff-line.added")).toContainText(
+    "More documentation",
+  );
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("github_pull_request_files", null),
+  );
+  await screen
+    .getByRole("button", { name: "Retry files", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(0);
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_pull_request_files",
+    ),
+  );
+  expect(calls.map((call: any) => call.args.page)).toEqual([1, 2, 1, 1]);
+  expect(
+    calls.every((call: any) => call.args.url === previewPullRequest.url),
+  ).toBe(true);
+});
+
+for (const provider of ["codex", "opencode"] as const) {
+  test(`PR comments send selected complete feedback to the current ${provider} session and preserve its draft`, async ({
+    page,
+  }) => {
+    const screen = await preparePullRequestReview(page, provider);
+    await screen
+      .getByRole("button", { name: "Back to session", exact: true })
+      .click();
+    await findProjectFile(page, "src/App.tsx");
+    await page
+      .locator(".file-editor-toolbar")
+      .getByRole("button", { name: "Add to prompt", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("Keep my next task draft.");
+    await page
+      .getByRole("region", { name: "Pull requests", exact: true })
+      .getByRole("button", { name: /View pull request #44/ })
+      .click();
+    await screen.getByRole("tab", { name: "Comments", exact: true }).click();
+    await expect(
+      screen.getByRole("region", { name: "Reviews", exact: true }),
+    ).toContainText("changes requested");
+    await expect(
+      screen.getByRole("checkbox", {
+        name: "Include resolved.ts:3",
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    await expect(
+      screen.getByRole("checkbox", {
+        name: "Include outdated.ts:3",
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    const inline = screen.getByRole("checkbox", {
+      name: "Include src/new name.ts:3",
+      exact: true,
+    });
+    await expect(inline).toBeDisabled();
+    await screen
+      .getByRole("button", { name: "Load remaining replies", exact: true })
+      .click();
+    await expect(inline).toBeChecked();
+    await expect(screen).toContainText("Unicode: 空白");
+    await screen
+      .getByRole("button", {
+        name: "Load more discussion comments",
+        exact: true,
+      })
+      .click();
+    await expect(screen).toContainText("Also include an example");
+    await screen
+      .getByRole("region", { name: "Discussion", exact: true })
+      .getByRole("checkbox")
+      .first()
+      .uncheck();
+    await screen
+      .getByRole("tab", { name: "Files changed (3)", exact: true })
+      .click();
+    await screen.getByRole("tab", { name: "Comments", exact: true }).click();
+    await expect(
+      screen
+        .getByRole("region", { name: "Discussion", exact: true })
+        .getByRole("checkbox")
+        .first(),
+    ).not.toBeChecked();
+    await expect(inline).toBeChecked();
+    await screen
+      .locator(".pr-feedback")
+      .filter({ hasText: "Preserve the return value" })
+      .getByText("Diff context", { exact: true })
+      .click();
+    await expect(
+      screen.locator(".pr-comment-context .diff-line.added"),
+    ).toContainText("value");
+    await screen
+      .getByRole("button", { name: "Address selected comments", exact: true })
+      .click();
+    await expect(screen).toHaveCount(0);
+    await expect(
+      page.getByRole("textbox", { name: "Message", exact: true }),
+    ).toHaveValue("Keep my next task draft.");
+    await expect(attachedContext(page)).toContainText("src/App.tsx");
+    const calls = await page.evaluate(
+      (provider) =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === `${provider}_send_prompt`,
+        ),
+      provider,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args.sessionId).toBe(
+      provider === "codex" ? "thread-a" : "ses-a",
+    );
+    expect(calls[0].args.projectPath).toBe("/work/caelum");
+    const prompt = calls[0].args.prompt;
+    expect(prompt).toContain(previewPullRequest.url);
+    expect(prompt).toContain(previewPullRequest.headRefOid);
+    expect(prompt).toContain("Unicode: 空白");
+    expect(prompt).toContain("src/new name.ts");
+    expect(prompt).toContain("Also include an example");
+    for (const absent of [
+      "Already addressed",
+      "Old implementation",
+      "Please update the documentation",
+      "Keep my next task draft",
+      "caelum-file-context",
+    ])
+      expect(prompt).not.toContain(absent);
+  });
+}
+
+test("PR comments require an idle existing session, retain failed sends and respect newer navigation", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page, "codex", false);
+  await screen.getByRole("tab", { name: "Comments", exact: true }).click();
+  await expect(screen).toContainText("Select a session to address feedback");
+  await expect(
+    screen.getByRole("button", {
+      name: "Address selected comments",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Refine the session workspace", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("Untouched draft");
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  await screen.getByRole("tab", { name: "Comments", exact: true }).click();
+  await emit(page, "turn/started", {
+    threadId: "thread-a",
+    turn: { id: "busy" },
+  });
+  await expect(
+    screen.getByRole("button", {
+      name: "Address selected comments",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(screen).toContainText("Wait for the current turn");
+  await emit(page, "turn/completed", {
+    threadId: "thread-a",
+    turn: { id: "busy", status: "completed" },
+  });
+  await page.evaluate(() => (window as any).fixture.failSend());
+  await screen
+    .getByRole("button", { name: "Address selected comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toContainText(
+    "Could not send review feedback",
+  );
+  await page.evaluate(() => (window as any).fixture.hold("codex_send_prompt"));
+  await screen
+    .getByRole("button", { name: "Address selected comments", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Sending…", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Review the provider adapters", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.release("codex_send_prompt"),
+  );
+  await expect(page.locator(".breadcrumbs strong")).toHaveText(
+    "Review the provider adapters",
+  );
+  await page
+    .getByRole("button", { name: "Refine the session workspace", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toHaveValue("Untouched draft");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "codex_send_prompt",
+        ).length,
+    ),
+  ).toBe(2);
+});
+
+test("PR comments revalidate cached replies and require every reply page after refresh failures", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await screen.getByRole("tab", { name: "Comments", exact: true }).click();
+  const inline = screen.getByRole("checkbox", {
+    name: "Include src/new name.ts:3",
+    exact: true,
+  });
+  await screen
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await expect(inline).toBeChecked();
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Refresh comments", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate(() => {
+    (window as any).fixture.hold("github_pull_request_feedback");
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      "Replies unavailable",
+    );
+  });
+  await screen
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await expect(
+    screen.getByText("Loading replies…", { exact: true }),
+  ).toBeVisible();
+  await expect(inline).toBeDisabled();
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_feedback"),
+  );
+  await expect(screen.getByRole("alert")).toContainText("Replies unavailable");
+  await expect(inline).toBeDisabled();
+  await page.evaluate((url) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_pull_request_feedback", null);
+    const comment = (id: string, body: string) => ({
+      id,
+      body,
+      url: `${url}#discussion_${id}`,
+      author: null,
+      createdAt: "2026-11-01T12:00:00Z",
+      state: null,
+      diffHunk: null,
+    });
+    fixture.setPullRequestPage(url, "replies", "replies-next", {
+      comments: [comment("reply", "Updated reply")],
+      threads: [],
+      nextCursor: "replies-last",
+    });
+    fixture.setPullRequestPage(url, "replies", "replies-last", {
+      comments: [comment("last-reply", "Last reply on the thread")],
+      threads: [],
+      nextCursor: null,
+    });
+  }, previewPullRequest.url);
+  await screen
+    .getByRole("button", { name: "Retry replies", exact: true })
+    .click();
+  await expect(screen).toContainText("Updated reply");
+  await expect(inline).toBeDisabled();
+  await screen
+    .getByRole("button", { name: "Load more replies", exact: true })
+    .click();
+  await expect(inline).toBeChecked();
+  await expect(screen).toContainText("Last reply on the thread");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      "Refresh unavailable",
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(3);
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      null,
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await screen
+    .getByRole("button", { name: "Load more replies", exact: true })
+    .click();
+  await expect(inline).toBeChecked();
+  await screen
+    .getByRole("button", { name: "Retry review threads", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Load remaining replies", exact: true }),
+  ).toBeVisible();
+  await expect(inline).toBeDisabled();
+});
+
+test("PR comments retain refresh failures, isolate delayed responses and reload for a new head", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await screen.getByRole("tab", { name: "Comments", exact: true }).click();
+  await expect(screen).toContainText("Please update the documentation");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      "Rate limited",
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(3);
+  await expect(screen).toContainText("Please update the documentation");
+  await expect(
+    screen.getByRole("button", {
+      name: "Address selected comments",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      null,
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_feedback"),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      headRefOid: "f".repeat(40),
+    });
+    (window as any).fixture.setPullRequestPage(pr.url, "discussion", "", {
+      comments: [
+        {
+          id: "new-head-comment",
+          body: "Feedback on the new head",
+          url: `${pr.url}#issuecomment-1`,
+          author: null,
+          state: null,
+          createdAt: "2026-11-01T12:00:00Z",
+          diffHunk: null,
+        },
+      ],
+      threads: [],
+      nextCursor: null,
+    });
+  }, previewPullRequest);
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(
+    screen.getByText("Please update the documentation.", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_feedback"),
+  );
+  await expect(screen).toContainText("Feedback on the new head");
+  await expect(screen).not.toContainText("Please update the documentation");
+  await screen
+    .getByRole("button", { name: "Address selected comments", exact: true })
+    .click();
+  const prompt = await page.evaluate(
+    () =>
+      (window as any).fixture.calls.findLast(
+        (call: any) => call.command === "codex_send_prompt",
+      ).args.prompt,
+  );
+  expect(prompt).toContain("f".repeat(40));
+  expect(prompt).toContain("Feedback on the new head");
+  expect(prompt).not.toContain("Please update the documentation");
+});
 
 test("PR previews load on demand, stay open across the hover gap, share cached details and open the PR screen", async ({
   page,
