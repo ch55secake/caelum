@@ -18,6 +18,10 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { DiffSection } from "./DiffSection.js";
+import {
+  FileDiffSkeleton,
+  FileTreeSkeleton,
+} from "./PullRequestFilesSkeleton.js";
 import { PageStatus } from "./PullRequestReviewStatus.js";
 import { usePullRequestReview } from "./usePullRequestReview.js";
 import { diffLines } from "./diffHighlighting.js";
@@ -307,6 +311,7 @@ export function PullRequestFiles({
     ],
     [resource.pages],
   );
+  const initialLoading = resource.loading && !resource.pages.length;
   const [selected, setSelected] = useState<string>();
   const { byFile, otherThreads, otherFiles } = useMemo(() => {
     const paths = new Set(files.map((file) => file.path));
@@ -573,8 +578,8 @@ export function PullRequestFiles({
               <PanelLeft size={15} />
             </button>
             <strong>
-              {files.length === pr.changedFiles
-                ? `${files.length} files changed`
+              {initialLoading || files.length === pr.changedFiles
+                ? `${pr.changedFiles} files changed`
                 : `${files.length} of ${pr.changedFiles} files`}
             </strong>
             <span className="lines-added">
@@ -615,13 +620,18 @@ export function PullRequestFiles({
           id={fileListId}
           className="pr-file-list"
           aria-label="Changed files"
+          aria-busy={initialLoading}
           tabIndex={0}
           hidden={!showFiles}
         >
-          <div className="pr-file-list-summary">
-            <MessageSquare size={13} />
-            {feedback.length} loaded review threads
-          </div>
+          {initialLoading ? (
+            <FileTreeSkeleton />
+          ) : (
+            <div className="pr-file-list-summary">
+              <MessageSquare size={13} />
+              {feedback.length} loaded review threads
+            </div>
+          )}
           {files.map((file) => (
             <div key={file.path}>
               <button
@@ -680,6 +690,7 @@ export function PullRequestFiles({
           </div>
         </nav>
         <div className="pr-file-patches">
+          {initialLoading && <FileDiffSkeleton />}
           {files.map((file, index) => (
             <FilePatch
               key={file.path}
@@ -692,14 +703,16 @@ export function PullRequestFiles({
             />
           ))}
           <div ref={end} className="pr-files-pagination">
-            <PageStatus
-              resource={{
-                ...resource,
-                more,
-                refresh: () => (retryMore.current ? more() : refresh()),
-              }}
-              label="files"
-            />
+            {!initialLoading && (
+              <PageStatus
+                resource={{
+                  ...resource,
+                  more,
+                  refresh: () => (retryMore.current ? more() : refresh()),
+                }}
+                label="files"
+              />
+            )}
             {!resource.loading &&
               !resource.error &&
               !resource.hasMore &&
