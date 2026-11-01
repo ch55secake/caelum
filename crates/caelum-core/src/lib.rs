@@ -12,3 +12,6 @@ pub mod projects;
 pub mod questions;
 pub mod session_branches;
 pub mod worktrees;
+
+#[cfg(all(test, unix))]
+mod test_support;

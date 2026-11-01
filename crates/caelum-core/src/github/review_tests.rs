@@ -1,10 +1,7 @@
 use super::*;
 use caelum_protocol::GitHubFeedbackKind;
 use serde_json::{json, Value};
-use std::{
-    os::unix::fs::PermissionsExt,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const URL: &str = "https://git.example.com/upstream/repo/pull/44";
 const HEAD: &str = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
@@ -20,12 +17,10 @@ impl Fixture {
         ));
         fs::create_dir_all(&path).unwrap();
         let fixture = Self(path.canonicalize().unwrap());
-        fs::write(
-            fixture.0.join("gh"),
+        crate::test_support::write_executable(
+            &fixture.0.join("gh"),
             format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> arguments\n{script}\n"),
-        )
-        .unwrap();
-        fs::set_permissions(fixture.0.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+        );
         fixture
     }
     fn write(&self, name: &str, value: Value) {

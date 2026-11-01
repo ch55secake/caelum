@@ -360,10 +360,11 @@ pub enum GitHubError {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::{
-        os::unix::fs::PermissionsExt,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // Allow cold executable startup under parallel load. The hung-process test
+    // uses its own short deadline to check timeout and cleanup behavior.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -376,12 +377,11 @@ mod tests {
             ));
             fs::create_dir_all(&path).unwrap();
             let executable = path.join("gh");
-            fs::write(&executable, format!("#!/bin/sh\n{script}\n")).unwrap();
-            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            crate::test_support::write_executable(&executable, format!("#!/bin/sh\n{script}\n"));
             Self(path.canonicalize().unwrap())
         }
         fn query(&self, branch: &str) -> Result<Option<GitHubPullRequest>, GitHubError> {
-            query_pull_request(&self.0.join("gh"), &self.0, branch, Duration::from_secs(2))
+            query_pull_request(&self.0.join("gh"), &self.0, branch, TEST_TIMEOUT)
         }
     }
     impl Drop for Fixture {
@@ -499,13 +499,7 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
             "printf '%s\\n' \"$@\" > arguments\npwd > directory\nprintf '%s' '{}'",
             details_response(url)
         ));
-        let result = query_details(
-            &fixture.0.join("gh"),
-            &fixture.0,
-            url,
-            Duration::from_secs(2),
-        )
-        .unwrap();
+        let result = query_details(&fixture.0.join("gh"), &fixture.0, url, TEST_TIMEOUT).unwrap();
         assert_eq!(result.state, "MERGED");
         assert_eq!(result.additions, 128);
         assert_eq!(result.deletions, 42);
@@ -574,7 +568,7 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
                 &fixture.0.join("gh"),
                 &fixture.0,
                 "https://github.com/owner/repo/pull/43",
-                Duration::from_secs(2)
+                TEST_TIMEOUT
             ),
             Err(GitHubError::Command(_))
         ));
@@ -601,27 +595,16 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
         response["statusCheckRollup"] = serde_json::Value::Null;
         response["reviewDecision"] = serde_json::Value::Null;
         let fixture = Fixture::new(&format!("printf '%s' '{response}'"));
-        let details = query_details(
-            &fixture.0.join("gh"),
-            &fixture.0,
-            url,
-            Duration::from_secs(2),
-        )
-        .unwrap();
+        let details = query_details(&fixture.0.join("gh"), &fixture.0, url, TEST_TIMEOUT).unwrap();
         assert!(details.author.is_none());
         assert!(details.status_check_rollup.is_none());
         let failed = Fixture::new("printf 'Authentication required' >&2\nexit 1");
         assert!(
-            matches!(query_details(&failed.0.join("gh"), &failed.0, url, Duration::from_secs(2)), Err(GitHubError::Command(message)) if message.contains("Authentication required"))
+            matches!(query_details(&failed.0.join("gh"), &failed.0, url, TEST_TIMEOUT), Err(GitHubError::Command(message)) if message.contains("Authentication required"))
         );
         let invalid = Fixture::new("printf '{}'");
         assert!(matches!(
-            query_details(
-                &invalid.0.join("gh"),
-                &invalid.0,
-                url,
-                Duration::from_secs(2)
-            ),
+            query_details(&invalid.0.join("gh"), &invalid.0, url, TEST_TIMEOUT),
             Err(GitHubError::Response(_))
         ));
     }
@@ -656,7 +639,7 @@ printf '%s' '{"merged":true,"message":"Pull Request successfully merged"}'
                 "https://git.example.com/upstream/repo/pull/43",
                 method,
                 sha,
-                Duration::from_secs(2),
+                TEST_TIMEOUT,
             )
             .unwrap();
             assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), format!("api\n--hostname\ngit.example.com\n--method\nPUT\nrepos/upstream/repo/pulls/43/merge\n-f\nmerge_method={name}\n-f\nsha={sha}\n"));
@@ -720,7 +703,7 @@ printf '%s' '{"merged":true,"message":"Pull Request successfully merged"}'
                 "https://github.com/owner/repo/pull/43",
                 GitHubMergeMethod::Squash,
                 &"a".repeat(40),
-                Duration::from_secs(2),
+                TEST_TIMEOUT,
             );
             assert!(matches!(result, Err(GitHubError::Command(message)) if !message.is_empty()));
         }
@@ -732,7 +715,7 @@ printf '%s' '{"merged":true,"message":"Pull Request successfully merged"}'
                 "https://github.com/owner/repo/pull/43",
                 GitHubMergeMethod::Merge,
                 &"a".repeat(40),
-                Duration::from_secs(2)
+                TEST_TIMEOUT
             ),
             Err(GitHubError::Response(_))
         ));
@@ -754,7 +737,7 @@ printf '%s' '{"message":"Updating pull request branch.","url":"https://git.examp
             &fixture.0,
             "https://git.example.com/upstream/repo/pull/43",
             sha,
-            Duration::from_secs(2),
+            TEST_TIMEOUT,
         )
         .unwrap();
         assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), format!("api\n--hostname\ngit.example.com\n--method\nPUT\nrepos/upstream/repo/pulls/43/update-branch\n-f\nexpected_head_sha={sha}\n"));
@@ -812,7 +795,7 @@ printf '%s' '{"message":"Updating pull request branch.","url":"https://git.examp
                 &fixture.0,
                 "https://github.com/owner/repo/pull/43",
                 &"a".repeat(40),
-                Duration::from_secs(2),
+                TEST_TIMEOUT,
             );
             assert!(matches!(result, Err(GitHubError::Command(error)) if error == message));
         }

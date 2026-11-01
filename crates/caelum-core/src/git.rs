@@ -935,24 +935,22 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn reports_git_command_failures_with_the_git_error_message() {
-        use std::os::unix::fs::PermissionsExt;
-
         let directory = TestDirectory::new("command-error");
         let project = directory.init_repository();
         let executable = directory.0.join("failing-git");
-        fs::write(
+        crate::test_support::write_executable(
             &executable,
             "#!/bin/sh\necho 'intentional Git failure' >&2\nexit 42\n",
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&executable).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&executable, permissions).unwrap();
+        );
 
-        assert!(matches!(
-            GitClient::with_executable(executable).repository_status(&project),
-            Err(GitError::CommandFailed { message, .. }) if message == "intentional Git failure"
-        ));
+        let result = GitClient::with_executable(executable).repository_status(&project);
+        assert!(
+            matches!(
+                &result,
+                Err(GitError::CommandFailed { message, .. }) if message == "intentional Git failure"
+            ),
+            "unexpected Git result: {result:?}"
+        );
     }
 
     #[cfg(unix)]

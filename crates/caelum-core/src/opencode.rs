@@ -1928,13 +1928,12 @@ mod tests {
         if Command::new("python3").arg("--version").output().is_err() {
             return;
         }
-        use std::os::unix::fs::PermissionsExt;
 
         let directory = TestDirectory::new();
         let project_path = directory.0.join("project");
         fs::create_dir_all(&project_path).unwrap();
         let executable = directory.0.join("fake-opencode");
-        fs::write(
+        crate::test_support::write_executable(
             &executable,
             r##"#!/usr/bin/env python3
 import json
@@ -2151,11 +2150,7 @@ if not os.environ.get("OPENCODE_SERVER_PASSWORD"):
     print("server password " + PASSWORD, flush=True)
 server.serve_forever()
 "##,
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&executable).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&executable, permissions).unwrap();
+        );
 
         let processes = Arc::new(ProcessRegistry::default());
         let approvals = ApprovalBroker::default();
