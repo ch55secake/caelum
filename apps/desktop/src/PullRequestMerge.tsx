@@ -1,10 +1,37 @@
 import { useId, useState } from "react";
 import { GitMerge, LoaderCircle } from "lucide-react";
+import { ChoicePicker } from "./ChoicePicker.js";
 import {
   mergeStatus,
   type MergeMethod,
   type PullRequestDetails,
 } from "./pullRequestState.js";
+
+const methods: {
+  id: MergeMethod;
+  name: string;
+  action: string;
+  description: string;
+}[] = [
+  {
+    id: "merge",
+    name: "Create a merge commit",
+    action: "Merge pull request",
+    description: "Keep all commits and add a merge commit.",
+  },
+  {
+    id: "squash",
+    name: "Squash and merge",
+    action: "Squash and merge",
+    description: "Combine all commits into one commit.",
+  },
+  {
+    id: "rebase",
+    name: "Rebase and merge",
+    action: "Rebase and merge",
+    description: "Replay each commit onto the base branch.",
+  },
+];
 
 export function PullRequestMerge({
   pr,
@@ -25,37 +52,30 @@ export function PullRequestMerge({
   const id = useId();
   const status = mergeStatus(pr);
   const terminal = pr.state === "MERGED" || pr.state === "CLOSED";
+  const selected = methods.find((item) => item.id === method)!;
   return (
     <section
       className="pr-merge"
       aria-label="Merge pull request"
       data-merged={pr.state === "MERGED"}
+      data-ready={status.enabled}
     >
       <div className="pr-merge-status" role="status">
         {merging ? (
-          <LoaderCircle size={18} className="spinning" aria-hidden="true" />
+          <LoaderCircle size={16} className="spinning" aria-hidden="true" />
         ) : (
-          <GitMerge size={18} aria-hidden="true" />
+          <GitMerge size={16} aria-hidden="true" />
         )}
         <span id={id}>{merging ? "Merging pull request…" : status.text}</span>
       </div>
       {!terminal && (
-        <div className="pr-merge-actions">
-          <label>
-            Merge method
-            <select
-              aria-label="Merge method"
-              value={method}
-              disabled={merging}
-              onChange={(event) => setMethod(event.target.value as MergeMethod)}
-            >
-              <option value="merge">Merge commit</option>
-              <option value="squash">Squash and merge</option>
-              <option value="rebase">Rebase and merge</option>
-            </select>
-          </label>
+        <div
+          className="pr-merge-button"
+          role="group"
+          aria-label="Merge actions"
+        >
           <button
-            className="primary-button"
+            className="pr-merge-action"
             type="button"
             disabled={!status.enabled || loading || merging}
             aria-describedby={id}
@@ -66,8 +86,18 @@ export function PullRequestMerge({
             ) : (
               <GitMerge size={14} aria-hidden="true" />
             )}
-            {merging ? "Merging…" : "Merge pull request"}
+            {merging ? "Merging…" : selected.action}
           </button>
+          <ChoicePicker
+            label="Merge method"
+            icon={null}
+            triggerName=""
+            value={method}
+            choices={methods}
+            align="end"
+            disabled={merging}
+            onChange={(value) => setMethod(value as MergeMethod)}
+          />
         </div>
       )}
       {error && (

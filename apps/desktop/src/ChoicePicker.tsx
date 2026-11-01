@@ -29,6 +29,7 @@ export function ChoicePicker({
   searchable = false,
   favouriteIds = [],
   onToggleFavourite,
+  align = "start",
 }: {
   label: string;
   value: string;
@@ -40,6 +41,7 @@ export function ChoicePicker({
   searchable?: boolean;
   favouriteIds?: string[];
   onToggleFavourite?: (id: string) => void;
+  align?: "start" | "end";
 }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -122,7 +124,10 @@ export function ChoicePicker({
         width,
         left: Math.max(
           12,
-          Math.min(rect.left, window.innerWidth - width - 12),
+          Math.min(
+            align === "end" ? rect.right - width : rect.left,
+            window.innerWidth - width - 12,
+          ),
         ),
         ...(below
           ? { top: rect.bottom + 8 }
@@ -137,7 +142,7 @@ export function ChoicePicker({
     (search.current ?? list.current)?.focus();
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
-  }, [open, searchable]);
+  }, [open, searchable, align]);
 
   useEffect(() => {
     if (!open) return;

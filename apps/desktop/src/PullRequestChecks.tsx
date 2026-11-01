@@ -50,11 +50,13 @@ export function PullRequestChecks({
     <section className="pr-checks" aria-label="Pull request checks">
       <header className="pr-checks-heading">
         <h2>
-          Checks <span>{checks?.length ?? 0}</span>
+          <span className="pr-checks-icon" data-tone={summary.tone}>
+            <CheckStatusIcon tone={summary.tone} size={14} />
+          </span>
+          Checks <span className="pr-checks-count">{checks?.length ?? 0}</span>
         </h2>
-        <div className="pr-status" data-tone={summary.tone} role="status">
-          <CheckStatusIcon tone={summary.tone} size={14} />
-          <span>{summary.text}</span>
+        <div className="pr-checks-summary" role="status">
+          {summary.text}
         </div>
       </header>
       {checks?.length ? (
@@ -64,7 +66,7 @@ export function PullRequestChecks({
             return (
               <li className="pr-check" key={index}>
                 <span className="pr-check-icon" data-tone={result.tone}>
-                  <CheckStatusIcon tone={result.tone} />
+                  <CheckStatusIcon tone={result.tone} size={14} />
                 </span>
                 <span className="pr-check-name">
                   {result.url ? (

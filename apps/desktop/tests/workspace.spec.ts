@@ -6954,6 +6954,13 @@ test("PR checks show live pending animations, passed ticks and linked results in
       .getByRole("region", { name: "Merge pull request", exact: true })
       .scrollIntoViewIfNeeded();
     await page.screenshot({ path: `test-results/pr-merge-${theme}.png` });
+    await screen
+      .getByRole("button", { name: "Merge method", exact: true })
+      .click();
+    const menu = page.getByRole("dialog", { name: "Choose merge method" });
+    await expect(menu).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: `test-results/pr-merge-menu-${theme}.png` });
+    await page.keyboard.press("Escape");
     await screen.evaluate((node) => {
       node.scrollTop = 0;
     });
@@ -6985,6 +6992,24 @@ test("PR checks show live pending animations, passed ticks and linked results in
     .getByRole("region", { name: "Merge pull request", exact: true })
     .scrollIntoViewIfNeeded();
   await page.screenshot({ path: "test-results/pr-merge-compact.png" });
+  await screen
+    .getByRole("button", { name: "Merge method", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Choose merge method" }),
+  ).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: "test-results/pr-merge-menu-compact.png" });
+  await page.getByRole("option", { name: /^Rebase and merge/ }).click();
+  await expect(
+    screen.getByRole("button", { name: "Rebase and merge", exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_merge_pull_request",
+      ),
+    ),
+  ).toHaveLength(0);
 });
 
 test("PR merge is shared across navigation, pins the head and removes merged rows despite delayed discovery", async ({
@@ -7017,11 +7042,19 @@ test("PR merge is shared across navigation, pins the head and removes merged row
   await page.clock.runFor(60_100);
   const second = list.getByRole("button", { name: /View pull request #45/ });
   await expect(second).toBeVisible();
+  const method = screen.getByRole("button", {
+    name: "Merge method",
+    exact: true,
+  });
+  await method.press("ArrowDown");
+  await expect(
+    page.getByRole("option", { name: /^Create a merge commit/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(method).toBeFocused();
   await screen
-    .getByRole("combobox", { name: "Merge method" })
-    .selectOption("squash");
-  await screen
-    .getByRole("button", { name: "Merge pull request", exact: true })
+    .getByRole("button", { name: "Squash and merge", exact: true })
     .click();
   await expect(
     screen.getByRole("button", { name: "Merging…", exact: true }),
@@ -7037,10 +7070,10 @@ test("PR merge is shared across navigation, pins the head and removes merged row
   await screen.getByRole("button", { name: "Back to session" }).click();
   await first.click();
   await expect(
-    screen.getByRole("combobox", { name: "Merge method" }),
-  ).toHaveValue("squash");
+    screen.getByRole("button", { name: "Merge method", exact: true }),
+  ).toHaveAttribute("title", "Merge method: Squash and merge");
   await expect(
-    screen.getByRole("combobox", { name: "Merge method" }),
+    screen.getByRole("button", { name: "Merge method", exact: true }),
   ).toBeDisabled();
   await expect(
     screen.getByRole("button", { name: "Merging…", exact: true }),
@@ -7130,9 +7163,12 @@ test("PR merge reports failures, reloads changed heads and confirms a successful
   );
   await expect(button).toBeEnabled();
   await merge
-    .getByRole("combobox", { name: "Merge method" })
-    .selectOption("rebase");
-  await button.click();
+    .getByRole("button", { name: "Merge method", exact: true })
+    .click();
+  await page.getByRole("option", { name: /^Rebase and merge/ }).click();
+  await merge
+    .getByRole("button", { name: "Rebase and merge", exact: true })
+    .click();
   await expect(merge.getByRole("status")).toHaveText("Merged into main");
   await expect(merge.getByRole("alert")).toHaveCount(0);
   await expect(merge.getByRole("button")).toHaveCount(0);

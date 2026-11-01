@@ -473,7 +473,7 @@ function PullRequestContent({
             <span>{reviewStatus(details.value.reviewDecision)}</span>
           </div>
           {expanded && (
-            <>
+            <div className="pr-readiness">
               <PullRequestChecks
                 checks={details.value.statusCheckRollup}
                 open={open}
@@ -486,7 +486,7 @@ function PullRequestContent({
                 lastMethod={details.mergeMethod}
                 merge={details.merge}
               />
-            </>
+            </div>
           )}
         </>
       ) : (
