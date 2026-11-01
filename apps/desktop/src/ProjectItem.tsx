@@ -13,7 +13,6 @@ import {
   revealAction,
   type ContextAction,
 } from "./ContextMenu.js";
-import { PullRequestIndicator } from "./PullRequestIndicator.js";
 
 export function ProjectItem({
   project,
@@ -134,12 +133,6 @@ export function ProjectItem({
                   <GitBranch size={10} aria-hidden="true" />
                   <span>{branch}</span>
                 </span>
-                {status.branch && (
-                  <PullRequestIndicator
-                    projectPath={project.path}
-                    branch={status.branch}
-                  />
-                )}
                 <span
                   className={`project-changes${count ? " dirty" : ""}`}
                   title={

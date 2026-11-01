@@ -6303,9 +6303,9 @@ const previewPullRequest = {
   ],
 };
 
-async function preparePullRequestPreview(page: Page) {
+async function preparePullRequestPreview(page: Page, worktrees = true) {
   await page.clock.install();
-  await desktop(page, null, { worktrees: true });
+  await desktop(page, null, { worktrees });
   await page.evaluate((pr) => {
     const fixture = (window as any).fixture;
     fixture.setPullRequest("main", pr);
@@ -6313,15 +6313,17 @@ async function preparePullRequestPreview(page: Page) {
     fixture.setPullRequestDetails(pr.url, pr);
   }, previewPullRequest);
   await page.clock.runFor(60_100);
-  return page
-    .locator(".project-row")
-    .getByRole("button", { name: /Open pull request #44/ });
+  return sessionRow(page, "Refine the session workspace").getByRole("button", {
+    name: /Open pull request #44/,
+  });
 }
 
 test("PR previews load on demand, stay open across the hover gap, share cached details and open the PR screen", async ({
   page,
 }) => {
   const trigger = await preparePullRequestPreview(page);
+  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
+  await expect(page.locator(".worktree-row .branch-pr-trigger")).toHaveCount(0);
   const detailCalls = () =>
     page.evaluate(() =>
       (window as any).fixture.calls.filter(
@@ -6349,6 +6351,7 @@ test("PR previews load on demand, stay open across the hover gap, share cached d
   await expect(card).toContainText("6 files changed");
   await expect(card).toContainText("1 passed · 1 pending");
   await expect(card).toContainText("Approved");
+  await expect(card.locator(".pr-ready-badge")).toHaveText("Ready to merge");
   await card.hover();
   await page.clock.runFor(500);
   await expect(card).toBeVisible();
@@ -6365,6 +6368,11 @@ test("PR previews load on demand, stay open across the hover gap, share cached d
   await expect(
     expanded.getByRole("region", { name: "Pull request checks" }),
   ).toContainText("Preview deploy");
+  await expect(expanded.locator(".pr-ready-badge")).toBeVisible();
+  await expect(expanded.locator(".pr-merge")).toHaveAttribute(
+    "data-ready",
+    "true",
+  );
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
@@ -6448,6 +6456,7 @@ test("PR previews support keyboard access, retry failures and constrain long con
   }, previewPullRequest);
   await page.keyboard.press("Enter");
   await expect(card).toContainText("Merged");
+  await expect(card.locator(".pr-ready-badge")).toHaveCount(0);
   await expect(card).toContainText("1 failed");
   await expect(card).toContainText("Changes requested");
   for (const theme of ["dark", "light"]) {
@@ -6494,7 +6503,10 @@ test("PR previews support keyboard access, retry failures and constrain long con
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("button", { name: "Close caelum", exact: true }),
+    sessionRow(page, "Refine the session workspace").getByRole("button", {
+      name: "Archive session",
+      exact: true,
+    }),
   ).toBeFocused();
   await expect(card).toHaveCount(0);
 });
@@ -6502,7 +6514,7 @@ test("PR previews support keyboard access, retry failures and constrain long con
 test("PR previews discard delayed displays after navigation and isolate identical numbers across repositories", async ({
   page,
 }) => {
-  const trigger = await preparePullRequestPreview(page);
+  const trigger = await preparePullRequestPreview(page, false);
   await page.evaluate(() =>
     (window as any).fixture.hold("github_pull_request_details"),
   );
@@ -6513,10 +6525,11 @@ test("PR previews discard delayed displays after navigation and isolate identica
     exact: true,
   });
   await expect(card).toContainText("Loading pull request details");
+  await expect(card.locator(".pr-ready-badge")).toHaveCount(0);
   await page.evaluate((pr) => {
     const fixture = (window as any).fixture;
     fixture.setPullRequest(
-      "main",
+      "other-project",
       {
         ...pr,
         url: "https://github.com/example/other/pull/44",
@@ -6537,26 +6550,28 @@ test("PR previews discard delayed displays after navigation and isolate identica
   await page.evaluate(() =>
     (window as any).fixture.release("github_pull_request_details"),
   );
-  const other = page
-    .locator(".project-row")
-    .getByRole("button", { name: /pull request #44: Other repository PR/ });
+  const other = sessionRow(page, "Refine the session workspace").getByRole(
+    "button",
+    { name: /pull request #44: Other repository PR/ },
+  );
   await other.hover();
   await page.clock.runFor(300);
   await expect(card).toContainText("Different description");
   await expect(card).toContainText("+9");
   await expect(card).not.toContainText("clearer workspace");
   await page.evaluate(() => {
-    (window as any).fixture.setGitMetadata(
-      { repositoryRoot: "/work/other", branch: null },
+    (window as any).fixture.setPullRequest(
+      "other-project",
+      null,
       "/work/other",
     );
-    window.dispatchEvent(new Event("focus"));
   });
+  await page.clock.runFor(60_100);
   await expect(other).toHaveCount(0);
   await expect(card).toHaveCount(0);
 });
 
-test("PR preview details are shared with linked worktrees and cannot select their checkout", async ({
+test("session PR previews share details across linked worktrees without selecting a session", async ({
   page,
 }) => {
   const trigger = await preparePullRequestPreview(page);
@@ -6577,16 +6592,42 @@ test("PR preview details are shared with linked worktrees and cannot select thei
     .getByRole("button", { name: "caelum", exact: true })
     .click({ button: "right" });
   await pickMenu(page, "Refresh worktrees");
-  const checkout = page
-    .locator(".worktree-row")
+  await expect(page.locator(".worktree-row .branch-pr-trigger")).toHaveCount(0);
+  const checkout = page.getByRole("button", {
+    name: "Switch to worktree feature/navigation",
+    exact: true,
+  });
+  await checkout.click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Review navigation");
+  await input.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Stop generation" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    const id = fixture.calls.find(
+      (call: any) => call.command === "codex_send_prompt",
+    ).args.threadId;
+    fixture.setSessionDetails("codex", id, {
+      branch: "feature/navigation",
+      branchIsCurrent: true,
+      changes: null,
+    });
+  });
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await page.getByRole("button", { name: /^New session/ }).click();
+  const session = page
+    .locator(".session-row")
     .getByRole("button", { name: /pull request #44/ });
-  await checkout.hover();
+  await session.hover();
   await page.clock.runFor(300);
   await expect(card).toContainText("+128");
-  await checkout.click();
-  await expect(
-    page.getByRole("button", { name: "caelum", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+  await session.click();
+  await expect(checkout).toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".breadcrumbs")).toContainText("New session");
   expect(
     await page.evaluate(() =>
       (window as any).fixture.calls.filter(
@@ -6594,12 +6635,7 @@ test("PR preview details are shared with linked worktrees and cannot select thei
       ),
     ),
   ).toHaveLength(1);
-  await page
-    .getByRole("button", {
-      name: "Switch to worktree feature/navigation",
-      exact: true,
-    })
-    .click();
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
   await expect(card).toHaveCount(0);
 });
 
@@ -6684,7 +6720,12 @@ test("session PR section groups open sessions and opens an overview without sele
     .getByRole("button", { name: "Archive session", exact: true })
     .click();
   await expect(shared).toHaveCount(0);
-  await expect(page.locator(".project-row .branch-pr-trigger")).toBeVisible();
+  await expect(
+    page
+      .locator(".session-row")
+      .getByRole("button", { name: /pull request #44/ }),
+  ).toHaveCount(0);
+  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(shared).toBeVisible();
   await page.evaluate(() => {
@@ -7158,12 +7199,26 @@ test("PR merge is shared across navigation, pins the head and removes merged row
     };
     fixture.setPullRequest("fix/provider-adapters", other);
     fixture.setPullRequestDetails(other.url, other);
-    fixture.hold("github_open_pull_request:/work/caelum:main");
+    fixture.hold(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
     fixture.hold("github_merge_pull_request");
   }, previewPullRequest);
   await page.clock.runFor(60_100);
   const second = list.getByRole("button", { name: /View pull request #45/ });
   await expect(second).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) =>
+              call.command === "github_open_pull_request" &&
+              call.args.branch === "feat/session-ui-redesign",
+          ).length,
+      ),
+    )
+    .toBe(3);
   const method = screen.getByRole("button", {
     name: "Merge method",
     exact: true,
@@ -7181,6 +7236,11 @@ test("PR merge is shared across navigation, pins the head and removes merged row
   await expect(
     screen.getByRole("button", { name: "Merging…", exact: true }),
   ).toBeDisabled();
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(screen.locator(".pr-merge")).toHaveAttribute(
+    "data-ready",
+    "false",
+  );
   await expect(
     screen
       .getByRole("button", { name: "Merging…", exact: true })
@@ -7233,10 +7293,14 @@ test("PR merge is shared across navigation, pins the head and removes merged row
   ).toBeEnabled();
   await page.evaluate(() =>
     (window as any).fixture.release(
-      "github_open_pull_request:/work/caelum:main",
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
     ),
   );
-  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
+  await expect(
+    sessionRow(page, "Refine the session workspace").locator(
+      ".branch-pr-trigger",
+    ),
+  ).toHaveCount(0);
   await expect(first).toHaveCount(0);
   await expect(second).toHaveAttribute("aria-current", "page");
 });
@@ -7298,6 +7362,8 @@ test("PR merge reports failures, reloads changed heads and confirms a successful
   await expect(merge.getByRole("alert")).toHaveCount(0);
   await expect(merge.getByRole("button")).toHaveCount(0);
   await expect(screen.locator(".pr-state")).toHaveText("Merged");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(merge).toHaveAttribute("data-ready", "false");
   await expect(entry).toHaveCount(0);
   const calls = await page.evaluate(() =>
     (window as any).fixture.calls.filter(
@@ -7330,6 +7396,21 @@ test("PR merge explains draft, blocked, conflicting and unknown states without s
     exact: true,
   });
   await expect(merge).toBeVisible();
+  await expect(screen.locator(".pr-ready-badge")).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_details"),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(merge.getByRole("status")).toHaveText(
+    "Checking merge readiness…",
+  );
+  await expect(merge).toHaveAttribute("data-ready", "false");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_details"),
+  );
+  await expect(merge).toHaveAttribute("data-ready", "true");
+  await expect(screen.locator(".pr-ready-badge")).toBeVisible();
   for (const [change, message] of [
     [{ isDraft: true }, "Mark this draft ready"],
     [{ mergeStateStatus: "BLOCKED" }, "Waiting for required checks"],
@@ -7347,6 +7428,8 @@ test("PR merge explains draft, blocked, conflicting and unknown states without s
     );
     await screen.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(merge.getByRole("status")).toContainText(message);
+    await expect(merge).toHaveAttribute("data-ready", "false");
+    await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
     await expect(
       merge.getByRole("button", { name: "Merge pull request", exact: true }),
     ).toBeDisabled();
@@ -7372,6 +7455,7 @@ test("PR merge explains draft, blocked, conflicting and unknown states without s
     "This pull request is closed",
   );
   await expect(merge.getByRole("button")).toHaveCount(0);
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
   await expect(
     screen.getByRole("region", { name: "Pull request checks" }),
   ).toContainText("No checks reported");
@@ -7417,6 +7501,8 @@ test("PR branch updates preserve progress across navigation and wait for the new
   await expect(merge.getByRole("status")).toHaveText(
     "Updating branch from main…",
   );
+  await expect(merge).toHaveAttribute("data-ready", "false");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
   await expect(
     merge.getByRole("button", { name: "Updating…", exact: true }),
   ).toBeDisabled();
@@ -7556,6 +7642,8 @@ test("PR branch update failures retain the PR and refresh stale heads for retry"
   await expect(update).toBeEnabled();
   await update.click();
   await expect(merge.getByRole("alert")).toHaveCount(0);
+  await expect(merge).toHaveAttribute("data-ready", "false");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
   await expect(
     merge.getByRole("button", { name: "Updating…", exact: true }),
   ).toBeDisabled();
@@ -7753,7 +7841,7 @@ test("session PR section ignores delayed results from a different project", asyn
   await expect(section).not.toContainText("Other project changes");
 });
 
-test("branch PR indicators share lookups, distinguish drafts and clear closed or unavailable PRs", async ({
+test("session PR indicators share lookups, distinguish drafts and clear closed or unavailable PRs", async ({
   page,
 }) => {
   await page.clock.install();
@@ -7786,12 +7874,7 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
     });
   });
   await page.clock.runFor(60_100);
-  await expect(
-    project.getByRole("button", {
-      name: "Open pull request #11: Main changes",
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
   await expect(
     openCode.getByRole("button", {
       name: "Open pull request #11: Main changes",
@@ -7828,7 +7911,6 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
     });
   });
   await page.clock.runFor(60_100);
-  await expect(project.locator(".branch-pr")).toBeEmpty();
   await expect(openCode.locator(".branch-pr")).toBeEmpty();
   await expect(
     session.getByRole("button", {
@@ -7852,7 +7934,7 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     800,
   );
-  await page.screenshot({ path: "test-results/branch-pr-indicators.png" });
+  await page.screenshot({ path: "test-results/session-pr-indicators.png" });
   await page.evaluate(() =>
     (window as any).fixture.setCommandError(
       "github_open_pull_request",
@@ -7877,20 +7959,19 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
   ).toBeVisible();
 });
 
-test("branch PR indicators stay scoped through branch and project changes and delayed responses", async ({
+test("session PR indicators stay scoped through branch and project changes and delayed responses", async ({
   page,
 }) => {
   await page.clock.install();
   await desktop(page);
   const projects = page.getByRole("navigation", { name: "Open projects" });
-  const current = projects
-    .getByRole("button", { name: "caelum", exact: true })
-    .locator("..");
+  const current = sessionRow(page, "Refine the session workspace");
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.setGitMetadata({
-      repositoryRoot: "/work/caelum",
+    fixture.setSessionDetails("codex", "thread-a", {
       branch: "feat/shared",
+      branchIsCurrent: false,
+      changes: null,
     });
     fixture.setPullRequest("feat/shared", {
       number: 10,
@@ -7899,9 +7980,11 @@ test("branch PR indicators stay scoped through branch and project changes and de
       isDraft: false,
     });
     fixture.hold("github_open_pull_request:/work/caelum:feat/shared");
-    window.dispatchEvent(new Event("focus"));
   });
-  await expect(current.locator(".project-branch")).toHaveText("feat/shared");
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await expect(current.locator(".session-branch")).toHaveText("feat/shared");
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -7915,9 +7998,10 @@ test("branch PR indicators stay scoped through branch and project changes and de
     .toBe(true);
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.setGitMetadata({
-      repositoryRoot: "/work/caelum",
+    fixture.setSessionDetails("codex", "thread-a", {
       branch: "feat/current",
+      branchIsCurrent: false,
+      changes: null,
     });
     fixture.setPullRequest("feat/current", {
       number: 20,
@@ -7925,8 +8009,10 @@ test("branch PR indicators stay scoped through branch and project changes and de
       url: "https://github.com/example/caelum/pull/20",
       isDraft: false,
     });
-    window.dispatchEvent(new Event("focus"));
   });
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
   await expect(
     current.getByRole("button", {
       name: "Open pull request #20: Current branch",
@@ -7936,10 +8022,6 @@ test("branch PR indicators stay scoped through branch and project changes and de
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     fixture.release("github_open_pull_request:/work/caelum:feat/shared");
-    fixture.setGitMetadata(
-      { repositoryRoot: "/work/other", branch: "feat/current" },
-      "/work/other",
-    );
     fixture.setPullRequest(
       "feat/current",
       {
@@ -7952,15 +8034,16 @@ test("branch PR indicators stay scoped through branch and project changes and de
     );
   });
   await page.getByRole("button", { name: "Open project", exact: true }).click();
-  const other = projects
-    .getByRole("button", { name: "other", exact: true })
-    .locator("..");
   await expect(
-    other.getByRole("button", {
+    current.getByRole("button", {
       name: "Open pull request #30: Other repository",
       exact: true,
     }),
   ).toBeVisible();
+  await expect(
+    current.getByRole("button", { name: /#20: Current branch/ }),
+  ).toHaveCount(0);
+  await projects.getByRole("button", { name: "caelum", exact: true }).click();
   await expect(
     current.getByRole("button", {
       name: "Open pull request #20: Current branch",
@@ -7970,19 +8053,22 @@ test("branch PR indicators stay scoped through branch and project changes and de
   await expect(current.getByRole("button", { name: /Old branch/ })).toHaveCount(
     0,
   );
+  await expect(
+    current.getByRole("button", { name: /#30: Other repository/ }),
+  ).toHaveCount(0);
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.setGitMetadata({ repositoryRoot: "/work/caelum", branch: null });
-    fixture.setGitMetadata(
-      { repositoryRoot: null, branch: null },
-      "/work/other",
-    );
-    window.dispatchEvent(new Event("focus"));
+    fixture.setSessionDetails("codex", "thread-a", {
+      branch: null,
+      branchIsCurrent: false,
+      changes: null,
+    });
   });
-  await expect(current.locator(".project-branch")).toHaveText("Detached HEAD");
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await expect(current.locator(".session-branch")).toHaveCount(0);
   await expect(current.locator(".branch-pr-trigger")).toHaveCount(0);
-  await expect(other).toContainText("Not a Git repository");
-  await expect(other.locator(".branch-pr-trigger")).toHaveCount(0);
   expect(
     await page.evaluate(() =>
       (window as any).fixture.calls.filter(

@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowRight,
+  CircleCheck,
   ExternalLink,
   FileDiff,
   GitBranch,
@@ -27,6 +28,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   checkSummary,
+  mergeStatus,
   pullRequestState,
   reviewStatus,
   type PullRequest,
@@ -351,6 +353,12 @@ function PullRequestContent({
   const pr = details.value ?? target.pr;
   const Heading = expanded ? "h1" : "h2";
   const state = pullRequestState(pr);
+  const ready =
+    !!details.value &&
+    mergeStatus(details.value).enabled &&
+    !details.loading &&
+    !details.merging &&
+    !details.updating;
   const Icon =
     state === "Merged"
       ? GitMerge
@@ -395,6 +403,12 @@ function PullRequestContent({
         <span>#{pr.number}</span>
         {details.value?.author && (
           <span className="pr-author">by {details.value.author.login}</span>
+        )}
+        {ready && (
+          <span className="pr-ready-badge">
+            <CircleCheck size={13} aria-hidden="true" />
+            Ready to merge
+          </span>
         )}
       </div>
       <Heading tabIndex={expanded ? -1 : undefined}>{pr.title}</Heading>
@@ -480,6 +494,7 @@ function PullRequestContent({
               />
               <PullRequestMerge
                 pr={details.value}
+                ready={ready}
                 loading={details.loading}
                 merging={details.merging}
                 error={details.mergeError}

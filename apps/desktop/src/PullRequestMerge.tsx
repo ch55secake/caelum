@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { GitMerge, LoaderCircle, RefreshCw } from "lucide-react";
+import { CircleCheck, GitMerge, LoaderCircle, RefreshCw } from "lucide-react";
 import { ChoicePicker } from "./ChoicePicker.js";
 import {
   mergeStatus,
@@ -36,6 +36,7 @@ const methods: {
 
 export function PullRequestMerge({
   pr,
+  ready,
   loading,
   merging,
   error,
@@ -46,6 +47,7 @@ export function PullRequestMerge({
   updateBranch,
 }: {
   pr: PullRequestDetails;
+  ready: boolean;
   loading: boolean;
   merging: boolean;
   error: string | null;
@@ -59,17 +61,20 @@ export function PullRequestMerge({
   const id = useId();
   const status = mergeStatus(pr);
   const terminal = pr.state === "MERGED" || pr.state === "CLOSED";
+  const checking = loading && !terminal;
   const selected = methods.find((item) => item.id === method)!;
   return (
     <section
       className="pr-merge"
       aria-label="Merge pull request"
       data-merged={pr.state === "MERGED"}
-      data-ready={status.enabled && !updating}
+      data-ready={ready}
     >
       <div className="pr-merge-status" role="status">
-        {merging || updating ? (
+        {merging || updating || checking ? (
           <LoaderCircle size={16} className="spinning" aria-hidden="true" />
+        ) : ready ? (
+          <CircleCheck size={22} aria-hidden="true" />
         ) : (
           <GitMerge size={16} aria-hidden="true" />
         )}
@@ -78,7 +83,9 @@ export function PullRequestMerge({
             ? "Merging pull request…"
             : updating
               ? `Updating branch from ${pr.baseRefName}…`
-              : status.text}
+              : checking
+                ? "Checking merge readiness…"
+                : status.text}
         </span>
       </div>
       {!terminal && (
@@ -105,7 +112,7 @@ export function PullRequestMerge({
             <button
               className="pr-merge-action"
               type="button"
-              disabled={!status.enabled || loading || merging || updating}
+              disabled={!ready}
               aria-describedby={id}
               onClick={() => void merge(method)}
             >
