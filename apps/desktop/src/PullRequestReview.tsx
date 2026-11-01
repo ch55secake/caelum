@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, RefreshCw, Send } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,7 +29,7 @@ const unique = <T extends { id: string }>(items: T[]) => [
   ...new Map(items.map((item) => [item.id, item])).values(),
 ];
 
-function Comment({
+const Comment = memo(function Comment({
   comment,
   open,
 }: {
@@ -94,7 +94,7 @@ function Comment({
       </div>
     </article>
   );
-}
+});
 
 function ThreadReplies({
   thread,
@@ -157,8 +157,9 @@ export function PullRequestReview({
   const discussion = usePullRequestReview({ ...target, kind: "discussion" });
   const reviews = usePullRequestReview({ ...target, kind: "reviews" });
   const threads = usePullRequestReview({ ...target, kind: "threads" });
-  const reviewThreads = unique(
-    threads.pages.flatMap((page) => page.threads ?? []),
+  const reviewThreads = useMemo(
+    () => unique(threads.pages.flatMap((page) => page.threads ?? [])),
+    [threads.pages],
   );
   const [choices, setChoices] = useState<Record<string, boolean>>({});
   const [replies, setReplies] = useState<
@@ -180,38 +181,31 @@ export function PullRequestReview({
     () => new Set<string>(),
   );
   const resources = [discussion, reviews, threads];
-  const groups = [
-    {
-      title: "Discussion",
-      label: "discussion comments",
-      resource: discussion,
-      items: unique(
-        discussion.pages.flatMap((page) => page.comments ?? []),
-      ).map(
+  const discussionItems = useMemo(
+    () =>
+      unique(discussion.pages.flatMap((page) => page.comments ?? [])).map(
         (comment): ReviewFeedback => ({
           id: comment.id,
           kind: "discussion",
           comments: [comment],
         }),
       ),
-    },
-    {
-      title: "Reviews",
-      label: "reviews",
-      resource: reviews,
-      items: unique(reviews.pages.flatMap((page) => page.comments ?? [])).map(
+    [discussion.pages],
+  );
+  const reviewItems = useMemo(
+    () =>
+      unique(reviews.pages.flatMap((page) => page.comments ?? [])).map(
         (comment): ReviewFeedback => ({
           id: comment.id,
           kind: "review",
           comments: [comment],
         }),
       ),
-    },
-    {
-      title: "Inline comments",
-      label: "review threads",
-      resource: threads,
-      items: reviewThreads.map((thread): ReviewFeedback => {
+    [reviews.pages],
+  );
+  const threadItems = useMemo(
+    () =>
+      reviewThreads.map((thread): ReviewFeedback => {
         const cached = replies[thread.id];
         const extra =
           cached?.thread === thread && cached.version === threads.version
@@ -232,16 +226,34 @@ export function PullRequestReview({
           },
         };
       }),
+    [reviewThreads, replies, threads.version],
+  );
+  const groups = [
+    {
+      id: "discussion",
+      title: "Discussion",
+      label: "discussion comments",
+      resource: discussion,
+      items: discussionItems,
+    },
+    {
+      id: "reviews",
+      title: "Reviews",
+      label: "reviews",
+      resource: reviews,
+      items: reviewItems,
     },
   ];
-  const selected = groups
-    .flatMap((group) => group.items)
-    .filter(
-      (item) =>
-        !item.thread?.nextCursor &&
-        item.comments.some((comment) => comment.body.trim()) &&
-        (choices[item.id] ?? feedbackSelectedByDefault(item)),
-    );
+  const selected = useMemo(
+    () =>
+      [...discussionItems, ...reviewItems, ...threadItems].filter(
+        (item) =>
+          !item.thread?.nextCursor &&
+          item.comments.some((comment) => comment.body.trim()) &&
+          (choices[item.id] ?? feedbackSelectedByDefault(item)),
+      ),
+    [discussionItems, reviewItems, threadItems, choices],
+  );
   const loading = resources.some(
     (resource) =>
       resource.loading || (!resource.pages.length && !resource.error),
@@ -280,102 +292,125 @@ export function PullRequestReview({
       setSending(false);
     }
   };
-  const renderFeedback = (item: ReviewFeedback, inline = false) => {
-    const thread = item.thread;
-    const original =
-      thread && reviewThreads.find((value) => value.id === thread.id);
-    const replyKey = `${refreshId}:${threads.version}:${original?.id}:${original?.nextCursor}`;
-    const label = thread
-      ? `${thread.path}${thread.line || thread.originalLine ? `:${thread.line ?? thread.originalLine}` : ""}`
-      : `comment by ${item.comments[0]?.author?.login ?? "deleted user"}`;
-    return (
-      <div className="pr-feedback" key={item.id} data-thread-id={thread?.id}>
-        <div className="pr-feedback-heading">
-          <label>
-            <input
-              type="checkbox"
-              checked={selected.some((value) => value.id === item.id)}
-              disabled={
-                Boolean(thread?.nextCursor) ||
-                sending ||
-                !item.comments.some((comment) => comment.body.trim())
+  const renderFeedback = useCallback(
+    (item: ReviewFeedback, inline = false) => {
+      const thread = item.thread;
+      const original =
+        thread && reviewThreads.find((value) => value.id === thread.id);
+      const replyKey = `${refreshId}:${threads.version}:${original?.id}:${original?.nextCursor}`;
+      const label = thread
+        ? `${thread.path}${thread.line || thread.originalLine ? `:${thread.line ?? thread.originalLine}` : ""}`
+        : `comment by ${item.comments[0]?.author?.login ?? "deleted user"}`;
+      return (
+        <div
+          className="pr-feedback"
+          key={item.id}
+          data-thread-id={thread?.id}
+          tabIndex={-1}
+        >
+          <div className="pr-feedback-heading">
+            <label>
+              <input
+                type="checkbox"
+                checked={selected.some((value) => value.id === item.id)}
+                disabled={
+                  Boolean(thread?.nextCursor) ||
+                  sending ||
+                  !item.comments.some((comment) => comment.body.trim())
+                }
+                onChange={(event) =>
+                  setChoices((current) => ({
+                    ...current,
+                    [item.id]: event.target.checked,
+                  }))
+                }
+                aria-label={`Include ${label}`}
+              />
+              <span>{label}</span>
+            </label>
+            {thread && (
+              <>
+                <span>
+                  {thread.diffSide === "LEFT" ? "Original" : "New"}{" "}
+                  {thread.startLine
+                    ? `lines ${thread.startLine}–${thread.line ?? thread.originalLine}`
+                    : "side"}
+                </span>
+                <span className="pr-thread-state">
+                  {thread.isResolved ? "Resolved" : "Unresolved"}
+                </span>
+                {thread.isOutdated && (
+                  <span className="pr-thread-state">Outdated</span>
+                )}
+              </>
+            )}
+          </div>
+          {thread && !inline && item.comments[0]?.diffHunk && (
+            <details className="pr-comment-context">
+              <summary>Diff context</summary>
+              <DiffSection
+                title="Review context"
+                path={thread.path}
+                content={item.comments[0].diffHunk}
+                numbered
+              />
+            </details>
+          )}
+          {item.comments.map((comment) => (
+            <Comment key={comment.id} comment={comment} open={open} />
+          ))}
+          {original?.nextCursor && thread?.nextCursor && (
+            <ThreadReplies
+              key={replyKey}
+              thread={original}
+              projectPath={projectPath}
+              pr={pr}
+              open={open}
+              enabled={requestedReplies.has(replyKey)}
+              enable={() =>
+                setRequestedReplies((current) => new Set(current).add(replyKey))
               }
-              onChange={(event) =>
-                setChoices((current) => ({
+              received={(comments, nextCursor) =>
+                setReplies((current) => ({
                   ...current,
-                  [item.id]: event.target.checked,
+                  [original.id]: {
+                    thread: original,
+                    version: threads.version,
+                    comments,
+                    nextCursor,
+                  },
                 }))
               }
-              aria-label={`Include ${label}`}
             />
-            <span>{label}</span>
-          </label>
-          {thread && (
-            <>
-              <span>
-                {thread.diffSide === "LEFT" ? "Original" : "New"}{" "}
-                {thread.startLine
-                  ? `lines ${thread.startLine}–${thread.line ?? thread.originalLine}`
-                  : "side"}
-              </span>
-              <span className="pr-thread-state">
-                {thread.isResolved ? "Resolved" : "Unresolved"}
-              </span>
-              {thread.isOutdated && (
-                <span className="pr-thread-state">Outdated</span>
-              )}
-            </>
           )}
         </div>
-        {thread && !inline && item.comments[0]?.diffHunk && (
-          <details className="pr-comment-context">
-            <summary>Diff context</summary>
-            <DiffSection
-              title="Review context"
-              path={thread.path}
-              content={item.comments[0].diffHunk}
-              numbered
-            />
-          </details>
-        )}
-        {item.comments.map((comment) => (
-          <Comment key={comment.id} comment={comment} open={open} />
-        ))}
-        {original?.nextCursor && thread?.nextCursor && (
-          <ThreadReplies
-            key={replyKey}
-            thread={original}
-            projectPath={projectPath}
-            pr={pr}
-            open={open}
-            enabled={requestedReplies.has(replyKey)}
-            enable={() =>
-              setRequestedReplies((current) => new Set(current).add(replyKey))
-            }
-            received={(comments, nextCursor) =>
-              setReplies((current) => ({
-                ...current,
-                [original.id]: {
-                  thread: original,
-                  version: threads.version,
-                  comments,
-                  nextCursor,
-                },
-              }))
-            }
-          />
-        )}
-      </div>
-    );
-  };
+      );
+    },
+    [
+      reviewThreads,
+      refreshId,
+      threads.version,
+      selected,
+      sending,
+      open,
+      projectPath,
+      pr,
+      requestedReplies,
+    ],
+  );
   return (
     <PullRequestFiles
       projectPath={projectPath}
       pr={pr}
       open={open}
       active={active}
-      feedback={groups[2].items}
+      feedback={threadItems}
       renderFeedback={renderFeedback}
+      reviewLinks={groups.map((group) => ({
+        id: group.id,
+        title: group.title,
+        count: group.items.length,
+      }))}
       threadStatus={<PageStatus resource={threads} label="review threads" />}
       reviewActions={
         <>
@@ -421,18 +456,20 @@ export function PullRequestReview({
           )}
           {resources.some((resource) => resource.hasMore) && (
             <p className="pr-muted">
-              More feedback is available below. The action includes only the
-              selected, loaded comments.
+              More feedback is available. The action includes only the selected,
+              loaded comments.
             </p>
           )}
         </>
       }
     >
-      {groups.slice(0, 2).map((group) => (
+      {groups.map((group) => (
         <section
           className="pr-feedback-group"
           key={group.title}
           aria-label={group.title}
+          data-feedback-group={group.id}
+          tabIndex={-1}
         >
           <h2>
             {group.title} <span>{group.items.length}</span>

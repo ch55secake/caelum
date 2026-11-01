@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 import {
   diffLines,
@@ -8,7 +15,7 @@ import {
   type SyntaxToken,
 } from "./diffHighlighting.js";
 
-export function DiffSection({
+export const DiffSection = memo(function DiffSection({
   title,
   path,
   content,
@@ -50,7 +57,7 @@ export function DiffSection({
       />
     </section>
   );
-}
+});
 
 export function DiffCode({
   path,
@@ -90,62 +97,64 @@ export function DiffCode({
       disposed = true;
     };
   }, [lines, path]);
-  const marked = new Set(highlights);
   const tokens =
     highlighted?.lines === lines && highlighted.path === path
       ? highlighted.tokens
       : null;
-  const rows = lines.map(({ text, kind, oldLine, newLine }, index) => {
-    const lineTokens = tokens?.get(index);
-    return (
-      <span
-        className={`diff-line ${kind}${marked.has(index) ? " latest-change" : ""}`}
-        data-latest-change={marked.has(index) || undefined}
-        data-old-line={oldLine}
-        data-new-line={newLine}
-        key={index}
-      >
-        {numbered && (
-          <>
-            <span
-              className="diff-line-number"
-              data-side="old"
-              aria-hidden="true"
-            >
-              {oldLine}
-            </span>
-            <span
-              className="diff-line-number"
-              data-side="new"
-              aria-hidden="true"
-            >
-              {newLine}
-            </span>
-          </>
-        )}
-        <span className="diff-source">
-          {lineTokens ? (
+  const rows = useMemo(() => {
+    const marked = new Set(highlights);
+    return lines.map(({ text, kind, oldLine, newLine }, index) => {
+      const lineTokens = tokens?.get(index);
+      return (
+        <span
+          className={`diff-line ${kind}${marked.has(index) ? " latest-change" : ""}`}
+          data-latest-change={marked.has(index) || undefined}
+          data-old-line={oldLine}
+          data-new-line={newLine}
+          key={index}
+        >
+          {numbered && (
             <>
-              <span className="diff-marker">{text[0]}</span>
-              {lineTokens.map((token, tokenIndex) => (
-                <span key={token.offset} className={syntaxClass(token.type)}>
-                  {text.slice(
-                    token.offset + 1,
-                    lineTokens[tokenIndex + 1]
-                      ? lineTokens[tokenIndex + 1].offset + 1
-                      : undefined,
-                  )}
-                </span>
-              ))}
+              <span
+                className="diff-line-number"
+                data-side="old"
+                aria-hidden="true"
+              >
+                {oldLine}
+              </span>
+              <span
+                className="diff-line-number"
+                data-side="new"
+                aria-hidden="true"
+              >
+                {newLine}
+              </span>
             </>
-          ) : (
-            text
           )}
-          {index < lines.length - 1 ? "\n" : ""}
+          <span className="diff-source">
+            {lineTokens ? (
+              <>
+                <span className="diff-marker">{text[0]}</span>
+                {lineTokens.map((token, tokenIndex) => (
+                  <span key={token.offset} className={syntaxClass(token.type)}>
+                    {text.slice(
+                      token.offset + 1,
+                      lineTokens[tokenIndex + 1]
+                        ? lineTokens[tokenIndex + 1].offset + 1
+                        : undefined,
+                    )}
+                  </span>
+                ))}
+              </>
+            ) : (
+              text
+            )}
+            {index < lines.length - 1 ? "\n" : ""}
+          </span>
         </span>
-      </span>
-    );
-  });
+      );
+    });
+  }, [lines, tokens, highlights, numbered]);
   // Keep highlighting across the whole hunk, but place rich comments outside
   // the code's horizontal scroller so they wrap to the available review width.
   const ends = [

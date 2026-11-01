@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -387,14 +388,14 @@ function PullRequestContent({
         ? "failure"
         : "neutral";
   const description = details.value?.body.trim();
-  const open = (url: string) => {
+  const open = useCallback((url: string) => {
     setLinkError("");
     void openUrl(url).catch(() =>
       setLinkError(
         "Could not open the link. Copy its address from the context menu.",
       ),
     );
-  };
+  }, []);
   return (
     <div
       className={`pr-content${expanded && tab === "files" ? " pr-content-files" : ""}`}

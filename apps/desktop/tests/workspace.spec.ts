@@ -6898,6 +6898,15 @@ test("PR review places threads on exact diff sides and keeps outdated, omitted a
   await screen
     .getByRole("button", { name: "Load more review threads", exact: true })
     .click();
+  await screen.locator(".pr-files-pagination").scrollIntoViewIfNeeded();
+  await expect(
+    screen.getByRole("article", { name: "Diff for README.md", exact: true }),
+  ).toHaveCount(1);
+  await screen
+    .getByRole("navigation", { name: "Changed files", exact: true })
+    .getByRole("group", { name: "Comments on README.md", exact: true })
+    .getByRole("button")
+    .click();
   const later = screen
     .getByRole("article", { name: "Diff for README.md", exact: true })
     .locator('.diff-annotation [data-thread-id="later"]');
@@ -7004,7 +7013,7 @@ test("PR review scrolls the page over long file lists, code and expanded comment
     name: "Changed files",
     exact: true,
   });
-  await expect(nav.getByRole("button")).toHaveCount(40);
+  await expect(nav.getByRole("button", { name: /^src\/file/ })).toHaveCount(40);
   expect(await nav.evaluate((element) => element.clientHeight)).toBeGreaterThan(
     1000,
   );
@@ -7059,6 +7068,203 @@ test("PR review scrolls the page over long file lists, code and expanded comment
         .map((node) => node.className),
     ),
   ).toEqual([]);
+});
+
+test("PR large reviews keep tab switches light and retain loaded patches", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    const patch = `@@ -0,0 +1,240 @@\n${Array.from({ length: 240 }, (_, index) => `+export const value${index} = { name: "value", count: ${index} };`).join("\n")}`;
+    fixture.setPullRequestDetails(pr.url, { ...pr, changedFiles: 30 });
+    fixture.setPullRequestPage(pr.url, "files", 1, {
+      baseOid: "base",
+      files: Array.from({ length: 30 }, (_, index) => ({
+        path: `src/file${index}.ts`,
+        previousPath: null,
+        status: "added",
+        additions: 240,
+        deletions: 0,
+        patch,
+      })),
+      nextPage: null,
+    });
+    fixture.setPullRequestPage(pr.url, "threads", "", {
+      threads: [
+        {
+          id: "far-comment",
+          path: "src/file29.ts",
+          line: 180,
+          originalLine: 180,
+          startLine: null,
+          diffSide: "RIGHT",
+          isResolved: false,
+          isOutdated: false,
+          nextCursor: null,
+          comments: [
+            {
+              id: "far-comment-body",
+              body: "Review the distant file.",
+              url: `${pr.url}#discussion_far`,
+              author: { login: "reviewer" },
+              createdAt: "2026-11-01T12:00:00Z",
+              state: null,
+              diffHunk: null,
+            },
+          ],
+        },
+      ],
+      nextCursor: null,
+    });
+  }, previewPullRequest);
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (30)", exact: true })
+    .click();
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(30);
+  await expect(screen.locator(".syntax-keyword").first()).toBeVisible();
+  expect(await screen.locator(".diff-line").count()).toBeLessThan(500);
+  await screen
+    .locator(".diff-source")
+    .first()
+    .evaluate((node) => ((window as any).keptDiffLine = node));
+  for (let index = 0; index < 3; index++) {
+    await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+    await screen
+      .getByRole("tab", { name: "Files changed (30)", exact: true })
+      .click();
+  }
+  expect(await screen.locator(".diff-line").count()).toBeLessThan(500);
+  expect(
+    await screen
+      .locator(".diff-source")
+      .first()
+      .evaluate((node) => node === (window as any).keptDiffLine),
+  ).toBe(true);
+  const nav = screen.getByRole("navigation", {
+    name: "Changed files",
+    exact: true,
+  });
+  await expect(
+    nav.getByRole("button", { name: /^src\/file29.ts/ }),
+  ).toContainText("1");
+  await screen
+    .getByRole("button", { name: "Collapse all", exact: true })
+    .click();
+  await nav
+    .getByRole("group", { name: "Comments on src/file29.ts", exact: true })
+    .getByRole("button")
+    .click();
+  const thread = screen.locator('[data-thread-id="far-comment"]');
+  await expect(thread).toBeFocused();
+  await expect(thread).toBeInViewport();
+  await expect(
+    screen.getByRole("button", {
+      name: "Collapse diff for src/file29.ts",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+  const last = screen.getByRole("article", {
+    name: "Diff for src/file29.ts",
+    exact: true,
+  });
+  await expect(last.locator(".syntax-keyword").first()).toHaveText("export");
+  expect(await screen.locator(".diff-line").count()).toBeLessThan(1500);
+  expect(
+    await thread.evaluate(
+      (node) =>
+        node.getBoundingClientRect().top -
+        node
+          .closest(".pr-screen")!
+          .querySelector(".pr-files-toolbar")!
+          .getBoundingClientRect().bottom,
+    ),
+  ).toBeGreaterThan(35);
+  await thread.getByRole("checkbox").uncheck();
+  await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (30)", exact: true })
+    .click();
+  await expect(thread.getByRole("checkbox")).not.toBeChecked();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "github_pull_request_files",
+        ).length,
+    ),
+  ).toBe(1);
+});
+
+test("PR file tree exposes comment locations, states and discussion links with keyboard jumps", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  const nav = screen.getByRole("navigation", {
+    name: "Changed files",
+    exact: true,
+  });
+  await expect(nav).toContainText("3 loaded review threads");
+  await expect(
+    nav.getByRole("button", { name: /^src\/new name.ts/ }),
+  ).toContainText("1");
+  const comments = nav.getByRole("group", {
+    name: "Comments on src/new name.ts",
+    exact: true,
+  });
+  await expect(comments).toContainText("New lines 2–3");
+  await expect(comments).toContainText("Preserve the return value");
+  await expect(
+    nav.getByRole("group", { name: "Comments on resolved.ts", exact: true }),
+  ).toContainText("Resolved");
+  await expect(
+    nav.getByRole("group", { name: "Comments on outdated.ts", exact: true }),
+  ).toContainText("Outdated");
+  await screen
+    .getByRole("button", {
+      name: "Collapse diff for src/new name.ts",
+      exact: true,
+    })
+    .click();
+  await comments.getByRole("button").focus();
+  await page.keyboard.press("Enter");
+  const thread = screen.locator('[data-thread-id="inline"]');
+  await expect(thread).toBeFocused();
+  await expect(thread).toBeInViewport();
+  await expect(thread.getByRole("checkbox")).toBeDisabled();
+  await thread
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await expect(thread).toContainText("Unicode: 空白");
+  await expect(thread.getByRole("checkbox")).toBeChecked();
+  await nav
+    .getByRole("group", { name: "Comments on outdated.ts", exact: true })
+    .getByRole("button")
+    .click();
+  await expect(screen.locator('[data-thread-id="outdated"]')).toBeFocused();
+  await expect(screen.locator('[data-thread-id="outdated"]')).toBeInViewport();
+  await nav.getByRole("button", { name: /^Discussion/ }).click();
+  await expect(
+    screen.getByRole("region", { name: "Discussion", exact: true }),
+  ).toBeFocused();
+  await nav.getByRole("button", { name: /^Reviews/ }).click();
+  await expect(
+    screen.getByRole("region", { name: "Reviews", exact: true }),
+  ).toBeFocused();
+  await nav.getByRole("button", { name: /^src\/new name.ts/ }).click();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    await page.screenshot({
+      path: `test-results/pr-comment-tree-${theme}.png`,
+    });
+  }
 });
 
 test("PR inline feedback keeps complete replies and selections when delayed files place the thread", async ({

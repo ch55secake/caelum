@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
@@ -30,20 +31,15 @@ import type { PullRequestDetails } from "./pullRequestState.js";
 type RenderFeedback = (item: ReviewFeedback, inline?: boolean) => ReactNode;
 const noFeedback: ReviewFeedback[] = [];
 
-const FilePatch = memo(function FilePatch({
+const FilePatchContent = memo(function FilePatchContent({
   file,
-  collapsed,
-  toggle,
   feedback,
   renderFeedback,
 }: {
   file: PullRequestFile;
-  collapsed: boolean;
-  toggle: (path: string) => void;
   feedback: ReviewFeedback[];
   renderFeedback: RenderFeedback;
 }) {
-  const id = useId();
   const { placed, unplaced } = useMemo(() => {
     const oldLines = new Map<number, number>();
     const newLines = new Map<number, number>();
@@ -71,11 +67,75 @@ const FilePatch = memo(function FilePatch({
     }
     return { placed, unplaced };
   }, [file.patch, feedback]);
-  const annotations = new Map(
-    [...placed].map(([index, items]) => [
-      index,
-      items.map((item) => renderFeedback(item, true)),
-    ]),
+  const annotations = useMemo(
+    () =>
+      new Map(
+        [...placed].map(([index, items]) => [
+          index,
+          items.map((item) => renderFeedback(item, true)),
+        ]),
+      ),
+    [placed, renderFeedback],
+  );
+  return (
+    <>
+      {file.previousPath && (
+        <p className="pr-file-rename">
+          Renamed from <code>{file.previousPath}</code>
+        </p>
+      )}
+      {file.patch ? (
+        <DiffSection
+          path={file.path}
+          title={file.path}
+          content={file.patch}
+          numbered
+          hideHeading
+          annotations={annotations}
+        />
+      ) : (
+        <p className="pr-muted pr-file-unavailable">
+          GitHub did not provide a text patch for this file. It may be binary,
+          too large, or renamed without changes.
+        </p>
+      )}
+      {unplaced.length > 0 && (
+        <section
+          className="pr-file-comments"
+          aria-label={`Additional comments on ${file.path}`}
+        >
+          <p className="pr-muted">
+            File comments and threads outside the current patch
+          </p>
+          {unplaced.map((item) => renderFeedback(item))}
+        </section>
+      )}
+    </>
+  );
+});
+
+const FilePatch = memo(function FilePatch({
+  file,
+  collapsed,
+  toggle,
+  ready,
+  feedback,
+  renderFeedback,
+}: {
+  file: PullRequestFile;
+  collapsed: boolean;
+  toggle: (path: string) => void;
+  ready: boolean;
+  feedback: ReviewFeedback[];
+  renderFeedback: RenderFeedback;
+}) {
+  const id = useId();
+  const height = useMemo(
+    () =>
+      Math.max(64, (file.patch?.split("\n").length ?? 0) * 20.4) +
+      (file.previousPath ? 40 : 0) +
+      feedback.length * 220,
+    [file.patch, file.previousPath, feedback.length],
   );
   return (
     <article
@@ -110,42 +170,100 @@ const FilePatch = memo(function FilePatch({
         <span className="lines-added">+{file.additions}</span>
         <span className="lines-deleted">−{file.deletions}</span>
       </header>
-      <div id={id} className="pr-file-body" hidden={collapsed}>
-        {file.previousPath && (
-          <p className="pr-file-rename">
-            Renamed from <code>{file.previousPath}</code>
-          </p>
-        )}
-        {file.patch ? (
-          <DiffSection
-            path={file.path}
-            title={file.path}
-            content={file.patch}
-            numbered
-            hideHeading
-            annotations={annotations}
+      <div
+        id={id}
+        className="pr-file-body"
+        hidden={collapsed}
+        style={{ "--pr-file-height": `${height}px` } as CSSProperties}
+      >
+        {ready ? (
+          <FilePatchContent
+            file={file}
+            feedback={feedback}
+            renderFeedback={renderFeedback}
           />
         ) : (
-          <p className="pr-muted pr-file-unavailable">
-            GitHub did not provide a text patch for this file. It may be binary,
-            too large, or renamed without changes.
-          </p>
-        )}
-        {unplaced.length > 0 && (
-          <section
-            className="pr-file-comments"
-            aria-label={`Additional comments on ${file.path}`}
-          >
-            <p className="pr-muted">
-              File comments and threads outside the current patch
-            </p>
-            {unplaced.map((item) => renderFeedback(item))}
-          </section>
+          <div
+            className="pr-file-placeholder"
+            aria-label={`Diff for ${file.path} renders when in view`}
+          />
         )}
       </div>
     </article>
   );
 });
+
+type Jump = { path?: string; threadId?: string; section?: string };
+
+function ThreadLinks({
+  items,
+  path,
+  jump,
+}: {
+  items: ReviewFeedback[];
+  path?: string;
+  jump: (target: Jump) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <div
+      className="pr-file-thread-list"
+      role="group"
+      aria-label={`Comments on ${path ?? items[0].thread!.path}`}
+    >
+      {items.map((item) => {
+        const thread = item.thread!;
+        const line = thread.line ?? thread.originalLine;
+        const location = line
+          ? `${thread.diffSide === "LEFT" ? "Old" : "New"} ${thread.startLine ? `lines ${thread.startLine}–${line}` : `line ${line}`}`
+          : "File comment";
+        const state = thread.isOutdated
+          ? "Outdated"
+          : thread.isResolved
+            ? "Resolved"
+            : "Unresolved";
+        const preview = `${item.comments[0]?.author?.login ?? "Deleted user"}: ${item.comments[0]?.body.trim().split("\n", 1)[0].slice(0, 100) || "Comment"}`;
+        return (
+          <button
+            type="button"
+            className="pr-thread-link"
+            key={item.id}
+            data-state={state.toLowerCase()}
+            onClick={() => jump({ path, threadId: item.id })}
+            aria-label={`Go to comment: ${location}, ${state.toLowerCase()}. ${preview}`}
+            title={preview}
+          >
+            <span className="pr-thread-location">
+              <MessageSquare size={12} />
+              {location}
+              <span>{state}</span>
+            </span>
+            <span className="pr-thread-preview">{preview}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ThreadCount({ items }: { items: ReviewFeedback[] }) {
+  if (!items.length) return null;
+  const unresolved = items.filter(
+    (item) => !item.thread!.isResolved && !item.thread!.isOutdated,
+  ).length;
+  const label = `${unresolved} unresolved of ${items.length} review threads`;
+  return (
+    <span
+      className="pr-file-thread-count"
+      data-unresolved={unresolved > 0}
+      aria-label={label}
+      title={label}
+    >
+      <MessageSquare size={12} />
+      {items.length}
+    </span>
+  );
+}
 
 export function PullRequestFiles({
   projectPath,
@@ -156,6 +274,7 @@ export function PullRequestFiles({
   renderFeedback,
   reviewActions,
   threadStatus,
+  reviewLinks,
   children,
 }: {
   projectPath: string;
@@ -166,6 +285,7 @@ export function PullRequestFiles({
   renderFeedback: RenderFeedback;
   reviewActions: ReactNode;
   threadStatus: ReactNode;
+  reviewLinks: { id: string; title: string; count: number }[];
   children: ReactNode;
 }) {
   const resource = usePullRequestReview({
@@ -185,7 +305,7 @@ export function PullRequestFiles({
     [resource.pages],
   );
   const [selected, setSelected] = useState<string>();
-  const { byFile, otherThreads } = useMemo(() => {
+  const { byFile, otherThreads, otherFiles } = useMemo(() => {
     const paths = new Set(files.map((file) => file.path));
     const renamed = new Map(
       files
@@ -194,24 +314,29 @@ export function PullRequestFiles({
     );
     const byFile = new Map<string, ReviewFeedback[]>();
     const otherThreads: ReviewFeedback[] = [];
+    const otherFiles = new Map<string, ReviewFeedback[]>();
     for (const item of feedback) {
       const path = item.thread!.path;
       const current = paths.has(path) ? path : renamed.get(path);
       if (current) byFile.set(current, [...(byFile.get(current) ?? []), item]);
-      else otherThreads.push(item);
+      else {
+        otherThreads.push(item);
+        otherFiles.set(path, [...(otherFiles.get(path) ?? []), item]);
+      }
     }
-    return { byFile, otherThreads };
+    return { byFile, otherThreads, otherFiles };
   }, [files, feedback]);
   const [collapsed, setCollapsed] = useState(() => new Map<string, boolean>());
   const [collapseAll, setCollapseAll] = useState(false);
   const [showFiles, setShowFiles] = useState(true);
+  const [rendered, setRendered] = useState(() => new Set<string>());
   const root = useRef<HTMLElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   const fileList = useRef<HTMLElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const fileListId = useId();
   const retryMore = useRef(false);
-  const pendingJump = useRef<string | null>(null);
+  const pendingJump = useRef<Jump | null>(null);
   const isCollapsed = (path: string) => collapsed.get(path) ?? collapseAll;
   const toggle = useCallback(
     (path: string) =>
@@ -299,6 +424,34 @@ export function PullRequestFiles({
     };
   }, [active, files]);
 
+  // Keep file headers and estimated space in the document, but only create and
+  // highlight patches near the viewport. Once visited, their DOM stays mounted.
+  useEffect(() => {
+    const element = root.current;
+    const screen = element?.closest(".pr-screen");
+    if (!active || !element || !screen) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const paths = entries
+          .filter((entry) => entry.isIntersecting)
+          .map((entry) => (entry.target as HTMLElement).dataset.diffPath!);
+        if (!paths.length) return;
+        setRendered((current) => {
+          const added = paths.filter((path) => !current.has(path));
+          return added.length ? new Set([...current, ...added]) : current;
+        });
+      },
+      { root: screen, rootMargin: "800px 0px" },
+    );
+    for (const card of element.querySelectorAll<HTMLElement>(
+      "[data-diff-path]",
+    )) {
+      if (!(collapsed.get(card.dataset.diffPath!) ?? collapseAll))
+        observer.observe(card);
+    }
+    return () => observer.disconnect();
+  }, [active, files, collapsed, collapseAll]);
+
   useEffect(() => {
     const sentinel = end.current;
     const screen = root.current?.closest(".pr-screen");
@@ -328,29 +481,59 @@ export function PullRequestFiles({
   ]);
 
   useLayoutEffect(() => {
-    const path = pendingJump.current;
-    if (!path) return;
+    const target = pendingJump.current;
+    if (!target) return;
     pendingJump.current = null;
     const screen = root.current?.closest<HTMLElement>(".pr-screen");
+    const attribute = target.threadId
+      ? "threadId"
+      : target.section
+        ? "feedbackGroup"
+        : "diffPath";
+    const selector = target.threadId
+      ? "[data-thread-id]"
+      : target.section
+        ? "[data-feedback-group]"
+        : "[data-diff-path]";
     const card = [
-      ...(root.current?.querySelectorAll<HTMLElement>("[data-diff-path]") ??
-        []),
-    ].find((element) => element.dataset.diffPath === path);
-    if (screen && card)
+      ...(root.current?.querySelectorAll<HTMLElement>(selector) ?? []),
+    ].find(
+      (element) =>
+        element.dataset[attribute] ===
+        (target.threadId ?? target.section ?? target.path),
+    );
+    if (screen && card) {
+      // Reveal skipped layout before measuring a comment deep inside a patch.
+      const body = card.closest<HTMLElement>(".pr-file-body");
+      if (body) body.style.contentVisibility = "visible";
+      const heading = target.threadId
+        ? card
+            .closest(".pr-file-diff")
+            ?.querySelector<HTMLElement>(".pr-file-heading")
+        : null;
       screen.scrollTo({
         top:
           screen.scrollTop +
           card.getBoundingClientRect().top -
           screen.getBoundingClientRect().top -
           (toolbar.current?.offsetHeight ?? 0) -
+          (heading?.offsetHeight ?? 0) -
           12,
       });
-    setSelected(path);
-  }, [collapsed]);
+      if (target.threadId || target.section)
+        card.focus({ preventScroll: true });
+      if (body) body.style.removeProperty("content-visibility");
+    }
+    if (target.path) setSelected(target.path);
+  }, [collapsed, rendered]);
 
-  const jump = (path: string) => {
-    pendingJump.current = path;
-    setCollapsed((current) => new Map(current).set(path, false));
+  const jump = (target: Jump) => {
+    pendingJump.current = target;
+    if (target.path)
+      setRendered((current) => new Set(current).add(target.path!));
+    setCollapsed((current) =>
+      target.path ? new Map(current).set(target.path, false) : new Map(current),
+    );
   };
 
   return (
@@ -402,6 +585,7 @@ export function PullRequestFiles({
       {!resource.loading && !resource.error && !files.length && (
         <p className="pr-muted">No changed files.</p>
       )}
+      <div className="pr-thread-status">{threadStatus}</div>
       <div
         className={`pr-file-layout${showFiles ? "" : " pr-file-layout-wide"}`}
       >
@@ -412,30 +596,75 @@ export function PullRequestFiles({
           aria-label="Changed files"
           hidden={!showFiles}
         >
+          <div className="pr-file-list-summary">
+            <MessageSquare size={13} />
+            {feedback.length} loaded review threads
+          </div>
           {files.map((file) => (
-            <button
-              type="button"
-              key={file.path}
-              onClick={() => jump(file.path)}
-              aria-current={
-                file.path === (selected ?? files[0]?.path) ? "true" : undefined
-              }
-              title={file.path}
-            >
-              <FileDiff size={13} />
-              <span>{file.path}</span>
-              <span className="lines-added">+{file.additions}</span>
-              <span className="lines-deleted">−{file.deletions}</span>
-            </button>
+            <div key={file.path}>
+              <button
+                className="pr-file-link"
+                type="button"
+                onClick={() => jump({ path: file.path })}
+                aria-current={
+                  file.path === (selected ?? files[0]?.path)
+                    ? "true"
+                    : undefined
+                }
+                title={file.path}
+              >
+                <FileDiff size={13} />
+                <span>{file.path}</span>
+                <ThreadCount items={byFile.get(file.path) ?? noFeedback} />
+                <span className="lines-added">+{file.additions}</span>
+                <span className="lines-deleted">−{file.deletions}</span>
+              </button>
+              <ThreadLinks
+                items={byFile.get(file.path) ?? noFeedback}
+                path={file.path}
+                jump={jump}
+              />
+            </div>
           ))}
+          {otherFiles.size > 0 && (
+            <div className="pr-file-list-summary">Other commented files</div>
+          )}
+          {[...otherFiles].map(([path, items]) => (
+            <div key={path}>
+              <button
+                type="button"
+                className="pr-file-link"
+                onClick={() => jump({ threadId: items[0].id })}
+              >
+                <FileDiff size={13} />
+                <span>{path}</span>
+                <ThreadCount items={items} />
+              </button>
+              <ThreadLinks items={items} jump={jump} />
+            </div>
+          ))}
+          <div className="pr-file-review-links">
+            {reviewLinks.map((link) => (
+              <button
+                type="button"
+                key={link.id}
+                onClick={() => jump({ section: link.id })}
+              >
+                <MessageSquare size={13} />
+                <span>{link.title}</span>
+                <span>{link.count}</span>
+              </button>
+            ))}
+          </div>
         </nav>
         <div className="pr-file-patches">
-          {files.map((file) => (
+          {files.map((file, index) => (
             <FilePatch
               key={file.path}
               file={file}
               collapsed={isCollapsed(file.path)}
               toggle={toggle}
+              ready={index === 0 || rendered.has(file.path)}
               feedback={byFile.get(file.path) ?? noFeedback}
               renderFeedback={renderFeedback}
             />
@@ -463,7 +692,6 @@ export function PullRequestFiles({
               View full diff on GitHub <ExternalLink size={12} />
             </button>
           </div>
-          {threadStatus}
           {otherThreads.length > 0 && (
             <section
               className="pr-feedback-group"
