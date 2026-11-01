@@ -36,11 +36,7 @@ import {
 import { usePullRequestDetails } from "./usePullRequestDetails.js";
 import { CheckStatusIcon, PullRequestChecks } from "./PullRequestChecks.js";
 import { PullRequestMerge } from "./PullRequestMerge.js";
-import {
-  PullRequestComments,
-  type ReviewSession,
-} from "./PullRequestReview.js";
-import { PullRequestFiles } from "./PullRequestFiles.js";
+import { PullRequestReview, type ReviewSession } from "./PullRequestReview.js";
 import { copyAction, useContextMenu } from "./ContextMenu.js";
 
 export type PullRequestTarget = {
@@ -357,12 +353,11 @@ function PullRequestContent({
     expanded,
   );
   const primaryAction = useRef<HTMLButtonElement>(null);
-  const [tab, setTab] = useState<"overview" | "files" | "comments">("overview");
-  const [visited, setVisited] = useState({ files: false, comments: false });
+  const [tab, setTab] = useState<"overview" | "files">("overview");
+  const [visited, setVisited] = useState(false);
   const selectTab = (value: typeof tab) => {
     setTab(value);
-    if (value !== "overview")
-      setVisited((current) => ({ ...current, [value]: true }));
+    if (value === "files") setVisited(true);
   };
   const tabId = useId();
   const [linkError, setLinkError] = useState("");
@@ -445,7 +440,7 @@ function PullRequestContent({
               role="tablist"
               aria-label="Pull request views"
               onKeyDown={(event) => {
-                const names = ["overview", "files", "comments"] as const;
+                const names = ["overview", "files"] as const;
                 const index = names.indexOf(tab);
                 const next =
                   event.key === "ArrowRight"
@@ -465,7 +460,7 @@ function PullRequestContent({
                   [next]?.focus();
               }}
             >
-              {(["overview", "files", "comments"] as const).map((name) => (
+              {(["overview", "files"] as const).map((name) => (
                 <button
                   key={name}
                   type="button"
@@ -478,9 +473,7 @@ function PullRequestContent({
                 >
                   {name === "overview"
                     ? "Overview"
-                    : name === "files"
-                      ? `Files changed (${details.value!.changedFiles})`
-                      : "Comments"}
+                    : `Files changed (${details.value!.changedFiles})`}
                 </button>
               ))}
             </div>
@@ -574,34 +567,19 @@ function PullRequestContent({
               </div>
             )}
           </div>
-          {expanded && visited.files && (
+          {expanded && visited && (
             <div
               hidden={tab !== "files"}
               role="tabpanel"
               id={`${tabId}-files-panel`}
               aria-labelledby={`${tabId}-files`}
             >
-              <PullRequestFiles
+              <PullRequestReview
                 key={details.value.headRefOid}
                 projectPath={target.projectPath}
                 pr={details.value}
                 open={open}
                 active={tab === "files"}
-              />
-            </div>
-          )}
-          {expanded && visited.comments && (
-            <div
-              hidden={tab !== "comments"}
-              role="tabpanel"
-              id={`${tabId}-comments-panel`}
-              aria-labelledby={`${tabId}-comments`}
-            >
-              <PullRequestComments
-                key={details.value.headRefOid}
-                projectPath={target.projectPath}
-                pr={details.value}
-                open={open}
                 session={
                   session && {
                     ...session,
