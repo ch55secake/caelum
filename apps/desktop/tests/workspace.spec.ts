@@ -6952,6 +6952,7 @@ test("PR review places threads on exact diff sides and keeps outdated, omitted a
         .filter(
           (node) =>
             node.getClientRects().length &&
+            !node.classList.contains("pr-file-list") &&
             /auto|scroll/.test(getComputedStyle(node).overflowY) &&
             node.scrollHeight > node.clientHeight + 1,
         )
@@ -6960,7 +6961,7 @@ test("PR review places threads on exact diff sides and keeps outdated, omitted a
   ).toEqual([]);
 });
 
-test("PR review scrolls the page over long file lists, code and expanded comment context", async ({
+test("PR review scrolls its file tree independently while code and expanded comment context scroll the page", async ({
   page,
 }) => {
   const screen = await preparePullRequestReview(page);
@@ -7017,26 +7018,52 @@ test("PR review scrolls the page over long file lists, code and expanded comment
     exact: true,
   });
   await expect(nav.getByRole("button", { name: /^src\/file/ })).toHaveCount(40);
-  expect(await nav.evaluate((element) => element.clientHeight)).toBeGreaterThan(
-    1000,
-  );
   expect(
     await nav.evaluate(
-      (element) => element.scrollHeight <= element.clientHeight + 1,
+      (element) => element.scrollHeight > element.clientHeight + 1,
     ),
   ).toBe(true);
   await nav.getByRole("button", { name: /src\/file0.ts/ }).click();
   const navBounds = (await nav.boundingBox())!;
   const screenBounds = (await screen.boundingBox())!;
   const top = await screen.evaluate((element) => element.scrollTop);
-  await page.mouse.move(
-    navBounds.x + 30,
-    screenBounds.y + screenBounds.height - 80,
-  );
+  await page.mouse.move(navBounds.x + 30, navBounds.y + navBounds.height / 2);
   await page.mouse.wheel(0, 300);
   await expect
-    .poll(() => screen.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(top + 200);
+    .poll(() => nav.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(200);
+  expect(await screen.evaluate((element) => element.scrollTop)).toBe(top);
+  await nav.focus();
+  await page.keyboard.press("End");
+  await expect
+    .poll(() =>
+      nav.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeLessThan(2);
+  const lastFile = nav.getByRole("button", { name: /^src\/file39.ts/ });
+  await expect(lastFile).toBeInViewport();
+  await page.mouse.wheel(0, 300);
+  expect(await screen.evaluate((element) => element.scrollTop)).toBe(top);
+  const treeTop = await nav.evaluate((element) => element.scrollTop);
+  await lastFile.click();
+  await expect(lastFile).toHaveAttribute("aria-current", "true");
+  await expect(
+    screen
+      .getByRole("article", { name: "Diff for src/file39.ts", exact: true })
+      .locator(".pr-file-heading"),
+  ).toBeInViewport();
+  await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (40)", exact: true })
+    .click();
+  expect(await nav.evaluate((element) => element.scrollTop)).toBe(treeTop);
+  await nav.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(() => nav.evaluate((element) => element.scrollTop)).toBe(0);
+  await nav.getByRole("button", { name: /^src\/file0.ts/ }).click();
   const source = screen.getByRole("article", {
     name: "Diff for src/file0.ts",
     exact: true,
@@ -7070,7 +7097,49 @@ test("PR review scrolls the page over long file lists, code and expanded comment
         )
         .map((node) => node.className),
     ),
-  ).toEqual([]);
+  ).toEqual(["pr-file-list"]);
+  await page.setViewportSize({ width: 1280, height: 620 });
+  await nav.getByRole("button", { name: /^src\/file0.ts/ }).click();
+  await expect
+    .poll(() =>
+      nav.evaluate((element) => {
+        const screen = element.closest(".pr-screen")!;
+        return (
+          element.getBoundingClientRect().bottom -
+          screen.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBeLessThanOrEqual(-11);
+  await page.setViewportSize({ width: 860, height: 620 });
+  await expect
+    .poll(() => nav.evaluate((element) => element.clientHeight))
+    .toBeLessThanOrEqual(320);
+  await nav.evaluate((element) => element.scrollIntoView({ block: "end" }));
+  await expect
+    .poll(() =>
+      nav.evaluate((element) => {
+        const toolbar = element
+          .closest(".pr-files")!
+          .querySelector(".pr-files-toolbar")!;
+        return (
+          element.getBoundingClientRect().top -
+          toolbar.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBeGreaterThanOrEqual(0);
+  const narrowTop = await screen.evaluate((element) => element.scrollTop);
+  const narrowBounds = (await nav.boundingBox())!;
+  await page.mouse.move(
+    narrowBounds.x + 30,
+    narrowBounds.y + narrowBounds.height / 2,
+  );
+  await page.mouse.wheel(0, 300);
+  await expect
+    .poll(() => nav.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(200);
+  expect(await screen.evaluate((element) => element.scrollTop)).toBe(narrowTop);
 });
 
 test("PR large reviews keep tab switches light and retain loaded patches", async ({

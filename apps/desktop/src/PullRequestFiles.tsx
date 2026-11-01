@@ -362,25 +362,43 @@ export function PullRequestFiles({
   useLayoutEffect(() => {
     const element = root.current;
     const bar = toolbar.current;
+    const list = fileList.current;
     const screen = element?.closest<HTMLElement>(".pr-screen");
-    if (!active || !element || !bar || !screen) return;
+    if (!active || !element || !bar || !list || !screen) return;
+    let frame = 0;
     const measure = () => {
+      const top = Math.max(
+        bar.offsetHeight + 12,
+        list.getBoundingClientRect().top - screen.getBoundingClientRect().top,
+      );
       element.style.setProperty(
         "--pr-files-toolbar-height",
         `${bar.offsetHeight}px`,
       );
       element.style.setProperty(
-        "--pr-file-list-top",
-        `${Math.min(bar.offsetHeight + 12, screen.clientHeight - (fileList.current?.offsetHeight ?? 0) - 12)}px`,
+        "--pr-file-list-max-height",
+        `${Math.max(0, screen.clientHeight - top - 12)}px`,
       );
     };
+    const schedule = () => {
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          measure();
+        });
+    };
     measure();
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(schedule);
     observer.observe(bar);
     observer.observe(screen);
-    if (fileList.current) observer.observe(fileList.current);
-    return () => observer.disconnect();
-  }, [active]);
+    observer.observe(element);
+    screen.addEventListener("scroll", schedule, { passive: true });
+    return () => {
+      observer.disconnect();
+      screen.removeEventListener("scroll", schedule);
+      cancelAnimationFrame(frame);
+    };
+  }, [active, showFiles]);
 
   useEffect(() => {
     const element = root.current;
@@ -597,6 +615,7 @@ export function PullRequestFiles({
           id={fileListId}
           className="pr-file-list"
           aria-label="Changed files"
+          tabIndex={0}
           hidden={!showFiles}
         >
           <div className="pr-file-list-summary">
