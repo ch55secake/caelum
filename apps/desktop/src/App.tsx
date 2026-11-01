@@ -70,13 +70,19 @@ export default function App() {
   >(null);
   const sidebarView = useSidebarView(app.project?.path ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
-  const [searchFocus, setSearchFocus] = useState(0);
-  useLayoutEffect(() => {
-    if (!searchFocus) return;
-    searchRef.current?.focus();
-    searchRef.current?.select();
-  }, [searchFocus]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [focusRequest, setFocusRequest] = useState<{
+    target: "search" | "composer";
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (!focusRequest) return;
+    const target =
+      focusRequest.target === "search"
+        ? searchRef.current
+        : textareaRef.current;
+    target?.focus();
+    if (focusRequest.target === "search") target?.select();
+  }, [focusRequest]);
   const questionDockRef = useRef<HTMLDivElement>(null);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
   const activePullRequest =
@@ -123,19 +129,18 @@ export default function App() {
     setPullRequest(null);
     app.newSession();
     sidebarView.update({ tab: "sessions", search: "", searchOpen: false });
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    setFocusRequest({ target: "composer" });
   }
   function showSession() {
     setPullRequest(null);
     setExpanded(false);
     // Leaving a PR already restores focus through the session effect below.
-    if (!activePullRequest)
-      requestAnimationFrame(() => textareaRef.current?.focus());
+    if (!activePullRequest) setFocusRequest({ target: "composer" });
   }
   function focusSearch() {
     setCollapsed(false);
     sidebarView.update({ tab: "sessions", searchOpen: true });
-    setSearchFocus((request) => request + 1);
+    setFocusRequest({ target: "search" });
   }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
