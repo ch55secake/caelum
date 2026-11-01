@@ -6205,6 +6205,7 @@ test("Shift+Tab cycles available agents without changing the draft or other keyb
     name: "Search sessions",
     exact: true,
   });
+  await expect(search).toBeFocused();
   await search.press("Shift+Tab");
   await expect(search).not.toBeFocused();
   await expect(status).toHaveText("Next: Build");
