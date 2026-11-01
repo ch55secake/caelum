@@ -12,7 +12,6 @@ import {
 } from "react";
 import {
   ChevronDown,
-  ExternalLink,
   FileDiff,
   MessageSquare,
   PanelLeft,
@@ -134,8 +133,11 @@ const FilePatch = memo(function FilePatch({
     () =>
       Math.max(64, (file.patch?.split("\n").length ?? 0) * 20.4) +
       (file.previousPath ? 40 : 0) +
-      feedback.length * 220,
-    [file.patch, file.previousPath, feedback.length],
+      feedback.reduce(
+        (height, item) => height + (item.thread?.isResolved ? 60 : 220),
+        0,
+      ),
+    [file.patch, file.previousPath, feedback],
   );
   return (
     <article
@@ -217,12 +219,15 @@ function ThreadLinks({
         const location = line
           ? `${thread.diffSide === "LEFT" ? "Old" : "New"} ${thread.startLine ? `lines ${thread.startLine}–${line}` : `line ${line}`}`
           : "File comment";
-        const state = thread.isOutdated
-          ? "Outdated"
-          : thread.isResolved
-            ? "Resolved"
+        const state = thread.isResolved
+          ? "Resolved"
+          : thread.isOutdated
+            ? "Outdated"
             : "Unresolved";
-        const preview = `${item.comments[0]?.author?.login ?? "Deleted user"}: ${item.comments[0]?.body.trim().split("\n", 1)[0].slice(0, 100) || "Comment"}`;
+        const preview = thread.isResolved
+          ? ""
+          : `${item.comments[0]?.author?.login ?? "Deleted user"}: ${item.comments[0]?.body.trim().split("\n", 1)[0].slice(0, 100) || "Comment"}`;
+        const status = `${state}${thread.isResolved && thread.isOutdated ? " · Outdated" : ""}`;
         return (
           <button
             type="button"
@@ -230,15 +235,15 @@ function ThreadLinks({
             key={item.id}
             data-state={state.toLowerCase()}
             onClick={() => jump({ path, threadId: item.id })}
-            aria-label={`Go to comment: ${location}, ${state.toLowerCase()}. ${preview}`}
-            title={preview}
+            aria-label={`Go to comment: ${location}, ${status.toLowerCase()}${preview ? `. ${preview}` : ""}`}
+            title={preview || `${location} · ${status}`}
           >
             <span className="pr-thread-location">
               <MessageSquare size={12} />
               {location}
-              <span>{state}</span>
+              <span>{status}</span>
             </span>
-            <span className="pr-thread-preview">{preview}</span>
+            {preview && <span className="pr-thread-preview">{preview}</span>}
           </button>
         );
       })}
@@ -268,7 +273,6 @@ function ThreadCount({ items }: { items: ReviewFeedback[] }) {
 export function PullRequestFiles({
   projectPath,
   pr,
-  open,
   active,
   feedback,
   renderFeedback,
@@ -279,7 +283,6 @@ export function PullRequestFiles({
 }: {
   projectPath: string;
   pr: PullRequestDetails;
-  open: (url: string) => void;
   active: boolean;
   feedback: ReviewFeedback[];
   renderFeedback: RenderFeedback;
@@ -684,13 +687,6 @@ export function PullRequestFiles({
               files.length < pr.changedFiles && (
                 <p className="pr-muted">GitHub returned a partial file list.</p>
               )}
-            <button
-              className="pr-external-action"
-              type="button"
-              onClick={() => open(`${pr.url}/files`)}
-            >
-              View full diff on GitHub <ExternalLink size={12} />
-            </button>
           </div>
           {otherThreads.length > 0 && (
             <section

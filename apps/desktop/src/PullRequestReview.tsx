@@ -1,5 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ExternalLink, RefreshCw, Send } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  ExternalLink,
+  RefreshCw,
+  Send,
+} from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DiffSection } from "./DiffSection.js";
@@ -301,18 +307,14 @@ export function PullRequestReview({
       const label = thread
         ? `${thread.path}${thread.line || thread.originalLine ? `:${thread.line ?? thread.originalLine}` : ""}`
         : `comment by ${item.comments[0]?.author?.login ?? "deleted user"}`;
-      return (
-        <div
-          className="pr-feedback"
-          key={item.id}
-          data-thread-id={thread?.id}
-          tabIndex={-1}
-        >
+      const isSelected = selected.some((value) => value.id === item.id);
+      const content = (
+        <>
           <div className="pr-feedback-heading">
             <label>
               <input
                 type="checkbox"
-                checked={selected.some((value) => value.id === item.id)}
+                checked={isSelected}
                 disabled={
                   Boolean(thread?.nextCursor) ||
                   sending ||
@@ -383,6 +385,34 @@ export function PullRequestReview({
               }
             />
           )}
+        </>
+      );
+      return (
+        <div
+          className="pr-feedback"
+          key={item.id}
+          data-thread-id={thread?.id}
+          tabIndex={-1}
+        >
+          {thread?.isResolved ? (
+            <details className="pr-resolved-thread">
+              <summary>
+                <ChevronRight size={13} className="pr-resolved-chevron" />
+                <Check size={13} className="pr-resolved-check" />
+                <strong>Resolved</strong>
+                <span className="pr-resolved-location">{label}</span>
+                {thread.isOutdated && (
+                  <span className="pr-thread-state">Outdated</span>
+                )}
+                {isSelected && (
+                  <span className="pr-thread-state">Selected</span>
+                )}
+              </summary>
+              {content}
+            </details>
+          ) : (
+            content
+          )}
         </div>
       );
     },
@@ -402,7 +432,6 @@ export function PullRequestReview({
     <PullRequestFiles
       projectPath={projectPath}
       pr={pr}
-      open={open}
       active={active}
       feedback={threadItems}
       renderFeedback={renderFeedback}

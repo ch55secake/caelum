@@ -6867,9 +6867,12 @@ test("PR review places threads on exact diff sides and keeps outdated, omitted a
     ).toEqual({ number: line, text });
   }
   await expect(annotation("right").locator(".pr-feedback")).toHaveCount(2);
-  await expect(
-    annotation("same-line").getByRole("checkbox").last(),
-  ).not.toBeChecked();
+  const resolved = source.locator('[data-thread-id="same-line"]');
+  await expect(resolved.locator(".pr-comment")).toBeHidden();
+  await resolved.locator("summary").click();
+  await expect(resolved.locator(".pr-comment")).toBeVisible();
+  await expect(resolved.getByRole("checkbox")).not.toBeChecked();
+  await resolved.locator("summary").click();
   await expect(annotation("range")).toContainText("New lines 10–12");
   for (const id of ["outdated", "omitted", "file-level"])
     await expect(
@@ -7218,9 +7221,12 @@ test("PR file tree exposes comment locations, states and discussion links with k
   });
   await expect(comments).toContainText("New lines 2–3");
   await expect(comments).toContainText("Preserve the return value");
-  await expect(
-    nav.getByRole("group", { name: "Comments on resolved.ts", exact: true }),
-  ).toContainText("Resolved");
+  const resolvedLink = nav.getByRole("group", {
+    name: "Comments on resolved.ts",
+    exact: true,
+  });
+  await expect(resolvedLink).toContainText("Resolved");
+  await expect(resolvedLink).not.toContainText("Already addressed");
   await expect(
     nav.getByRole("group", { name: "Comments on outdated.ts", exact: true }),
   ).toContainText("Outdated");
@@ -7241,6 +7247,23 @@ test("PR file tree exposes comment locations, states and discussion links with k
     .click();
   await expect(thread).toContainText("Unicode: 空白");
   await expect(thread.getByRole("checkbox")).toBeChecked();
+  await resolvedLink.getByRole("button").click();
+  const resolved = screen.locator('[data-thread-id="resolved"]');
+  await expect(resolved).toBeFocused();
+  await expect(resolved).toBeInViewport();
+  await expect(resolved.locator(".pr-comment")).toBeHidden();
+  await resolved.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(resolved.locator(".pr-comment")).toBeVisible();
+  await resolved.getByRole("checkbox").check();
+  await resolved.locator("summary").click();
+  await expect(resolved.locator("summary")).toContainText("Selected");
+  await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  await expect(resolved.locator(".pr-comment")).toBeHidden();
+  await expect(resolved.locator("input")).toBeChecked();
   await nav
     .getByRole("group", { name: "Comments on outdated.ts", exact: true })
     .getByRole("button")
@@ -7356,6 +7379,7 @@ for (const provider of ["codex", "opencode"] as const) {
       screen.getByRole("checkbox", {
         name: "Include resolved.ts:3",
         exact: true,
+        includeHidden: true,
       }),
     ).not.toBeChecked();
     await expect(
