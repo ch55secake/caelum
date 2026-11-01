@@ -1,8 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
-type Tab = "sessions" | "requests";
-type View = { tab: Tab; search: string; searchOpen: boolean };
-const initial: View = { tab: "sessions", search: "", searchOpen: false };
+type View = { search: string; searchOpen: boolean };
+const initial: View = { search: "", searchOpen: false };
 
 export function useSidebarView(path: string) {
   const [views, setViews] = useState<Record<string, View>>({});

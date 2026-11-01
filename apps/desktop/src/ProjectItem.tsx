@@ -35,6 +35,7 @@ export function ProjectItem({
   disclosure?: ReactNode;
 }) {
   const detailsId = useId();
+  const metadataId = useId();
   const contextMenu = useContextMenu();
   const row = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
@@ -97,28 +98,6 @@ export function ProjectItem({
         details={
           <span className="project-details">
             <span className="project-path">{project.path}</span>
-            <span className="project-context">
-              {error ? (
-                <span title={error}>Git unavailable</span>
-              ) : !status ? (
-                <span>{isTauri() ? "Checking Git…" : "Local folder"}</span>
-              ) : !status.repositoryRoot ? (
-                <span>Not a Git repository</span>
-              ) : (
-                <>
-                  <span
-                    className="project-branch"
-                    title={`Current branch: ${branch}`}
-                  >
-                    <GitBranch size={10} aria-hidden="true" />
-                    <span>{branch}</span>
-                  </span>
-                  <span className={`project-changes${count ? " dirty" : ""}`}>
-                    {count ? `${count} changed` : "Clean"}
-                  </span>
-                </>
-              )}
-            </span>
             {working && <span>Running session</span>}
             {approval && <span>Approval required</span>}
           </span>
@@ -127,7 +106,7 @@ export function ProjectItem({
         <button
           className="sidebar-row-select"
           aria-label={project.name}
-          aria-describedby={detailsId}
+          aria-describedby={`${detailsId} ${metadataId}`}
           aria-current={selected ? "page" : undefined}
           onClick={activate}
         >
@@ -147,6 +126,28 @@ export function ProjectItem({
                 className="approval-indicator"
                 aria-label="Approval required"
               />
+            )}
+          </span>
+          <span id={metadataId} className="project-context">
+            {error ? (
+              <span title={error}>Git unavailable</span>
+            ) : !status ? (
+              <span>{isTauri() ? "Checking Git…" : "Local folder"}</span>
+            ) : !status.repositoryRoot ? (
+              <span>Not a Git repository</span>
+            ) : (
+              <>
+                <span
+                  className="project-branch"
+                  title={`Current branch: ${branch}`}
+                >
+                  <GitBranch size={11} aria-hidden="true" />
+                  <span>{branch}</span>
+                </span>
+                <span className={`project-changes${count ? " dirty" : ""}`}>
+                  {count ? `${count} changed` : "Clean"}
+                </span>
+              </>
             )}
           </span>
         </button>

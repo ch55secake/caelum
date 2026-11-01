@@ -1280,8 +1280,12 @@ async function choose(page: Page, label: string, option: string) {
 }
 
 async function showPullRequests(page: Page) {
-  await page.getByRole("tab", { name: "Pull requests", exact: true }).click();
-  return page.getByRole("region", { name: "Pull requests", exact: true });
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(section).toBeVisible();
+  return section;
 }
 
 async function setHistory(
@@ -2193,8 +2197,8 @@ test("Files searches filenames and contents beside the conversation, handles ign
     exact: true,
   });
   await expect(
-    page.getByRole("tab", { name: "Sessions", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+    page.getByRole("region", { name: "Sessions", exact: true }),
+  ).toBeVisible();
   await expect(
     navigation.getByRole("button", { name: "Changes", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -2208,8 +2212,8 @@ test("Files searches filenames and contents beside the conversation, handles ign
   await input.fill("Keep this draft visible");
   await findProjectFile(page, "src/App.tsx");
   await expect(
-    page.getByRole("tab", { name: "Sessions", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+    page.getByRole("region", { name: "Sessions", exact: true }),
+  ).toBeVisible();
   await expect(
     navigation.getByRole("button", { name: "Files", exact: true }),
   ).toHaveClass(/active/);
@@ -2491,8 +2495,8 @@ test("Files inspector resizes and expands while keeping the conversation mounted
   await expect.poll(treeWidth).toBe(preferredTreeWidth);
   await expect(input).toBeHidden();
   await expect(
-    page.getByRole("tab", { name: "Sessions", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+    page.getByRole("region", { name: "Sessions", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Files", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -2505,8 +2509,8 @@ test("Files inspector resizes and expands while keeping the conversation mounted
     .click();
   await expect(input).toHaveValue("Keep my place");
   await expect(
-    page.getByRole("tab", { name: "Sessions", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+    page.getByRole("region", { name: "Sessions", exact: true }),
+  ).toBeVisible();
   await expect(page.locator(".transcript")).toHaveAttribute(
     "data-mounted",
     "yes",
@@ -4001,7 +4005,7 @@ test("sidebar metadata and archiving stay scoped when projects reuse a session I
   ]);
 });
 
-test("compact sidebar keeps projects visible and remembers activity tabs, search and scrolling per checkout", async ({
+test("sidebar shows project details and stacked activity lists with independent scrolling and checkout search", async ({
   page,
 }) => {
   await desktop(page, "thread-a", { worktrees: true });
@@ -4044,12 +4048,12 @@ test("compact sidebar keeps projects visible and remembers activity tabs, search
   const second = projects.getByRole("button", { name: "other", exact: true });
   await expect(first).toBeInViewport({ ratio: 1 });
   await expect(second).toBeInViewport({ ratio: 1 });
-  expect(
-    await projects
-      .locator(".project-row")
-      .first()
-      .evaluate((node) => node.clientHeight),
-  ).toBeLessThanOrEqual(36);
+  await expect(
+    projects.locator(".project-row").first().locator(".project-branch"),
+  ).toBeVisible();
+  await expect(
+    projects.locator(".project-row").first().locator(".project-changes"),
+  ).toBeVisible();
   await first.focus();
   await expect(page.locator(".sidebar-details-tooltip")).toContainText(
     "/work/caelum",
@@ -4059,33 +4063,33 @@ test("compact sidebar keeps projects visible and remembers activity tabs, search
   await first.press("Enter");
   await expect(message).toHaveValue("Project A draft");
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  const sessionsTab = page.getByRole("tab", { name: "Sessions", exact: true });
-  const requestsTab = page.getByRole("tab", {
-    name: "Pull requests",
-    exact: true,
-  });
-  await expect(requestsTab).toContainText("24");
-  const sessions = page.getByRole("tabpanel", {
+  const sessionSection = page.getByRole("region", {
     name: "Sessions",
     exact: true,
   });
+  const requestSection = await showPullRequests(page);
+  await expect(requestSection.locator(".sidebar-section-count")).toHaveText(
+    "24",
+  );
+  const sessions = sessionSection.locator(".session-list");
+  const requests = requestSection.locator(".sidebar-request-panel");
+  expect((await requestSection.boundingBox())!.y).toBeGreaterThan(
+    (await sessions.boundingBox())!.y,
+  );
+  await expect(
+    sessionSection.getByRole("heading", { name: "Sessions", exact: true }),
+  ).toBeInViewport();
+  await expect(
+    requestSection.getByRole("heading", { name: "Pull requests", exact: true }),
+  ).toBeInViewport();
   await sessions.evaluate((node) => (node.scrollTop = 500));
   await expect
     .poll(() => sessions.evaluate((node) => node.scrollTop))
     .toBe(500);
-  await sessionsTab.focus();
-  await sessionsTab.press("ArrowRight");
-  await expect(requestsTab).toBeFocused();
-  const requests = page.getByRole("tabpanel", {
-    name: "Pull requests",
-    exact: true,
-  });
   await requests.evaluate((node) => (node.scrollTop = 300));
   await expect
     .poll(() => requests.evaluate((node) => node.scrollTop))
     .toBe(300);
-  await requestsTab.press("ArrowLeft");
-  await expect(sessionsTab).toBeFocused();
   await expect
     .poll(() => sessions.evaluate((node) => node.scrollTop))
     .toBe(500);
@@ -4097,17 +4101,16 @@ test("compact sidebar keeps projects visible and remembers activity tabs, search
   await expect(search).toBeFocused();
   await search.fill("Background task 2");
   await expect(sessions.locator(".session-row")).toHaveCount(5);
-  await requestsTab.click();
   await expect
     .poll(() => requests.evaluate((node) => node.scrollTop))
     .toBe(300);
   await second.click();
-  await expect(sessionsTab).toHaveAttribute("aria-selected", "true");
+  await expect(sessionSection).toBeVisible();
+  await expect(requestSection).toBeVisible();
   await expect(message).toHaveValue("Project B draft");
   await page.keyboard.press("Meta+k");
   await search.fill("adapters");
   await first.click();
-  await expect(requestsTab).toHaveAttribute("aria-selected", "true");
   await expect
     .poll(() => requests.evaluate((node) => node.scrollTop))
     .toBe(300);
@@ -4134,13 +4137,17 @@ test("compact sidebar keeps projects visible and remembers activity tabs, search
       exact: true,
     }),
   ).toBeVisible();
+  await disclosure.click();
+  await requests.evaluate((node) => {
+    node.scrollTop = 0;
+  });
   for (const theme of ["dark", "light"]) {
     await page.evaluate(
       (theme) => (document.documentElement.dataset.theme = theme),
       theme,
     );
     await page.screenshot({
-      path: `test-results/compact-sidebar-${theme}.png`,
+      path: `test-results/stacked-sidebar-${theme}.png`,
     });
   }
   await page.setViewportSize({ width: 800, height: 620 });
@@ -4150,12 +4157,15 @@ test("compact sidebar keeps projects visible and remembers activity tabs, search
     page.getByRole("button", { name: "Settings", exact: true }),
   ).toBeInViewport({ ratio: 1 });
   expect(await sessions.evaluate((node) => node.clientHeight)).toBeGreaterThan(
-    170,
+    80,
+  );
+  expect(await requests.evaluate((node) => node.clientHeight)).toBeGreaterThan(
+    60,
   );
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     800,
   );
-  await page.screenshot({ path: "test-results/compact-sidebar-small.png" });
+  await page.screenshot({ path: "test-results/stacked-sidebar-small.png" });
 });
 
 test("sidebar resizes, retains its preferred width and keeps session details usable at the minimum window size", async ({
@@ -7709,7 +7719,6 @@ test("PR comments require an idle existing session, retain failed sends and resp
       exact: true,
     }),
   ).toBeDisabled();
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await page
     .getByRole("button", { name: "Refine the session workspace", exact: true })
     .click();
@@ -7751,7 +7760,6 @@ test("PR comments require an idle existing session, retain failed sends and resp
   await expect(
     screen.getByRole("button", { name: "Sending…", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await page
     .getByRole("button", { name: "Review the provider adapters", exact: true })
     .click();
@@ -8350,7 +8358,6 @@ test("session PR section groups open sessions and opens an overview without sele
   );
   await showPullRequests(page);
   await expect(section.getByRole("button")).toHaveCount(2);
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await page.getByRole("textbox", { name: "Search sessions" }).fill("");
   for (const theme of ["dark", "light"]) {
     await page.evaluate((theme) => {
@@ -8366,7 +8373,6 @@ test("session PR section groups open sessions and opens an overview without sele
     .click();
   await showPullRequests(page);
   await expect(shared).toHaveAccessibleDescription("#44 · OpenCode session");
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await sessionRow(page, "OpenCode session")
     .getByRole("button", { name: "Archive session", exact: true })
     .click();
@@ -8466,7 +8472,6 @@ test("PR screen keeps the sidebar usable and preserves the conversation, draft a
     }),
   ).toBeVisible();
   await entry.click();
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await session.click();
   await expect(screen).toHaveCount(0);
   await expect(input).toHaveValue("Keep my session draft");
@@ -9607,7 +9612,6 @@ test("session PR indicators share lookups, distinguish drafts and preserve match
   );
   await section.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(section.getByRole("status")).toHaveCount(0);
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(
     session.getByRole("button", {
       name: "Open pull request #40: Ready for review",
@@ -9639,7 +9643,6 @@ test("session PR refresh bypasses cached misses for both providers and preserves
   await refresh.click();
   const section = await showPullRequests(page);
   await expect(section.locator(".session-pr-item")).toHaveCount(2);
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   const codex = sessionRow(page, "Refine the session workspace").getByRole(
     "button",
     { name: /pull request #44/ },
@@ -9668,7 +9671,6 @@ test("session PR refresh bypasses cached misses for both providers and preserves
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await page.clock.runFor(60_100);
   await page.getByRole("button", { name: "Expand sidebar" }).click();
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(codex).toBeVisible();
   await expect(opencode).toBeVisible();
   await page.evaluate(() => {
@@ -9679,7 +9681,6 @@ test("session PR refresh bypasses cached misses for both providers and preserves
   await page.clock.runFor(15_100);
   await showPullRequests(page);
   await expect(section.getByRole("status")).toHaveCount(0);
-  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(codex).toHaveCount(0);
   await expect(opencode).toBeVisible();
   await showPullRequests(page);
@@ -9782,6 +9783,98 @@ test("session PR explicit refresh discards older in-flight discovery and picks u
 });
 
 for (const provider of ["codex", "opencode"] as const) {
+  test(`${provider} live Git branch updates bypass slow metadata and refresh PR discovery during execution`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await desktop(page, null);
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    const id = provider === "codex" ? "thread-a" : "ses-a";
+    const row = sessionRow(
+      page,
+      provider === "codex"
+        ? "Refine the session workspace"
+        : "OpenCode session",
+    );
+    await expect(row.locator(".session-branch")).toHaveText(
+      provider === "codex" ? "feat/session-ui-redesign" : "main",
+    );
+    const reads = () =>
+      page.evaluate(
+        ({ provider, id }) =>
+          (window as any).fixture.calls.filter(
+            (call: any) =>
+              call.command === "session_details" &&
+              call.args.provider === provider &&
+              call.args.sessionId === id,
+          ).length,
+        { provider, id },
+      );
+    const before = await reads();
+    await page.evaluate(() => (window as any).fixture.hold("session_details"));
+    if (provider === "codex")
+      await emit(page, "turn/started", {
+        threadId: id,
+        turn: { id: "live-turn" },
+      });
+    else
+      await emit(
+        page,
+        "session.execution.started",
+        { sessionID: id },
+        provider,
+      );
+    await expect.poll(reads).toBeGreaterThan(before);
+    await page.evaluate(
+      ({ provider, id, pr }) => {
+        const fixture = (window as any).fixture;
+        fixture.setSessionDetails(provider, id, {
+          branch: "feature/live",
+          branchIsCurrent: false,
+          changes: { additions: 9, deletions: 2 },
+        });
+        fixture.setPullRequest("feature/live", pr);
+        fixture.emit("session-branch-updated", {
+          projectPath: "/work/caelum",
+          provider,
+          sessionId: id,
+          branch: "feature/live",
+        });
+      },
+      { provider, id, pr: previewPullRequest },
+    );
+    await expect(row.locator(".session-branch")).toHaveText("feature/live");
+    await expect(
+      row.getByRole("button", { name: /pull request #44/ }),
+    ).toBeVisible();
+    await expect(
+      sessionRow(page, "Review the provider adapters").locator(
+        ".session-branch",
+      ),
+    ).toHaveText("fix/provider-adapters");
+    await page.evaluate(() =>
+      (window as any).fixture.release("session_details"),
+    );
+    await expect.poll(reads).toBeGreaterThan(before + 1);
+    await expect(row.locator(".lines-added")).toHaveText("+9");
+    await expect(row.locator(".session-branch")).toHaveText("feature/live");
+    await page.evaluate(
+      ({ provider, id }) =>
+        (window as any).fixture.emit("session-branch-updated", {
+          projectPath: "/work/caelum",
+          provider,
+          sessionId: id,
+          branch: null,
+        }),
+      { provider, id },
+    );
+    await expect(row.locator(".session-branch")).toHaveCount(0);
+    await expect(
+      row.getByRole("button", { name: /pull request #44/ }),
+    ).toHaveCount(0);
+    await expect(row.locator(".lines-added")).toHaveText("+9");
+  });
+
   test(`${provider} session PR discovery refreshes immediately when execution finishes`, async ({
     page,
   }) => {

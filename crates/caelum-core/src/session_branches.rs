@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use caelum_protocol::{CodexEvent, OpenCodeEvent, SessionDetails};
+use caelum_protocol::{
+    CodexEvent, GitRepositoryStatus, OpenCodeEvent, SessionBranchUpdate, SessionDetails,
+};
 
 use crate::{database::WorkspaceDatabase, git::GitClient, projects::Project};
 
@@ -27,7 +29,7 @@ struct Tracking {
     active: HashMap<Key, Execution>,
 }
 
-/// Attribute checkout branches to actual execution, never to sidebar reads.
+/// Attribute checkout branches only to known, unambiguous execution.
 #[derive(Clone)]
 pub struct SessionBranches {
     database: Option<WorkspaceDatabase>,
@@ -42,38 +44,34 @@ impl SessionBranches {
         }
     }
 
-    pub fn codex_event(&self, event: &CodexEvent) {
+    pub fn codex_event(&self, event: &CodexEvent) -> Option<SessionBranchUpdate> {
         if event.method == "codex/processExited" {
             self.disconnect(&event.project_path, "codex");
         }
-        let Some(id) = event.params.get("threadId").and_then(|id| id.as_str()) else {
-            return;
-        };
+        let id = event.params.get("threadId").and_then(|id| id.as_str())?;
         let turn = event.params.pointer("/turn/id").and_then(|id| id.as_str());
         match event.method.as_str() {
             "turn/started" => self.execution(&event.project_path, "codex", id, turn, true),
             "turn/completed" => self.execution(&event.project_path, "codex", id, turn, false),
-            _ => {}
+            _ => None,
         }
     }
 
-    pub fn opencode_event(&self, event: &OpenCodeEvent) {
+    pub fn opencode_event(&self, event: &OpenCodeEvent) -> Option<SessionBranchUpdate> {
         if event.event_type == "server.disconnected" {
             self.disconnect(&event.project_path, "opencode");
         }
-        let Some(id) = event.data.get("sessionID").and_then(|id| id.as_str()) else {
-            return;
-        };
+        let id = event.data.get("sessionID").and_then(|id| id.as_str())?;
         match event.event_type.as_str() {
             "session.execution.started" => {
-                self.execution(&event.project_path, "opencode", id, None, true);
+                self.execution(&event.project_path, "opencode", id, None, true)
             }
             "session.execution.succeeded"
             | "session.execution.failed"
             | "session.execution.interrupted" => {
-                self.execution(&event.project_path, "opencode", id, None, false);
+                self.execution(&event.project_path, "opencode", id, None, false)
             }
-            _ => {}
+            _ => None,
         }
     }
 
@@ -108,41 +106,76 @@ impl SessionBranches {
         details
     }
 
-    fn execution(&self, path: &str, provider: &str, id: &str, turn: Option<&str>, starting: bool) {
-        let Some(key) = key(path, provider, id) else {
-            return;
+    /// Keep an unambiguous execution's branch current while its tools are running.
+    /// Idle sessions and overlapping executions retain their own recorded branches.
+    pub fn refresh_checkout(&self, status: &GitRepositoryStatus) -> Vec<SessionBranchUpdate> {
+        let Some(root) = status.repository_root.as_ref().map(PathBuf::from) else {
+            return Vec::new();
         };
         let mut tracking = self
             .tracking
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let keys: Vec<_> = tracking
+            .active
+            .iter()
+            .filter(|(_, execution)| !execution.ambiguous && execution.root == root)
+            .map(|(key, _)| key.clone())
+            .collect();
+        if keys.is_empty() {
+            return Vec::new();
+        }
+        // The status read may predate a newer turn. Sample under the execution
+        // lock instead of attributing that earlier snapshot to its new owner.
+        let Ok(Some(context)) = GitClient::new().branch_context(&status.project_path) else {
+            return Vec::new();
+        };
+        if context.root != root {
+            return Vec::new();
+        }
+        keys.into_iter()
+            .filter_map(|key| self.record(&mut tracking, key, context.branch.clone()))
+            .collect()
+    }
+
+    fn execution(
+        &self,
+        path: &str,
+        provider: &str,
+        id: &str,
+        turn: Option<&str>,
+        starting: bool,
+    ) -> Option<SessionBranchUpdate> {
+        let key = key(path, provider, id)?;
+        let mut tracking = self
+            .tracking
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !starting {
-            let Some(active) = tracking.active.get(&key) else {
-                return;
-            };
+            let active = tracking.active.get(&key)?;
             if active.turn.as_deref() != turn {
-                return;
+                return None;
             }
             let active = tracking.active.remove(&key).unwrap();
             if active.ambiguous {
-                return;
+                return None;
             }
             if let Ok(Some(context)) = GitClient::new().branch_context(&key.path) {
                 if context.root == active.root {
-                    self.record(&mut tracking, key, context.branch);
+                    return self.record(&mut tracking, key, context.branch);
                 }
             }
-            return;
+            return None;
         }
         if tracking
             .active
             .get(&key)
             .is_some_and(|active| active.turn.as_deref() == turn)
         {
-            return;
+            return None;
         }
         let Ok(Some(context)) = GitClient::new().branch_context(&key.path) else {
-            return;
+            return None;
         };
         let mut ambiguous = false;
         for (other, active) in &mut tracking.active {
@@ -161,11 +194,20 @@ impl SessionBranches {
         );
         // Overlapping sessions in one checkout cannot reliably own its branch changes.
         if !ambiguous {
-            self.record(&mut tracking, key, context.branch);
+            return self.record(&mut tracking, key, context.branch);
         }
+        None
     }
 
-    fn record(&self, tracking: &mut Tracking, key: Key, branch: Option<String>) {
+    fn record(
+        &self,
+        tracking: &mut Tracking,
+        key: Key,
+        branch: Option<String>,
+    ) -> Option<SessionBranchUpdate> {
+        if tracking.branches.get(&key) == Some(&branch) {
+            return None;
+        }
         if let Some(database) = &self.database {
             let _ = database.record_session_branch(
                 &key.path,
@@ -174,7 +216,14 @@ impl SessionBranches {
                 branch.as_deref(),
             );
         }
+        let update = SessionBranchUpdate {
+            project_path: key.path.clone(),
+            provider: key.provider.clone(),
+            session_id: key.session.clone(),
+            branch: branch.clone(),
+        };
         tracking.branches.insert(key, branch);
+        Some(update)
     }
 
     fn disconnect(&self, path: &str, provider: &str) {
@@ -277,7 +326,7 @@ mod tests {
         }
     }
     fn codex(tracker: &SessionBranches, path: &str, session: &str, turn: &str, method: &str) {
-        tracker.codex_event(&CodexEvent {
+        let _ = tracker.codex_event(&CodexEvent {
             project_path: path.into(),
             method: method.into(),
             params: json!({"threadId": session, "turn": {"id": turn}}),
@@ -285,7 +334,7 @@ mod tests {
         });
     }
     fn opencode(tracker: &SessionBranches, path: &str, session: &str, event: &str) {
-        tracker.opencode_event(&OpenCodeEvent {
+        let _ = tracker.opencode_event(&OpenCodeEvent {
             project_path: path.into(),
             event_type: event.into(),
             data: json!({"sessionID": session}),
@@ -367,6 +416,88 @@ mod tests {
     }
 
     #[test]
+    fn git_refresh_publishes_active_branch_changes_before_execution_finishes() {
+        for provider in ["codex", "opencode"] {
+            let fixture = Fixture::new();
+            let tracker = SessionBranches::new(Some(fixture.database()));
+            let path = fixture.path();
+            let event = |starting| {
+                if provider == "codex" {
+                    tracker.codex_event(&CodexEvent {
+                        project_path: path.into(),
+                        method: if starting {
+                            "turn/started"
+                        } else {
+                            "turn/completed"
+                        }
+                        .into(),
+                        params: json!({"threadId": "session", "turn": {"id": "turn"}}),
+                        request_id: None,
+                    })
+                } else {
+                    tracker.opencode_event(&OpenCodeEvent {
+                        project_path: path.into(),
+                        event_type: if starting {
+                            "session.execution.started"
+                        } else {
+                            "session.execution.succeeded"
+                        }
+                        .into(),
+                        data: json!({"sessionID": "session"}),
+                        id: None,
+                        created: None,
+                        location: None,
+                    })
+                }
+            };
+            assert_eq!(event(true).unwrap().branch.as_deref(), Some("main"));
+            let stale_status = GitClient::new().repository_status(path).unwrap();
+            git(&fixture.0, &["checkout", "-b", "feature/live"]);
+            assert_eq!(
+                tracker.refresh_checkout(&stale_status),
+                vec![SessionBranchUpdate {
+                    project_path: path.into(),
+                    provider: provider.into(),
+                    session_id: "session".into(),
+                    branch: Some("feature/live".into()),
+                }]
+            );
+            assert!(tracker.refresh_checkout(&stale_status).is_empty());
+            assert_eq!(
+                tracker
+                    .details(path, provider, "session", native(Some("main"), false))
+                    .branch
+                    .as_deref(),
+                Some("feature/live")
+            );
+            let restored = SessionBranches::new(Some(fixture.database()));
+            assert_eq!(
+                restored
+                    .details(path, provider, "session", native(None, false))
+                    .branch
+                    .as_deref(),
+                Some("feature/live")
+            );
+            git(&fixture.0, &["checkout", "--detach"]);
+            assert_eq!(tracker.refresh_checkout(&stale_status)[0].branch, None);
+            git(&fixture.0, &["checkout", "-b", "feature/finished"]);
+            assert_eq!(
+                event(false).unwrap().branch.as_deref(),
+                Some("feature/finished")
+            );
+            git(&fixture.0, &["checkout", "main"]);
+            assert!(tracker.refresh_checkout(&stale_status).is_empty());
+            assert_eq!(
+                tracker
+                    .details(path, provider, "session", native(Some("main"), false))
+                    .branch
+                    .as_deref(),
+                Some("feature/finished")
+            );
+        }
+    }
+
+    #[test]
     fn overlapping_sessions_in_the_same_checkout_do_not_claim_each_others_branch() {
         let fixture = Fixture::new();
         let tracker = SessionBranches::new(Some(fixture.database()));
@@ -376,6 +507,8 @@ mod tests {
         codex(&tracker, fixture.path(), "first", "turn-1", "turn/started");
         git(&fixture.0, &["checkout", "-b", "feature/ambiguous"]);
         opencode(&tracker, nested, "second", "session.execution.started");
+        let status = GitClient::new().repository_status(nested).unwrap();
+        assert!(tracker.refresh_checkout(&status).is_empty());
         codex(
             &tracker,
             fixture.path(),
@@ -428,6 +561,18 @@ mod tests {
         codex(&tracker, path, "same-id", "b", "turn/started");
         git(&fixture.0, &["checkout", "-b", "feature/root"]);
         git(&checkout, &["checkout", "-b", "feature/checkout"]);
+        let status = GitClient::new().repository_status(path).unwrap();
+        let updates = tracker.refresh_checkout(&status);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].project_path, path);
+        assert_eq!(updates[0].branch.as_deref(), Some("feature/checkout"));
+        assert_eq!(
+            tracker
+                .details(fixture.path(), "codex", "same-id", native(None, false))
+                .branch
+                .as_deref(),
+            Some("main")
+        );
         codex(&tracker, fixture.path(), "same-id", "a", "turn/completed");
         codex(&tracker, path, "same-id", "b", "turn/completed");
         assert_eq!(

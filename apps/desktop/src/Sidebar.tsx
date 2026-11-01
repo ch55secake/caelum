@@ -150,23 +150,11 @@ export function Sidebar({
   const requestList = useRef<HTMLDivElement>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
   const restoration = useRef<{
-    key: string;
-    top: number;
-    pending: boolean;
+    path: string;
+    lists: Record<"sessions" | "requests", { top: number; pending: boolean }>;
   } | null>(null);
-  const { search, searchOpen, tab } = view;
+  const { search, searchOpen } = view;
   const path = app.project?.path ?? "";
-  const selectTab = (next: SidebarView["tab"]) => {
-    const list = tab === "sessions" ? sessionList.current : requestList.current;
-    // Scroll events arrive on the next frame, which can be after a tab is hidden.
-    if (list && !restoration.current?.pending)
-      view.positions.current.set(`${path}\0${tab}`, list.scrollTop);
-    view.update({ tab: next });
-  };
-  const openSearch = () => {
-    selectTab("sessions");
-    focusSearch();
-  };
   const closeSearch = () => {
     view.update({ search: "", searchOpen: false });
     searchButton.current?.focus();
@@ -213,29 +201,37 @@ export function Sidebar({
     })),
   );
   useLayoutEffect(() => {
-    const key = `${path}\0${tab}`;
-    if (restoration.current?.key !== key) {
+    if (restoration.current?.path !== path) {
       restoration.current = {
-        key,
-        top: view.positions.current.get(key) ?? 0,
-        pending: true,
+        path,
+        lists: {
+          sessions: {
+            top: view.positions.current.get(`${path}\0sessions`) ?? 0,
+            pending: true,
+          },
+          requests: {
+            top: view.positions.current.get(`${path}\0requests`) ?? 0,
+            pending: true,
+          },
+        },
       };
     }
-    const restore = restoration.current;
-    const list = tab === "sessions" ? sessionList.current : requestList.current;
-    if (!restore.pending || !list) return;
-    list.scrollTop = restore.top;
-    // Discovery rehydrates asynchronously when the sidebar is reopened. Wait
-    // for rows before accepting a scroll position clamped by an empty panel.
-    const loading =
-      tab === "sessions"
-        ? app.providerWorkspace?.isLoadingSessions
-        : pullRequests.loading;
-    if (Math.abs(list.scrollTop - restore.top) < 1 || !loading)
-      restore.pending = false;
+    for (const name of ["sessions", "requests"] as const) {
+      const restore = restoration.current.lists[name];
+      const list =
+        name === "sessions" ? sessionList.current : requestList.current;
+      if (!restore.pending || !list) continue;
+      list.scrollTop = restore.top;
+      // Wait for discovery to rehydrate before accepting an empty list's clamp.
+      const loading =
+        name === "sessions"
+          ? app.providerWorkspace?.isLoadingSessions
+          : pullRequests.loading;
+      if (Math.abs(list.scrollTop - restore.top) < 1 || !loading)
+        restore.pending = false;
+    }
   }, [
     path,
-    tab,
     sessions.length,
     pullRequests.entries.size,
     pullRequests.loading,
@@ -314,293 +310,261 @@ export function Sidebar({
           <GitBranch size={15} />
         </button>
       </nav>
-      <div className="sidebar-activity-heading">
-        <div
-          role="tablist"
-          aria-label="Project activity"
-          className="sidebar-activity-tabs"
-        >
-          {(["sessions", "requests"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              role="tab"
-              id={`${activityId}-${value}-tab`}
-              aria-controls={`${activityId}-${value}`}
-              aria-selected={tab === value}
-              aria-label={value === "sessions" ? "Sessions" : "Pull requests"}
-              tabIndex={tab === value ? 0 : -1}
-              onClick={() => selectTab(value)}
-              onKeyDown={(event) => {
-                if (
-                  !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
-                    event.key,
-                  )
-                )
-                  return;
-                event.preventDefault();
-                const next =
-                  event.key === "Home"
-                    ? "sessions"
-                    : event.key === "End"
-                      ? "requests"
-                      : value === "sessions"
-                        ? "requests"
-                        : "sessions";
-                selectTab(next);
-                document.getElementById(`${activityId}-${next}-tab`)?.focus();
-              }}
-            >
-              {value === "sessions" ? "Sessions" : "Pull requests"}
-              <span>
-                {value === "sessions"
-                  ? allSessions.length
-                  : pullRequests.entries.size}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="sidebar-list-tools">
-        <span>
-          {tab === "sessions"
-            ? search
-              ? `${sessions.length} matching`
-              : "Recent sessions"
-            : "Open pull requests"}
-        </span>
-        <button
-          ref={searchButton}
-          type="button"
-          className="icon-button"
-          aria-label="Search sessions"
-          title="Search sessions (⌘K)"
-          aria-expanded={searchOpen && tab === "sessions"}
-          aria-controls={`${activityId}-search`}
-          disabled={!app.project}
-          onClick={openSearch}
-        >
-          <Search size={13} />
-        </button>
-        <button
-          className="icon-button"
-          title="Refresh sessions"
-          aria-label="Refresh sessions"
-          disabled={!app.project || app.providerWorkspace?.isLoadingSessions}
-          onClick={() => void app.refreshSessions()}
-        >
-          <RefreshCw
-            size={13}
-            className={
-              app.providerWorkspace?.isLoadingSessions ? "spinning" : ""
-            }
-          />
-        </button>
-      </div>
-      <label
-        id={`${activityId}-search`}
-        className="session-search"
-        hidden={!searchOpen || tab !== "sessions"}
-      >
-        <Search size={13} />
-        <input
-          ref={searchRef}
-          placeholder="Search sessions…"
-          aria-label="Search sessions"
-          value={search}
-          onChange={(event) => view.update({ search: event.target.value })}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeSearch();
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Close session search"
-          onClick={closeSearch}
-        >
-          <X size={12} />
-        </button>
-      </label>
       <div className="sidebar-session-lists">
-        <div
-          ref={sessionList}
-          id={`${activityId}-sessions`}
-          role="tabpanel"
-          aria-labelledby={`${activityId}-sessions-tab`}
-          hidden={tab !== "sessions"}
-          className="session-list"
-          tabIndex={0}
-          onScroll={(event) => {
-            if (tab === "sessions" && !restoration.current?.pending)
-              view.positions.current.set(
-                `${path}\0sessions`,
-                event.currentTarget.scrollTop,
-              );
-          }}
+        <section
+          className="sidebar-session-section"
+          aria-labelledby={`${activityId}-sessions-heading`}
         >
-          {app.providerWorkspace?.isLoadingSessions &&
-            sessions.length === 0 && (
-              <div className="empty-sessions">Connecting…</div>
-            )}
-          {sessions.length === 0 &&
-            !app.providerWorkspace?.isLoadingSessions && (
-              <div className="empty-sessions">
-                {search ? "No matching sessions" : "No sessions yet"}
-              </div>
-            )}
-          {sessions.map((item) => {
-            const workspace = app.workspace?.providers[item.provider];
-            const state = workspace?.sessionsById[item.id];
-            const archiving = workspace?.archivingSessionIds.includes(item.id);
-            const working = state?.isWorking ?? item.isWorking;
-            const approval = app.approvals.some(
-              (request) =>
-                request.projectPath === app.project?.path &&
-                request.provider === item.provider &&
-                request.sessionId === item.id,
-            );
-            return (
-              <div
-                key={`${app.project?.path}-${item.provider}-${item.id}`}
-                className={`session-row${!activeUrl && app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
-                onContextMenu={(event) =>
-                  contextMenu(event, [
-                    {
-                      text: "Open session",
-                      enabled: !archiving,
-                      action: () => selectSession(item, item.provider),
-                    },
-                    copyAction("Copy session title", sessionTitle(item)),
-                    copyAction("Copy session ID", item.id),
-                    { item: "Separator" },
-                    {
-                      text: "Archive session",
-                      enabled: !(
-                        archiving ||
-                        working ||
-                        state?.isSubmitting ||
-                        state?.connection === "connecting" ||
-                        approval
-                      ),
-                      action: () => app.archiveSession(item, item.provider),
-                    },
-                  ])
-                }
+          <div className="sidebar-section-heading">
+            <h2 id={`${activityId}-sessions-heading`}>Sessions</h2>
+            <span className="sidebar-section-count">
+              {search
+                ? `${sessions.length} / ${allSessions.length}`
+                : allSessions.length}
+            </span>
+            <div className="sidebar-list-tools">
+              <button
+                ref={searchButton}
+                type="button"
+                className="icon-button"
+                aria-label="Search sessions"
+                title="Search sessions (⌘K)"
+                aria-expanded={searchOpen}
+                aria-controls={`${activityId}-search`}
+                disabled={!app.project}
+                onClick={focusSearch}
               >
-                <div className="session-item">
-                  <button
-                    className="sidebar-row-select"
-                    title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
-                    aria-label={sessionTitle(item)}
-                    aria-current={
-                      !activeUrl &&
-                      app.provider === item.provider &&
-                      app.selectedId === item.id
-                        ? "page"
-                        : undefined
-                    }
-                    disabled={archiving}
-                    onClick={() => selectSession(item, item.provider)}
-                  >
-                    <span className="session-heading">
-                      <span
-                        className="session-status"
-                        title={approval ? "Approval required" : undefined}
-                      >
-                        {approval ? (
-                          <ShieldAlert
-                            size={13}
-                            className="approval-indicator"
-                            aria-label="Approval required"
-                          />
-                        ) : working ? (
-                          <span
-                            className="running-dot"
-                            aria-label="Running"
-                            title="Running"
-                          />
-                        ) : state?.unread ? (
-                          <span
-                            className="unread-dot"
-                            aria-label="Unread"
-                            title="Unread"
-                          />
-                        ) : state?.connection === "disconnected" ? (
-                          <span
-                            className="disconnected-dot"
-                            aria-label="Disconnected"
-                            title="Disconnected"
-                          />
-                        ) : null}
-                      </span>
-                      <span className="session-title">
-                        {sessionTitle(item)}
-                      </span>
-                    </span>
-                  </button>
-                  <SessionContext
-                    projectPath={app.project!.path}
-                    details={workspace?.sessionDetails[item.id]}
-                    revision={item.updatedAt}
-                    load={() => {
-                      if (app.project)
-                        void app.loadSessionDetails(
-                          app.project.path,
-                          item.provider,
-                          item.id,
-                        );
-                    }}
-                  />
+                <Search size={13} />
+              </button>
+              <button
+                className="icon-button"
+                title="Refresh sessions"
+                aria-label="Refresh sessions"
+                disabled={
+                  !app.project || app.providerWorkspace?.isLoadingSessions
+                }
+                onClick={() => void app.refreshSessions()}
+              >
+                <RefreshCw
+                  size={13}
+                  className={
+                    app.providerWorkspace?.isLoadingSessions ? "spinning" : ""
+                  }
+                />
+              </button>
+            </div>
+          </div>
+          <label
+            id={`${activityId}-search`}
+            className="session-search"
+            hidden={!searchOpen}
+          >
+            <Search size={13} />
+            <input
+              ref={searchRef}
+              placeholder="Search sessions…"
+              aria-label="Search sessions"
+              value={search}
+              onChange={(event) => view.update({ search: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeSearch();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Close session search"
+              onClick={closeSearch}
+            >
+              <X size={12} />
+            </button>
+          </label>
+          <div
+            ref={sessionList}
+            id={`${activityId}-sessions`}
+            className="session-list"
+            tabIndex={0}
+            onScroll={(event) => {
+              if (!restoration.current?.lists.sessions.pending)
+                view.positions.current.set(
+                  `${path}\0sessions`,
+                  event.currentTarget.scrollTop,
+                );
+            }}
+          >
+            {app.providerWorkspace?.isLoadingSessions &&
+              sessions.length === 0 && (
+                <div className="empty-sessions">Connecting…</div>
+              )}
+            {sessions.length === 0 &&
+              !app.providerWorkspace?.isLoadingSessions && (
+                <div className="empty-sessions">
+                  {search ? "No matching sessions" : "No sessions yet"}
                 </div>
-                <button
-                  className="icon-button session-archive"
-                  aria-label="Archive session"
-                  title={
-                    working || state?.isSubmitting || approval
-                      ? "Stop the running turn before archiving"
-                      : `Archive ${sessionTitle(item)}`
-                  }
-                  disabled={
-                    archiving ||
-                    working ||
-                    state?.isSubmitting ||
-                    state?.connection === "connecting" ||
-                    approval
-                  }
-                  onClick={() => void app.archiveSession(item, item.provider)}
-                >
-                  {archiving ? (
-                    <LoaderCircle size={13} className="spinning" />
-                  ) : (
-                    <Archive size={13} />
-                  )}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-        <div
-          ref={requestList}
-          id={`${activityId}-requests`}
-          role="tabpanel"
-          aria-labelledby={`${activityId}-requests-tab`}
-          hidden={tab !== "requests"}
-          className="sidebar-request-panel"
-          tabIndex={0}
-          onScroll={(event) => {
-            if (tab === "requests" && !restoration.current?.pending)
-              view.positions.current.set(
-                `${path}\0requests`,
-                event.currentTarget.scrollTop,
+              )}
+            {sessions.map((item) => {
+              const workspace = app.workspace?.providers[item.provider];
+              const state = workspace?.sessionsById[item.id];
+              const archiving = workspace?.archivingSessionIds.includes(
+                item.id,
               );
-          }}
+              const working = state?.isWorking ?? item.isWorking;
+              const approval = app.approvals.some(
+                (request) =>
+                  request.projectPath === app.project?.path &&
+                  request.provider === item.provider &&
+                  request.sessionId === item.id,
+              );
+              return (
+                <div
+                  key={`${app.project?.path}-${item.provider}-${item.id}`}
+                  className={`session-row${!activeUrl && app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
+                  onContextMenu={(event) =>
+                    contextMenu(event, [
+                      {
+                        text: "Open session",
+                        enabled: !archiving,
+                        action: () => selectSession(item, item.provider),
+                      },
+                      copyAction("Copy session title", sessionTitle(item)),
+                      copyAction("Copy session ID", item.id),
+                      { item: "Separator" },
+                      {
+                        text: "Archive session",
+                        enabled: !(
+                          archiving ||
+                          working ||
+                          state?.isSubmitting ||
+                          state?.connection === "connecting" ||
+                          approval
+                        ),
+                        action: () => app.archiveSession(item, item.provider),
+                      },
+                    ])
+                  }
+                >
+                  <div className="session-item">
+                    <button
+                      className="sidebar-row-select"
+                      title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
+                      aria-label={sessionTitle(item)}
+                      aria-current={
+                        !activeUrl &&
+                        app.provider === item.provider &&
+                        app.selectedId === item.id
+                          ? "page"
+                          : undefined
+                      }
+                      disabled={archiving}
+                      onClick={() => selectSession(item, item.provider)}
+                    >
+                      <span className="session-heading">
+                        <span
+                          className="session-status"
+                          title={approval ? "Approval required" : undefined}
+                        >
+                          {approval ? (
+                            <ShieldAlert
+                              size={13}
+                              className="approval-indicator"
+                              aria-label="Approval required"
+                            />
+                          ) : working ? (
+                            <span
+                              className="running-dot"
+                              aria-label="Running"
+                              title="Running"
+                            />
+                          ) : state?.unread ? (
+                            <span
+                              className="unread-dot"
+                              aria-label="Unread"
+                              title="Unread"
+                            />
+                          ) : state?.connection === "disconnected" ? (
+                            <span
+                              className="disconnected-dot"
+                              aria-label="Disconnected"
+                              title="Disconnected"
+                            />
+                          ) : null}
+                        </span>
+                        <span className="session-title">
+                          {sessionTitle(item)}
+                        </span>
+                      </span>
+                    </button>
+                    <SessionContext
+                      projectPath={app.project!.path}
+                      details={workspace?.sessionDetails[item.id]}
+                      revision={item.updatedAt}
+                      load={() => {
+                        if (app.project)
+                          void app.loadSessionDetails(
+                            app.project.path,
+                            item.provider,
+                            item.id,
+                          );
+                      }}
+                    />
+                  </div>
+                  <button
+                    className="icon-button session-archive"
+                    aria-label="Archive session"
+                    title={
+                      working || state?.isSubmitting || approval
+                        ? "Stop the running turn before archiving"
+                        : `Archive ${sessionTitle(item)}`
+                    }
+                    disabled={
+                      archiving ||
+                      working ||
+                      state?.isSubmitting ||
+                      state?.connection === "connecting" ||
+                      approval
+                    }
+                    onClick={() => void app.archiveSession(item, item.provider)}
+                  >
+                    {archiving ? (
+                      <LoaderCircle size={13} className="spinning" />
+                    ) : (
+                      <Archive size={13} />
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+        <section
+          className="sidebar-request-section"
+          aria-labelledby={`${activityId}-requests-heading`}
         >
-          <SessionPullRequests result={pullRequests} />
-        </div>
+          <div className="sidebar-section-heading">
+            <h2 id={`${activityId}-requests-heading`}>Pull requests</h2>
+            <span className="sidebar-section-count">
+              {pullRequests.entries.size}
+            </span>
+          </div>
+          <div
+            ref={requestList}
+            id={`${activityId}-requests`}
+            className="sidebar-request-panel"
+            tabIndex={0}
+            onScroll={(event) => {
+              if (!restoration.current?.lists.requests.pending)
+                view.positions.current.set(
+                  `${path}\0requests`,
+                  event.currentTarget.scrollTop,
+                );
+            }}
+          >
+            <SessionPullRequests result={pullRequests} />
+          </div>
+        </section>
       </div>
       <button
         className="nav-item sidebar-settings"

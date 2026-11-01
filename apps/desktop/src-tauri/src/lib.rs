@@ -228,11 +228,20 @@ async fn remove_worktree(
 }
 
 #[tauri::command]
-async fn git_repository_status(project_path: String) -> Result<GitRepositoryStatus, String> {
+async fn git_repository_status(
+    app: tauri::AppHandle,
+    branches: State<'_, SessionBranches>,
+    project_path: String,
+) -> Result<GitRepositoryStatus, String> {
+    let branches = branches.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        GitClient::new()
+        let status = GitClient::new()
             .repository_status(project_path)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        for update in branches.refresh_checkout(&status) {
+            let _ = app.emit("session-branch-updated", update);
+        }
+        Ok(status)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1000,7 +1009,9 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(event) = codex_updates.recv() {
-                    branches.codex_event(&event);
+                    if let Some(update) = branches.codex_event(&event) {
+                        let _ = handle.emit("session-branch-updated", update);
+                    }
                     if handle.emit("codex-event", event).is_err() {
                         break;
                     }
@@ -1012,7 +1023,9 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(event) = opencode_updates.recv() {
-                    branches.opencode_event(&event);
+                    if let Some(update) = branches.opencode_event(&event) {
+                        let _ = handle.emit("session-branch-updated", update);
+                    }
                     if handle.emit("opencode-event", event).is_err() {
                         break;
                     }

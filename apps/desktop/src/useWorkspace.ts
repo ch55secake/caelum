@@ -678,6 +678,35 @@ export function useWorkspace(settings: AppSettings) {
       else stops.push(stop);
     };
     void Promise.all([
+      subscribe<{
+        projectPath: string;
+        provider: ProviderKind;
+        sessionId: string;
+        branch: string | null;
+      }>(
+        "session-branch-updated",
+        ({ projectPath: path, provider: kind, sessionId: id, branch }) => {
+          if (unavailable(path, kind, id)) return;
+          const current = state.current[path].providers[kind];
+          if (!current.sessions.some((session) => session.id === id)) return;
+          const key = `details:${keyFor(path, kind, id)}`;
+          // A provider metadata read begun before this Git observation must not
+          // put the old branch back while the agent is still running.
+          if (detailsLoads.current.has(key)) detailsRefreshes.current.add(key);
+          mutateProvider(path, kind, (value) => ({
+            ...value,
+            sessionDetails: {
+              ...value.sessionDetails,
+              [id]: {
+                changes: value.sessionDetails[id]?.changes ?? null,
+                branch,
+                branchIsCurrent: false,
+              },
+            },
+          }));
+          if (branch) refreshBranchPullRequests(path, [branch]);
+        },
+      ),
       subscribe<Parameters<typeof applyCodexEvent>[1]>(
         "codex-event",
         (event) => {

@@ -128,7 +128,7 @@ export default function App() {
   function newSession() {
     setPullRequest(null);
     app.newSession();
-    sidebarView.update({ tab: "sessions", search: "", searchOpen: false });
+    sidebarView.update({ search: "", searchOpen: false });
     setFocusRequest({ target: "composer" });
   }
   function showSession() {
@@ -139,7 +139,7 @@ export default function App() {
   }
   function focusSearch() {
     setCollapsed(false);
-    sidebarView.update({ tab: "sessions", searchOpen: true });
+    sidebarView.update({ searchOpen: true });
     setFocusRequest({ target: "search" });
   }
   useEffect(() => {

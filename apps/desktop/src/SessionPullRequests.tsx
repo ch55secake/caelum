@@ -73,7 +73,7 @@ export function SessionPullRequests({
 }) {
   const { path, entries, loading, error } = result;
   return (
-    <section className="session-pr-section" aria-label="Pull requests">
+    <div className="session-pr-section">
       <div className="session-pr-list">
         {entries.size
           ? [...entries.values()].map((entry) => (
@@ -107,7 +107,7 @@ export function SessionPullRequests({
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }
 
