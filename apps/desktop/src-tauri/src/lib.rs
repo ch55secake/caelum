@@ -13,14 +13,17 @@ use caelum_core::{
     processes::ProcessRegistry,
     projects::Project,
     questions::{Answer, QuestionBroker},
+    session_branches::SessionBranches,
     worktrees::WorktreeClient,
 };
 use caelum_protocol::{
     AppInfo, ApprovalDecision, ApprovalPrompt, CodexSessionInfo, CodexSessionList, GitFileDiff,
-    GitFileVersions, GitHubPullRequest, GitRepositoryStatus, GitWorktree, GitWorktrees,
-    OpenCodeSessionInfo, OpenCodeSessionList, ProjectDirectoryListing, ProjectFileContent,
-    ProjectInfo, ProjectSearchMode, ProjectSearchResults, ProviderChoices, QuestionPrompt,
-    SessionDetails, SessionHistoryPage, WorkspaceSnapshot,
+    GitFileVersions, GitHubFeedbackKind, GitHubMergeMethod, GitHubPullRequest,
+    GitHubPullRequestDetails, GitHubPullRequestFeedback, GitHubPullRequestFiles,
+    GitRepositoryStatus, GitWorktree, GitWorktrees, OpenCodeSessionInfo, OpenCodeSessionList,
+    ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProjectSearchMode,
+    ProjectSearchResults, ProviderChoices, QuestionPrompt, SessionDetails, SessionHistoryPage,
+    WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -248,6 +251,86 @@ async fn github_open_pull_request(
 }
 
 #[tauri::command]
+async fn github_pull_request_details(
+    project_path: String,
+    url: String,
+) -> Result<GitHubPullRequestDetails, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::pull_request_details(project_path, &url).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_pull_request_files(
+    project_path: String,
+    url: String,
+    head_oid: String,
+    page: u32,
+) -> Result<GitHubPullRequestFiles, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::pull_request_files(project_path, &url, &head_oid, page)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_pull_request_feedback(
+    project_path: String,
+    url: String,
+    head_oid: String,
+    kind: GitHubFeedbackKind,
+    cursor: Option<String>,
+    thread_id: Option<String>,
+) -> Result<GitHubPullRequestFeedback, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::pull_request_feedback(
+            project_path,
+            &url,
+            &head_oid,
+            kind,
+            cursor.as_deref(),
+            thread_id.as_deref(),
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_merge_pull_request(
+    project_path: String,
+    url: String,
+    method: GitHubMergeMethod,
+    head_oid: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::merge_pull_request(project_path, &url, method, &head_oid)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn github_update_pull_request_branch(
+    project_path: String,
+    url: String,
+    head_oid: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        github::update_pull_request_branch(project_path, &url, &head_oid)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn git_file_diff(project_path: String, file_path: String) -> Result<GitFileDiff, String> {
     tauri::async_runtime::spawn_blocking(move || {
         GitClient::new()
@@ -444,20 +527,25 @@ async fn forget_project_session(
 async fn session_details(
     codex: State<'_, CodexProvider>,
     opencode: State<'_, OpenCodeProvider>,
+    branches: State<'_, SessionBranches>,
     project_path: String,
     provider: String,
     session_id: String,
 ) -> Result<SessionDetails, String> {
     let codex = codex.inner().clone();
     let opencode = opencode.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || match provider.as_str() {
-        "codex" => codex
-            .session_details(project_path, &session_id)
-            .map_err(|error| error.to_string()),
-        "opencode" => opencode
-            .session_details(project_path, &session_id)
-            .map_err(|error| error.to_string()),
-        _ => Err("Unknown provider".into()),
+    let branches = branches.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let details = match provider.as_str() {
+            "codex" => codex
+                .session_details(&project_path, &session_id)
+                .map_err(|error| error.to_string()),
+            "opencode" => opencode
+                .session_details(&project_path, &session_id)
+                .map_err(|error| error.to_string()),
+            _ => Err("Unknown provider".into()),
+        }?;
+        Ok(branches.details(&project_path, &provider, &session_id, details))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -861,6 +949,9 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir();
             app.manage(WorktreeClient::new(app.path().home_dir()?));
             app.manage(PersistenceState::open(app_data_dir));
+            app.manage(SessionBranches::new(
+                app.state::<PersistenceState>().database().ok(),
+            ));
             let startup_project = std::env::args_os()
                 .skip(1)
                 .map(PathBuf::from)
@@ -905,9 +996,11 @@ pub fn run() {
             });
 
             let codex_updates = app.state::<CodexProvider>().subscribe();
+            let branches = app.state::<SessionBranches>().inner().clone();
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(event) = codex_updates.recv() {
+                    branches.codex_event(&event);
                     if handle.emit("codex-event", event).is_err() {
                         break;
                     }
@@ -915,9 +1008,11 @@ pub fn run() {
             });
 
             let opencode_updates = app.state::<OpenCodeProvider>().subscribe();
+            let branches = app.state::<SessionBranches>().inner().clone();
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 while let Ok(event) = opencode_updates.recv() {
+                    branches.opencode_event(&event);
                     if handle.emit("opencode-event", event).is_err() {
                         break;
                     }
@@ -936,6 +1031,11 @@ pub fn run() {
             remove_worktree,
             git_repository_status,
             github_open_pull_request,
+            github_pull_request_details,
+            github_pull_request_files,
+            github_pull_request_feedback,
+            github_merge_pull_request,
+            github_update_pull_request_branch,
             git_file_diff,
             git_file_versions,
             list_project_directory,

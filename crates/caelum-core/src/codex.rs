@@ -1500,10 +1500,7 @@ impl ProviderInner {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::{
-        os::unix::fs::PermissionsExt,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -1538,12 +1535,7 @@ mod tests {
                 if authenticated { 0 } else { 1 },
                 PYTHON_FAKE_SERVER.replace('\'', "'\\''")
             );
-            fs::write(&executable, script).expect("write fake Codex executable");
-            let mut permissions = fs::metadata(&executable)
-                .expect("read fake executable metadata")
-                .permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&executable, permissions).expect("make fake executable runnable");
+            crate::test_support::write_executable(&executable, script);
             executable
         }
     }

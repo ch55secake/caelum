@@ -253,6 +253,7 @@ async function desktop(
       >();
       const gitErrors = new Map<string, string>();
       const pullRequests = new Map<string, unknown>();
+      const pullRequestPages = new Map<string, unknown>();
       let diffVersion = 1;
       const codexHistory = new Map<
         string,
@@ -349,6 +350,9 @@ async function desktop(
           setSessionDetails: (provider: string, id: string, value: unknown) => {
             sessionDetails.set(`${provider}:${id}`, value);
           },
+          addSession: (id: string, name: string) => {
+            threads.push({ id, name, preview: "", updatedAt: 1 });
+          },
           setGitFiles: (files: GitChange[], path = project.path) => {
             gitProjects.set(path, files);
           },
@@ -368,6 +372,17 @@ async function desktop(
             path = project.path,
           ) => {
             pullRequests.set(fileKey(path, branch), value);
+          },
+          setPullRequestDetails: (url: string, value: unknown) => {
+            pullRequests.set(url, value);
+          },
+          setPullRequestPage: (
+            url: string,
+            kind: string,
+            cursor: string | number,
+            value: unknown,
+          ) => {
+            pullRequestPages.set(`${url}:${kind}:${cursor}`, value);
           },
           setGitDiff: (
             file: string,
@@ -593,7 +608,7 @@ async function desktop(
                           : args.sessionId === "thread-a"
                             ? "feat/session-ui-redesign"
                             : "fix/provider-adapters",
-                    branchIsCurrent: args.provider === "opencode",
+                    branchIsCurrent: false,
                     changes: {
                       additions: args.sessionId === "thread-a" ? 42 : 7,
                       deletions: 3,
@@ -983,6 +998,64 @@ async function desktop(
               )?.promise;
               if (error) throw new Error(error);
               return result;
+            }
+            if (
+              [
+                "github_pull_request_files",
+                "github_pull_request_feedback",
+              ].includes(command)
+            ) {
+              const kind =
+                command === "github_pull_request_files" ? "files" : args.kind;
+              const result =
+                pullRequestPages.get(
+                  `${args.url}:${kind}:${args.page ?? args.cursor ?? ""}`,
+                ) ??
+                (kind === "files"
+                  ? { files: [], baseOid: "base", nextPage: null }
+                  : { comments: [], threads: [], nextCursor: null });
+              const error = commandErrors.get(command);
+              await (gates.get(`${command}:${args.url}`) ?? gates.get(command))
+                ?.promise;
+              if (error) throw new Error(error);
+              return result;
+            }
+            if (command === "github_pull_request_details") {
+              const result = pullRequests.get(args.url);
+              const error = commandErrors.get(command);
+              await (gates.get(`${command}:${args.url}`) ?? gates.get(command))
+                ?.promise;
+              if (error) throw new Error(error);
+              if (!result)
+                throw new Error("No pull request details in fixture");
+              return result;
+            }
+            if (command === "github_merge_pull_request") {
+              const error = commandErrors.get(command);
+              await (gates.get(`${command}:${args.url}`) ?? gates.get(command))
+                ?.promise;
+              if (error) throw new Error(error);
+              const pr = pullRequests.get(args.url) as any;
+              if (!pr || pr.headRefOid !== args.headOid)
+                throw new Error("Head branch was modified (HTTP 409)");
+              pullRequests.set(args.url, { ...pr, state: "MERGED" });
+              for (const [key, value] of pullRequests) {
+                if (key !== args.url && (value as any)?.url === args.url)
+                  pullRequests.delete(key);
+              }
+              return;
+            }
+            if (command === "github_update_pull_request_branch") {
+              const error = commandErrors.get(command);
+              await (gates.get(`${command}:${args.url}`) ?? gates.get(command))
+                ?.promise;
+              if (error) throw new Error(error);
+              const pr = pullRequests.get(args.url) as any;
+              if (!pr || pr.headRefOid !== args.headOid)
+                throw new Error("Head branch was modified (HTTP 422)");
+              // Like GitHub's 202 response, acceptance does not change the head
+              // until a later detail response reports the completed update.
+              return;
             }
             if (command === "git_repository_status") {
               const error = gitErrors.get(args.projectPath);
@@ -1810,6 +1883,7 @@ async function setQuestions(
 
 test("Codex questions preserve drafts across sessions and retry the original request", async ({
   page,
+  browserName,
 }) => {
   await desktop(page);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
@@ -1822,7 +1896,12 @@ test("Codex questions preserve drafts across sessions and retry the original req
   ).toHaveCount(0);
   await expect(card).toBeFocused();
   await expect(card.locator("input:checked")).toHaveCount(0);
-  await page.keyboard.press("Tab");
+  // macOS WebKit uses Option+Tab to include radio buttons in tab navigation.
+  await page.keyboard.press(
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab",
+  );
   await expect(
     card.getByRole("radio", { name: "Small Focused change" }),
   ).toBeFocused();
@@ -3663,7 +3742,7 @@ for (const provider of ["codex", "opencode"]) {
       "title",
       provider === "codex"
         ? "Session branch: feat/session-ui-redesign"
-        : "Current working-directory branch: main",
+        : "Session branch: main",
     );
     await expect(row.locator(".session-lines")).toHaveAttribute(
       "title",
@@ -3838,7 +3917,7 @@ test("late listings, history and metadata cannot overwrite an archived and resto
     fixture.setOpenWorking(false);
     fixture.setSessionDetails("opencode", "ses-a", {
       branch: "fresh-branch",
-      branchIsCurrent: true,
+      branchIsCurrent: false,
       changes: { additions: 19, deletions: 4 },
     });
   });
@@ -4514,10 +4593,20 @@ test("context menus support keyboard navigation, viewport edges, themes and dism
   await expect(menu).toHaveCount(0);
   await expect(project).toBeFocused();
 
-  await page
-    .locator("main")
-    .dispatchEvent("contextmenu", { clientX: 1279, clientY: 799 });
+  // Exercise pointer placement separately from keyboard invocation, and wait
+  // for the edge position before clicking the project outside the menu.
+  await page.mouse.click(1279, 799, { button: "right" });
   await expect(menu).toBeVisible();
+  await expect
+    .poll(async () => {
+      const bounds = await menu.boundingBox();
+      return (
+        bounds &&
+        Math.abs(bounds.x + bounds.width - 1272) < 1 &&
+        Math.abs(bounds.y + bounds.height - 792) < 1
+      );
+    })
+    .toBe(true);
   const bounds = (await menu.boundingBox())!;
   expect(bounds.x).toBeGreaterThanOrEqual(8);
   expect(bounds.y).toBeGreaterThanOrEqual(8);
@@ -6214,7 +6303,3030 @@ test("navigating while first-send creation is pending does not steal the selecte
   ).toContainText("Background task");
 });
 
-test("branch PR indicators share lookups, distinguish drafts and clear closed or unavailable PRs", async ({
+const previewPullRequest = {
+  number: 44,
+  title: "Improve project navigation",
+  url: "https://github.com/example/caelum/pull/44",
+  isDraft: false,
+  state: "OPEN",
+  body: "A **clearer workspace** with independent checkouts.\n\n<!-- template note -->\n## Details\nKeep every task easy to find.",
+  author: { login: "oscar" },
+  baseRefName: "main",
+  headRefName: "feature/navigation",
+  headRefOid: "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+  mergeable: "MERGEABLE",
+  mergeStateStatus: "CLEAN",
+  additions: 128,
+  deletions: 42,
+  changedFiles: 6,
+  reviewDecision: "APPROVED",
+  statusCheckRollup: [
+    {
+      __typename: "CheckRun",
+      name: "Tests",
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-11-01T12:00:00Z",
+      completedAt: "2026-11-01T12:02:14Z",
+      detailsUrl: "https://github.com/example/caelum/actions/runs/123",
+    },
+    {
+      __typename: "StatusContext",
+      context: "Preview deploy",
+      state: "PENDING",
+      targetUrl: "https://deploy.example.com/preview/44",
+    },
+  ],
+};
+
+async function preparePullRequestPreview(page: Page, worktrees = true) {
+  await page.clock.install();
+  await desktop(page, null, { worktrees });
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("main", pr);
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.setPullRequestDetails(pr.url, pr);
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  return sessionRow(page, "Refine the session workspace").getByRole("button", {
+    name: /Open pull request #44/,
+  });
+}
+
+async function preparePullRequestReview(
+  page: Page,
+  provider: "codex" | "opencode" = "codex",
+  selected = true,
+) {
+  await page.clock.install();
+  await desktop(page, selected && provider === "codex" ? "thread-a" : null);
+  if (provider === "opencode") {
+    await choose(page, "Provider", "OpenCode");
+    if (selected)
+      await page
+        .getByRole("button", { name: "OpenCode session", exact: true })
+        .click();
+  }
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.setPullRequest("main", pr);
+    fixture.setPullRequestDetails(pr.url, { ...pr, changedFiles: 3 });
+    const comment = (id: string, body: string) => ({
+      id,
+      body,
+      url: `${pr.url}#discussion_${id}`,
+      author: { login: "reviewer" },
+      createdAt: "2026-11-01T12:00:00Z",
+      state: null,
+      diffHunk: null,
+    });
+    fixture.setPullRequestPage(pr.url, "files", 1, {
+      baseOid: "base",
+      files: [
+        {
+          path: "src/new name.ts",
+          previousPath: "src/old name.ts",
+          status: "renamed",
+          additions: 1,
+          deletions: 1,
+          patch:
+            "@@ -1,3 +1,3 @@\n-const oldValue = false;\n+const newValue = true;\n const value = newValue;\n return value;",
+        },
+        {
+          path: "assets/logo.png",
+          previousPath: null,
+          status: "added",
+          additions: 0,
+          deletions: 0,
+          patch: null,
+        },
+      ],
+      nextPage: 2,
+    });
+    fixture.setPullRequestPage(pr.url, "files", 2, {
+      baseOid: "base",
+      files: [
+        {
+          path: "README.md",
+          previousPath: null,
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: "@@ -1 +1,2 @@\n # Project\n+More documentation",
+        },
+      ],
+      nextPage: null,
+    });
+    fixture.setPullRequestPage(pr.url, "discussion", "", {
+      comments: [comment("discussion", "Please update the documentation.")],
+      threads: [],
+      nextCursor: "discussion-next",
+    });
+    fixture.setPullRequestPage(pr.url, "discussion", "discussion-next", {
+      comments: [comment("later", "Also include an example.")],
+      threads: [],
+      nextCursor: null,
+    });
+    fixture.setPullRequestPage(pr.url, "reviews", "", {
+      comments: [
+        {
+          ...comment("review", "Please handle **empty input**."),
+          state: "CHANGES_REQUESTED",
+        },
+      ],
+      threads: [],
+      nextCursor: null,
+    });
+    const thread = {
+      id: "inline",
+      path: "src/new name.ts",
+      line: 3,
+      startLine: 2,
+      originalLine: 3,
+      diffSide: "RIGHT",
+      isResolved: false,
+      isOutdated: false,
+      nextCursor: "replies-next",
+      comments: [
+        {
+          ...comment(
+            "inline-first",
+            "Preserve the return value.\n```suggestion\nreturn value;\n```",
+          ),
+          diffHunk: "@@ -2 +2 @@\n-old\n+value",
+        },
+      ],
+    };
+    fixture.setPullRequestPage(pr.url, "threads", "", {
+      comments: [],
+      threads: [
+        thread,
+        {
+          ...thread,
+          id: "resolved",
+          path: "resolved.ts",
+          isResolved: true,
+          nextCursor: null,
+          comments: [comment("resolved-comment", "Already addressed.")],
+        },
+        {
+          ...thread,
+          id: "outdated",
+          path: "outdated.ts",
+          isOutdated: true,
+          nextCursor: null,
+          comments: [comment("outdated-comment", "Old implementation.")],
+        },
+      ],
+      nextCursor: null,
+    });
+    fixture.setPullRequestPage(pr.url, "replies", "replies-next", {
+      comments: [
+        comment("reply", "This also needs to preserve Unicode: 空白."),
+      ],
+      threads: [],
+      nextCursor: null,
+    });
+  }, previewPullRequest);
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  return page.getByRole("region", { name: "Pull request #44", exact: true });
+}
+
+test("PR files load on demand as continuous diffs with renames, automatic pagination and retained errors", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter((call: any) =>
+        ["github_pull_request_files", "github_pull_request_feedback"].includes(
+          call.command,
+        ),
+      ),
+    ),
+  ).toHaveLength(0);
+  await screen.getByRole("tab", { name: "Overview", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    screen.getByRole("tab", { name: "Files changed (3)" }),
+  ).toBeFocused();
+  await expect(
+    screen.getByRole("tab", { name: "Files changed (3)" }),
+  ).toHaveAttribute("aria-selected", "true");
+  const source = screen.getByRole("article", {
+    name: "Diff for src/new name.ts",
+    exact: true,
+  });
+  const readme = screen.getByRole("article", {
+    name: "Diff for README.md",
+    exact: true,
+  });
+  await expect(source).toContainText("Renamed from src/old name.ts");
+  await expect(source.locator(".diff-line.added")).toContainText("newValue");
+  await expect(source.locator(".diff-line.removed")).toContainText("oldValue");
+  await screen
+    .getByRole("navigation", { name: "Changed files" })
+    .getByRole("button", { name: /assets\/logo.png/ })
+    .click();
+  await expect(screen).toContainText("GitHub did not provide a text patch");
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(3);
+  await screen
+    .getByRole("navigation", { name: "Changed files" })
+    .getByRole("button", { name: /README.md/ })
+    .click();
+  await expect(readme.locator(".diff-line.added")).toContainText(
+    "More documentation",
+  );
+  await expect(
+    screen.getByRole("button", { name: "Load more files", exact: true }),
+  ).toHaveCount(0);
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    expect(
+      await screen.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    ).toBe(true);
+  }
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_files",
+      "Network unavailable",
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh files", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toContainText(
+    "Showing the last loaded results",
+  );
+  await expect(readme.locator(".diff-line.added")).toContainText(
+    "More documentation",
+  );
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("github_pull_request_files", null),
+  );
+  await screen
+    .getByRole("button", { name: "Retry files", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(0);
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(3);
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_pull_request_files",
+    ),
+  );
+  expect(calls.map((call: any) => call.args.page)).toEqual([1, 2, 1, 1, 2]);
+  expect(
+    calls.every((call: any) => call.args.url === previewPullRequest.url),
+  ).toBe(true);
+});
+
+test("PR file diffs scroll through full patches with sticky navigation, line numbers and collapsible files", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await page.evaluate((url) => {
+    const fixture = (window as any).fixture;
+    const patch = (count: number) =>
+      `@@ -0,0 +1,${count} @@\n${Array.from({ length: count }, (_, i) => `+const value${i} = ${i};`).join("\n")}`;
+    const file = (path: string, text: string) => ({
+      path,
+      previousPath: null,
+      status: "modified",
+      additions: 100,
+      deletions: 1,
+      patch: text,
+    });
+    fixture.setPullRequestPage(url, "files", 1, {
+      baseOid: "base",
+      files: [
+        file(
+          "src/review.ts",
+          `@@ -10,3 +20,4 @@\n keep\n-old\n+new\n+extra\n end\n\\ No newline at end of file\n${patch(140)}`,
+        ),
+        file("docs/guide.md", patch(100)),
+      ],
+      nextPage: 2,
+    });
+    fixture.setPullRequestPage(url, "files", 2, {
+      baseOid: "base",
+      files: [file("src/last.ts", patch(80))],
+      nextPage: null,
+    });
+  }, previewPullRequest.url);
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  const source = screen.getByRole("article", {
+    name: "Diff for src/review.ts",
+    exact: true,
+  });
+  const nav = screen.getByRole("navigation", {
+    name: "Changed files",
+    exact: true,
+  });
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(2);
+  await expect(
+    source.locator('.diff-line.context [data-side="old"]'),
+  ).toHaveText(["10", "12"]);
+  await expect(
+    source.locator('.diff-line.context [data-side="new"]'),
+  ).toHaveText(["20", "23"]);
+  await expect(
+    source.locator('.diff-line.removed [data-side="old"]'),
+  ).toHaveText("11");
+  await expect(
+    source.locator('.diff-line.removed [data-side="new"]'),
+  ).toHaveText("");
+  await expect(
+    source.locator('.diff-line.added [data-side="new"]').nth(2),
+  ).toHaveText("1");
+  expect(
+    await source.locator("pre").evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(2000);
+  expect(
+    await source
+      .locator("pre")
+      .evaluate((element) => element.scrollHeight <= element.clientHeight + 1),
+  ).toBe(true);
+  const bounds = (await screen.boundingBox())!;
+  await page.mouse.move(
+    bounds.x + bounds.width - 120,
+    bounds.y + bounds.height / 2,
+  );
+  await page.mouse.wheel(0, 850);
+  await expect
+    .poll(() => screen.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(600);
+  await expect
+    .poll(() =>
+      source.locator(".pr-file-heading").evaluate((element) => {
+        const screen = element.closest(".pr-screen")!;
+        const bar = screen.querySelector(".pr-files-toolbar")!;
+        return Math.abs(
+          element.getBoundingClientRect().top -
+            bar.getBoundingClientRect().bottom,
+        );
+      }),
+    )
+    .toBeLessThan(2);
+  await expect(
+    nav.getByRole("button", { name: /src\/review.ts/ }),
+  ).toHaveAttribute("aria-current", "true");
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(2);
+  await page.screenshot({ path: "test-results/pr-continuous-diff-dark.png" });
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_files",
+      "Next page unavailable",
+    ),
+  );
+  await nav.getByRole("button", { name: /docs\/guide.md/ }).click();
+  await page.mouse.move(
+    bounds.x + bounds.width - 120,
+    bounds.y + bounds.height / 2,
+  );
+  await page.mouse.wheel(0, 1400);
+  await expect(screen.getByRole("alert")).toContainText(
+    "Next page unavailable",
+  );
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(2);
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("github_pull_request_files", null),
+  );
+  await screen
+    .getByRole("button", { name: "Retry files", exact: true })
+    .click();
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(3);
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls
+      .filter((call: any) => call.command === "github_pull_request_files")
+      .map((call: any) => call.args.page),
+  );
+  expect(calls).toEqual([1, 2, 2]);
+  await nav.getByRole("button", { name: /src\/last.ts/ }).click();
+  await expect(
+    nav.getByRole("button", { name: /src\/last.ts/ }),
+  ).toHaveAttribute("aria-current", "true");
+  await screen
+    .getByRole("button", { name: "Collapse all", exact: true })
+    .click();
+  await expect(screen.locator(".pr-file-body:visible")).toHaveCount(0);
+  await nav.getByRole("button", { name: /src\/last.ts/ }).click();
+  await expect(
+    screen.getByRole("button", {
+      name: "Collapse diff for src/last.ts",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(screen.locator(".pr-file-body:visible")).toHaveCount(1);
+  await screen.getByRole("button", { name: "Expand all", exact: true }).click();
+  await expect(screen.locator(".pr-file-body:visible")).toHaveCount(3);
+  const width = await source.evaluate((element) => element.clientWidth);
+  await screen
+    .getByRole("button", { name: "Hide file list", exact: true })
+    .click();
+  await expect(nav).toBeHidden();
+  expect(
+    await source.evaluate((element) => element.clientWidth),
+  ).toBeGreaterThan(width);
+  await screen
+    .getByRole("button", { name: "Show file list", exact: true })
+    .click();
+  await nav.getByRole("button", { name: /src\/review.ts/ }).click();
+  await page.evaluate(() => (document.documentElement.dataset.theme = "light"));
+  await page.screenshot({ path: "test-results/pr-continuous-diff-light.png" });
+  await page.setViewportSize({ width: 860, height: 760 });
+  expect(
+    await screen.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth + 1,
+    ),
+  ).toBe(true);
+  await expect(source.locator("pre")).toBeVisible();
+});
+
+test("PR review places threads on exact diff sides and keeps outdated, omitted and file-level context beside the file", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  const patch = `@@ -10,3 +10,4 @@\n keep\n-oldValue\n+newValue\n+extraValue\n end\n@@ -40 +50 @@\n-last\n+${"longValue".repeat(80)}`;
+  await page.evaluate(
+    ({ url, patch }) => {
+      const fixture = (window as any).fixture;
+      fixture.setPullRequestPage(url, "files", 1, {
+        baseOid: "base",
+        files: [
+          {
+            path: "src/new name.ts",
+            previousPath: "src/old name.ts",
+            status: "renamed",
+            additions: 4,
+            deletions: 3,
+            patch,
+          },
+          {
+            path: "assets/logo.png",
+            previousPath: null,
+            status: "added",
+            additions: 0,
+            deletions: 0,
+            patch: null,
+          },
+        ],
+        nextPage: 2,
+      });
+      const thread = (
+        id: string,
+        side: string,
+        line: number | null,
+        extra = {},
+      ) => ({
+        id,
+        path: "src/new name.ts",
+        line,
+        originalLine: line,
+        startLine: null,
+        diffSide: side,
+        isResolved: false,
+        isOutdated: false,
+        nextCursor: null,
+        comments: [
+          {
+            id: `${id}-comment`,
+            body: `Feedback ${id}\n\n\`\`\`suggestion\nreturn value;\n\`\`\``,
+            url: `${url}#discussion_${id}`,
+            author: { login: "reviewer" },
+            createdAt: "2026-11-01T12:00:00Z",
+            state: null,
+            diffHunk: "@@ -10 +10 @@\n-old\n+new",
+          },
+        ],
+        ...extra,
+      });
+      fixture.setPullRequestPage(url, "threads", "", {
+        threads: [
+          thread("left", "LEFT", 11, { path: "src/old name.ts" }),
+          thread("right", "RIGHT", 11),
+          thread("same-line", "RIGHT", 11, { isResolved: true }),
+          thread("range", "RIGHT", 12, { startLine: 10 }),
+          thread("outdated", "RIGHT", 11, { isOutdated: true }),
+          thread("omitted", "LEFT", 99),
+          thread("file-level", "RIGHT", null),
+          thread("binary", "RIGHT", null, { path: "assets/logo.png" }),
+          thread("missing", "RIGHT", 1, { path: "missing.ts" }),
+        ],
+        nextCursor: "more-threads",
+      });
+      fixture.setPullRequestPage(url, "threads", "more-threads", {
+        threads: [thread("later", "RIGHT", 2, { path: "README.md" })],
+        nextCursor: null,
+      });
+    },
+    { url: previewPullRequest.url, patch },
+  );
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("tab", { name: "Comments", exact: true }),
+  ).toHaveCount(0);
+  const source = screen.getByRole("article", {
+    name: "Diff for src/new name.ts",
+    exact: true,
+  });
+  const annotation = (id: string) =>
+    source.locator(`.diff-annotation:has([data-thread-id="${id}"])`);
+  for (const [id, side, line, text] of [
+    ["left", "old", "11", "-oldValue"],
+    ["right", "new", "11", "+newValue"],
+    ["range", "new", "12", "+extraValue"],
+  ]) {
+    await expect(annotation(id)).toBeVisible();
+    expect(
+      await annotation(id).evaluate((element, side) => {
+        const line = element.previousElementSibling!.querySelector(
+          ".diff-line:last-child",
+        )!;
+        return {
+          number: line.getAttribute(`data-${side}-line`),
+          text: line.querySelector(".diff-source")!.textContent!.trim(),
+        };
+      }, side),
+    ).toEqual({ number: line, text });
+  }
+  await expect(annotation("right").locator(".pr-feedback")).toHaveCount(2);
+  const resolved = source.locator('[data-thread-id="same-line"]');
+  await expect(resolved.locator(".pr-comment")).toBeHidden();
+  await resolved.locator("summary").click();
+  await expect(resolved.locator(".pr-comment")).toBeVisible();
+  await expect(resolved.getByRole("checkbox")).not.toBeChecked();
+  await resolved.locator("summary").click();
+  await expect(annotation("range")).toContainText("New lines 10–12");
+  for (const id of ["outdated", "omitted", "file-level"])
+    await expect(
+      source.locator(`.pr-file-comments [data-thread-id="${id}"]`),
+    ).toHaveCount(1);
+  await expect(
+    source.locator('[data-thread-id="outdated"] input'),
+  ).not.toBeChecked();
+  await source
+    .locator('[data-thread-id="outdated"]')
+    .getByText("Diff context", { exact: true })
+    .click();
+  await expect(
+    source.locator('[data-thread-id="outdated"] .diff-source').last(),
+  ).toContainText("+new");
+  await expect(
+    screen
+      .getByRole("article", { name: "Diff for assets/logo.png", exact: true })
+      .locator('[data-thread-id="binary"]'),
+  ).toHaveCount(1);
+  await expect(
+    screen
+      .getByRole("region", { name: "Comments on other files", exact: true })
+      .locator('[data-thread-id="missing"]'),
+  ).toHaveCount(1);
+  await screen
+    .getByRole("button", { name: "Load more review threads", exact: true })
+    .click();
+  await screen.locator(".pr-files-pagination").scrollIntoViewIfNeeded();
+  await expect(
+    screen.getByRole("article", { name: "Diff for README.md", exact: true }),
+  ).toHaveCount(1);
+  await screen
+    .getByRole("navigation", { name: "Changed files", exact: true })
+    .getByRole("group", { name: "Comments on README.md", exact: true })
+    .getByRole("button")
+    .click();
+  const later = screen
+    .getByRole("article", { name: "Diff for README.md", exact: true })
+    .locator('.diff-annotation [data-thread-id="later"]');
+  await expect(later).toHaveCount(1);
+  await expect(screen.locator("[data-thread-id]")).toHaveCount(10);
+  expect(
+    (
+      await source
+        .locator(".pr-file-body > .git-diff-section > pre .diff-source")
+        .allTextContents()
+    ).join(""),
+  ).toBe(patch);
+  await screen
+    .getByRole("navigation", { name: "Changed files", exact: true })
+    .getByRole("button", { name: /src\/new name.ts/ })
+    .click();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    await page.screenshot({
+      path: `test-results/pr-inline-comments-${theme}.png`,
+    });
+    expect(
+      await screen.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    ).toBe(true);
+  }
+  await page.setViewportSize({ width: 860, height: 760 });
+  expect(
+    await screen.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth + 1,
+    ),
+  ).toBe(true);
+  expect(
+    await screen.evaluate((element) =>
+      [...element.querySelectorAll<HTMLElement>("*")]
+        .filter(
+          (node) =>
+            node.getClientRects().length &&
+            !node.classList.contains("pr-file-list") &&
+            /auto|scroll/.test(getComputedStyle(node).overflowY) &&
+            node.scrollHeight > node.clientHeight + 1,
+        )
+        .map((node) => node.className),
+    ),
+  ).toEqual([]);
+});
+
+test("PR review scrolls its file tree independently while code and expanded comment context scroll the page", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    const patch = `@@ -0,0 +1,100 @@\n${Array.from({ length: 100 }, (_, index) => `+const line${index} = ${index};`).join("\n")}`;
+    fixture.setPullRequestDetails(pr.url, { ...pr, changedFiles: 40 });
+    fixture.setPullRequestPage(pr.url, "files", 1, {
+      baseOid: "base",
+      files: Array.from({ length: 40 }, (_, index) => ({
+        path: `src/file${index}.ts`,
+        previousPath: null,
+        status: "added",
+        additions: 100,
+        deletions: 0,
+        patch,
+      })),
+      nextPage: null,
+    });
+    fixture.setPullRequestPage(pr.url, "threads", "", {
+      threads: [
+        {
+          id: "old",
+          path: "src/file0.ts",
+          line: null,
+          originalLine: 50,
+          startLine: null,
+          diffSide: "RIGHT",
+          isResolved: false,
+          isOutdated: true,
+          nextCursor: null,
+          comments: [
+            {
+              id: "old-comment",
+              body: "Earlier version",
+              url: `${pr.url}#discussion_old`,
+              author: null,
+              createdAt: "2026-11-01T12:00:00Z",
+              state: null,
+              diffHunk: patch,
+            },
+          ],
+        },
+      ],
+      nextCursor: null,
+    });
+  }, previewPullRequest);
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (40)", exact: true })
+    .click();
+  const nav = screen.getByRole("navigation", {
+    name: "Changed files",
+    exact: true,
+  });
+  await expect(nav.getByRole("button", { name: /^src\/file/ })).toHaveCount(40);
+  expect(
+    await nav.evaluate(
+      (element) => element.scrollHeight > element.clientHeight + 1,
+    ),
+  ).toBe(true);
+  await nav.getByRole("button", { name: /src\/file0.ts/ }).click();
+  const navBounds = (await nav.boundingBox())!;
+  const screenBounds = (await screen.boundingBox())!;
+  const top = await screen.evaluate((element) => element.scrollTop);
+  await page.mouse.move(navBounds.x + 30, navBounds.y + navBounds.height / 2);
+  await page.mouse.wheel(0, 300);
+  await expect
+    .poll(() => nav.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(200);
+  expect(await screen.evaluate((element) => element.scrollTop)).toBe(top);
+  await nav.focus();
+  await page.keyboard.press("End");
+  await expect
+    .poll(() =>
+      nav.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeLessThan(2);
+  const lastFile = nav.getByRole("button", { name: /^src\/file39.ts/ });
+  await expect(lastFile).toBeInViewport();
+  await page.mouse.wheel(0, 300);
+  expect(await screen.evaluate((element) => element.scrollTop)).toBe(top);
+  const treeTop = await nav.evaluate((element) => element.scrollTop);
+  await lastFile.click();
+  await expect(lastFile).toHaveAttribute("aria-current", "true");
+  await expect(
+    screen
+      .getByRole("article", { name: "Diff for src/file39.ts", exact: true })
+      .locator(".pr-file-heading"),
+  ).toBeInViewport();
+  await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (40)", exact: true })
+    .click();
+  expect(await nav.evaluate((element) => element.scrollTop)).toBe(treeTop);
+  await nav.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(() => nav.evaluate((element) => element.scrollTop)).toBe(0);
+  await nav.getByRole("button", { name: /^src\/file0.ts/ }).click();
+  const source = screen.getByRole("article", {
+    name: "Diff for src/file0.ts",
+    exact: true,
+  });
+  await source.getByText("Diff context", { exact: true }).click();
+  const context = source.locator(".pr-comment-context pre");
+  expect(
+    await context.evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(2000);
+  await context.evaluate((element) =>
+    element.scrollIntoView({ block: "start" }),
+  );
+  const before = await screen.evaluate((element) => element.scrollTop);
+  const bounds = (await context.boundingBox())!;
+  await page.mouse.move(
+    bounds.x + 120,
+    screenBounds.y + screenBounds.height - 100,
+  );
+  await page.mouse.wheel(0, 500);
+  await expect
+    .poll(() => screen.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(before + 400);
+  expect(
+    await screen.evaluate((element) =>
+      [...element.querySelectorAll<HTMLElement>("*")]
+        .filter(
+          (node) =>
+            node.getClientRects().length &&
+            /auto|scroll/.test(getComputedStyle(node).overflowY) &&
+            node.scrollHeight > node.clientHeight + 1,
+        )
+        .map((node) => node.className),
+    ),
+  ).toEqual(["pr-file-list"]);
+  await page.setViewportSize({ width: 1280, height: 620 });
+  await nav.getByRole("button", { name: /^src\/file0.ts/ }).click();
+  await expect
+    .poll(() =>
+      nav.evaluate((element) => {
+        const screen = element.closest(".pr-screen")!;
+        return (
+          element.getBoundingClientRect().bottom -
+          screen.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBeLessThanOrEqual(-11);
+  await page.setViewportSize({ width: 860, height: 620 });
+  await expect
+    .poll(() => nav.evaluate((element) => element.clientHeight))
+    .toBeLessThanOrEqual(320);
+  await nav.evaluate((element) => element.scrollIntoView({ block: "end" }));
+  await expect
+    .poll(() =>
+      nav.evaluate((element) => {
+        const toolbar = element
+          .closest(".pr-files")!
+          .querySelector(".pr-files-toolbar")!;
+        return (
+          element.getBoundingClientRect().top -
+          toolbar.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBeGreaterThanOrEqual(0);
+  const narrowTop = await screen.evaluate((element) => element.scrollTop);
+  const narrowBounds = (await nav.boundingBox())!;
+  await page.mouse.move(
+    narrowBounds.x + 30,
+    narrowBounds.y + narrowBounds.height / 2,
+  );
+  await page.mouse.wheel(0, 300);
+  await expect
+    .poll(() => nav.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(200);
+  expect(await screen.evaluate((element) => element.scrollTop)).toBe(narrowTop);
+});
+
+test("PR large reviews keep tab switches light and retain loaded patches", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    const patch = `@@ -0,0 +1,240 @@\n${Array.from({ length: 240 }, (_, index) => `+export const value${index} = { name: "value", count: ${index} };`).join("\n")}`;
+    fixture.setPullRequestDetails(pr.url, { ...pr, changedFiles: 30 });
+    fixture.setPullRequestPage(pr.url, "files", 1, {
+      baseOid: "base",
+      files: Array.from({ length: 30 }, (_, index) => ({
+        path: `src/file${index}.ts`,
+        previousPath: null,
+        status: "added",
+        additions: 240,
+        deletions: 0,
+        patch,
+      })),
+      nextPage: null,
+    });
+    fixture.setPullRequestPage(pr.url, "threads", "", {
+      threads: [
+        {
+          id: "far-comment",
+          path: "src/file29.ts",
+          line: 180,
+          originalLine: 180,
+          startLine: null,
+          diffSide: "RIGHT",
+          isResolved: false,
+          isOutdated: false,
+          nextCursor: null,
+          comments: [
+            {
+              id: "far-comment-body",
+              body: "Review the distant file.",
+              url: `${pr.url}#discussion_far`,
+              author: { login: "reviewer" },
+              createdAt: "2026-11-01T12:00:00Z",
+              state: null,
+              diffHunk: null,
+            },
+          ],
+        },
+      ],
+      nextCursor: null,
+    });
+  }, previewPullRequest);
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (30)", exact: true })
+    .click();
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(30);
+  await expect(screen.locator(".syntax-keyword").first()).toBeVisible();
+  expect(await screen.locator(".diff-line").count()).toBeLessThan(500);
+  await screen
+    .locator(".diff-source")
+    .first()
+    .evaluate((node) => ((window as any).keptDiffLine = node));
+  for (let index = 0; index < 3; index++) {
+    await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+    await screen
+      .getByRole("tab", { name: "Files changed (30)", exact: true })
+      .click();
+  }
+  expect(await screen.locator(".diff-line").count()).toBeLessThan(500);
+  expect(
+    await screen
+      .locator(".diff-source")
+      .first()
+      .evaluate((node) => node === (window as any).keptDiffLine),
+  ).toBe(true);
+  const nav = screen.getByRole("navigation", {
+    name: "Changed files",
+    exact: true,
+  });
+  await expect(
+    nav.getByRole("button", { name: /^src\/file29.ts/ }),
+  ).toContainText("1");
+  await screen
+    .getByRole("button", { name: "Collapse all", exact: true })
+    .click();
+  await nav
+    .getByRole("group", { name: "Comments on src/file29.ts", exact: true })
+    .getByRole("button")
+    .click();
+  const thread = screen.locator('[data-thread-id="far-comment"]');
+  await expect(thread).toBeFocused();
+  await expect(thread).toBeInViewport();
+  await expect(
+    screen.getByRole("button", {
+      name: "Collapse diff for src/file29.ts",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+  const last = screen.getByRole("article", {
+    name: "Diff for src/file29.ts",
+    exact: true,
+  });
+  await expect(last.locator(".syntax-keyword").first()).toHaveText("export");
+  expect(await screen.locator(".diff-line").count()).toBeLessThan(1500);
+  expect(
+    await thread.evaluate(
+      (node) =>
+        node.getBoundingClientRect().top -
+        node
+          .closest(".pr-screen")!
+          .querySelector(".pr-files-toolbar")!
+          .getBoundingClientRect().bottom,
+    ),
+  ).toBeGreaterThan(35);
+  await thread.getByRole("checkbox").uncheck();
+  await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (30)", exact: true })
+    .click();
+  await expect(thread.getByRole("checkbox")).not.toBeChecked();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "github_pull_request_files",
+        ).length,
+    ),
+  ).toBe(1);
+});
+
+test("PR file tree exposes comment locations, states and discussion links with keyboard jumps", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  const nav = screen.getByRole("navigation", {
+    name: "Changed files",
+    exact: true,
+  });
+  await expect(nav).toContainText("3 loaded review threads");
+  await expect(
+    nav.getByRole("button", { name: /^src\/new name.ts/ }),
+  ).toContainText("1");
+  const comments = nav.getByRole("group", {
+    name: "Comments on src/new name.ts",
+    exact: true,
+  });
+  await expect(comments).toContainText("New lines 2–3");
+  await expect(comments).toContainText("Preserve the return value");
+  const resolvedLink = nav.getByRole("group", {
+    name: "Comments on resolved.ts",
+    exact: true,
+  });
+  await expect(resolvedLink).toContainText("Resolved");
+  await expect(resolvedLink).not.toContainText("Already addressed");
+  await expect(
+    nav.getByRole("group", { name: "Comments on outdated.ts", exact: true }),
+  ).toContainText("Outdated");
+  await screen
+    .getByRole("button", {
+      name: "Collapse diff for src/new name.ts",
+      exact: true,
+    })
+    .click();
+  await comments.getByRole("button").focus();
+  await page.keyboard.press("Enter");
+  const thread = screen.locator('[data-thread-id="inline"]');
+  await expect(thread).toBeFocused();
+  await expect(thread).toBeInViewport();
+  await expect(thread.getByRole("checkbox")).toBeDisabled();
+  await thread
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await expect(thread).toContainText("Unicode: 空白");
+  await expect(thread.getByRole("checkbox")).toBeChecked();
+  await resolvedLink.getByRole("button").click();
+  const resolved = screen.locator('[data-thread-id="resolved"]');
+  await expect(resolved).toBeFocused();
+  await expect(resolved).toBeInViewport();
+  await expect(resolved.locator(".pr-comment")).toBeHidden();
+  await resolved.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(resolved.locator(".pr-comment")).toBeVisible();
+  await resolved.getByRole("checkbox").check();
+  await resolved.locator("summary").click();
+  await expect(resolved.locator("summary")).toContainText("Selected");
+  await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  await expect(resolved.locator(".pr-comment")).toBeHidden();
+  await expect(resolved.locator("input")).toBeChecked();
+  await nav
+    .getByRole("group", { name: "Comments on outdated.ts", exact: true })
+    .getByRole("button")
+    .click();
+  await expect(screen.locator('[data-thread-id="outdated"]')).toBeFocused();
+  await expect(screen.locator('[data-thread-id="outdated"]')).toBeInViewport();
+  await nav.getByRole("button", { name: /^Discussion/ }).click();
+  await expect(
+    screen.getByRole("region", { name: "Discussion", exact: true }),
+  ).toBeFocused();
+  await nav.getByRole("button", { name: /^Reviews/ }).click();
+  await expect(
+    screen.getByRole("region", { name: "Reviews", exact: true }),
+  ).toBeFocused();
+  await nav.getByRole("button", { name: /^src\/new name.ts/ }).click();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    await page.screenshot({
+      path: `test-results/pr-comment-tree-${theme}.png`,
+    });
+  }
+});
+
+test("PR inline feedback keeps complete replies and selections when delayed files place the thread", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_files"),
+  );
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  const other = screen.getByRole("region", {
+    name: "Comments on other files",
+    exact: true,
+  });
+  await expect(other.locator('[data-thread-id="inline"]')).toHaveCount(1);
+  await other
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  const choice = screen.getByRole("checkbox", {
+    name: "Include src/new name.ts:3",
+    exact: true,
+  });
+  await expect(choice).toBeChecked();
+  await choice.uncheck();
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_files"),
+  );
+  const inline = screen.locator('.diff-annotation [data-thread-id="inline"]');
+  await expect(inline).toContainText("Unicode: 空白");
+  await expect(choice).not.toBeChecked();
+  await expect(other.locator('[data-thread-id="inline"]')).toHaveCount(0);
+  await expect(screen.locator('[data-thread-id="inline"]')).toHaveCount(1);
+  await screen
+    .getByRole("button", {
+      name: "Collapse diff for src/new name.ts",
+      exact: true,
+    })
+    .click();
+  await screen
+    .getByRole("button", {
+      name: "Expand diff for src/new name.ts",
+      exact: true,
+    })
+    .click();
+  await expect(choice).not.toBeChecked();
+  await choice.check();
+  await screen
+    .getByRole("button", { name: "Address selected comments", exact: true })
+    .click();
+  const prompt = await page.evaluate(
+    () =>
+      (window as any).fixture.calls.findLast(
+        (call: any) => call.command === "codex_send_prompt",
+      ).args.prompt,
+  );
+  expect(prompt).toContain("Unicode: 空白");
+  expect(prompt).toContain("Preserve the return value");
+});
+
+for (const provider of ["codex", "opencode"] as const) {
+  test(`PR comments send selected complete feedback to the current ${provider} session and preserve its draft`, async ({
+    page,
+  }) => {
+    const screen = await preparePullRequestReview(page, provider);
+    await screen
+      .getByRole("button", { name: "Back to session", exact: true })
+      .click();
+    await findProjectFile(page, "src/App.tsx");
+    await page
+      .locator(".file-editor-toolbar")
+      .getByRole("button", { name: "Add to prompt", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("Keep my next task draft.");
+    await page
+      .getByRole("region", { name: "Pull requests", exact: true })
+      .getByRole("button", { name: /View pull request #44/ })
+      .click();
+    await screen
+      .getByRole("tab", { name: "Files changed (3)", exact: true })
+      .click();
+    await expect(
+      screen.getByRole("region", { name: "Reviews", exact: true }),
+    ).toContainText("changes requested");
+    await expect(
+      screen.getByRole("checkbox", {
+        name: "Include resolved.ts:3",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).not.toBeChecked();
+    await expect(
+      screen.getByRole("checkbox", {
+        name: "Include outdated.ts:3",
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    const inline = screen.getByRole("checkbox", {
+      name: "Include src/new name.ts:3",
+      exact: true,
+    });
+    await expect(inline).toBeDisabled();
+    await screen
+      .getByRole("button", { name: "Load remaining replies", exact: true })
+      .click();
+    await expect(inline).toBeChecked();
+    await expect(screen).toContainText("Unicode: 空白");
+    await screen
+      .getByRole("button", {
+        name: "Load more discussion comments",
+        exact: true,
+      })
+      .click();
+    await expect(screen).toContainText("Also include an example");
+    await screen
+      .getByRole("region", { name: "Discussion", exact: true })
+      .getByRole("checkbox")
+      .first()
+      .uncheck();
+    await screen.getByRole("tab", { name: "Overview", exact: true }).click();
+    await screen
+      .getByRole("tab", { name: "Files changed (3)", exact: true })
+      .click();
+    await expect(
+      screen
+        .getByRole("region", { name: "Discussion", exact: true })
+        .getByRole("checkbox")
+        .first(),
+    ).not.toBeChecked();
+    await expect(inline).toBeChecked();
+    const thread = screen.locator('.diff-annotation [data-thread-id="inline"]');
+    await expect(thread).toContainText("Preserve the return value");
+    await expect(thread.getByText("Diff context", { exact: true })).toHaveCount(
+      0,
+    );
+    await screen
+      .getByRole("button", { name: "Address selected comments", exact: true })
+      .click();
+    await expect(screen).toHaveCount(0);
+    await expect(
+      page.getByRole("textbox", { name: "Message", exact: true }),
+    ).toHaveValue("Keep my next task draft.");
+    await expect(attachedContext(page)).toContainText("src/App.tsx");
+    const calls = await page.evaluate(
+      (provider) =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === `${provider}_send_prompt`,
+        ),
+      provider,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args.sessionId).toBe(
+      provider === "codex" ? "thread-a" : "ses-a",
+    );
+    expect(calls[0].args.projectPath).toBe("/work/caelum");
+    const prompt = calls[0].args.prompt;
+    expect(prompt).toContain(previewPullRequest.url);
+    expect(prompt).toContain(previewPullRequest.headRefOid);
+    expect(prompt).toContain("Unicode: 空白");
+    expect(prompt).toContain("src/new name.ts");
+    expect(prompt).toContain("Also include an example");
+    for (const absent of [
+      "Already addressed",
+      "Old implementation",
+      "Please update the documentation",
+      "Keep my next task draft",
+      "caelum-file-context",
+    ])
+      expect(prompt).not.toContain(absent);
+  });
+}
+
+test("PR comments require an idle existing session, retain failed sends and respect newer navigation", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page, "codex", false);
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  await expect(screen).toContainText("Select a session to address feedback");
+  await expect(
+    screen.getByRole("button", {
+      name: "Address selected comments",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Refine the session workspace", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("Untouched draft");
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  await emit(page, "turn/started", {
+    threadId: "thread-a",
+    turn: { id: "busy" },
+  });
+  await expect(
+    screen.getByRole("button", {
+      name: "Address selected comments",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(screen).toContainText("Wait for the current turn");
+  await emit(page, "turn/completed", {
+    threadId: "thread-a",
+    turn: { id: "busy", status: "completed" },
+  });
+  await page.evaluate(() => (window as any).fixture.failSend());
+  await screen
+    .getByRole("button", { name: "Address selected comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toContainText(
+    "Could not send review feedback",
+  );
+  await page.evaluate(() => (window as any).fixture.hold("codex_send_prompt"));
+  await screen
+    .getByRole("button", { name: "Address selected comments", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Sending…", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Review the provider adapters", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.release("codex_send_prompt"),
+  );
+  await expect(page.locator(".breadcrumbs strong")).toHaveText(
+    "Review the provider adapters",
+  );
+  await page
+    .getByRole("button", { name: "Refine the session workspace", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toHaveValue("Untouched draft");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "codex_send_prompt",
+        ).length,
+    ),
+  ).toBe(2);
+});
+
+test("PR comments revalidate cached replies and require every reply page after refresh failures", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  const inline = screen.getByRole("checkbox", {
+    name: "Include src/new name.ts:3",
+    exact: true,
+  });
+  await screen
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await expect(inline).toBeChecked();
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Refresh comments", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate(() => {
+    (window as any).fixture.hold("github_pull_request_feedback");
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      "Replies unavailable",
+    );
+  });
+  await screen
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await expect(
+    screen.getByText("Loading replies…", { exact: true }),
+  ).toBeVisible();
+  await expect(inline).toBeDisabled();
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_feedback"),
+  );
+  await expect(screen.getByRole("alert")).toContainText("Replies unavailable");
+  await expect(inline).toBeDisabled();
+  await page.evaluate((url) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_pull_request_feedback", null);
+    const comment = (id: string, body: string) => ({
+      id,
+      body,
+      url: `${url}#discussion_${id}`,
+      author: null,
+      createdAt: "2026-11-01T12:00:00Z",
+      state: null,
+      diffHunk: null,
+    });
+    fixture.setPullRequestPage(url, "replies", "replies-next", {
+      comments: [comment("reply", "Updated reply")],
+      threads: [],
+      nextCursor: "replies-last",
+    });
+    fixture.setPullRequestPage(url, "replies", "replies-last", {
+      comments: [comment("last-reply", "Last reply on the thread")],
+      threads: [],
+      nextCursor: null,
+    });
+  }, previewPullRequest.url);
+  await screen
+    .getByRole("button", { name: "Retry replies", exact: true })
+    .click();
+  await expect(screen).toContainText("Updated reply");
+  await expect(inline).toBeDisabled();
+  await screen
+    .getByRole("button", { name: "Load more replies", exact: true })
+    .click();
+  await expect(inline).toBeChecked();
+  await expect(screen).toContainText("Last reply on the thread");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      "Refresh unavailable",
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(3);
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      null,
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Load remaining replies", exact: true })
+    .click();
+  await screen
+    .getByRole("button", { name: "Load more replies", exact: true })
+    .click();
+  await expect(inline).toBeChecked();
+  await screen
+    .getByRole("button", { name: "Retry review threads", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Load remaining replies", exact: true }),
+  ).toBeVisible();
+  await expect(inline).toBeDisabled();
+});
+
+test("PR comments retain refresh failures, isolate delayed responses and reload for a new head", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  await expect(screen).toContainText("Please update the documentation");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      "Rate limited",
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(3);
+  await expect(screen).toContainText("Please update the documentation");
+  await expect(
+    screen.getByRole("button", {
+      name: "Address selected comments",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_feedback",
+      null,
+    ),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await expect(screen.getByRole("alert")).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_feedback"),
+  );
+  await screen
+    .getByRole("button", { name: "Refresh comments", exact: true })
+    .click();
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      headRefOid: "f".repeat(40),
+    });
+    (window as any).fixture.setPullRequestPage(pr.url, "discussion", "", {
+      comments: [
+        {
+          id: "new-head-comment",
+          body: "Feedback on the new head",
+          url: `${pr.url}#issuecomment-1`,
+          author: null,
+          state: null,
+          createdAt: "2026-11-01T12:00:00Z",
+          diffHunk: null,
+        },
+      ],
+      threads: [],
+      nextCursor: null,
+    });
+  }, previewPullRequest);
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(
+    screen.getByText("Please update the documentation.", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_feedback"),
+  );
+  await expect(screen).toContainText("Feedback on the new head");
+  await expect(screen).not.toContainText("Please update the documentation");
+  await screen
+    .getByRole("button", { name: "Address selected comments", exact: true })
+    .click();
+  const prompt = await page.evaluate(
+    () =>
+      (window as any).fixture.calls.findLast(
+        (call: any) => call.command === "codex_send_prompt",
+      ).args.prompt,
+  );
+  expect(prompt).toContain("f".repeat(40));
+  expect(prompt).toContain("Feedback on the new head");
+  expect(prompt).not.toContain("Please update the documentation");
+});
+
+test("PR previews load on demand, stay open across the hover gap, share cached details and open the PR screen", async ({
+  page,
+}) => {
+  const trigger = await preparePullRequestPreview(page);
+  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
+  await expect(page.locator(".worktree-row .branch-pr-trigger")).toHaveCount(0);
+  const detailCalls = () =>
+    page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_pull_request_details",
+      ),
+    );
+  expect(await detailCalls()).toHaveLength(0);
+  await trigger.hover();
+  await page.getByRole("textbox", { name: "Message", exact: true }).hover();
+  await page.clock.runFor(300);
+  expect(await detailCalls()).toHaveLength(0);
+  await trigger.hover();
+  await page.clock.runFor(300);
+  const card = page.getByRole("dialog", {
+    name: "Pull request preview",
+    exact: true,
+  });
+  await expect(
+    card.getByRole("heading", { name: previewPullRequest.title, exact: true }),
+  ).toBeVisible();
+  await expect(card).toContainText("clearer workspace");
+  await expect(card).not.toContainText("template note");
+  await expect(card).toContainText("+128");
+  await expect(card).toContainText("−42");
+  await expect(card).toContainText("6 files changed");
+  await expect(card).toContainText("1 passed · 1 pending");
+  await expect(card).toContainText("Approved");
+  await expect(card.locator(".pr-ready-badge")).toHaveText("Ready to merge");
+  await card.hover();
+  await page.clock.runFor(500);
+  await expect(card).toBeVisible();
+  await page.screenshot({ path: "test-results/pr-preview.png" });
+  await expect(page.locator(".breadcrumbs")).toContainText("New session");
+  await card.getByRole("button", { name: "View pull request" }).click();
+  const expanded = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(
+    expanded.getByRole("heading", { name: "Details", exact: true }),
+  ).toBeVisible();
+  await expect(
+    expanded.getByRole("region", { name: "Pull request checks" }),
+  ).toContainText("Preview deploy");
+  await expect(expanded.locator(".pr-ready-badge")).toBeVisible();
+  await expect(expanded.locator(".pr-merge")).toHaveAttribute(
+    "data-ready",
+    "true",
+  );
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeHidden();
+  await page.screenshot({ path: "test-results/pr-overview.png" });
+  await expanded.getByRole("link", { name: "GitHub", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter((call: any) => call.command === "plugin:opener|open_url")
+            .at(-1)?.args.url,
+      ),
+    )
+    .toBe(previewPullRequest.url);
+  await expanded.getByRole("button", { name: "Back to session" }).click();
+  await expect(expanded).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeFocused();
+  await expect(card).toHaveCount(0);
+  const sessionTrigger = sessionRow(
+    page,
+    "Refine the session workspace",
+  ).getByRole("button", { name: /pull request #44/ });
+  await sessionTrigger.hover();
+  await page.clock.runFor(300);
+  await expect(card).toContainText("+128");
+  expect(await detailCalls()).toHaveLength(1);
+  await sessionTrigger.click();
+  await expect(page.locator(".breadcrumbs")).toContainText("New session");
+  await page.locator(".breadcrumbs").click();
+  await expect(card).toHaveCount(0);
+});
+
+test("PR previews support keyboard access, retry failures and constrain long content in both themes", async ({
+  page,
+}) => {
+  const trigger = await preparePullRequestPreview(page);
+  await page.setViewportSize({ width: 800, height: 620 });
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      "GitHub authentication required",
+    ),
+  );
+  await trigger.focus();
+  const card = page.getByRole("dialog", {
+    name: "Pull request preview",
+    exact: true,
+  });
+  await expect(card.getByRole("alert")).toContainText(
+    "authentication required",
+  );
+  await trigger.press("Tab");
+  await expect(
+    card.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeFocused();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_pull_request_details", null);
+    fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      state: "MERGED",
+      title:
+        "A pull request with a very long title that must stay inside the preview without pushing the layout sideways",
+      headRefName: "feature/" + "long-branch-".repeat(15),
+      body:
+        "<!-- hidden -->\n" + "This is a readable description. ".repeat(150),
+      reviewDecision: "CHANGES_REQUESTED",
+      statusCheckRollup: [
+        {
+          __typename: "CheckRun",
+          name: "Tests",
+          status: "COMPLETED",
+          conclusion: "FAILURE",
+        },
+      ],
+    });
+  }, previewPullRequest);
+  await page.keyboard.press("Enter");
+  await expect(card).toContainText("Merged");
+  await expect(card.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(card).toContainText("1 failed");
+  await expect(card).toContainText("Changes requested");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await expect(card).toBeInViewport({ ratio: 1 });
+    expect(
+      await card.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
+    await page.screenshot({ path: `test-results/pr-preview-${theme}.png` });
+  }
+  await page.keyboard.press("Escape");
+  await expect(card).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await page.clock.runFor(500);
+  await expect(card).toHaveCount(0);
+  await trigger.press("Enter");
+  await trigger.press("Tab");
+  await expect(
+    card.getByRole("button", { name: "View pull request" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(screen.getByRole("heading", { level: 1 })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(screen).toBeVisible();
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await trigger.focus();
+  await trigger.press("Enter");
+  await trigger.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(trigger).toBeFocused();
+  await expect(card).toHaveCount(0);
+  await trigger.press("Enter");
+  await trigger.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(
+    card.getByRole("link", { name: "GitHub", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    sessionRow(page, "Refine the session workspace").getByRole("button", {
+      name: "Archive session",
+      exact: true,
+    }),
+  ).toBeFocused();
+  await expect(card).toHaveCount(0);
+});
+
+test("PR previews discard delayed displays after navigation and isolate identical numbers across repositories", async ({
+  page,
+}) => {
+  const trigger = await preparePullRequestPreview(page, false);
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_details"),
+  );
+  await trigger.hover();
+  await page.clock.runFor(300);
+  const card = page.getByRole("dialog", {
+    name: "Pull request preview",
+    exact: true,
+  });
+  await expect(card).toContainText("Loading pull request details");
+  await expect(card.locator(".pr-ready-badge")).toHaveCount(0);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest(
+      "other-project",
+      {
+        ...pr,
+        url: "https://github.com/example/other/pull/44",
+        title: "Other repository PR",
+      },
+      "/work/other",
+    );
+    fixture.setPullRequestDetails("https://github.com/example/other/pull/44", {
+      ...pr,
+      url: "https://github.com/example/other/pull/44",
+      title: "Other repository PR",
+      body: "Different description",
+      additions: 9,
+    });
+  }, previewPullRequest);
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(card).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_details"),
+  );
+  const other = sessionRow(page, "Refine the session workspace").getByRole(
+    "button",
+    { name: /pull request #44: Other repository PR/ },
+  );
+  await other.hover();
+  await page.clock.runFor(300);
+  await expect(card).toContainText("Different description");
+  await expect(card).toContainText("+9");
+  await expect(card).not.toContainText("clearer workspace");
+  await page.evaluate(() => {
+    (window as any).fixture.setPullRequest(
+      "other-project",
+      null,
+      "/work/other",
+    );
+  });
+  await page.clock.runFor(60_100);
+  await expect(other).toHaveCount(0);
+  await expect(card).toHaveCount(0);
+});
+
+test("session PR previews share details across linked worktrees without selecting a session", async ({
+  page,
+}) => {
+  const trigger = await preparePullRequestPreview(page);
+  await trigger.hover();
+  await page.clock.runFor(300);
+  const card = page.getByRole("dialog", {
+    name: "Pull request preview",
+    exact: true,
+  });
+  await expect(card).toContainText("+128");
+  await page.keyboard.press("Escape");
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.addWorktree("/external/navigation", "feature/navigation");
+    fixture.setPullRequest("feature/navigation", pr, "/external/navigation");
+  }, previewPullRequest);
+  await page
+    .getByRole("button", { name: "caelum", exact: true })
+    .click({ button: "right" });
+  await pickMenu(page, "Refresh worktrees");
+  await expect(page.locator(".worktree-row .branch-pr-trigger")).toHaveCount(0);
+  const checkout = page.getByRole("button", {
+    name: "Switch to worktree feature/navigation",
+    exact: true,
+  });
+  await checkout.click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Review navigation");
+  await input.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Stop generation" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    const id = fixture.calls.find(
+      (call: any) => call.command === "codex_send_prompt",
+    ).args.threadId;
+    fixture.setSessionDetails("codex", id, {
+      branch: "feature/navigation",
+      branchIsCurrent: false,
+      changes: null,
+    });
+  });
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await page.getByRole("button", { name: /^New session/ }).click();
+  const session = page
+    .locator(".session-row")
+    .getByRole("button", { name: /pull request #44/ });
+  await session.hover();
+  await page.clock.runFor(300);
+  await expect(card).toContainText("+128");
+  await session.click();
+  await expect(checkout).toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".breadcrumbs")).toContainText("New session");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_pull_request_details",
+      ),
+    ),
+  ).toHaveLength(1);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(card).toHaveCount(0);
+});
+
+test("session PR section groups open sessions and opens an overview without selecting a session", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("main", pr);
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.setPullRequestDetails(pr.url, pr);
+    fixture.setPullRequest("fix/provider-adapters", {
+      ...pr,
+      number: 45,
+      title: "Improve provider adapters",
+      url: "https://github.com/example/caelum/pull/45",
+      isDraft: true,
+    });
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(section.getByRole("button")).toHaveCount(2);
+  const shared = section.getByRole("button", { name: /View pull request #44/ });
+  await expect(shared).toHaveAccessibleDescription("#44 · 2 sessions");
+  await expect(
+    section.getByRole("button", { name: /View draft pull request #45/ }),
+  ).toHaveAccessibleDescription("#45 · Review the provider adapters");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep this draft while reviewing PRs");
+  await shared.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(screen).toContainText("+128");
+  await expect(shared).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await expect(input).toHaveValue("Keep this draft while reviewing PRs");
+  await expect(page.locator(".breadcrumbs")).toContainText("New session");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter((call: any) =>
+        ["codex_resume_session", "opencode_resume_session"].includes(
+          call.command,
+        ),
+      ),
+    ),
+  ).toHaveLength(0);
+  await shared.focus();
+  await page.clock.runFor(32);
+  await expect(shared).toBeFocused();
+  await shared.press("Enter");
+  await expect(screen).toBeVisible();
+  await page.getByRole("button", { name: "Sessions", exact: true }).click();
+  await page.getByRole("textbox", { name: "Search sessions" }).fill("no match");
+  await expect(page.locator(".session-list")).toContainText(
+    "No matching sessions",
+  );
+  await expect(section.getByRole("button")).toHaveCount(2);
+  await page.getByRole("textbox", { name: "Search sessions" }).fill("");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await page.screenshot({
+      path: `test-results/session-pr-list-${theme}.png`,
+    });
+  }
+  const first = sessionRow(page, "Refine the session workspace");
+  await first
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(shared).toHaveAccessibleDescription("#44 · OpenCode session");
+  await sessionRow(page, "OpenCode session")
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(shared).toHaveCount(0);
+  await expect(
+    page
+      .locator(".session-row")
+      .getByRole("button", { name: /pull request #44/ }),
+  ).toHaveCount(0);
+  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(shared).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("main", null);
+    fixture.setPullRequest("fix/provider-adapters", null);
+  });
+  await page.clock.runFor(60_100);
+  await expect(section.getByRole("button")).toHaveCount(0);
+  await expect(section).toContainText("No pull requests for open sessions");
+});
+
+test("PR screen keeps the sidebar usable and preserves the conversation, draft and reading position", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const session = page.getByRole("button", {
+    name: "Refine the session workspace",
+    exact: true,
+  });
+  await session.click();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Keep my session draft");
+  await page
+    .getByRole("button", { name: "Load earlier messages", exact: true })
+    .click();
+  const transcript = page.locator(".transcript");
+  await transcript.evaluate((node) => {
+    node.setAttribute("data-mounted", "yes");
+    node.scrollTop = 250;
+  });
+  await expect(
+    page.getByRole("button", { name: "Jump to latest", exact: true }),
+  ).toBeVisible();
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(screen).toContainText("+128");
+  await expect(screen.getByRole("heading", { level: 1 })).toBeFocused();
+  await expect(entry).toHaveAttribute("aria-current", "page");
+  await expect(session).not.toHaveAttribute("aria-current", "page");
+  await expect(input).toBeHidden();
+  await expect(transcript).toHaveAttribute("data-mounted", "yes");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await emit(page, "item/agentMessage/delta", {
+    threadId: "thread-a",
+    itemId: "pr-background",
+    delta: "Progress while reviewing the pull request",
+  });
+  await expect(screen.getByRole("heading", { level: 1 })).toBeFocused();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await page.screenshot({ path: `test-results/pr-screen-${theme}.png` });
+  }
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(screen).toBeInViewport({ ratio: 1 });
+  expect(
+    await screen.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: "test-results/pr-screen-compact.png" });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(screen).toBeVisible();
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(entry).toHaveAttribute("aria-current", "page");
+  await page.getByRole("button", { name: "Sessions", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await expect(input).toHaveValue("Keep my session draft");
+  await expect(transcript).toHaveAttribute("data-mounted", "yes");
+  await expect
+    .poll(() => transcript.evaluate((node) => node.scrollTop))
+    .toBe(250);
+  await page
+    .getByRole("button", { name: "Jump to latest", exact: true })
+    .click();
+  await expect(
+    page.getByText("Progress while reviewing the pull request", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await entry.click();
+  await session.click();
+  await expect(screen).toHaveCount(0);
+  await expect(input).toHaveValue("Keep my session draft");
+  await entry.click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await expect(
+    page.getByRole("complementary", { name: "Project files", exact: true }),
+  ).toBeVisible();
+  await entry.click();
+  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Project changes", exact: true }),
+  ).toBeVisible();
+  await expect(screen).toHaveCount(0);
+  await entry.click();
+  await page.keyboard.press("Meta+n");
+  await expect(screen).toHaveCount(0);
+  await expect(input).toHaveValue("");
+  await session.click();
+  await expect(input).toHaveValue("Keep my session draft");
+});
+
+test("PR screen switches between requests, retries refresh failures and rejects stale results after navigation", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    const other = {
+      ...pr,
+      number: 45,
+      title: "Improve provider adapters",
+      url: "https://github.com/example/caelum/pull/45",
+      body: "Independent provider work",
+      additions: 9,
+    };
+    fixture.setPullRequest("fix/provider-adapters", other);
+    fixture.setPullRequestDetails(other.url, other);
+    fixture.hold(`github_pull_request_details:${pr.url}`);
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  const list = page.getByRole("region", { name: "Pull requests", exact: true });
+  const first = list.getByRole("button", { name: /View pull request #44/ });
+  const second = list.getByRole("button", { name: /View pull request #45/ });
+  await first.click();
+  await expect(
+    page.getByRole("region", { name: "Pull request #44", exact: true }),
+  ).toContainText("Loading pull request details");
+  await second.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #45",
+    exact: true,
+  });
+  await expect(screen).toContainText("Independent provider work");
+  await expect(second).toHaveAttribute("aria-current", "page");
+  await expect(first).not.toHaveAttribute("aria-current", "page");
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.release(`github_pull_request_details:${pr.url}`),
+    previewPullRequest,
+  );
+  await expect(screen).not.toContainText("clearer workspace");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      "GitHub unavailable",
+    ),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(screen.getByRole("alert")).toContainText(
+    "Showing the last loaded details",
+  );
+  await expect(screen).toContainText("+9");
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      null,
+    ),
+  );
+  await screen.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(screen.getByRole("alert")).toHaveCount(0);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await second.click();
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_details"),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(screen).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_details"),
+  );
+  await expect(page.locator(".breadcrumbs")).toContainText("other");
+  await expect(page.locator(".pr-screen")).toHaveCount(0);
+});
+
+test("PR checks show live pending animations, passed ticks and linked results in both themes", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      body: "Check progress and merge this pull request.",
+      mergeStateStatus: "BLOCKED",
+      statusCheckRollup: [
+        pr.statusCheckRollup[0],
+        {
+          __typename: "CheckRun",
+          name: "macOS build",
+          status: "IN_PROGRESS",
+          conclusion: null,
+          startedAt: new Date(Date.now() - 65_000).toISOString(),
+          completedAt: null,
+        },
+        {
+          __typename: "CheckRun",
+          name: "Linux build",
+          status: "QUEUED",
+          conclusion: null,
+        },
+        {
+          __typename: "CheckRun",
+          name: "Lint",
+          status: "COMPLETED",
+          conclusion: "FAILURE",
+          startedAt: "2026-11-01T12:00:00Z",
+          completedAt: "2026-11-01T12:00:12Z",
+          detailsUrl: "javascript:alert(1)",
+        },
+        {
+          __typename: "CheckRun",
+          name: "Optional deploy",
+          status: "COMPLETED",
+          conclusion: "SKIPPED",
+        },
+        pr.statusCheckRollup[1],
+      ],
+    });
+  }, previewPullRequest);
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const checks = screen.getByRole("region", { name: "Pull request checks" });
+  const rows = checks.getByRole("listitem");
+  await expect(rows).toHaveCount(6);
+  await expect(rows.filter({ hasText: "Tests" })).toContainText("Passed");
+  await expect(
+    rows.filter({ hasText: "Tests" }).locator(".lucide-check"),
+  ).toBeVisible();
+  await expect(rows.filter({ hasText: "macOS build" })).toContainText(
+    "In progress",
+  );
+  await expect(rows.filter({ hasText: "Linux build" })).toContainText("Queued");
+  await expect(
+    rows.filter({ hasText: "Lint" }).locator(".lucide-x"),
+  ).toBeVisible();
+  await expect(rows.filter({ hasText: "Lint" }).getByRole("link")).toHaveCount(
+    0,
+  );
+  await expect(rows.filter({ hasText: "Optional deploy" })).toContainText(
+    "Skipped",
+  );
+  const spinner = rows.filter({ hasText: "macOS build" }).locator(".spinning");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(spinner).toHaveCSS("animation-name", "spin");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(spinner).toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await checks.getByRole("link", { name: "Tests", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter((call: any) => call.command === "plugin:opener|open_url")
+            .at(-1)?.args.url,
+      ),
+    )
+    .toBe("https://github.com/example/caelum/actions/runs/123");
+  await checks
+    .getByRole("link", { name: "Preview deploy", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls
+            .filter((call: any) => call.command === "plugin:opener|open_url")
+            .at(-1)?.args.url,
+      ),
+    )
+    .toBe("https://deploy.example.com/preview/44");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await page.screenshot({ path: `test-results/pr-checks-${theme}.png` });
+    await screen
+      .getByRole("region", { name: "Merge pull request", exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `test-results/pr-merge-${theme}.png` });
+    await screen
+      .getByRole("button", { name: "Merge method", exact: true })
+      .click();
+    const menu = page.getByRole("dialog", { name: "Choose merge method" });
+    await expect(menu).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: `test-results/pr-merge-menu-${theme}.png` });
+    await page.keyboard.press("Escape");
+    await screen.evaluate((node) => {
+      node.scrollTop = 0;
+    });
+  }
+  await page.setViewportSize({ width: 800, height: 620 });
+  await checks.scrollIntoViewIfNeeded();
+  expect(
+    await screen.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: "test-results/pr-checks-compact.png" });
+  await expect(
+    screen.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        statusCheckRollup: [pr.statusCheckRollup[0]],
+      }),
+    previewPullRequest,
+  );
+  await page.clock.runFor(30_100);
+  await expect(checks).toContainText("1 passed");
+  await expect(checks.locator(".spinning")).toHaveCount(0);
+  await expect(
+    screen.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeEnabled();
+  await screen
+    .getByRole("region", { name: "Merge pull request", exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/pr-merge-compact.png" });
+  await screen
+    .getByRole("button", { name: "Merge method", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Choose merge method" }),
+  ).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: "test-results/pr-merge-menu-compact.png" });
+  await page.getByRole("option", { name: /^Rebase and merge/ }).click();
+  await expect(
+    screen.getByRole("button", { name: "Rebase and merge", exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_merge_pull_request",
+      ),
+    ),
+  ).toHaveLength(0);
+});
+
+test("PR check timers tick locally, resume from server timestamps and stop on completion", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.clock.pauseAt(new Date("2030-01-01T12:00:00Z"));
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      statusCheckRollup: [
+        pr.statusCheckRollup[0],
+        {
+          __typename: "CheckRun",
+          name: "Build",
+          status: "IN_PROGRESS",
+          conclusion: null,
+          startedAt: "2030-01-01T11:58:55Z",
+          completedAt: "0001-01-01T00:00:00Z",
+        },
+        {
+          __typename: "CheckRun",
+          name: "Queued",
+          status: "QUEUED",
+          conclusion: null,
+          startedAt: "0001-01-01T00:00:00Z",
+          completedAt: null,
+        },
+        pr.statusCheckRollup[1],
+      ],
+    });
+  }, previewPullRequest);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const rows = screen
+    .getByRole("region", { name: "Pull request checks" })
+    .getByRole("listitem");
+  const completed = rows.filter({ hasText: "Tests" }).locator("time");
+  const running = rows.filter({ hasText: "Build" }).locator("time");
+  await expect(completed).toHaveText("2m 14s");
+  await expect(completed).toHaveAttribute("datetime", "PT134S");
+  await expect(running).toHaveText("1m 5s");
+  await expect(running).toHaveAttribute("aria-label", "Elapsed time: 1m 5s");
+  await expect(rows.filter({ hasText: "Queued" }).locator("time")).toHaveCount(
+    0,
+  );
+  await expect(
+    rows.filter({ hasText: "Preview deploy" }).locator("time"),
+  ).toHaveCount(0);
+  const detailCalls = () =>
+    page.evaluate(
+      () =>
+        (window as any).fixture.calls.filter(
+          (call: any) => call.command === "github_pull_request_details",
+        ).length,
+    );
+  const requests = await detailCalls();
+  await page.clock.runFor(3000);
+  await expect(running).toHaveText("1m 8s");
+  await expect(completed).toHaveText("2m 14s");
+  expect(await detailCalls()).toBe(requests);
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await page.clock.runFor(10_000);
+  await entry.click();
+  await expect(running).toHaveText("1m 18s");
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        statusCheckRollup: [
+          pr.statusCheckRollup[0],
+          {
+            __typename: "CheckRun",
+            name: "Build",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            startedAt: "2030-01-01T11:58:55Z",
+            completedAt: "2030-01-01T12:00:05Z",
+          },
+        ],
+      }),
+    previewPullRequest,
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(running).toHaveText("1m 10s");
+  await expect(running).toHaveAttribute("aria-label", "Duration: 1m 10s");
+  await page.clock.runFor(5000);
+  await expect(running).toHaveText("1m 10s");
+});
+
+test("PR merge is shared across navigation, pins the head and removes merged rows despite delayed discovery", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const list = page.getByRole("region", { name: "Pull requests", exact: true });
+  const first = list.getByRole("button", { name: /View pull request #44/ });
+  await first.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(
+    screen.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    const other = {
+      ...pr,
+      number: 45,
+      title: "Another pull request",
+      url: "https://github.com/example/caelum/pull/45",
+    };
+    fixture.setPullRequest("fix/provider-adapters", other);
+    fixture.setPullRequestDetails(other.url, other);
+    fixture.hold(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
+    fixture.hold("github_merge_pull_request");
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  const second = list.getByRole("button", { name: /View pull request #45/ });
+  await expect(second).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) =>
+              call.command === "github_open_pull_request" &&
+              call.args.branch === "feat/session-ui-redesign",
+          ).length,
+      ),
+    )
+    .toBe(3);
+  const method = screen.getByRole("button", {
+    name: "Merge method",
+    exact: true,
+  });
+  await method.press("ArrowDown");
+  await expect(
+    page.getByRole("option", { name: /^Create a merge commit/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(method).toBeFocused();
+  await screen
+    .getByRole("button", { name: "Squash and merge", exact: true })
+    .click();
+  await expect(
+    screen.getByRole("button", { name: "Merging…", exact: true }),
+  ).toBeDisabled();
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(screen.locator(".pr-merge")).toHaveAttribute(
+    "data-ready",
+    "false",
+  );
+  await expect(
+    screen
+      .getByRole("button", { name: "Merging…", exact: true })
+      .locator(".spinning"),
+  ).toBeVisible();
+  await expect(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    screen.getByRole("button", { name: "Update branch", exact: true }),
+  ).toBeDisabled();
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await first.click();
+  await expect(
+    screen.getByRole("button", { name: "Merge method", exact: true }),
+  ).toHaveAttribute("title", "Merge method: Squash and merge");
+  await expect(
+    screen.getByRole("button", { name: "Merge method", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    screen.getByRole("button", { name: "Merging…", exact: true }),
+  ).toBeDisabled();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_merge_pull_request",
+    ),
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args).toEqual({
+    projectPath: "/work/caelum",
+    url: previewPullRequest.url,
+    method: "squash",
+    headOid: previewPullRequest.headRefOid,
+  });
+  await second.click();
+  const otherScreen = page.getByRole("region", {
+    name: "Pull request #45",
+    exact: true,
+  });
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_merge_pull_request"),
+  );
+  await expect(first).toHaveCount(0);
+  await expect(otherScreen).toBeVisible();
+  await expect(
+    otherScreen.getByRole("button", {
+      name: "Merge pull request",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await page.evaluate(() =>
+    (window as any).fixture.release(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    ),
+  );
+  await expect(
+    sessionRow(page, "Refine the session workspace").locator(
+      ".branch-pr-trigger",
+    ),
+  ).toHaveCount(0);
+  await expect(first).toHaveCount(0);
+  await expect(second).toHaveAttribute("aria-current", "page");
+});
+
+test("PR merge reports failures, reloads changed heads and confirms a successful retry", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  const button = merge.getByRole("button", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await expect(button).toBeEnabled();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_merge_pull_request",
+      "Merge method is not allowed (HTTP 405)",
+    ),
+  );
+  await button.click();
+  await expect(merge.getByRole("alert")).toContainText(
+    "Merge method is not allowed",
+  );
+  await expect(entry).toBeVisible();
+  await expect(button).toBeEnabled();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_merge_pull_request", null);
+    fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      headRefOid: "b".repeat(40),
+    });
+  }, previewPullRequest);
+  await button.click();
+  await expect(merge.getByRole("alert")).toContainText(
+    "Head branch was modified",
+  );
+  await expect(button).toBeEnabled();
+  await merge
+    .getByRole("button", { name: "Merge method", exact: true })
+    .click();
+  await page.getByRole("option", { name: /^Rebase and merge/ }).click();
+  await merge
+    .getByRole("button", { name: "Rebase and merge", exact: true })
+    .click();
+  await expect(merge.getByRole("status")).toHaveText("Merged into main");
+  await expect(merge.getByRole("alert")).toHaveCount(0);
+  await expect(merge.getByRole("button")).toHaveCount(0);
+  await expect(screen.locator(".pr-state")).toHaveText("Merged");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(merge).toHaveAttribute("data-ready", "false");
+  await expect(entry).toHaveCount(0);
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_merge_pull_request",
+    ),
+  );
+  expect(calls).toHaveLength(3);
+  expect(calls[2].args).toMatchObject({
+    method: "rebase",
+    headOid: "b".repeat(40),
+  });
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(merge.getByRole("status")).toHaveText("Merged into main");
+});
+
+test("PR merge explains draft, blocked, conflicting and unknown states without submitting", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await expect(merge).toBeVisible();
+  await expect(screen.locator(".pr-ready-badge")).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.hold("github_pull_request_details"),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(merge.getByRole("status")).toHaveText(
+    "Checking merge readiness…",
+  );
+  await expect(merge).toHaveAttribute("data-ready", "false");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_pull_request_details"),
+  );
+  await expect(merge).toHaveAttribute("data-ready", "true");
+  await expect(screen.locator(".pr-ready-badge")).toBeVisible();
+  for (const [change, message] of [
+    [{ isDraft: true }, "Mark this draft ready"],
+    [{ mergeStateStatus: "BLOCKED" }, "Waiting for required checks"],
+    [{ mergeable: "CONFLICTING" }, "Resolve merge conflicts"],
+    [{ mergeStateStatus: "BEHIND" }, "Update this branch"],
+    [{ mergeable: "UNKNOWN" }, "Waiting for GitHub"],
+  ] as const) {
+    await page.evaluate(
+      ({ pr, change }) =>
+        (window as any).fixture.setPullRequestDetails(pr.url, {
+          ...pr,
+          ...change,
+        }),
+      { pr: previewPullRequest, change },
+    );
+    await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(merge.getByRole("status")).toContainText(message);
+    await expect(merge).toHaveAttribute("data-ready", "false");
+    await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+    await expect(
+      merge.getByRole("button", { name: "Merge pull request", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      merge.getByRole("button", { name: "Update branch", exact: true }),
+    ).toBeEnabled({
+      enabled: !["CONFLICTING", "UNKNOWN"].includes(
+        (change as { mergeable?: string }).mergeable ?? "",
+      ),
+    });
+  }
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        state: "CLOSED",
+        statusCheckRollup: null,
+      }),
+    previewPullRequest,
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(merge.getByRole("status")).toContainText(
+    "This pull request is closed",
+  );
+  await expect(merge.getByRole("button")).toHaveCount(0);
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(
+    screen.getByRole("region", { name: "Pull request checks" }),
+  ).toContainText("No checks reported");
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_merge_pull_request",
+      ),
+    ),
+  ).toHaveLength(0);
+});
+
+test("PR branch updates preserve progress across navigation and wait for the new head before merging", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      mergeStateStatus: "BEHIND",
+    });
+    fixture.hold("github_update_pull_request_branch");
+  }, previewPullRequest);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await expect(
+    merge.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await merge
+    .getByRole("button", { name: "Update branch", exact: true })
+    .click();
+  await expect(merge.getByRole("status")).toHaveText(
+    "Updating branch from main…",
+  );
+  await expect(merge).toHaveAttribute("data-ready", "false");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    merge
+      .getByRole("button", { name: "Updating…", exact: true })
+      .locator(".spinning"),
+  ).toBeVisible();
+  await expect(
+    merge.getByRole("button", { name: "Merge method", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeDisabled();
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await entry.click();
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_update_pull_request_branch",
+    ),
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args).toEqual({
+    projectPath: "/work/caelum",
+    url: previewPullRequest.url,
+    headOid: previewPullRequest.headRefOid,
+  });
+
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_update_pull_request_branch"),
+  );
+  await page.clock.runFor(10_100);
+  // An accepted update with unchanged metadata must not unlock either action.
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    merge.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        headRefOid: "b".repeat(40),
+        mergeStateStatus: "BLOCKED",
+        statusCheckRollup: [
+          {
+            __typename: "CheckRun",
+            name: "Tests",
+            status: "IN_PROGRESS",
+            conclusion: null,
+          },
+        ],
+      }),
+    previewPullRequest,
+  );
+  await page.clock.runFor(10_100);
+  await expect(
+    merge.getByRole("button", { name: "Update branch", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    merge.getByRole("button", { name: "Merge pull request", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    screen.getByRole("region", { name: "Pull request checks" }),
+  ).toContainText("In progress");
+  await expect(entry).toBeVisible();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        headRefOid: "b".repeat(40),
+        statusCheckRollup: [pr.statusCheckRollup[0]],
+      }),
+    previewPullRequest,
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await merge
+    .getByRole("button", { name: "Merge pull request", exact: true })
+    .click();
+  await expect(merge.getByRole("status")).toHaveText("Merged into main");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.find(
+          (call: any) => call.command === "github_merge_pull_request",
+        ).args.headOid,
+    ),
+  ).toBe("b".repeat(40));
+});
+
+test("PR branch update failures retain the PR and refresh stale heads for retry", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  const entry = page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ });
+  await entry.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  const update = merge.getByRole("button", {
+    name: "Update branch",
+    exact: true,
+  });
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_update_pull_request_branch",
+      "Write access required (HTTP 403)",
+    ),
+  );
+  await update.click();
+  await expect(merge.getByRole("alert")).toContainText("Write access required");
+  await expect(update).toBeEnabled();
+  await expect(entry).toBeVisible();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_update_pull_request_branch", null);
+    fixture.setPullRequestDetails(pr.url, {
+      ...pr,
+      headRefOid: "b".repeat(40),
+    });
+  }, previewPullRequest);
+  await update.click();
+  await expect(merge.getByRole("alert")).toContainText(
+    "Head branch was modified",
+  );
+  await expect(update).toBeEnabled();
+  await update.click();
+  await expect(merge.getByRole("alert")).toHaveCount(0);
+  await expect(merge).toHaveAttribute("data-ready", "false");
+  await expect(screen.locator(".pr-ready-badge")).toHaveCount(0);
+  await expect(
+    merge.getByRole("button", { name: "Updating…", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(
+    (pr) =>
+      (window as any).fixture.setPullRequestDetails(pr.url, {
+        ...pr,
+        headRefOid: "c".repeat(40),
+      }),
+    previewPullRequest,
+  );
+  await page.clock.runFor(10_100);
+  await expect(update).toBeEnabled();
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls.filter(
+      (call: any) => call.command === "github_update_pull_request_branch",
+    ),
+  );
+  expect(calls).toHaveLength(3);
+  expect(calls[2].args.headOid).toBe("b".repeat(40));
+  await expect(entry).toBeVisible();
+});
+
+test("PR branch updates recover from unconfirmed updates and refresh failures", async ({
+  page,
+}) => {
+  await preparePullRequestPreview(page);
+  await page
+    .getByRole("region", { name: "Pull requests", exact: true })
+    .getByRole("button", { name: /View pull request #44/ })
+    .click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  const merge = screen.getByRole("region", {
+    name: "Merge pull request",
+    exact: true,
+  });
+  await merge
+    .getByRole("button", { name: "Update branch", exact: true })
+    .click();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      "Network unavailable",
+    ),
+  );
+  await page.clock.runFor(100_100);
+  await expect(merge.getByRole("alert")).toContainText(
+    "GitHub has not confirmed the branch update yet",
+  );
+  await expect(
+    screen.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_details",
+      null,
+    ),
+  );
+  await screen.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(
+    merge.getByRole("button", { name: "Update branch", exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) => call.command === "github_update_pull_request_branch",
+      ),
+    ),
+  ).toHaveLength(1);
+});
+
+test("session PR section discovers off-screen sessions with shared bounded lookups", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await page.setViewportSize({ width: 800, height: 620 });
+  const before = await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.hold("github_open_pull_request");
+    for (let index = 0; index < 18; index++) {
+      fixture.addSession(`background-${index}`, `Background task ${index}`);
+      fixture.setSessionDetails("codex", `background-${index}`, {
+        branch: `feature/background-${index}`,
+        branchIsCurrent: false,
+        changes: null,
+      });
+      if (index === 17)
+        fixture.setPullRequest(`feature/background-${index}`, pr);
+    }
+    return fixture.calls.length;
+  }, previewPullRequest);
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (before) =>
+          (window as any).fixture.calls
+            .slice(before)
+            .filter(
+              (call: any) =>
+                call.command === "session_details" &&
+                call.args.sessionId === "background-17",
+            ).length,
+        before,
+      ),
+    )
+    .toBe(1);
+  const lookups = await page.evaluate(
+    (before) =>
+      (window as any).fixture.calls
+        .slice(before)
+        .filter((call: any) => call.command === "github_open_pull_request"),
+    before,
+  );
+  expect(lookups.length).toBeGreaterThan(0);
+  expect(lookups.length).toBeLessThanOrEqual(4);
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_open_pull_request"),
+  );
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  const row = section.getByRole("button", { name: /View pull request #44/ });
+  await expect(row).toBeVisible();
+  await expect(row).toHaveAccessibleDescription("#44 · Background task 17");
+  await expect(sessionRow(page, "Background task 17")).not.toBeInViewport();
+  await expect(row).toBeInViewport({ ratio: 1 });
+  const calls = await page.evaluate(
+    (before) => (window as any).fixture.calls.slice(before),
+    before,
+  );
+  expect(
+    calls.filter(
+      (call: any) =>
+        call.command === "github_open_pull_request" &&
+        call.args.branch === "feature/background-17",
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter((call: any) => call.command === "codex_resume_session"),
+  ).toHaveLength(0);
+  expect(
+    await section.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/session-pr-list-many-sessions.png",
+  });
+});
+
+test("session PR section ignores delayed results from a different project", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.hold(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
+    fixture.setPullRequest(
+      "other-project",
+      {
+        ...pr,
+        url: "https://github.com/example/other/pull/44",
+        title: "Other project changes",
+      },
+      "/work/other",
+    );
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(
+    section.getByRole("button", { name: /Other project changes/ }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.release(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    ),
+  );
+  await expect(section.getByRole("button")).toHaveCount(1);
+  await expect(section).not.toContainText(previewPullRequest.title);
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(
+    section.getByRole("button", { name: /Improve project navigation/ }),
+  ).toBeVisible();
+  await expect(section).not.toContainText("Other project changes");
+});
+
+test("session PR indicators share lookups, distinguish drafts and preserve matches through unavailable lookups", async ({
   page,
 }) => {
   await page.clock.install();
@@ -6223,7 +9335,8 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
   await choose(page, "Provider", "OpenCode");
   const project = page
     .getByRole("navigation", { name: "Open projects" })
-    .getByRole("button", { name: "caelum", exact: true });
+    .getByRole("button", { name: "caelum", exact: true })
+    .locator("..");
   const session = sessionRow(page, "Refine the session workspace");
   const openCode = sessionRow(page, "OpenCode session");
   await expect(session.locator(".session-branch")).toHaveText(
@@ -6246,24 +9359,19 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
     });
   });
   await page.clock.runFor(60_100);
+  await expect(page.locator(".project-row .branch-pr-trigger")).toHaveCount(0);
   await expect(
-    project.getByRole("img", {
+    openCode.getByRole("button", {
       name: "Open pull request #11: Main changes",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    openCode.getByRole("img", {
-      name: "Open pull request #11: Main changes",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    session.getByRole("img", {
+    session.getByRole("button", {
       name: "Draft pull request #40: Session UI",
       exact: true,
     }),
-  ).toHaveAttribute("title", "Draft pull request #40: Session UI");
+  ).toHaveAttribute("aria-haspopup", "dialog");
   await expect(
     sessionRow(page, "Review the provider adapters").locator(".branch-pr"),
   ).toBeEmpty();
@@ -6288,17 +9396,22 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
     });
   });
   await page.clock.runFor(60_100);
-  await expect(project.locator(".branch-pr")).toBeEmpty();
   await expect(openCode.locator(".branch-pr")).toBeEmpty();
   await expect(
-    session.getByRole("img", {
+    session.getByRole("button", {
       name: "Open pull request #40: Ready for review",
       exact: true,
     }),
   ).toBeVisible();
   await page.setViewportSize({ width: 800, height: 620 });
+  await session
+    .getByRole("button", {
+      name: "Open pull request #40: Ready for review",
+      exact: true,
+    })
+    .scrollIntoViewIfNeeded();
   await expect(
-    session.getByRole("img", {
+    session.getByRole("button", {
       name: "Open pull request #40: Ready for review",
       exact: true,
     }),
@@ -6306,7 +9419,7 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     800,
   );
-  await page.screenshot({ path: "test-results/branch-pr-indicators.png" });
+  await page.screenshot({ path: "test-results/session-pr-indicators.png" });
   await page.evaluate(() =>
     (window as any).fixture.setCommandError(
       "github_open_pull_request",
@@ -6314,7 +9427,19 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
     ),
   );
   await page.clock.runFor(60_100);
-  await expect(session.locator(".branch-pr")).toBeEmpty();
+  await expect(
+    session.getByRole("button", {
+      name: "Open pull request #40: Ready for review",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(section.getByRole("status")).toContainText(
+    "Showing last known results",
+  );
   await expect(project.locator(".project-changes")).toHaveText("2 changed");
   await expect(
     page.getByRole("alert").filter({ hasText: "GitHub CLI unavailable" }),
@@ -6322,27 +9447,349 @@ test("branch PR indicators share lookups, distinguish drafts and clear closed or
   await page.evaluate(() =>
     (window as any).fixture.setCommandError("github_open_pull_request", null),
   );
-  await page.clock.runFor(60_100);
+  await section.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(section.getByRole("status")).toHaveCount(0);
   await expect(
-    session.getByRole("img", {
+    session.getByRole("button", {
       name: "Open pull request #40: Ready for review",
       exact: true,
     }),
   ).toBeVisible();
 });
 
-test("branch PR indicators stay scoped through branch and project changes and delayed responses", async ({
+test("session PR refresh bypasses cached misses for both providers and preserves results during outages", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.setPullRequest("main", {
+      ...pr,
+      number: 45,
+      url: pr.url.replace("44", "45"),
+      title: "OpenCode changes",
+    });
+  }, previewPullRequest);
+  const refresh = page.getByRole("button", {
+    name: "Refresh sessions",
+    exact: true,
+  });
+  await refresh.click();
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(section.locator(".session-pr-item")).toHaveCount(2);
+  const codex = sessionRow(page, "Refine the session workspace").getByRole(
+    "button",
+    { name: /pull request #44/ },
+  );
+  const opencode = sessionRow(page, "OpenCode session").getByRole("button", {
+    name: /pull request #45/,
+  });
+  await expect(codex).toBeVisible();
+  await expect(opencode).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_open_pull_request", "Network unavailable");
+    fixture.hold("github_open_pull_request");
+  });
+  await refresh.click();
+  await expect(codex).toBeVisible();
+  await expect(opencode).toBeVisible();
+  await page.evaluate(() =>
+    (window as any).fixture.release("github_open_pull_request"),
+  );
+  await expect(section.getByRole("status")).toContainText(
+    "Showing last known results",
+  );
+  await expect(section).not.toContainText("No pull requests for open sessions");
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await page.clock.runFor(60_100);
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(codex).toBeVisible();
+  await expect(opencode).toBeVisible();
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError("github_open_pull_request", null);
+    fixture.setPullRequest("feat/session-ui-redesign", null);
+  });
+  await page.clock.runFor(15_100);
+  await expect(section.getByRole("status")).toHaveCount(0);
+  await expect(codex).toHaveCount(0);
+  await expect(opencode).toBeVisible();
+  await expect(section.locator(".session-pr-item")).toHaveCount(1);
+});
+
+test("session PR explicit refresh discards older in-flight discovery and picks up changed branch metadata", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setPullRequest("feat/session-ui-redesign", pr);
+    fixture.hold(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
+  }, previewPullRequest);
+  await page.clock.runFor(60_100);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) =>
+              call.command === "github_open_pull_request" &&
+              call.args.branch === "feat/session-ui-redesign",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await page.evaluate((pr) => {
+    (window as any).fixture.setPullRequest("feat/session-ui-redesign", {
+      ...pr,
+      number: 45,
+      url: pr.url.replace("44", "45"),
+      title: "Fresh pull request",
+    });
+    (window as any).fixture.hold("session_details");
+  }, previewPullRequest);
+  const refresh = page.getByRole("button", {
+    name: "Refresh sessions",
+    exact: true,
+  });
+  await refresh.click();
+  await expect(refresh).toBeDisabled();
+  await page.evaluate(() => {
+    const command =
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign";
+    (window as any).fixture.release(command);
+    (window as any).fixture.hold(command);
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).fixture.calls.filter(
+            (call: any) =>
+              call.command === "github_open_pull_request" &&
+              call.args.branch === "feat/session-ui-redesign",
+          ).length,
+      ),
+    )
+    .toBe(3);
+  const section = page.getByRole("region", {
+    name: "Pull requests",
+    exact: true,
+  });
+  await expect(
+    section.getByRole("button", { name: /View pull request #44/ }),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).fixture.release(
+      "github_open_pull_request:/work/caelum:feat/session-ui-redesign",
+    );
+    (window as any).fixture.release("session_details");
+  });
+  await expect(
+    section.getByRole("button", { name: /View pull request #45/ }),
+  ).toBeVisible();
+  await expect(refresh).toBeEnabled();
+  await page.evaluate((pr) => {
+    const fixture = (window as any).fixture;
+    fixture.setSessionDetails("codex", "thread-a", {
+      branch: "feature/new",
+      branchIsCurrent: false,
+      changes: null,
+    });
+    fixture.setPullRequest("feature/new", {
+      ...pr,
+      number: 46,
+      url: pr.url.replace("44", "46"),
+      title: "New branch",
+    });
+  }, previewPullRequest);
+  await refresh.click();
+  await expect(
+    section.getByRole("button", { name: /View pull request #46/ }),
+  ).toBeVisible();
+  await expect(
+    section.getByRole("button", { name: /View pull request #45/ }),
+  ).toHaveCount(0);
+});
+
+for (const provider of ["codex", "opencode"] as const) {
+  test(`${provider} session PR discovery refreshes immediately when execution finishes`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await desktop(page);
+    if (provider === "opencode") {
+      await page.getByRole("button", { name: /^New session/ }).click();
+      await choose(page, "Provider", "OpenCode");
+      await page
+        .getByRole("button", { name: "OpenCode session", exact: true })
+        .click();
+    }
+    const branch = provider === "codex" ? "feat/session-ui-redesign" : "main";
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (branch) =>
+            (window as any).fixture.calls.some(
+              (call: any) =>
+                call.command === "github_open_pull_request" &&
+                call.args.branch === branch,
+            ),
+          branch,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(
+      ({ pr, branch }) => (window as any).fixture.setPullRequest(branch, pr),
+      { pr: previewPullRequest, branch },
+    );
+    if (provider === "codex")
+      await emit(page, "turn/completed", {
+        threadId: "thread-a",
+        turn: { id: "turn-1", status: "completed" },
+      });
+    else
+      await emit(
+        page,
+        "session.execution.succeeded",
+        { sessionID: "ses-a" },
+        "opencode",
+      );
+    await expect(
+      page
+        .getByRole("region", { name: "Pull requests", exact: true })
+        .getByRole("button", { name: /View pull request #44/ }),
+    ).toBeVisible();
+  });
+
+  test(`${provider} session PR discovery waits for fresh metadata when execution overlaps a read`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await desktop(page, null);
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    const id = provider === "codex" ? "thread-a" : "ses-a";
+    const row = sessionRow(
+      page,
+      provider === "codex"
+        ? "Refine the session workspace"
+        : "OpenCode session",
+    );
+    await expect(row.locator(".session-branch")).toHaveText(
+      provider === "codex" ? "feat/session-ui-redesign" : "main",
+    );
+    const branch = "fix/provider-adapters";
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (branch) =>
+            (window as any).fixture.calls.some(
+              (call: any) =>
+                call.command === "github_open_pull_request" &&
+                call.args.branch === branch,
+            ),
+          branch,
+        ),
+      )
+      .toBe(true);
+    const reads = await page.evaluate(
+      ({ provider, id }) =>
+        (window as any).fixture.calls.filter(
+          (call: any) =>
+            call.command === "session_details" &&
+            call.args.provider === provider &&
+            call.args.sessionId === id,
+        ).length,
+      { provider, id },
+    );
+    await page.evaluate(() => (window as any).fixture.hold("session_details"));
+    if (provider === "codex")
+      await emit(page, "turn/started", {
+        threadId: id,
+        turn: { id: "turn-1" },
+      });
+    else
+      await emit(
+        page,
+        "session.execution.started",
+        { sessionID: id },
+        "opencode",
+      );
+    await expect
+      .poll(() =>
+        page.evaluate(
+          ({ provider, id }) =>
+            (window as any).fixture.calls.filter(
+              (call: any) =>
+                call.command === "session_details" &&
+                call.args.provider === provider &&
+                call.args.sessionId === id,
+            ).length,
+          { provider, id },
+        ),
+      )
+      .toBe(reads + 1);
+    await page.evaluate(
+      ({ provider, id, branch, pr }) => {
+        (window as any).fixture.setSessionDetails(provider, id, {
+          branch,
+          branchIsCurrent: false,
+          changes: null,
+        });
+        (window as any).fixture.setPullRequest(branch, pr);
+      },
+      { provider, id, branch, pr: previewPullRequest },
+    );
+    if (provider === "codex")
+      await emit(page, "turn/completed", {
+        threadId: id,
+        turn: { id: "turn-1", status: "completed" },
+      });
+    else
+      await emit(
+        page,
+        "session.execution.succeeded",
+        { sessionID: id },
+        "opencode",
+      );
+    await page.evaluate(() =>
+      (window as any).fixture.release("session_details"),
+    );
+    await expect(row.locator(".session-branch")).toHaveText(branch);
+    await expect(
+      row.getByRole("button", { name: /pull request #44/ }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "Pull requests", exact: true })
+        .getByRole("button", { name: /View pull request #44/ }),
+    ).toContainText("2 sessions");
+  });
+}
+
+test("session PR indicators stay scoped through branch and project changes and delayed responses", async ({
   page,
 }) => {
   await page.clock.install();
   await desktop(page);
   const projects = page.getByRole("navigation", { name: "Open projects" });
-  const current = projects.getByRole("button", { name: "caelum", exact: true });
+  const current = sessionRow(page, "Refine the session workspace");
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.setGitMetadata({
-      repositoryRoot: "/work/caelum",
+    fixture.setSessionDetails("codex", "thread-a", {
       branch: "feat/shared",
+      branchIsCurrent: false,
+      changes: null,
     });
     fixture.setPullRequest("feat/shared", {
       number: 10,
@@ -6351,9 +9798,11 @@ test("branch PR indicators stay scoped through branch and project changes and de
       isDraft: false,
     });
     fixture.hold("github_open_pull_request:/work/caelum:feat/shared");
-    window.dispatchEvent(new Event("focus"));
   });
-  await expect(current.locator(".project-branch")).toHaveText("feat/shared");
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await expect(current.locator(".session-branch")).toHaveText("feat/shared");
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -6367,9 +9816,10 @@ test("branch PR indicators stay scoped through branch and project changes and de
     .toBe(true);
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.setGitMetadata({
-      repositoryRoot: "/work/caelum",
+    fixture.setSessionDetails("codex", "thread-a", {
       branch: "feat/current",
+      branchIsCurrent: false,
+      changes: null,
     });
     fixture.setPullRequest("feat/current", {
       number: 20,
@@ -6377,10 +9827,12 @@ test("branch PR indicators stay scoped through branch and project changes and de
       url: "https://github.com/example/caelum/pull/20",
       isDraft: false,
     });
-    window.dispatchEvent(new Event("focus"));
   });
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
   await expect(
-    current.getByRole("img", {
+    current.getByRole("button", {
       name: "Open pull request #20: Current branch",
       exact: true,
     }),
@@ -6388,10 +9840,6 @@ test("branch PR indicators stay scoped through branch and project changes and de
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     fixture.release("github_open_pull_request:/work/caelum:feat/shared");
-    fixture.setGitMetadata(
-      { repositoryRoot: "/work/other", branch: "feat/current" },
-      "/work/other",
-    );
     fixture.setPullRequest(
       "feat/current",
       {
@@ -6404,33 +9852,41 @@ test("branch PR indicators stay scoped through branch and project changes and de
     );
   });
   await page.getByRole("button", { name: "Open project", exact: true }).click();
-  const other = projects.getByRole("button", { name: "other", exact: true });
   await expect(
-    other.getByRole("img", {
+    current.getByRole("button", {
       name: "Open pull request #30: Other repository",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    current.getByRole("img", {
+    current.getByRole("button", { name: /#20: Current branch/ }),
+  ).toHaveCount(0);
+  await projects.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(
+    current.getByRole("button", {
       name: "Open pull request #20: Current branch",
       exact: true,
     }),
   ).toBeVisible();
-  await expect(current.getByRole("img", { name: /Old branch/ })).toHaveCount(0);
+  await expect(current.getByRole("button", { name: /Old branch/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    current.getByRole("button", { name: /#30: Other repository/ }),
+  ).toHaveCount(0);
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
-    fixture.setGitMetadata({ repositoryRoot: "/work/caelum", branch: null });
-    fixture.setGitMetadata(
-      { repositoryRoot: null, branch: null },
-      "/work/other",
-    );
-    window.dispatchEvent(new Event("focus"));
+    fixture.setSessionDetails("codex", "thread-a", {
+      branch: null,
+      branchIsCurrent: false,
+      changes: null,
+    });
   });
-  await expect(current.locator(".project-branch")).toHaveText("Detached HEAD");
-  await expect(current.getByRole("img")).toHaveCount(0);
-  await expect(other).toContainText("Not a Git repository");
-  await expect(other.getByRole("img")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Refresh sessions", exact: true })
+    .click();
+  await expect(current.locator(".session-branch")).toHaveCount(0);
+  await expect(current.locator(".branch-pr-trigger")).toHaveCount(0);
   expect(
     await page.evaluate(() =>
       (window as any).fixture.calls.filter(
@@ -6451,9 +9907,14 @@ test("project rows show scoped live Git details and background activity, includi
     name: "caelum",
     exact: true,
   });
-  await expect(current.locator(".project-path")).toHaveText("/work/caelum");
-  await expect(current.locator(".project-branch")).toHaveText("main");
-  await expect(current.locator(".project-changes")).toHaveText("2 changed");
+  const currentDetails = current.locator("..");
+  await expect(currentDetails.locator(".project-path")).toHaveText(
+    "/work/caelum",
+  );
+  await expect(currentDetails.locator(".project-branch")).toHaveText("main");
+  await expect(currentDetails.locator(".project-changes")).toHaveText(
+    "2 changed",
+  );
   await expect(current).toHaveAccessibleDescription(
     /\/work\/caelum.*main.*2 changed/,
   );
@@ -6469,14 +9930,17 @@ test("project rows show scoped live Git details and background activity, includi
   await page.getByRole("button", { name: "Open project", exact: true }).click();
   const other = projects.getByRole("button", { name: "other", exact: true });
   await expect(other).toHaveAttribute("aria-current", "page");
-  await expect(other).toContainText("Checking Git…");
+  const otherDetails = other.locator("..");
+  await expect(otherDetails).toContainText("Checking Git…");
   await expect(current.locator(".running-dot")).toBeVisible();
   await current.click();
   await page.evaluate(() =>
     (window as any).fixture.release("git_repository_status:/work/other"),
   );
-  await expect(other).toContainText("Git unavailable");
-  await expect(current.locator(".project-changes")).toHaveText("2 changed");
+  await expect(otherDetails).toContainText("Git unavailable");
+  await expect(currentDetails.locator(".project-changes")).toHaveText(
+    "2 changed",
+  );
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     fixture.setGitError(null, "/work/other");
@@ -6491,9 +9955,9 @@ test("project rows show scoped live Git details and background activity, includi
     fixture.setGitFiles([]);
     window.dispatchEvent(new Event("focus"));
   });
-  await expect(other).toContainText("Not a Git repository");
-  await expect(current.locator(".project-changes")).toHaveText("Clean");
-  await expect(current.locator(".project-branch")).toHaveAttribute(
+  await expect(otherDetails).toContainText("Not a Git repository");
+  await expect(currentDetails.locator(".project-changes")).toHaveText("Clean");
+  await expect(currentDetails.locator(".project-branch")).toHaveAttribute(
     "title",
     "Current branch: feat/a-long-branch-that-stays-within-the-project-row",
   );
@@ -6515,8 +9979,10 @@ test("project rows show scoped live Git details and background activity, includi
     ]);
   });
   await page.clock.runFor(30100);
-  await expect(other.locator(".project-branch")).toHaveText("Detached HEAD");
-  await expect(other.locator(".project-changes")).toHaveText("Clean");
+  await expect(otherDetails.locator(".project-branch")).toHaveText(
+    "Detached HEAD",
+  );
+  await expect(otherDetails.locator(".project-changes")).toHaveText("Clean");
   await expect(current).toHaveAccessibleDescription(
     /Running session.*Approval required/,
   );

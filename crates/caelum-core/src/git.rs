@@ -28,6 +28,12 @@ pub struct GitClient {
     executable: OsString,
 }
 
+/// The checkout identity and its current branch, without reading file changes.
+pub struct GitBranchContext {
+    pub root: PathBuf,
+    pub branch: Option<String>,
+}
+
 impl Default for GitClient {
     fn default() -> Self {
         Self::new()
@@ -72,6 +78,23 @@ impl GitClient {
             branch: (!branch.is_empty()).then_some(branch),
             changes: self.project_status_changes(&project, &repository_root)?,
         })
+    }
+
+    pub fn branch_context(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<Option<GitBranchContext>, GitError> {
+        let project = Project::open(project_path)?;
+        let Some(root) = self.repository_root(&project)? else {
+            return Ok(None);
+        };
+        let output = self.run(&project, &["branch", "--show-current"])?;
+        self.require_success(&output, "read current branch")?;
+        let branch = output_text(&output.stdout).trim().to_owned();
+        Ok(Some(GitBranchContext {
+            root,
+            branch: (!branch.is_empty()).then_some(branch),
+        }))
     }
 
     pub fn file_diff(
@@ -912,24 +935,22 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn reports_git_command_failures_with_the_git_error_message() {
-        use std::os::unix::fs::PermissionsExt;
-
         let directory = TestDirectory::new("command-error");
         let project = directory.init_repository();
         let executable = directory.0.join("failing-git");
-        fs::write(
+        crate::test_support::write_executable(
             &executable,
             "#!/bin/sh\necho 'intentional Git failure' >&2\nexit 42\n",
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&executable).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&executable, permissions).unwrap();
+        );
 
-        assert!(matches!(
-            GitClient::with_executable(executable).repository_status(&project),
-            Err(GitError::CommandFailed { message, .. }) if message == "intentional Git failure"
-        ));
+        let result = GitClient::with_executable(executable).repository_status(&project);
+        assert!(
+            matches!(
+                &result,
+                Err(GitError::CommandFailed { message, .. }) if message == "intentional Git failure"
+            ),
+            "unexpected Git result: {result:?}"
+        );
     }
 
     #[cfg(unix)]

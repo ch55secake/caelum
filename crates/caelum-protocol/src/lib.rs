@@ -74,6 +74,134 @@ pub struct GitHubPullRequest {
     pub is_draft: bool,
 }
 
+/// On-demand GitHub metadata for a pull request, independent of the checkout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestDetails {
+    #[serde(flatten)]
+    pub pull_request: GitHubPullRequest,
+    pub body: String,
+    pub state: String,
+    pub author: Option<GitHubAuthor>,
+    pub base_ref_name: String,
+    pub head_ref_name: String,
+    pub head_ref_oid: String,
+    pub mergeable: String,
+    pub merge_state_status: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub changed_files: u64,
+    pub review_decision: Option<String>,
+    pub status_check_rollup: Option<Vec<GitHubStatusCheck>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubAuthor {
+    pub login: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestFile {
+    #[serde(alias = "filename")]
+    pub path: String,
+    pub status: String,
+    #[serde(alias = "previous_filename")]
+    pub previous_path: Option<String>,
+    pub additions: u64,
+    pub deletions: u64,
+    pub patch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestFiles {
+    pub files: Vec<GitHubPullRequestFile>,
+    pub base_oid: String,
+    pub next_page: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubFeedbackKind {
+    Discussion,
+    Reviews,
+    Threads,
+    Replies,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubReviewComment {
+    pub id: String,
+    pub body: String,
+    pub url: String,
+    pub author: Option<GitHubAuthor>,
+    pub created_at: String,
+    pub state: Option<String>,
+    pub diff_hunk: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubReviewThread {
+    pub id: String,
+    pub path: String,
+    pub line: Option<u64>,
+    pub start_line: Option<u64>,
+    pub original_line: Option<u64>,
+    pub diff_side: String,
+    pub is_resolved: bool,
+    pub is_outdated: bool,
+    pub comments: Vec<GitHubReviewComment>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestFeedback {
+    pub comments: Vec<GitHubReviewComment>,
+    pub threads: Vec<GitHubReviewThread>,
+    pub next_cursor: Option<String>,
+}
+
+/// GitHub exposes both Actions check runs and legacy commit statuses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "__typename")]
+pub enum GitHubStatusCheck {
+    CheckRun {
+        name: String,
+        status: String,
+        conclusion: Option<String>,
+        #[serde(rename = "detailsUrl")]
+        details_url: Option<String>,
+        #[serde(rename = "startedAt")]
+        started_at: Option<String>,
+        #[serde(rename = "completedAt")]
+        completed_at: Option<String>,
+    },
+    StatusContext {
+        context: String,
+        state: String,
+        #[serde(rename = "targetUrl")]
+        target_url: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubMergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubMergeResult {
+    pub merged: bool,
+    pub message: String,
+}
+
 /// Separate staged, unstaged, and untracked diffs for one changed path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

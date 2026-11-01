@@ -10,7 +10,7 @@ use caelum_protocol::{PersistedProject, ProjectInfo, WorkspaceSnapshot};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 4;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 const PROVIDERS: [&str; 2] = ["codex", "opencode"];
 
 /// Thread-safe access to Caelum's app-owned workspace metadata database.
@@ -369,6 +369,41 @@ impl WorkspaceDatabase {
         Ok(())
     }
 
+    /// Branches observed while a session executes survive listing, archive/undo,
+    /// and app restarts. A stored NULL means an observed detached HEAD.
+    pub fn session_branch(
+        &self,
+        path: &str,
+        provider: &str,
+        session_id: &str,
+    ) -> Result<Option<Option<String>>, DatabaseError> {
+        validate_provider(provider)?;
+        Ok(self.lock().query_row(
+            "SELECT branch FROM session_branches WHERE project_path = ?1 AND provider = ?2 AND session_id = ?3",
+            params![path, provider, session_id],
+            |row| row.get(0),
+        ).optional()?)
+    }
+
+    pub fn record_session_branch(
+        &self,
+        path: &str,
+        provider: &str,
+        session_id: &str,
+        branch: Option<&str>,
+    ) -> Result<(), DatabaseError> {
+        validate_nonempty("project path", path)?;
+        validate_provider(provider)?;
+        validate_nonempty("session ID", session_id)?;
+        self.lock().execute(
+            "INSERT INTO session_branches (project_path, provider, session_id, branch)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(project_path, provider, session_id) DO UPDATE SET branch = excluded.branch",
+            params![path, provider, session_id, branch],
+        )?;
+        Ok(())
+    }
+
     fn lock(&self) -> MutexGuard<'_, Connection> {
         self.connection
             .lock()
@@ -526,6 +561,20 @@ fn migrate(connection: &mut Connection) -> Result<(), DatabaseError> {
              CREATE INDEX project_root_idx ON projects(root_path);",
         )?;
         transaction.pragma_update(None, "user_version", 4)?;
+        transaction.commit()?;
+    }
+    if version < 5 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE session_branches (
+                project_path TEXT NOT NULL,
+                provider TEXT NOT NULL CHECK (provider IN ('codex', 'opencode')),
+                session_id TEXT NOT NULL,
+                branch TEXT,
+                PRIMARY KEY (project_path, provider, session_id)
+             );",
+        )?;
+        transaction.pragma_update(None, "user_version", 5)?;
         transaction.commit()?;
     }
     Ok(())
@@ -820,7 +869,8 @@ mod tests {
             .unwrap();
         database.set_active_project(Some("/work/kept")).unwrap();
         database.lock().execute_batch(
-            "DROP TABLE sessions;
+            "DROP TABLE session_branches;
+             DROP TABLE sessions;
              CREATE TABLE sessions (
                 project_path TEXT NOT NULL REFERENCES projects(path) ON DELETE CASCADE,
                 provider TEXT NOT NULL CHECK (provider IN ('codex', 'opencode')),
