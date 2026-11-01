@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  ExternalLink,
-  FileDiff,
-  MessageSquare,
-  RefreshCw,
-  Send,
-} from "lucide-react";
+import { ExternalLink, MessageSquare, RefreshCw, Send } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DiffSection } from "./DiffSection.js";
@@ -34,7 +28,7 @@ const unique = <T extends { id: string }>(items: T[]) => [
   ...new Map(items.map((item) => [item.id, item])).values(),
 ];
 
-function PageStatus({
+export function PageStatus({
   resource,
   label,
 }: {
@@ -75,101 +69,6 @@ function PageStatus({
         </button>
       )}
     </>
-  );
-}
-
-export function PullRequestFiles({ projectPath, pr, open }: Props) {
-  const resource = usePullRequestReview({
-    projectPath,
-    url: pr.url,
-    headOid: pr.headRefOid,
-    kind: "files",
-  });
-  const files = [
-    ...new Map(
-      resource.pages
-        .flatMap((page) => page.files ?? [])
-        .map((file) => [file.path, file]),
-    ).values(),
-  ];
-  const [selected, setSelected] = useState<string>();
-  const file = files.find((file) => file.path === selected) ?? files[0];
-  return (
-    <section className="pr-files" aria-label="Pull request files">
-      <div className="pr-review-toolbar">
-        <span>
-          {files.length} of {pr.changedFiles} files ·{" "}
-          <code>{pr.headRefOid.slice(0, 7)}</code>
-        </span>
-        <button
-          type="button"
-          onClick={resource.refresh}
-          disabled={resource.loading}
-        >
-          <RefreshCw size={13} />
-          Refresh files
-        </button>
-      </div>
-      <PageStatus resource={resource} label="files" />
-      {!resource.loading && !resource.error && !files.length && (
-        <p className="pr-muted">No changed files.</p>
-      )}
-      {files.length > 0 && (
-        <div className="pr-file-layout">
-          <nav className="pr-file-list" aria-label="Changed files">
-            {files.map((entry) => (
-              <button
-                type="button"
-                key={entry.path}
-                onClick={() => setSelected(entry.path)}
-                aria-current={entry.path === file?.path ? "true" : undefined}
-                title={entry.path}
-              >
-                <FileDiff size={13} />
-                <span>{entry.path}</span>
-                <span className="lines-added">+{entry.additions}</span>
-                <span className="lines-deleted">−{entry.deletions}</span>
-              </button>
-            ))}
-          </nav>
-          {file && (
-            <div className="pr-file-diff">
-              <div className="pr-file-heading">
-                <strong>{file.path}</strong>
-                <span>{file.status}</span>
-                {file.previousPath && (
-                  <span>Renamed from {file.previousPath}</span>
-                )}
-              </div>
-              {file.patch ? (
-                <DiffSection
-                  path={file.path}
-                  title="Changes"
-                  content={file.patch}
-                />
-              ) : (
-                <p className="pr-muted">
-                  GitHub did not provide a text patch for this file. It may be
-                  binary, too large, or renamed without changes.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      {!resource.hasMore &&
-        files.length > 0 &&
-        files.length < pr.changedFiles && (
-          <p className="pr-muted">GitHub returned a partial file list.</p>
-        )}
-      <button
-        className="pr-external-action"
-        type="button"
-        onClick={() => open(`${pr.url}/files`)}
-      >
-        View full diff on GitHub <ExternalLink size={12} />
-      </button>
-    </section>
   );
 }
 

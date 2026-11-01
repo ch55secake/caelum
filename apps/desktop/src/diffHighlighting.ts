@@ -1,14 +1,21 @@
 export type DiffLine = {
   text: string;
   kind: "meta" | "hunk" | "context" | "added" | "removed";
+  oldLine?: number;
+  newLine?: number;
 };
 export type SyntaxToken = { offset: number; type: string };
 
 export function diffLines(content: string): DiffLine[] {
   let inHunk = false;
+  let oldLine = 0;
+  let newLine = 0;
   return content.split("\n").map((text) => {
-    if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(text)) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
+    if (hunk) {
       inHunk = true;
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
       return { text, kind: "hunk" };
     }
     if (text.startsWith("diff ")) inHunk = false;
@@ -17,7 +24,14 @@ export function diffLines(content: string): DiffLine[] {
           text[0] as "+" | "-" | " "
         ]
       : undefined;
-    return { text, kind: kind ?? "meta" };
+    return {
+      text,
+      kind: kind ?? "meta",
+      ...(kind === "removed" || kind === "context"
+        ? { oldLine: oldLine++ }
+        : {}),
+      ...(kind === "added" || kind === "context" ? { newLine: newLine++ } : {}),
+    };
   });
 }
 

@@ -13,11 +13,15 @@ export function DiffSection({
   path,
   content,
   highlights,
+  numbered = false,
+  hideHeading = false,
 }: {
   title: string;
   path: string;
   content: string;
   highlights?: number[];
+  numbered?: boolean;
+  hideHeading?: boolean;
 }) {
   const contextMenu = useContextMenu();
   const lines = useMemo(() => diffLines(content), [content]);
@@ -33,8 +37,13 @@ export function DiffSection({
         ])
       }
     >
-      <h2>{title}</h2>
-      <DiffCode path={path} lines={lines} highlights={highlights} />
+      {!hideHeading && <h2>{title}</h2>}
+      <DiffCode
+        path={path}
+        lines={lines}
+        highlights={highlights}
+        numbered={numbered}
+      />
     </section>
   );
 }
@@ -43,10 +52,12 @@ export function DiffCode({
   path,
   lines,
   highlights,
+  numbered = false,
 }: {
   path: string;
   lines: DiffLine[];
   highlights?: number[];
+  numbered?: boolean;
 }) {
   const [highlighted, setHighlighted] = useState<{
     lines: typeof lines;
@@ -79,8 +90,8 @@ export function DiffCode({
       ? highlighted.tokens
       : null;
   return (
-    <pre>
-      {lines.map(({ text, kind }, index) => {
+    <pre className={numbered ? "diff-numbered" : undefined}>
+      {lines.map(({ text, kind, oldLine, newLine }, index) => {
         const lineTokens = tokens?.get(index);
         return (
           <span
@@ -88,24 +99,47 @@ export function DiffCode({
             data-latest-change={marked.has(index) || undefined}
             key={index}
           >
-            {lineTokens ? (
+            {numbered && (
               <>
-                <span className="diff-marker">{text[0]}</span>
-                {lineTokens.map((token, tokenIndex) => (
-                  <span key={token.offset} className={syntaxClass(token.type)}>
-                    {text.slice(
-                      token.offset + 1,
-                      lineTokens[tokenIndex + 1]
-                        ? lineTokens[tokenIndex + 1].offset + 1
-                        : undefined,
-                    )}
-                  </span>
-                ))}
+                <span
+                  className="diff-line-number"
+                  data-side="old"
+                  aria-hidden="true"
+                >
+                  {oldLine}
+                </span>
+                <span
+                  className="diff-line-number"
+                  data-side="new"
+                  aria-hidden="true"
+                >
+                  {newLine}
+                </span>
               </>
-            ) : (
-              text
             )}
-            {index < lines.length - 1 ? "\n" : ""}
+            <span className="diff-source">
+              {lineTokens ? (
+                <>
+                  <span className="diff-marker">{text[0]}</span>
+                  {lineTokens.map((token, tokenIndex) => (
+                    <span
+                      key={token.offset}
+                      className={syntaxClass(token.type)}
+                    >
+                      {text.slice(
+                        token.offset + 1,
+                        lineTokens[tokenIndex + 1]
+                          ? lineTokens[tokenIndex + 1].offset + 1
+                          : undefined,
+                      )}
+                    </span>
+                  ))}
+                </>
+              ) : (
+                text
+              )}
+              {index < lines.length - 1 ? "\n" : ""}
+            </span>
           </span>
         );
       })}

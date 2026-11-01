@@ -6500,7 +6500,7 @@ async function preparePullRequestReview(
   return page.getByRole("region", { name: "Pull request #44", exact: true });
 }
 
-test("PR files load on demand with themed diffs, renames, pagination and retained errors", async ({
+test("PR files load on demand as continuous diffs with renames, automatic pagination and retained errors", async ({
   page,
 }) => {
   const screen = await preparePullRequestReview(page);
@@ -6521,24 +6521,28 @@ test("PR files load on demand with themed diffs, renames, pagination and retaine
   await expect(
     screen.getByRole("tab", { name: "Files changed (3)" }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(screen.locator(".pr-file-heading")).toContainText(
-    "Renamed from src/old name.ts",
-  );
-  await expect(screen.locator(".diff-line.added")).toContainText("newValue");
-  await expect(screen.locator(".diff-line.removed")).toContainText("oldValue");
+  const source = screen.getByRole("article", {
+    name: "Diff for src/new name.ts",
+    exact: true,
+  });
+  const readme = screen.getByRole("article", {
+    name: "Diff for README.md",
+    exact: true,
+  });
+  await expect(source).toContainText("Renamed from src/old name.ts");
+  await expect(source.locator(".diff-line.added")).toContainText("newValue");
+  await expect(source.locator(".diff-line.removed")).toContainText("oldValue");
   await screen
     .getByRole("navigation", { name: "Changed files" })
     .getByRole("button", { name: /assets\/logo.png/ })
     .click();
   await expect(screen).toContainText("GitHub did not provide a text patch");
-  await screen
-    .getByRole("button", { name: "Load more files", exact: true })
-    .click();
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(3);
   await screen
     .getByRole("navigation", { name: "Changed files" })
     .getByRole("button", { name: /README.md/ })
     .click();
-  await expect(screen.locator(".diff-line.added")).toContainText(
+  await expect(readme.locator(".diff-line.added")).toContainText(
     "More documentation",
   );
   await expect(
@@ -6567,7 +6571,7 @@ test("PR files load on demand with themed diffs, renames, pagination and retaine
   await expect(screen.getByRole("alert")).toContainText(
     "Showing the last loaded results",
   );
-  await expect(screen.locator(".diff-line.added")).toContainText(
+  await expect(readme.locator(".diff-line.added")).toContainText(
     "More documentation",
   );
   await page.evaluate(() =>
@@ -6577,15 +6581,180 @@ test("PR files load on demand with themed diffs, renames, pagination and retaine
     .getByRole("button", { name: "Retry files", exact: true })
     .click();
   await expect(screen.getByRole("alert")).toHaveCount(0);
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(3);
   const calls = await page.evaluate(() =>
     (window as any).fixture.calls.filter(
       (call: any) => call.command === "github_pull_request_files",
     ),
   );
-  expect(calls.map((call: any) => call.args.page)).toEqual([1, 2, 1, 1]);
+  expect(calls.map((call: any) => call.args.page)).toEqual([1, 2, 1, 1, 2]);
   expect(
     calls.every((call: any) => call.args.url === previewPullRequest.url),
   ).toBe(true);
+});
+
+test("PR file diffs scroll through full patches with sticky navigation, line numbers and collapsible files", async ({
+  page,
+}) => {
+  const screen = await preparePullRequestReview(page);
+  await page.evaluate((url) => {
+    const fixture = (window as any).fixture;
+    const patch = (count: number) =>
+      `@@ -0,0 +1,${count} @@\n${Array.from({ length: count }, (_, i) => `+const value${i} = ${i};`).join("\n")}`;
+    const file = (path: string, text: string) => ({
+      path,
+      previousPath: null,
+      status: "modified",
+      additions: 100,
+      deletions: 1,
+      patch: text,
+    });
+    fixture.setPullRequestPage(url, "files", 1, {
+      baseOid: "base",
+      files: [
+        file(
+          "src/review.ts",
+          `@@ -10,3 +20,4 @@\n keep\n-old\n+new\n+extra\n end\n\\ No newline at end of file\n${patch(140)}`,
+        ),
+        file("docs/guide.md", patch(100)),
+      ],
+      nextPage: 2,
+    });
+    fixture.setPullRequestPage(url, "files", 2, {
+      baseOid: "base",
+      files: [file("src/last.ts", patch(80))],
+      nextPage: null,
+    });
+  }, previewPullRequest.url);
+  await screen
+    .getByRole("tab", { name: "Files changed (3)", exact: true })
+    .click();
+  const source = screen.getByRole("article", {
+    name: "Diff for src/review.ts",
+    exact: true,
+  });
+  const nav = screen.getByRole("navigation", {
+    name: "Changed files",
+    exact: true,
+  });
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(2);
+  await expect(
+    source.locator('.diff-line.context [data-side="old"]'),
+  ).toHaveText(["10", "12"]);
+  await expect(
+    source.locator('.diff-line.context [data-side="new"]'),
+  ).toHaveText(["20", "23"]);
+  await expect(
+    source.locator('.diff-line.removed [data-side="old"]'),
+  ).toHaveText("11");
+  await expect(
+    source.locator('.diff-line.removed [data-side="new"]'),
+  ).toHaveText("");
+  await expect(
+    source.locator('.diff-line.added [data-side="new"]').nth(2),
+  ).toHaveText("1");
+  expect(
+    await source.locator("pre").evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(2000);
+  expect(
+    await source
+      .locator("pre")
+      .evaluate((element) => element.scrollHeight <= element.clientHeight + 1),
+  ).toBe(true);
+  const bounds = (await screen.boundingBox())!;
+  await page.mouse.move(
+    bounds.x + bounds.width - 120,
+    bounds.y + bounds.height / 2,
+  );
+  await page.mouse.wheel(0, 850);
+  await expect
+    .poll(() => screen.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(600);
+  await expect
+    .poll(() =>
+      source.locator(".pr-file-heading").evaluate((element) => {
+        const screen = element.closest(".pr-screen")!;
+        const bar = screen.querySelector(".pr-files-toolbar")!;
+        return Math.abs(
+          element.getBoundingClientRect().top -
+            bar.getBoundingClientRect().bottom,
+        );
+      }),
+    )
+    .toBeLessThan(2);
+  await expect(
+    nav.getByRole("button", { name: /src\/review.ts/ }),
+  ).toHaveAttribute("aria-current", "true");
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(2);
+  await page.screenshot({ path: "test-results/pr-continuous-diff-dark.png" });
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError(
+      "github_pull_request_files",
+      "Next page unavailable",
+    ),
+  );
+  await nav.getByRole("button", { name: /docs\/guide.md/ }).click();
+  await page.mouse.move(
+    bounds.x + bounds.width - 120,
+    bounds.y + bounds.height / 2,
+  );
+  await page.mouse.wheel(0, 1400);
+  await expect(screen.getByRole("alert")).toContainText(
+    "Next page unavailable",
+  );
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(2);
+  await page.evaluate(() =>
+    (window as any).fixture.setCommandError("github_pull_request_files", null),
+  );
+  await screen
+    .getByRole("button", { name: "Retry files", exact: true })
+    .click();
+  await expect(screen.locator(".pr-file-diff")).toHaveCount(3);
+  const calls = await page.evaluate(() =>
+    (window as any).fixture.calls
+      .filter((call: any) => call.command === "github_pull_request_files")
+      .map((call: any) => call.args.page),
+  );
+  expect(calls).toEqual([1, 2, 2]);
+  await nav.getByRole("button", { name: /src\/last.ts/ }).click();
+  await expect(
+    nav.getByRole("button", { name: /src\/last.ts/ }),
+  ).toHaveAttribute("aria-current", "true");
+  await screen
+    .getByRole("button", { name: "Collapse all", exact: true })
+    .click();
+  await expect(screen.locator(".pr-file-body:visible")).toHaveCount(0);
+  await nav.getByRole("button", { name: /src\/last.ts/ }).click();
+  await expect(
+    screen.getByRole("button", {
+      name: "Collapse diff for src/last.ts",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(screen.locator(".pr-file-body:visible")).toHaveCount(1);
+  await screen.getByRole("button", { name: "Expand all", exact: true }).click();
+  await expect(screen.locator(".pr-file-body:visible")).toHaveCount(3);
+  const width = await source.evaluate((element) => element.clientWidth);
+  await screen
+    .getByRole("button", { name: "Hide file list", exact: true })
+    .click();
+  await expect(nav).toBeHidden();
+  expect(
+    await source.evaluate((element) => element.clientWidth),
+  ).toBeGreaterThan(width);
+  await screen
+    .getByRole("button", { name: "Show file list", exact: true })
+    .click();
+  await nav.getByRole("button", { name: /src\/review.ts/ }).click();
+  await page.evaluate(() => (document.documentElement.dataset.theme = "light"));
+  await page.screenshot({ path: "test-results/pr-continuous-diff-light.png" });
+  await page.setViewportSize({ width: 860, height: 760 });
+  expect(
+    await screen.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth + 1,
+    ),
+  ).toBe(true);
+  await expect(source.locator("pre")).toBeVisible();
 });
 
 for (const provider of ["codex", "opencode"] as const) {

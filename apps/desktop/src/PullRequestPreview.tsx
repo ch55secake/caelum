@@ -37,10 +37,10 @@ import { usePullRequestDetails } from "./usePullRequestDetails.js";
 import { CheckStatusIcon, PullRequestChecks } from "./PullRequestChecks.js";
 import { PullRequestMerge } from "./PullRequestMerge.js";
 import {
-  PullRequestFiles,
   PullRequestComments,
   type ReviewSession,
 } from "./PullRequestReview.js";
+import { PullRequestFiles } from "./PullRequestFiles.js";
 import { copyAction, useContextMenu } from "./ContextMenu.js";
 
 export type PullRequestTarget = {
@@ -402,7 +402,7 @@ function PullRequestContent({
   };
   return (
     <div
-      className="pr-content"
+      className={`pr-content${expanded && tab === "files" ? " pr-content-files" : ""}`}
       onContextMenu={(event) =>
         menu(event, [
           copyAction("Copy pull request URL", pr.url),
@@ -586,6 +586,7 @@ function PullRequestContent({
                 projectPath={target.projectPath}
                 pr={details.value}
                 open={open}
+                active={tab === "files"}
               />
             </div>
           )}
