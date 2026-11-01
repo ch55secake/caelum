@@ -4545,10 +4545,20 @@ test("context menus support keyboard navigation, viewport edges, themes and dism
   await expect(menu).toHaveCount(0);
   await expect(project).toBeFocused();
 
-  await page
-    .locator("main")
-    .dispatchEvent("contextmenu", { clientX: 1279, clientY: 799 });
+  // Exercise pointer placement separately from keyboard invocation, and wait
+  // for the edge position before clicking the project outside the menu.
+  await page.mouse.click(1279, 799, { button: "right" });
   await expect(menu).toBeVisible();
+  await expect
+    .poll(async () => {
+      const bounds = await menu.boundingBox();
+      return (
+        bounds &&
+        Math.abs(bounds.x + bounds.width - 1272) < 1 &&
+        Math.abs(bounds.y + bounds.height - 792) < 1
+      );
+    })
+    .toBe(true);
   const bounds = (await menu.boundingBox())!;
   expect(bounds.x).toBeGreaterThanOrEqual(8);
   expect(bounds.y).toBeGreaterThanOrEqual(8);
