@@ -25,6 +25,7 @@ import { ToolActivity } from "./ToolActivity.js";
 import { conversationPresentation } from "../../domain/conversation/shellMessages.js";
 import { useContextMenu, copyAction } from "../primitives/ContextMenu.js";
 import { FileContextChips } from "../files/FileNavigation.js";
+import { PullRequestContextChips } from "../pull-requests/PullRequestContextChips.js";
 import { ChatImages } from "./ChatImage.js";
 
 function CompactionNotice({
@@ -480,6 +481,9 @@ export function Conversation({
                       <div className="user-text">{entry.text}</div>
                       {entry.fileContext && (
                         <FileContextChips files={entry.fileContext} />
+                      )}
+                      {entry.pullRequestContext && (
+                        <PullRequestContextChips pullRequests={entry.pullRequestContext} />
                       )}
                     </>
                   ) : (

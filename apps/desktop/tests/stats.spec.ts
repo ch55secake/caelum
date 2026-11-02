@@ -55,9 +55,17 @@ test("slash stats aggregates OpenCode history, filters by project and dates and 
     dialog.getByRole("region", { name: "Usage by model" }),
   ).toContainText("provider · high");
   await expect(
-    dialog.getByRole("meter", { name: "2026-10-01 model steps" }),
-  ).toHaveAttribute("value", "100");
+    dialog.getByRole("img", {
+      name: "2026-10-01: 100 model steps",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("columnheader")).toHaveCount(4);
   await dialog.screenshot({ path: "test-results/stats-compact.png" });
+  await dialog
+    .getByRole("button", { name: "Token details for model · provider · high" })
+    .click();
+  await expect(dialog.locator(".stats-model-tokens")).toContainText("5,000");
   const calls = () =>
     page.evaluate(() =>
       (window as any).fixture.calls
@@ -70,6 +78,19 @@ test("slash stats aggregates OpenCode history, filters by project and dates and 
     to: null,
   });
   await dialog.getByLabel("Statistics project").selectOption("project-two");
+  await dialog.getByRole("button", { name: "7 days", exact: true }).click();
+  const week = await page.evaluate(() => {
+    const to = new Date();
+    to.setHours(0, 0, 0, 0);
+    to.setDate(to.getDate() + 1);
+    const from = new Date(to);
+    from.setDate(from.getDate() - 7);
+    return { from: from.getTime(), to: to.getTime() };
+  });
+  await expect
+    .poll(async () => (await calls()).at(-1).filter)
+    .toMatchObject({ project: "project-two", ...week });
+  await dialog.getByRole("button", { name: "Custom", exact: true }).click();
   await dialog.getByLabel("Statistics from").fill("2026-10-01");
   await dialog.getByLabel("Statistics through").fill("2026-10-20");
   const bounds = await page.evaluate(() => ({

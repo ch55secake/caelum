@@ -36,7 +36,11 @@ test("side questions keep the main draft, attachments and running turn intact", 
     },
     "opencode",
   );
+  await expect(
+    page.getByText("Continuing the main task.", { exact: true }),
+  ).toBeVisible();
   const transcript = await page.locator(".transcript-content").innerText();
+  await input.fill("Keep my main draft α");
   await expect(
     page.getByRole("button", { name: "Ask a side question", exact: true }),
   ).toHaveCount(0);
@@ -55,9 +59,19 @@ test("side questions keep the main draft, attachments and running turn intact", 
   await question.fill("Explain this independently α\nSecond line");
   await page.evaluate(() => (window as any).fixture.hold("opencode_generate"));
   await question.press("Enter");
-  await expect(input).toBeFocused();
-  await input.fill("Keep my main draft α");
-  await expect(input).toBeInViewport({ ratio: 1 });
+  await expect(input).toHaveCount(0);
+  await expect(dialog).toBeFocused();
+  await expect(dialog).toBeInViewport({ ratio: 1 });
+  await emit(
+    page,
+    "session.text.delta",
+    {
+      sessionID: "ses-a",
+      assistantMessageID: "main-answer",
+      delta: " Still progressing.",
+    },
+    "opencode",
+  );
   await page.evaluate(() =>
     (window as any).fixture.release("opencode_generate"),
   );
@@ -65,9 +79,11 @@ test("side questions keep the main draft, attachments and running turn intact", 
     dialog.getByRole("region", { name: "Side answer" }),
   ).toContainText("Short answer");
   await expect(dialog.locator("strong")).toHaveText("Short answer");
-  await expect(input).toBeFocused();
+  await expect(dialog).toBeFocused();
   await expect(
-    page.getByText("Continuing the main task.", { exact: true }),
+    page.getByText("Continuing the main task. Still progressing.", {
+      exact: true,
+    }),
   ).toBeInViewport();
   expect(
     await page.locator(".transcript").evaluate((node) => node.clientHeight),
@@ -84,16 +100,20 @@ test("side questions keep the main draft, attachments and running turn intact", 
   await expect(question).toHaveValue(
     "Explain this independently α\nSecond line",
   );
-  await expect(input).toHaveValue("Keep my main draft α");
+  await expect(input).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(input).toHaveValue("Keep my main draft α");
+  await expect(input).toBeFocused();
   await expect(attachedContext(page)).toContainText("README.md");
   await expect(
     page.getByRole("button", { name: "Stop generation", exact: true }),
   ).toBeVisible();
   expect(await page.locator(".transcript-content").innerText()).toBe(
-    transcript,
+    transcript.replace(
+      "Continuing the main task.",
+      "Continuing the main task. Still progressing.",
+    ),
   );
   const calls = await page.evaluate(() =>
     (window as any).fixture.calls.filter((call: any) =>
@@ -179,7 +199,7 @@ test("slash btw asks once, retries without losing the question and ignores late 
   await expect(
     dialog.getByRole("button", { name: "Edit side question" }),
   ).toBeDisabled();
-  await input.focus();
+  await dialog.focus();
   await page.keyboard.press("Escape");
   await input.fill("Main draft after dismissal");
   await page

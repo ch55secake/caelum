@@ -25,6 +25,7 @@ import {
 import { FileNavigation } from "../ui/files/FileNavigation.js";
 import type { FileLocation } from "../domain/files/fileContext.js";
 import { useWorkspace } from "../application/workspace/useWorkspace.js";
+import { useSessionPullRequests } from "../application/github/useSessionPullRequests.js";
 import { useSidebarView } from "../ui/sidebar/useSidebarView.js";
 import { Sidebar } from "../ui/sidebar/Sidebar.js";
 import { ApprovalCard, Conversation } from "../ui/conversation/Conversation.js";
@@ -47,6 +48,17 @@ import {
 export default function App() {
   const preferences = useSettings();
   const app = useWorkspace(preferences.settings);
+  const sessionPullRequests = useSessionPullRequests(
+    app,
+    app.projectSessions
+      .filter(
+        (session) =>
+          session.project.path === app.project?.path &&
+          session.provider === app.provider &&
+          session.id === app.selectedId,
+      )
+      .map((session) => ({ ...session, title: sessionTitle(session) })),
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number | null>(() => {
@@ -707,6 +719,13 @@ export default function App() {
                       []
                     }
                     removeFileContext={app.removeFileContext}
+                    pullRequests={sessionPullRequests}
+                    pullRequestContext={app.selected?.pullRequestContext ?? []}
+                    removePullRequestContext={app.removePullRequestContext}
+                    addPullRequestContext={(pr) =>
+                      currentSessionKey.current === sessionKey &&
+                      app.addPullRequestContext(pr)
+                    }
                     addFileContext={(file) =>
                       currentSessionKey.current === sessionKey && app.addFileContext(file)
                     }

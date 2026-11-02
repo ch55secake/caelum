@@ -24,6 +24,9 @@ for (const provider of ["codex", "opencode"]) {
     await expect(input).toHaveAttribute("aria-activedescendant", /.+/);
     await input.press("Tab");
     await expect(input).toHaveValue('Review @"docs/hello world.md" carefully');
+    expect(
+      await input.evaluate((node: HTMLTextAreaElement) => node.selectionStart),
+    ).toBe('Review @"docs/hello world.md" '.length);
     await expect(attachedContext(page)).toContainText("docs/hello world.md");
     await expect(list).toHaveCount(0);
     await expect(input).toBeFocused();

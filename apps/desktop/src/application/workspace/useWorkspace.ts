@@ -31,9 +31,14 @@ import {
 } from "../../domain/composer/slashCommands.js";
 import {
   MAX_FILE_CONTEXT,
-  promptWithFileContext,
   type FileContext,
 } from "../../domain/files/fileContext.js";
+import { promptWithContext } from "../../domain/composer/promptContext.js";
+import {
+  MAX_PULL_REQUEST_CONTEXT,
+  promptWithPullRequests,
+  type PullRequestContext,
+} from "../../domain/pull-requests/pullRequestContext.js";
 import {
   newSessionOptions,
   type AppSettings,
@@ -1798,6 +1803,34 @@ export function useWorkspace(settings: AppSettings) {
     }
   }
 
+  function updatePullRequestContext(
+    change: (prs: PullRequestContext[]) => PullRequestContext[],
+  ) {
+    if (
+      !project ||
+      !selectedId ||
+      unavailable(project.path, provider, selectedId)
+    ) return;
+    mutateSession(project.path, provider, selectedId, (value) => ({
+      ...value,
+      pullRequestContext: change(value.pullRequestContext),
+    }));
+  }
+  function addPullRequestContext(pr: PullRequestContext) {
+    if (
+      !project ||
+      !selectedId ||
+      unavailable(project.path, provider, selectedId)
+    ) return false;
+    const session =
+      state.current[project.path]?.providers[provider].sessionsById[selectedId];
+    if (!session || session.isSubmitting) return false;
+    const rest = session.pullRequestContext.filter((item) => item.url !== pr.url);
+    if (rest.length >= MAX_PULL_REQUEST_CONTEXT) return false;
+    updatePullRequestContext(() => [...rest, pr]);
+    return true;
+  }
+
   async function enqueueMessage(
     path: string,
     kind: ProviderKind,
@@ -1830,6 +1863,7 @@ export function useWorkspace(settings: AppSettings) {
       ...value,
       draft: "",
       fileContext: [],
+      pullRequestContext: [],
       model: remote ? value.model : null,
       effort: remote ? value.effort : null,
       agent: remote ? value.agent : null,
@@ -2120,7 +2154,14 @@ export function useWorkspace(settings: AppSettings) {
         ? (cached?.fileContext ?? snapshot.fileContext)
         : [];
     const contextIds = new Set(fileContext.map((file) => file.id));
-    const prompt = command ? "" : promptWithFileContext(text, fileContext);
+    const pullRequestContext =
+      message === undefined
+        ? (cached?.pullRequestContext ?? snapshot.pullRequestContext)
+        : [];
+    const pullRequestIds = new Set(pullRequestContext.map((pr) => pr.id));
+    const prompt = command
+      ? ""
+      : promptWithContext(text, fileContext, pullRequestContext);
     const key = `send:${keyFor(target.path, kind, id ?? "new")}`;
     if (
       !text ||
@@ -2185,6 +2226,9 @@ export function useWorkspace(settings: AppSettings) {
           fileContext: value.fileContext.filter(
             (file) => !contextIds.has(file.id),
           ),
+          pullRequestContext: value.pullRequestContext.filter(
+            (pr) => !pullRequestIds.has(pr.id),
+          ),
           model: value.model === snapshot.model ? null : value.model,
           effort: value.effort === snapshot.effort ? null : value.effort,
           agent: value.agent === snapshot.agent ? null : value.agent,
@@ -2205,6 +2249,7 @@ export function useWorkspace(settings: AppSettings) {
               historyLoaded: true,
               draft: rawText,
               fileContext,
+              pullRequestContext,
             },
           },
         }));
@@ -2223,6 +2268,9 @@ export function useWorkspace(settings: AppSettings) {
           message === undefined && value.draft === rawText ? "" : value.draft,
         fileContext: value.fileContext.filter(
           (file) => !contextIds.has(file.id),
+        ),
+        pullRequestContext: value.pullRequestContext.filter(
+          (pr) => !pullRequestIds.has(pr.id),
         ),
         error: null,
         isSubmitting: true,
@@ -2289,7 +2337,10 @@ export function useWorkspace(settings: AppSettings) {
           ...options,
           command: {
             name: command.name,
-            text: command.arguments,
+            text: promptWithPullRequests(
+              command.arguments,
+              pullRequestContext,
+            ),
             files: commandFiles(fileContext),
           },
         });
@@ -2333,6 +2384,14 @@ export function useWorkspace(settings: AppSettings) {
                     !value.fileContext.some((item) => item.id === file.id),
                 ),
                 ...value.fileContext,
+              ],
+          pullRequestContext: !prepared
+            ? value.pullRequestContext
+            : [
+                ...pullRequestContext.filter(
+                  (pr) => !value.pullRequestContext.some((item) => item.url === pr.url),
+                ),
+                ...value.pullRequestContext,
               ],
           isWorking: command ? value.isWorking : false,
           activity: command ? value.activity : null,
@@ -2557,6 +2616,9 @@ export function useWorkspace(settings: AppSettings) {
     connectSession,
     setDraft,
     addFileContext,
+    addPullRequestContext,
+    removePullRequestContext: (id: string) =>
+      updatePullRequestContext((prs) => prs.filter((pr) => pr.id !== id)),
     removeFileContext: (id: string) =>
       updateFileContext((files) => files.filter((file) => file.id !== id)),
     submit,

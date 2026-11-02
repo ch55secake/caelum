@@ -9,11 +9,13 @@ export function TimelineDialog({
   loadHistory,
   reveal,
   close,
+  restoreFocus,
 }: {
   session: SessionWorkspaceState;
   loadHistory: () => Promise<void>;
   reveal: (id: string) => void;
   close: () => void;
+  restoreFocus: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -27,8 +29,7 @@ export function TimelineDialog({
     () =>
       conversationPresentation(session.conversation)
         .filter((entry) => entry.kind === "user" && !entry.sourceType)
-        .reverse()
-        .map((entry, position) => ({ ...entry, position })),
+        .reverse(),
     [session.conversation],
   );
   const matches = messages.filter((entry) =>
@@ -37,17 +38,11 @@ export function TimelineDialog({
   const selected = Math.min(active, Math.max(0, matches.length - 1));
   useEffect(() => {
     const element = dialog.current!;
-    const previous = document.activeElement;
     element.showModal();
     search.current?.focus({ preventScroll: true });
     return () => {
       element.close();
-      if (
-        !picked.current &&
-        previous instanceof HTMLElement &&
-        previous.isConnected
-      )
-        previous.focus({ preventScroll: true });
+      if (!picked.current) restoreFocus();
     };
   }, []);
   useEffect(() => {
@@ -83,6 +78,45 @@ export function TimelineDialog({
       ref={dialog}
       className="settings-dialog timeline-dialog"
       aria-label="Session timeline"
+      onKeyDownCapture={(event) => {
+        if (
+          event.nativeEvent.isComposing ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.altKey ||
+          event.shiftKey
+        )
+          return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        } else if (
+          ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
+        ) {
+          event.preventDefault();
+          if (event.key === "Home" || event.key === "End")
+            setActive(
+              event.key === "Home" ? 0 : Math.max(0, matches.length - 1),
+            );
+          else
+            setActive(
+              Math.max(
+                0,
+                Math.min(
+                  matches.length - 1,
+                  selected + (event.key === "ArrowDown" ? 1 : -1),
+                ),
+              ),
+            );
+          search.current?.focus({ preventScroll: true });
+        } else if (event.key === "Enter") {
+          const target = event.target as HTMLElement;
+          if (target.closest('button:not([role="option"])')) return;
+          event.preventDefault();
+          choose(selected);
+        }
+      }}
       onCancel={(event) => {
         event.preventDefault();
         close();
@@ -94,7 +128,6 @@ export function TimelineDialog({
         </span>
         <div>
           <h1>Session timeline</h1>
-          <p>Pick up where you left off</p>
         </div>
         <button
           className="icon-button"
@@ -123,48 +156,15 @@ export function TimelineDialog({
               setQuery(event.target.value);
               setActive(0);
             }}
-            onKeyDown={(event) => {
-              if (
-                event.nativeEvent.isComposing ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.altKey ||
-                event.shiftKey
-              )
-                return;
-              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                event.preventDefault();
-                setActive(
-                  Math.max(
-                    0,
-                    Math.min(
-                      matches.length - 1,
-                      selected + (event.key === "ArrowDown" ? 1 : -1),
-                    ),
-                  ),
-                );
-              } else if (event.key === "Enter") {
-                event.preventDefault();
-                choose(selected);
-              } else if (event.key === "Home" || event.key === "End") {
-                event.preventDefault();
-                setActive(
-                  event.key === "Home" ? 0 : Math.max(0, matches.length - 1),
-                );
-              }
-            }}
           />
         </label>
         <div className="timeline-summary">
           <span role="status">
             {matches.length} messages
-            {error
-              ? " · Earlier history unavailable"
-              : session.isLoadingHistory || session.nextCursor
-                ? " · Loading earlier history…"
-                : " · All history loaded"}
+            {!error && (session.isLoadingHistory || session.nextCursor)
+              ? " · Loading earlier history…"
+              : ""}
           </span>
-          <span>Newest first</span>
         </div>
         {error && (
           <div className="inline-error" role="alert">
@@ -185,6 +185,10 @@ export function TimelineDialog({
         id={id}
         className="timeline-list"
         role="listbox"
+        tabIndex={0}
+        aria-activedescendant={
+          matches[selected] ? `${id}-${selected}` : undefined
+        }
         aria-label="User messages"
       >
         {matches.map((entry, index) => (
@@ -205,17 +209,21 @@ export function TimelineDialog({
               <span />
             </span>
             <span className="timeline-entry">
-              <span className="timeline-entry-label">
-                {entry.position === 0
-                  ? "Latest message"
-                  : `${entry.position} earlier`}
-                {Boolean(entry.fileContext?.length) && (
-                  <small>
-                    <Paperclip size={11} aria-hidden="true" />
-                    {entry.fileContext!.length} files
-                  </small>
-                )}
-              </span>
+              {Boolean(
+                entry.fileContext?.length || entry.pullRequestContext?.length,
+              ) && (
+                <span className="timeline-entry-label">
+                  {Boolean(entry.fileContext?.length) && (
+                    <small>
+                      <Paperclip size={11} aria-hidden="true" />
+                      {entry.fileContext!.length} files
+                    </small>
+                  )}
+                  {entry.pullRequestContext?.map((pr) => (
+                    <small key={pr.id}>#{pr.number}</small>
+                  ))}
+                </span>
+              )}
               <span className="timeline-excerpt">
                 <Excerpt
                   text={
@@ -244,18 +252,6 @@ export function TimelineDialog({
           </p>
         )}
       </div>
-      <footer className="timeline-footer">
-        <span>
-          <kbd>↑</kbd>
-          <kbd>↓</kbd> Navigate
-        </span>
-        <span>
-          <kbd>↵</kbd> Jump to message
-        </span>
-        <span>
-          <kbd>esc</kbd> Close
-        </span>
-      </footer>
     </dialog>
   );
 }

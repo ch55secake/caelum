@@ -68,9 +68,7 @@ for (const provider of ["codex", "opencode"]) {
     await input.fill("/timeline");
     await input.press("Enter");
     const dialog = page.getByRole("dialog", { name: "Session timeline" });
-    await expect(dialog.getByRole("status")).toHaveText(
-      "120 messages · All history loaded",
-    );
+    await expect(dialog.getByRole("status")).toHaveText("120 messages");
     const search = dialog.getByRole("searchbox", {
       name: "Search user messages",
     });
@@ -126,12 +124,26 @@ for (const provider of ["codex", "opencode"]) {
       "aria-selected",
       "true",
     );
+    // Keys work from the list and header too, including WebKit's search Escape.
+    await dialog.getByRole("listbox", { name: "User messages" }).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(dialog.getByRole("option").nth(2)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await dialog.getByRole("button", { name: "Close timeline" }).focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(dialog.getByRole("option").nth(1)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await search.press("End");
     await expect(dialog.getByRole("option").last()).toHaveAttribute(
       "aria-selected",
       "true",
     );
     await expect(dialog.getByRole("option").last()).toBeInViewport();
+    await search.fill("Prompt");
     await page.keyboard.press("Escape");
     await expect(input).toBeFocused();
     expect(
@@ -199,9 +211,7 @@ test("timeline retries page failures and pending loads stay scoped after dismiss
     .click();
   await input.fill("/timeline");
   await input.press("Enter");
-  await expect(dialog.getByRole("status")).toHaveText(
-    "120 messages · All history loaded",
-  );
+  await expect(dialog.getByRole("status")).toHaveText("120 messages");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: /New session/ }).click();
   await input.fill("/timeline");

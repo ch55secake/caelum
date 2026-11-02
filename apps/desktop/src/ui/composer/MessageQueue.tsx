@@ -1,8 +1,9 @@
 import { ListOrdered, X } from "lucide-react";
 import type { QueuedMessage } from "../../domain/composer/messageQueueState.js";
-import { splitFileContext } from "../../domain/files/fileContext.js";
+import { splitPromptContext } from "../../domain/composer/promptContext.js";
 import { visibleMessageText } from "../../domain/conversation/shellMessages.js";
 import { FileContextChips } from "../files/FileNavigation.js";
+import { PullRequestContextChips } from "../pull-requests/PullRequestContextChips.js";
 
 export function MessageQueue({
   messages,
@@ -42,7 +43,7 @@ export function MessageQueue({
       </header>
       <ol>
         {messages.map((item) => {
-          const { text, files } = splitFileContext(item.prompt);
+          const { text, files, pullRequests } = splitPromptContext(item.prompt);
           return (
             <li key={item.id}>
               <div>
@@ -50,6 +51,7 @@ export function MessageQueue({
                   {visibleMessageText(text)}
                 </p>
                 <FileContextChips files={files} />
+                <PullRequestContextChips pullRequests={pullRequests} />
                 {item.pending && <small>Sending…</small>}
                 {item.error && (
                   <small className="queue-error" role="alert">

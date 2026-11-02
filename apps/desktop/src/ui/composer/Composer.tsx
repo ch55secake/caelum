@@ -18,7 +18,10 @@ import { ModelPicker } from "./ModelPicker.js";
 import { ContextUsageIndicator } from "../usage/ContextUsageIndicator.js";
 import { AgentPicker } from "./AgentPicker.js";
 import { FileContextChips } from "../files/FileNavigation.js";
-import type { FileContext } from "../../domain/files/fileContext.js";
+import {
+  MAX_FILE_CONTEXT,
+  type FileContext,
+} from "../../domain/files/fileContext.js";
 import { parseSlashCommand } from "../../domain/composer/slashCommands.js";
 import { useSlashCommands } from "./SlashCommandPicker.js";
 import { UsageDialog } from "../usage/UsageDialog.js";
@@ -26,6 +29,15 @@ import { useFileMentions } from "./FileMentionPicker.js";
 import { StatsDialog } from "../usage/StatsDialog.js";
 import { TimelineDialog } from "../conversation/TimelineDialog.js";
 import { SideQuestionPanel } from "../conversation/SideQuestionPanel.js";
+import {
+  usePullRequestMentions,
+  type SessionPullRequests,
+} from "./PullRequestMentionPicker.js";
+import {
+  MAX_PULL_REQUEST_CONTEXT,
+  type PullRequestContext,
+} from "../../domain/pull-requests/pullRequestContext.js";
+import { PullRequestContextChips } from "../pull-requests/PullRequestContextChips.js";
 
 export function Composer({
   projectPath,
@@ -64,6 +76,10 @@ export function Composer({
   fileContext,
   removeFileContext,
   addFileContext,
+  pullRequests,
+  pullRequestContext,
+  addPullRequestContext,
+  removePullRequestContext,
   worktreePicker,
 }: {
   projectPath: string;
@@ -102,6 +118,10 @@ export function Composer({
   fileContext: FileContext[];
   removeFileContext: (id: string) => void;
   addFileContext: (file: FileContext) => boolean;
+  pullRequests: SessionPullRequests;
+  pullRequestContext: PullRequestContext[];
+  addPullRequestContext: (pr: PullRequestContext) => boolean;
+  removePullRequestContext: (id: string) => void;
   worktreePicker?: ReactNode;
 }) {
   const measurement = useRef<HTMLTextAreaElement>(null);
@@ -111,22 +131,68 @@ export function Composer({
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [sideQuestion, setSideQuestion] = useState<{
     initial: string;
+    files: FileContext[];
+    pullRequests: PullRequestContext[];
     id: number;
   } | null>(null);
   const sideQuestionId = useRef(0);
+  const mainDraft = useRef(draft);
+  const wasSideQuestion = useRef(false);
+  useLayoutEffect(() => {
+    if (!draft.startsWith("/")) mainDraft.current = draft;
+  }, [draft]);
+  useLayoutEffect(() => {
+    if (wasSideQuestion.current && !sideQuestion)
+      textareaRef.current?.focus({ preventScroll: true });
+    wasSideQuestion.current = Boolean(sideQuestion);
+  }, [sideQuestion, textareaRef]);
   const closeSideQuestion = () => {
     setSideQuestion(null);
-    textareaRef.current?.focus({ preventScroll: true });
   };
   const [commandError, setCommandError] = useState<string | null>(null);
   const parsed = parseSlashCommand(draft);
+  const preparingSideQuestion =
+    provider === "opencode" && parsed?.name === "btw";
+  const [sideFiles, setSideFiles] = useState<FileContext[]>([]);
+  const [sidePrs, setSidePrs] = useState<PullRequestContext[]>([]);
+  useLayoutEffect(() => {
+    if (!preparingSideQuestion) {
+      setSideFiles([]);
+      setSidePrs([]);
+    }
+  }, [preparingSideQuestion]);
   const mentions = useFileMentions({
     project: projectPath,
     draft,
     setDraft,
-    enabled: !disabled && !submitting,
+    enabled: !disabled && !submitting && !sideQuestion,
     input: textareaRef,
-    attach: addFileContext,
+    attach: (file) => {
+      if (!preparingSideQuestion) return addFileContext(file);
+      const rest = sideFiles.filter(
+        (item) =>
+          item.path !== file.path ||
+          item.startLine !== file.startLine ||
+          item.endLine !== file.endLine,
+      );
+      if (rest.length >= MAX_FILE_CONTEXT) return false;
+      setSideFiles([...rest, file]);
+      return true;
+    },
+  });
+  const prMentions = usePullRequestMentions({
+    source: pullRequests,
+    draft,
+    setDraft,
+    enabled: Boolean(session) && !disabled && !submitting && !sideQuestion,
+    input: textareaRef,
+    attach: (pr) => {
+      if (!preparingSideQuestion) return addPullRequestContext(pr);
+      const rest = sidePrs.filter((item) => item.url !== pr.url);
+      if (rest.length >= MAX_PULL_REQUEST_CONTEXT) return false;
+      setSidePrs([...rest, pr]);
+      return true;
+    },
   });
   const command =
     provider === "opencode" ||
@@ -136,14 +202,15 @@ export function Composer({
   const slash = useSlashCommands({
     project: projectPath,
     provider,
-    enabled: !disabled && !submitting,
+    enabled: !disabled && !submitting && !sideQuestion,
     draft,
     setDraft,
     run: send,
     input: textareaRef,
   });
   function send(text = draft) {
-    if (disabled || submitting || mentions.reading) return;
+    if (disabled || submitting || mentions.reading || prMentions.reading)
+      return;
     const command = parseSlashCommand(text);
     if (command?.name === "new") {
       if (command.arguments.trim()) {
@@ -191,9 +258,11 @@ export function Composer({
         return;
       }
       setCommandError(null);
-      setDraft("");
+      setDraft(mainDraft.current);
       setSideQuestion({
         initial: command.arguments,
+        files: sideFiles,
+        pullRequests: sidePrs,
         id: ++sideQuestionId.current,
       });
     } else submit();
@@ -218,7 +287,7 @@ export function Composer({
     measure.style.width = `${area.getBoundingClientRect().width}px`;
     area.style.height = `${Math.min(180, Math.max(56, measure.scrollHeight))}px`;
   }
-  useLayoutEffect(resizeInput, [draft, textareaRef]);
+  useLayoutEffect(resizeInput, [draft, textareaRef, sideQuestion]);
   useLayoutEffect(() => {
     if (!recalled.current) return;
     recalled.current = false;
@@ -236,7 +305,7 @@ export function Composer({
     });
     observer.observe(area);
     return () => observer.disconnect();
-  }, [textareaRef]);
+  }, [textareaRef, sideQuestion]);
   return (
     <div className="composer-wrap">
       {sideQuestion && session && (
@@ -245,10 +314,10 @@ export function Composer({
           project={projectPath}
           sessionId={session.session.thread.id}
           initial={sideQuestion.initial}
+          initialFiles={sideQuestion.files}
+          initialPullRequests={sideQuestion.pullRequests}
+          pullRequests={pullRequests}
           available={!disabled}
-          resumeDraft={() =>
-            textareaRef.current?.focus({ preventScroll: true })
-          }
           close={closeSideQuestion}
         />
       )}
@@ -259,275 +328,305 @@ export function Composer({
             : (activity ?? "Agent working")}
         </span>
       )}
-      {awaitingApproval && (
+      {awaitingApproval && !sideQuestion && (
         <div className="composer-approval">Approval required</div>
       )}
-      <form
-        className="composer"
-        aria-label="Message composer"
-        data-working={busy}
-        onSubmit={(event) => {
-          event.preventDefault();
-          send();
-        }}
-      >
-        {slash.menu}
-        {mentions.menu}
-        <FileContextChips
-          files={fileContext}
-          remove={removeFileContext}
-          disabled={submitting}
-        />
-        <textarea
-          ref={measurement}
-          className="composer-measure"
-          aria-hidden="true"
-          tabIndex={-1}
-          readOnly
-          value={draft}
-        />
-        <textarea
-          ref={textareaRef}
-          aria-label="Message"
-          aria-autocomplete="list"
-          aria-haspopup="listbox"
-          aria-controls={mentions.controls ?? slash.controls}
-          aria-activedescendant={mentions.activeId ?? slash.activeId}
-          aria-keyshortcuts={canCycleAgent ? "Shift+Tab" : undefined}
-          title={!draft && lastMessage ? "↑ Recall last message" : undefined}
-          placeholder={
-            working
-              ? "Queue your next message…"
-              : "Ask anything, / for commands, @ for files…"
-          }
-          value={draft}
-          disabled={disabled}
-          onFocus={() => {
-            slash.focus();
-            mentions.focus();
+      {!sideQuestion && (
+        <form
+          className="composer"
+          aria-label="Message composer"
+          data-working={busy}
+          onSubmit={(event) => {
+            event.preventDefault();
+            send();
           }}
-          onBlur={() => {
-            slash.blur();
-            mentions.blur();
-          }}
-          onSelect={mentions.select}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            setCommandError(null);
-            slash.changed();
-            mentions.changed();
-          }}
-          onKeyDown={(event) => {
-            if (mentions.keyDown(event) || slash.keyDown(event)) return;
-            if (event.key === "Escape" && sideQuestion) {
-              event.preventDefault();
-              closeSideQuestion();
-              return;
+        >
+          {slash.menu}
+          {mentions.menu}
+          {prMentions.menu}
+          <FileContextChips
+            files={preparingSideQuestion ? sideFiles : fileContext}
+            remove={
+              preparingSideQuestion
+                ? (id) =>
+                    setSideFiles(sideFiles.filter((file) => file.id !== id))
+                : removeFileContext
             }
-            if (
-              event.key === "Tab" &&
-              event.shiftKey &&
-              !event.altKey &&
-              !event.metaKey &&
-              !event.ctrlKey &&
-              !event.nativeEvent.isComposing &&
-              canCycleAgent
-            ) {
-              event.preventDefault();
-              if (!event.repeat) {
-                const index = agents.findIndex((choice) => choice.id === agent);
-                setOption("agent", agents[(index + 1) % agents.length].id);
-              }
-              return;
-            }
-            if (
-              event.key === "ArrowUp" &&
-              !event.nativeEvent.isComposing &&
-              !event.shiftKey &&
-              !event.altKey &&
-              !event.metaKey &&
-              !event.ctrlKey &&
-              !submitting &&
-              !draft &&
-              lastMessage
-            ) {
-              event.preventDefault();
-              recalled.current = true;
-              setDraft(lastMessage);
-              return;
-            }
-            if (
-              event.key === "Enter" &&
-              !event.nativeEvent.isComposing &&
-              (!event.shiftKey || event.metaKey || event.ctrlKey)
-            ) {
-              event.preventDefault();
-              send();
-            }
-          }}
-        />
-        {commandError && (
-          <p className="composer-command-error" role="alert">
-            {commandError}
-          </p>
-        )}
-        {provider === "opencode" && (
-          <AgentPicker
-            value={agent}
-            current={currentAgent}
-            choices={agents}
-            isNew={isNew}
-            working={working}
-            disabled={disabled || submitting}
-            onChange={(value) => setOption("agent", value)}
+            disabled={submitting}
           />
-        )}
-        <div className="composer-footer">
-          <div className="composer-controls">
-            {isNew && worktreePicker}
-            {isNew ? (
-              <ChoicePicker
-                label="Provider"
-                icon={<Layers size={13} />}
-                value={provider}
-                onChange={(value) => changeProvider(value as ProviderKind)}
-                disabled={submitting}
-                choices={[
-                  { id: "codex", name: "Codex" },
-                  { id: "opencode", name: "OpenCode" },
-                ]}
-              />
-            ) : (
-              <span className="provider-label">
-                {provider === "codex" ? "Codex" : "OpenCode"}
-              </span>
-            )}
-            {(Boolean(choices?.models.length) || Boolean(model)) && (
-              <ModelPicker
-                label="Model"
-                provider={provider}
-                value={model}
-                disabled={submitting || disabled}
-                onChange={(value) => setOption("model", value)}
-                models={choices?.models ?? []}
-                favouriteModels={favouriteModels}
-                toggleFavourite={toggleFavouriteModel}
-                unavailableDescription="Current selection · currently unavailable"
-                defaultChoice={{
-                  name: isNew ? "Default model" : "Session model",
-                  description: isNew
-                    ? "Use provider settings"
-                    : "Keep this session’s configured model",
-                }}
-              />
-            )}
-            {Boolean(modelChoice?.efforts.length) && (
-              <ChoicePicker
-                label="Effort"
-                icon={<Gauge size={13} />}
-                value={effort}
-                disabled={submitting || disabled}
-                onChange={(value) => setOption("effort", value)}
-                choices={[
-                  {
-                    id: "",
-                    name: "Default effort",
-                    description: modelChoice?.defaultEffort
-                      ? `Use ${effortName(modelChoice.defaultEffort).toLowerCase()} effort`
-                      : "Use model settings",
-                  },
-                  ...(effort &&
-                  !modelChoice!.efforts.some((choice) => choice.id === effort)
-                    ? [
-                        {
-                          id: effort,
-                          name: effortName(effort),
-                          description: "Current selection",
-                        },
-                      ]
-                    : []),
-                  ...modelChoice!.efforts.map((choice) => ({
-                    ...choice,
-                    name: effortName(choice.name),
-                  })),
-                ]}
-              />
-            )}
-            {choicesError && (
-              <button
-                type="button"
-                className="text-button choices-retry"
-                title={choicesError}
-                onClick={retryChoices}
-              >
-                Load models
-              </button>
-            )}
-          </div>
-          <span className="composer-hint">
-            {effortPending
-              ? "Settings apply to next message"
-              : modelPending
-                ? "Model applies to next message"
-                : working
-                  ? activity === "Compacting context…"
-                    ? activity
-                    : "↵ Queue · ⇧↵ Newline"
-                  : !draft && lastMessage
-                    ? "↑ Recall · ↵ Send"
-                    : "↵ Send · ⇧↵ Newline"}
-          </span>
-          {!isNew && (
-            <ContextUsageIndicator usage={contextUsage} choices={choices} />
-          )}
-          {working ? (
-            <button
-              key="stop"
-              type="button"
-              className="send-button stop-button"
-              onClick={(event) => {
+          <PullRequestContextChips
+            pullRequests={preparingSideQuestion ? sidePrs : pullRequestContext}
+            remove={
+              preparingSideQuestion
+                ? (id) => setSidePrs(sidePrs.filter((pr) => pr.id !== id))
+                : removePullRequestContext
+            }
+            disabled={submitting}
+          />
+          <textarea
+            ref={measurement}
+            className="composer-measure"
+            aria-hidden="true"
+            tabIndex={-1}
+            readOnly
+            value={draft}
+          />
+          <textarea
+            ref={textareaRef}
+            aria-label="Message"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-controls={
+              prMentions.controls ?? mentions.controls ?? slash.controls
+            }
+            aria-activedescendant={
+              prMentions.activeId ?? mentions.activeId ?? slash.activeId
+            }
+            aria-keyshortcuts={canCycleAgent ? "Shift+Tab" : undefined}
+            title={!draft && lastMessage ? "↑ Recall last message" : undefined}
+            placeholder={
+              working
+                ? "Queue your next message…"
+                : "Ask anything, / for commands, @ for files…"
+            }
+            value={draft}
+            disabled={disabled}
+            onFocus={() => {
+              slash.focus();
+              mentions.focus();
+              prMentions.focus();
+            }}
+            onBlur={() => {
+              slash.blur();
+              mentions.blur();
+              prMentions.blur();
+            }}
+            onSelect={() => {
+              mentions.select();
+              prMentions.select();
+            }}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setCommandError(null);
+              slash.changed();
+              mentions.changed();
+              prMentions.changed();
+            }}
+            onKeyDown={(event) => {
+              if (
+                prMentions.keyDown(event) ||
+                mentions.keyDown(event) ||
+                slash.keyDown(event)
+              )
+                return;
+              if (
+                event.key === "Tab" &&
+                event.shiftKey &&
+                !event.altKey &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.nativeEvent.isComposing &&
+                canCycleAgent
+              ) {
                 event.preventDefault();
-                cancel();
-              }}
-              aria-label="Stop generation"
-              title="Stop generation"
-            >
-              <Square size={13} />
-            </button>
-          ) : null}
-          {
-            <button
-              key="send"
-              type="button"
-              className="send-button"
-              onClick={() => send()}
-              disabled={
-                disabled ||
-                submitting ||
-                mentions.reading ||
-                !draft.trim() ||
-                draft.trim() === "/"
+                if (!event.repeat) {
+                  const index = agents.findIndex(
+                    (choice) => choice.id === agent,
+                  );
+                  setOption("agent", agents[(index + 1) % agents.length].id);
+                }
+                return;
               }
-              aria-label={
-                command
-                  ? "Run command"
+              if (
+                event.key === "ArrowUp" &&
+                !event.nativeEvent.isComposing &&
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !submitting &&
+                !draft &&
+                lastMessage
+              ) {
+                event.preventDefault();
+                recalled.current = true;
+                setDraft(lastMessage);
+                return;
+              }
+              if (
+                event.key === "Enter" &&
+                !event.nativeEvent.isComposing &&
+                (!event.shiftKey || event.metaKey || event.ctrlKey)
+              ) {
+                event.preventDefault();
+                send();
+              }
+            }}
+          />
+          {commandError && (
+            <p className="composer-command-error" role="alert">
+              {commandError}
+            </p>
+          )}
+          {provider === "opencode" && (
+            <AgentPicker
+              value={agent}
+              current={currentAgent}
+              choices={agents}
+              isNew={isNew}
+              working={working}
+              disabled={disabled || submitting}
+              onChange={(value) => setOption("agent", value)}
+            />
+          )}
+          <div className="composer-footer">
+            <div className="composer-controls">
+              {isNew && worktreePicker}
+              {isNew ? (
+                <ChoicePicker
+                  label="Provider"
+                  icon={<Layers size={13} />}
+                  value={provider}
+                  onChange={(value) => changeProvider(value as ProviderKind)}
+                  disabled={submitting}
+                  choices={[
+                    { id: "codex", name: "Codex" },
+                    { id: "opencode", name: "OpenCode" },
+                  ]}
+                />
+              ) : (
+                <span className="provider-label">
+                  {provider === "codex" ? "Codex" : "OpenCode"}
+                </span>
+              )}
+              {(Boolean(choices?.models.length) || Boolean(model)) && (
+                <ModelPicker
+                  label="Model"
+                  provider={provider}
+                  value={model}
+                  disabled={submitting || disabled}
+                  onChange={(value) => setOption("model", value)}
+                  models={choices?.models ?? []}
+                  favouriteModels={favouriteModels}
+                  toggleFavourite={toggleFavouriteModel}
+                  unavailableDescription="Current selection · currently unavailable"
+                  defaultChoice={{
+                    name: isNew ? "Default model" : "Session model",
+                    description: isNew
+                      ? "Use provider settings"
+                      : "Keep this session’s configured model",
+                  }}
+                />
+              )}
+              {Boolean(modelChoice?.efforts.length) && (
+                <ChoicePicker
+                  label="Effort"
+                  icon={<Gauge size={13} />}
+                  value={effort}
+                  disabled={submitting || disabled}
+                  onChange={(value) => setOption("effort", value)}
+                  choices={[
+                    {
+                      id: "",
+                      name: "Default effort",
+                      description: modelChoice?.defaultEffort
+                        ? `Use ${effortName(modelChoice.defaultEffort).toLowerCase()} effort`
+                        : "Use model settings",
+                    },
+                    ...(effort &&
+                    !modelChoice!.efforts.some((choice) => choice.id === effort)
+                      ? [
+                          {
+                            id: effort,
+                            name: effortName(effort),
+                            description: "Current selection",
+                          },
+                        ]
+                      : []),
+                    ...modelChoice!.efforts.map((choice) => ({
+                      ...choice,
+                      name: effortName(choice.name),
+                    })),
+                  ]}
+                />
+              )}
+              {choicesError && (
+                <button
+                  type="button"
+                  className="text-button choices-retry"
+                  title={choicesError}
+                  onClick={retryChoices}
+                >
+                  Load models
+                </button>
+              )}
+            </div>
+            <span className="composer-hint">
+              {effortPending
+                ? "Settings apply to next message"
+                : modelPending
+                  ? "Model applies to next message"
                   : working
-                    ? "Queue message"
-                    : "Send message"
-              }
-              title={
-                command
-                  ? "Run command"
-                  : working
-                    ? "Queue message"
-                    : "Send message"
-              }
-            >
-              <ArrowUp size={17} />
-            </button>
-          }
-        </div>
-      </form>
+                    ? activity === "Compacting context…"
+                      ? activity
+                      : "↵ Queue · ⇧↵ Newline"
+                    : !draft && lastMessage
+                      ? "↑ Recall · ↵ Send"
+                      : "↵ Send · ⇧↵ Newline"}
+            </span>
+            {!isNew && (
+              <ContextUsageIndicator usage={contextUsage} choices={choices} />
+            )}
+            {working ? (
+              <button
+                key="stop"
+                type="button"
+                className="send-button stop-button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  cancel();
+                }}
+                aria-label="Stop generation"
+                title="Stop generation"
+              >
+                <Square size={13} />
+              </button>
+            ) : null}
+            {
+              <button
+                key="send"
+                type="button"
+                className="send-button"
+                onClick={() => send()}
+                disabled={
+                  disabled ||
+                  submitting ||
+                  mentions.reading ||
+                  prMentions.reading ||
+                  !draft.trim() ||
+                  draft.trim() === "/"
+                }
+                aria-label={
+                  command
+                    ? "Run command"
+                    : working
+                      ? "Queue message"
+                      : "Send message"
+                }
+                title={
+                  command
+                    ? "Run command"
+                    : working
+                      ? "Queue message"
+                      : "Send message"
+                }
+              >
+                <ArrowUp size={17} />
+              </button>
+            }
+          </div>
+        </form>
+      )}
       {usageOpen && (
         <UsageDialog
           project={projectPath}
@@ -545,6 +644,9 @@ export function Composer({
           loadHistory={loadTimeline}
           reveal={revealMessage}
           close={() => setTimelineOpen(false)}
+          restoreFocus={() =>
+            textareaRef.current?.focus({ preventScroll: true })
+          }
         />
       )}
     </div>

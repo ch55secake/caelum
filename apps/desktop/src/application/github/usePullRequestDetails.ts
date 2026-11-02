@@ -28,6 +28,21 @@ type Entry = {
 };
 // The canonical URL includes the host and repository, and is shared by worktrees.
 const cache = new Map<string, Entry>();
+const reads = new Map<string, Promise<PullRequestDetails>>();
+
+// A mention takes a fresh snapshot; simultaneous previews share its request.
+export function readPullRequestDetails(projectPath: string, url: string) {
+  const pending = reads.get(url);
+  if (pending) return pending;
+  const request = invoke<PullRequestDetails>("github_pull_request_details", {
+    projectPath,
+    url,
+  }).finally(() => {
+    if (reads.get(url) === request) reads.delete(url);
+  });
+  reads.set(url, request);
+  return request;
+}
 const empty: Snapshot = {
   value: null,
   error: null,
@@ -84,10 +99,7 @@ function refresh(projectPath: string, url: string, maxAge = freshness) {
     return;
   const revision = ++entry.revision;
   publish(entry, { ...entry.snapshot, error: null, loading: true });
-  void invoke<PullRequestDetails>("github_pull_request_details", {
-    projectPath,
-    url,
-  })
+  void readPullRequestDetails(projectPath, url)
     .then((value) => {
       if (entry.revision !== revision) return;
       // A confirmed merge cannot be undone by an eventually consistent read.

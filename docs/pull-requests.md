@@ -12,6 +12,14 @@ Caelum records session branches during execution and retains their history acros
 
 Lookups are shared and bounded, refresh about once a minute while visible, and refresh immediately after execution or **Refresh sessions**. Temporary failures retain known PRs with Retry and a shorter refresh interval. Successful misses remove entries; ambiguous matches are reported. Details load on demand and are shared by canonical PR URL.
 
+## Mentioning pull requests
+
+In an existing session, type `#` in the composer to search its associated PRs by number or title, including stack ancestors. Choose a result with arrows and Tab/Enter, or click it. Caelum inserts `#61` and a removable context chip; other sessions' unrelated PRs stay outside the suggestions.
+
+Selection captures canonical URL, number, title, state, head/base branches, current head commit and check names/statuses/links. The snapshot travels with the prompt or queued message for Codex and OpenCode, and with OpenCode `/btw` questions. Check links give the agent a starting point for inspecting CI logs. Snapshots support up to 16 PRs and 100 checks per PR, with failures retained first and omitted checks marked. Re-select a PR to refresh its snapshot.
+
+Failed reads leave the text and attachments intact. Failed sends restore their context for retry; queued messages and history display PR chips. Side-question attachments are independent of the main draft. Clicking a chip opens the PR in your browser.
+
 ## Checks, branch updates and merging
 
 **Overview** shows the description, review state and linked check results, including pending, failed and skipped statuses. When GitHub supplies timestamps, completed checks show their duration and running checks update elapsed time locally. Pending checks refresh automatically; animations respect reduced motion.

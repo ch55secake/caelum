@@ -1,26 +1,53 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { LoaderCircle, MessageCircleQuestion, Pencil, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUp,
+  LoaderCircle,
+  MessageCircleQuestion,
+  Pencil,
+} from "lucide-react";
 import { CopyButton, MessageContent } from "./MessageContent.js";
+import {
+  usePullRequestMentions,
+  type SessionPullRequests,
+} from "../composer/PullRequestMentionPicker.js";
+import { useFileMentions } from "../composer/FileMentionPicker.js";
+import { FileContextChips } from "../files/FileNavigation.js";
+import { PullRequestContextChips } from "../pull-requests/PullRequestContextChips.js";
+import {
+  MAX_FILE_CONTEXT,
+  type FileContext,
+} from "../../domain/files/fileContext.js";
+import {
+  MAX_PULL_REQUEST_CONTEXT,
+  type PullRequestContext,
+} from "../../domain/pull-requests/pullRequestContext.js";
+import { promptWithContext } from "../../domain/composer/promptContext.js";
 import "./sideQuestion.css";
 
 export function SideQuestionPanel({
   project,
   sessionId,
   initial,
+  initialFiles,
+  initialPullRequests,
+  pullRequests,
   available,
-  resumeDraft,
   close,
 }: {
   project: string;
   sessionId: string;
   initial: string;
+  initialFiles: FileContext[];
+  initialPullRequests: PullRequestContext[];
+  pullRequests: SessionPullRequests;
   available: boolean;
-  resumeDraft: () => void;
   close: () => void;
 }) {
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
+  const panel = useRef<HTMLElement>(null);
   const mounted = useRef(false);
   const started = useRef(false);
   const pending = useRef(false);
@@ -30,20 +57,64 @@ export function SideQuestionPanel({
   const [answer, setAnswer] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  async function ask(text = question) {
-    if (pending.current || !available || !text.trim()) return;
+  const [files, setFiles] = useState(initialFiles);
+  const [prs, setPrs] = useState(initialPullRequests);
+  const lastPrompt = useRef("");
+  const mentions = useFileMentions({
+    project,
+    draft: question,
+    setDraft: setQuestion,
+    input,
+    enabled: available && editing && !loading,
+    attach: (file) => {
+      const rest = files.filter(
+        (item) =>
+          item.path !== file.path ||
+          item.startLine !== file.startLine ||
+          item.endLine !== file.endLine,
+      );
+      if (rest.length >= MAX_FILE_CONTEXT) return false;
+      setFiles([...rest, file]);
+      return true;
+    },
+  });
+  const prMentions = usePullRequestMentions({
+    source: pullRequests,
+    draft: question,
+    setDraft: setQuestion,
+    input,
+    enabled: available && editing && !loading,
+    attach: (pr) => {
+      const rest = prs.filter((item) => item.url !== pr.url);
+      if (rest.length >= MAX_PULL_REQUEST_CONTEXT) return false;
+      setPrs([...rest, pr]);
+      return true;
+    },
+  });
+  async function ask(
+    text = question,
+    prompt = promptWithContext(text, files, prs),
+  ) {
+    if (
+      pending.current ||
+      !available ||
+      !text.trim() ||
+      mentions.reading ||
+      prMentions.reading
+    )
+      return;
     pending.current = true;
     setEditing(false);
     setAsked(text);
     setLoading(true);
     setError(null);
     setAnswer(null);
-    resumeDraft();
+    lastPrompt.current = prompt;
     try {
       const reply = await invoke<string>("opencode_generate", {
         projectPath: project,
         sessionId,
-        prompt: text,
+        prompt,
       });
       if (mounted.current) setAnswer(reply);
     } catch (reason) {
@@ -67,12 +138,24 @@ export function SideQuestionPanel({
       mounted.current = false;
     };
   }, []);
+  useLayoutEffect(() => {
+    if (editing) input.current?.focus({ preventScroll: true });
+    else panel.current?.focus({ preventScroll: true });
+  }, [editing]);
+  useLayoutEffect(() => {
+    const area = input.current;
+    if (!area) return;
+    area.style.height = "auto";
+    area.style.height = `${Math.min(180, Math.max(56, area.scrollHeight))}px`;
+  }, [question, editing]);
   return (
     <section
-      className="side-question-panel"
+      ref={panel}
+      tabIndex={-1}
+      className="composer side-question-panel"
       aria-labelledby={`${id}-title`}
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
           event.preventDefault();
           event.stopPropagation();
           close();
@@ -80,6 +163,15 @@ export function SideQuestionPanel({
       }}
     >
       <header className="side-question-heading">
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Back to message"
+          title="Back to message · Esc"
+          onClick={close}
+        >
+          <ArrowLeft size={16} />
+        </button>
         <MessageCircleQuestion size={15} aria-hidden="true" />
         <h2 id={`${id}-title`}>Side question</h2>
         <span title="Uses this session’s context without adding to its history">
@@ -97,21 +189,11 @@ export function SideQuestionPanel({
             disabled={loading}
             onClick={() => {
               setEditing(true);
-              requestAnimationFrame(() =>
-                input.current?.focus({ preventScroll: true }),
-              );
             }}
           >
             <Pencil size={13} />
           </button>
         )}
-        <button
-          className="icon-button"
-          aria-label="Dismiss side question"
-          onClick={close}
-        >
-          <X size={16} />
-        </button>
       </header>
       <div className="side-question-content">
         {editing ? (
@@ -128,10 +210,32 @@ export function SideQuestionPanel({
               ref={input}
               id={`${id}-input`}
               value={question}
-              readOnly={loading}
+              disabled={!available}
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              aria-controls={prMentions.controls ?? mentions.controls}
+              aria-activedescendant={prMentions.activeId ?? mentions.activeId}
               placeholder="Ask a quick question…"
-              onChange={(event) => setQuestion(event.target.value)}
+              onFocus={() => {
+                mentions.focus();
+                prMentions.focus();
+              }}
+              onBlur={() => {
+                mentions.blur();
+                prMentions.blur();
+              }}
+              onSelect={() => {
+                mentions.select();
+                prMentions.select();
+              }}
+              onChange={(event) => {
+                setQuestion(event.target.value);
+                mentions.changed();
+                prMentions.changed();
+              }}
               onKeyDown={(event) => {
+                if (prMentions.keyDown(event) || mentions.keyDown(event))
+                  return;
                 if (
                   event.key === "Enter" &&
                   !event.nativeEvent.isComposing &&
@@ -142,17 +246,41 @@ export function SideQuestionPanel({
                 }
               }}
             />
+            {mentions.menu}
+            {prMentions.menu}
+            <FileContextChips
+              files={files}
+              remove={(id) => setFiles(files.filter((file) => file.id !== id))}
+            />
+            <PullRequestContextChips
+              pullRequests={prs}
+              remove={(id) => setPrs(prs.filter((pr) => pr.id !== id))}
+            />
             <div className="side-question-actions">
+              <span>Uses this session’s context</span>
               <button
                 type="submit"
-                disabled={loading || !available || !question.trim()}
+                className="send-button"
+                aria-label="Ask side question"
+                title="Ask side question"
+                disabled={
+                  loading ||
+                  !available ||
+                  !question.trim() ||
+                  mentions.reading ||
+                  prMentions.reading
+                }
               >
-                Ask side question
+                <ArrowUp size={17} />
               </button>
             </div>
           </form>
         ) : (
-          <p className="side-question-prompt">{asked}</p>
+          <>
+            <p className="side-question-prompt">{asked}</p>
+            <FileContextChips files={files} />
+            <PullRequestContextChips pullRequests={prs} />
+          </>
         )}
         {!available && (
           <p className="inline-error" role="status">
@@ -170,7 +298,7 @@ export function SideQuestionPanel({
             Couldn’t answer: {error}
             <button
               type="button"
-              onClick={() => void ask(asked)}
+              onClick={() => void ask(asked, lastPrompt.current)}
               disabled={!available}
             >
               Retry side question

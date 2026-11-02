@@ -18,11 +18,6 @@
   font-weight: 550;
   letter-spacing: -0.2px;
 }
-.timeline-heading p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 11px;
-}
 .timeline-icon {
   display: grid;
   place-items: center;
@@ -174,33 +169,6 @@
   padding: 40px 16px;
   font-size: 12px;
   color: var(--muted);
-}
-.timeline-footer {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  flex-shrink: 0;
-  padding: 12px 20px;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 10px;
-}
-.timeline-footer > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.timeline-footer > span:last-child {
-  margin-left: auto;
-}
-.timeline-footer kbd {
-  min-width: 18px;
-  padding: 2px 4px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--panel);
-  text-align: center;
-  font: inherit;
 }
 .conversation-entry[data-timeline-target="true"] {
   outline: 2px solid var(--accent);

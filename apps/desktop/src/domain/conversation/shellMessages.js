@@ -1,4 +1,4 @@
-import { splitFileContext } from "../files/fileContext.js";
+import { splitPromptContext } from "../composer/promptContext.js";
 
 // Only provider-style blocks are hidden. Fenced/quoted examples remain ordinary text.
 export function visibleMessageText(text) {
@@ -81,13 +81,9 @@ export function splitShellMessages(text) {
     if (
       !attributes.id ||
       !attributes.command ||
-      ![
-        "running",
-        "completed",
-        "failed",
-        "cancelled",
-        "interrupted",
-      ].includes(attributes.state)
+      !["running", "completed", "failed", "cancelled", "interrupted"].includes(
+        attributes.state,
+      )
     )
       continue;
     if (match.index > last)
@@ -101,8 +97,7 @@ export function splitShellMessages(text) {
     });
     last = match.index + match[0].length;
   }
-  if (last < text.length)
-    parts.push({ type: "text", text: text.slice(last) });
+  if (last < text.length) parts.push({ type: "text", text: text.slice(last) });
   return parts;
 }
 
@@ -115,8 +110,14 @@ export function conversationPresentation(entries) {
         return [];
     }
     if (entry.kind === "user") {
-      const { text, files } = splitFileContext(entry.text);
-      if (files.length) entry = { ...entry, text, fileContext: files };
+      const { text, files, pullRequests } = splitPromptContext(entry.text);
+      if (files.length || pullRequests.length)
+        entry = {
+          ...entry,
+          text,
+          ...(files.length ? { fileContext: files } : {}),
+          ...(pullRequests.length ? { pullRequestContext: pullRequests } : {}),
+        };
     }
     if (
       !["user", "assistant", "status"].includes(entry.kind) ||
@@ -151,7 +152,7 @@ export function lastUserMessage(entries) {
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
     if (entry.kind !== "user") continue;
-    const text = splitShellMessages(splitFileContext(entry.text).text)
+    const text = splitShellMessages(splitPromptContext(entry.text).text)
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("");

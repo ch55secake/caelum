@@ -1,4 +1,5 @@
 import type { FileContext } from "../files/fileContext.js";
+import type { PullRequestContext } from "../pull-requests/pullRequestContext.js";
 
 export type ProviderKind = "codex" | "opencode";
 export type SessionSummary = {
@@ -29,6 +30,7 @@ export type ConversationEntry = {
   images?: import("../conversation/chatMedia.js").ChatImageSource[];
   sourceType?: "system" | "synthetic";
   fileContext?: FileContext[];
+  pullRequestContext?: PullRequestContext[];
   id: string;
   kind: "user" | "assistant" | "tool" | "status" | "reasoning" | "compaction";
   text: string;
@@ -100,6 +102,7 @@ export type SessionWorkspaceState = {
   error: string | null;
   draft: string;
   fileContext: FileContext[];
+  pullRequestContext: PullRequestContext[];
   connection: "connecting" | "connected" | "disconnected";
   historyError: string | null;
   historyLoaded: boolean;
@@ -149,6 +152,7 @@ export type ProviderWorkspaceState = {
   error: string | null;
   draft: string;
   fileContext: FileContext[];
+  pullRequestContext: PullRequestContext[];
   isCreating: boolean;
   choices: ProviderChoices | null;
   choicesError: string | null;

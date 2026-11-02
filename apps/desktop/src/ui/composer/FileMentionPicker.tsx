@@ -8,7 +8,10 @@ import {
   type RefObject,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { createFileContext, type FileContext } from "../../domain/files/fileContext.js";
+import {
+  createFileContext,
+  type FileContext,
+} from "../../domain/files/fileContext.js";
 
 export function useFileMentions({
   project,
@@ -61,6 +64,10 @@ export function useFileMentions({
       revision.current++;
     };
   }, []);
+  useEffect(() => {
+    revision.current++;
+    setReading(false);
+  }, [enabled]);
   useLayoutEffect(() => {
     if (pendingCaret.current === null) return;
     input.current?.setSelectionRange(
@@ -155,7 +162,9 @@ export function useFileMentions({
       const mention = `@${/\s/.test(path) ? JSON.stringify(path) : path}`;
       const suffix = draft.slice(end);
       const replacement = mention + (suffix.startsWith(" ") ? "" : " ");
-      pendingCaret.current = start + replacement.length;
+      pendingCaret.current =
+        start + replacement.length + (suffix.startsWith(" ") ? 1 : 0);
+      setCaret(pendingCaret.current);
       setDraft(draft.slice(0, start) + replacement + suffix);
       dismiss();
       input.current?.focus({ preventScroll: true });
