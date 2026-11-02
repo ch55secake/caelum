@@ -8,6 +8,7 @@ import {
   createSessionWorkspace,
   projectHasActiveTurn,
   restoreProjectWorkspace,
+  sessionListError,
   updateProviderWorkspace,
   updateProjectWorkspace,
   updateSessionWorkspace,
@@ -41,6 +42,24 @@ function withSession(
     }),
   );
 }
+
+test("only explicitly classified uninstalled providers are optional during discovery", () => {
+  const message = "Codex CLI was not found.";
+  assert.deepEqual(sessionListError({ kind: "notInstalled", message }), {
+    kind: "notInstalled",
+    message,
+  });
+  for (const reason of [
+    message,
+    new Error(message),
+    { kind: "failed", message },
+    { kind: "unknown", message },
+  ]) {
+    assert.deepEqual(sessionListError(reason), { kind: "failed", message });
+  }
+  assert.equal(sessionListError(null).kind, "failed");
+  assert.equal(sessionListError({ kind: "notInstalled" }).kind, "failed");
+});
 
 test("project provider, session drafts, and new-session drafts stay independent", () => {
   let workspaces = {};

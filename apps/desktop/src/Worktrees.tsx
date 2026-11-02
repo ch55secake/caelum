@@ -287,7 +287,7 @@ export function ProjectWorktrees({
     ? "New session"
     : session?.name || session?.preview
       ? sessionTitle(session)
-      : !sessions?.sessionsLoaded && !sessions?.error
+      : !sessions?.sessionsLoaded && !sessions?.sessionsError
         ? "Loading session…"
         : "Untitled session";
   useEffect(() => {
@@ -297,7 +297,7 @@ export function ProjectWorktrees({
       provider &&
       selectedId &&
       !sessions?.sessionsLoaded &&
-      !sessions?.error
+      !sessions?.sessionsError
     )
       // Restore background project titles without opening their conversations.
       void app.loadSessions(checkout, provider);
@@ -308,7 +308,7 @@ export function ProjectWorktrees({
     provider,
     selectedId,
     sessions?.sessionsLoaded,
-    sessions?.error,
+    sessions?.sessionsError,
   ]);
   const [expanded, setExpanded] = useState(() => {
     try {

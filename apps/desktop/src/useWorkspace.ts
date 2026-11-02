@@ -46,6 +46,7 @@ import {
   projectHasActiveTurn,
   restoreProjectWorkspace,
   sessionBranches,
+  sessionListError,
   updateProjectWorkspace,
   updateProviderWorkspace,
   updateSessionWorkspace,
@@ -307,11 +308,16 @@ export function useWorkspace(settings: AppSettings) {
     isTauri() &&
     discovery.some(
       ({ state }) =>
-        state?.isLoadingSessions || (!state?.sessionsLoaded && !state?.error),
+        state?.isLoadingSessions ||
+        (!state?.sessionsLoaded && !state?.sessionsError),
     );
   const sessionErrors = discovery.flatMap(
-    ({ state, provider, checkoutLabel }) =>
-      state?.error ? [`${checkoutLabel} · ${provider}: ${state.error}`] : [],
+    ({ state, provider, checkoutLabel, project }) =>
+      state?.sessionsError?.kind === "failed"
+        ? [
+            `${checkoutLabel} · ${provider === "codex" ? "Codex" : "OpenCode"} (${project.path}): ${state.sessionsError.message}`,
+          ]
+        : [],
   );
 
   function assignRoots(mapping: Record<string, string>) {
@@ -1267,7 +1273,7 @@ export function useWorkspace(settings: AppSettings) {
     mutateProvider(target.path, kind, (value) => ({
       ...value,
       isLoadingSessions: true,
-      error: null,
+      sessionsError: null,
     }));
     try {
       const result = await invoke<{
@@ -1317,6 +1323,7 @@ export function useWorkspace(settings: AppSettings) {
           ),
         ].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
         sessionsLoaded: true,
+        sessionsError: null,
       }));
       // Unopened checkouts are discovered without changing the persisted open
       // projects. Their provider-owned IDs are saved when a session is selected.
@@ -1342,7 +1349,7 @@ export function useWorkspace(settings: AppSettings) {
       if (revision(scope) === version)
         mutateProvider(target.path, kind, (value) => ({
           ...value,
-          error: String(reason),
+          sessionsError: sessionListError(reason),
         }));
     } finally {
       locks.current.delete(key);
@@ -1877,7 +1884,7 @@ export function useWorkspace(settings: AppSettings) {
         state.current[item.project.path]?.providers[item.provider];
       if (
         current?.sessionsLoaded ||
-        current?.error ||
+        current?.sessionsError ||
         current?.isLoadingSessions
       )
         continue;
@@ -1915,7 +1922,7 @@ export function useWorkspace(settings: AppSettings) {
     project?.path,
     provider,
     providerWorkspace?.sessionsLoaded,
-    providerWorkspace?.error,
+    providerWorkspace?.sessionsError,
     selectedId,
     ready,
     restoring,

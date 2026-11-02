@@ -390,6 +390,14 @@ pub struct CodexSessionInfo {
     pub effort: Option<String>,
 }
 
+/// Session discovery distinguishes an optional, uninstalled provider from a failed listing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "message", rename_all = "camelCase")]
+pub enum SessionListError {
+    NotInstalled(String),
+    Failed(String),
+}
+
 /// Recent Codex-owned threads scoped to one project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -130,6 +130,12 @@ export type ContextUsage = {
   timestamp: number | null;
 };
 
+export type SessionListError = {
+  kind: "notInstalled" | "failed";
+  message: string;
+};
+export function sessionListError(reason: unknown): SessionListError;
+
 export type ProviderWorkspaceState = {
   sessions: SessionSummary[];
   sessionDetails: Record<string, SessionDetails>;
@@ -137,6 +143,7 @@ export type ProviderWorkspaceState = {
   archivedSessionIds: string[];
   sessionsLoaded: boolean;
   isLoadingSessions: boolean;
+  sessionsError: SessionListError | null;
   selectedSessionId: string | null;
   sessionsById: Record<string, SessionWorkspaceState>;
   error: string | null;

@@ -234,7 +234,9 @@ export default function App() {
     });
     return () => cancelAnimationFrame(frame);
   }, [sessionKey, activeQuestionKey, Boolean(activePullRequest)]);
-  const sessionError = app.selected?.error ?? app.providerWorkspace?.error;
+  const sessionError = app.selected
+    ? app.selected.error
+    : app.providerWorkspace?.error;
   const mac = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   return (
     <FileNavigation.Provider value={fileNavigation}>
@@ -524,11 +526,10 @@ export default function App() {
                   <span>{sessionError}</span>
                   {!app.selected && app.project && (
                     <button
-                      onClick={() =>
-                        void app.loadSessions(app.project!, app.provider)
-                      }
+                      disabled={app.providerWorkspace?.isCreating}
+                      onClick={() => void app.submit()}
                     >
-                      Retry connection
+                      Retry
                     </button>
                   )}
                 </div>

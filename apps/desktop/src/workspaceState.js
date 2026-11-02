@@ -12,6 +12,16 @@ export function sessionBranches(details) {
     ]),
   ];
 }
+export function sessionListError(reason) {
+  return {
+    kind:
+      reason?.kind === "notInstalled" && typeof reason.message === "string"
+        ? "notInstalled"
+        : "failed",
+    message:
+      typeof reason?.message === "string" ? reason.message : String(reason),
+  };
+}
 function emptyProviderWorkspace() {
   return {
     sessions: [],
@@ -20,6 +30,7 @@ function emptyProviderWorkspace() {
     archivedSessionIds: [],
     sessionsLoaded: false,
     isLoadingSessions: false,
+    sessionsError: null,
     selectedSessionId: null,
     sessionsById: {},
     draft: "",

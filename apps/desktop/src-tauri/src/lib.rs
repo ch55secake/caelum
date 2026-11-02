@@ -4,12 +4,12 @@ use std::{path::PathBuf, sync::Arc};
 
 use caelum_core::{
     approvals::ApprovalBroker,
-    codex::CodexProvider,
+    codex::{CodexError, CodexProvider},
     database::WorkspaceDatabase,
     files,
     git::GitClient,
     github,
-    opencode::OpenCodeProvider,
+    opencode::{OpenCodeError, OpenCodeProvider},
     processes::ProcessRegistry,
     projects::Project,
     questions::{Answer, QuestionBroker},
@@ -23,7 +23,7 @@ use caelum_protocol::{
     GitRepositoryStatus, GitWorktree, GitWorktrees, OpenCodeSessionInfo, OpenCodeSessionList,
     ProjectDirectoryListing, ProjectFileContent, ProjectInfo, ProjectSearchMode,
     ProjectSearchResults, ProviderChoices, QuestionPrompt, SessionDetails, SessionHistoryPage,
-    WorkspaceSnapshot,
+    SessionListError, WorkspaceSnapshot,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -666,15 +666,18 @@ fn resolve_approval(
 async fn codex_list_sessions(
     codex: State<'_, CodexProvider>,
     project_path: String,
-) -> Result<CodexSessionList, String> {
+) -> Result<CodexSessionList, SessionListError> {
     let codex = codex.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         codex
             .list_sessions(project_path)
-            .map_err(|error| error.to_string())
+            .map_err(|error| match error {
+                CodexError::NotInstalled => SessionListError::NotInstalled(error.to_string()),
+                error => SessionListError::Failed(error.to_string()),
+            })
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| SessionListError::Failed(error.to_string()))?
 }
 
 #[tauri::command]
@@ -793,15 +796,18 @@ async fn codex_cancel_turn(
 async fn opencode_list_sessions(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,
-) -> Result<OpenCodeSessionList, String> {
+) -> Result<OpenCodeSessionList, SessionListError> {
     let opencode = opencode.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         opencode
             .list_sessions(project_path)
-            .map_err(|error| error.to_string())
+            .map_err(|error| match error {
+                OpenCodeError::NotInstalled => SessionListError::NotInstalled(error.to_string()),
+                error => SessionListError::Failed(error.to_string()),
+            })
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| SessionListError::Failed(error.to_string()))?
 }
 
 #[tauri::command]

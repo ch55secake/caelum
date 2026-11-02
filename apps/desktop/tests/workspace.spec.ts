@@ -9,10 +9,17 @@ async function desktop(
     initialQuestions?: QuestionPrompt[];
     holdQuestions?: boolean;
     worktrees?: boolean;
+    missingProviders?: ("codex" | "opencode")[];
   } = {},
 ) {
   await page.addInitScript(
-    ({ selected, initialQuestions, holdQuestions, worktrees }) => {
+    ({
+      selected,
+      initialQuestions,
+      holdQuestions,
+      worktrees,
+      missingProviders,
+    }) => {
       const callbacks = new Map<number, (event: unknown) => void>();
       const listeners = new Map<string, number[]>();
       const project = { name: "caelum", path: "/work/caelum" };
@@ -180,6 +187,7 @@ async function desktop(
       );
       let failNextSend = false;
       const commandErrors = new Map<string, string>();
+      const uninstalled = new Set(missingProviders);
       const slashCommands = new Map<
         string,
         { name: string; description?: string }[]
@@ -420,6 +428,13 @@ async function desktop(
           setCommandError: (command: string, error: string | null) => {
             if (error) commandErrors.set(command, error);
             else commandErrors.delete(command);
+          },
+          setProviderInstalled: (
+            provider: "codex" | "opencode",
+            installed: boolean,
+          ) => {
+            if (installed) uninstalled.delete(provider);
+            else uninstalled.add(provider);
           },
           setCommands: (
             path: string,
@@ -795,8 +810,14 @@ async function desktop(
               };
               const scope = `${command}:${args.projectPath}`;
               const error = commandErrors.get(scope) ?? commandErrors.get(command);
+              const missing = uninstalled.has("codex");
               await (gates.get(scope) ?? gates.get(command))?.promise;
-              if (error) throw new Error(error);
+              if (missing)
+                throw {
+                  kind: "notInstalled",
+                  message: "Codex CLI was not found.",
+                };
+              if (error) throw { kind: "failed", message: error };
               return snapshot;
             }
             if (command === "opencode_list_sessions") {
@@ -821,8 +842,14 @@ async function desktop(
               };
               const scope = `${command}:${args.projectPath}`;
               const error = commandErrors.get(scope) ?? commandErrors.get(command);
+              const missing = uninstalled.has("opencode");
               await (gates.get(scope) ?? gates.get(command))?.promise;
-              if (error) throw new Error(error);
+              if (missing)
+                throw {
+                  kind: "notInstalled",
+                  message: "OpenCode CLI was not found.",
+                };
+              if (error) throw { kind: "failed", message: error };
               return snapshot;
             }
             if (command === "codex_resume_session") {
@@ -947,6 +974,8 @@ async function desktop(
             }
             if (command.endsWith("_start_session")) {
               if (startGate) await startGate;
+              const error = commandErrors.get(command);
+              if (error) throw new Error(error);
               const id =
                 (command.startsWith("codex") ? "thread-new" : "ses-new") +
                 (worktrees ? `-${sequence++}` : "");
@@ -1798,6 +1827,144 @@ test("project sessions discover unopened checkouts and keep navigation, activity
   await expect(original).toBeVisible();
 });
 
+for (const provider of ["codex", "opencode"] as const) {
+  test(`session discovery tolerates an uninstalled ${provider} and finds it after installation`, async ({
+    page,
+  }) => {
+    await desktop(page, null, { missingProviders: [provider] });
+    const refresh = page.getByRole("button", {
+      name: "Refresh sessions",
+      exact: true,
+    });
+    const availableTitle =
+      provider === "codex" ? "OpenCode session" : "Refine the session workspace";
+    const missingTitle =
+      provider === "codex" ? "Refine the session workspace" : "OpenCode session";
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(
+      page.getByRole("button", { name: availableTitle, exact: true }),
+    ).toBeVisible();
+    await expect(refresh).toBeEnabled();
+    await expect(page.locator(".session-discovery-error")).toHaveCount(0);
+    await expect(page.locator(".session-workspace .error-banner")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: missingTitle, exact: true }),
+    ).toHaveCount(0);
+    await input.fill("Keep this draft");
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    expect(
+      await page.evaluate(
+        (provider) =>
+          (window as any).fixture.calls.filter(
+            (call: any) => call.command === `${provider}_list_sessions`,
+          ).length,
+        provider,
+      ),
+    ).toBe(1);
+    await page.evaluate(
+      (provider) => (window as any).fixture.setProviderInstalled(provider, true),
+      provider,
+    );
+    await refresh.click();
+    await expect(
+      page.getByRole("button", { name: missingTitle, exact: true }),
+    ).toBeVisible();
+    await expect(refresh).toBeEnabled();
+    await expect(page.locator(".session-discovery-error")).toHaveCount(0);
+    await expect(input).toHaveValue("Keep this draft");
+  });
+
+  test(`${provider} creation errors stay separate from session discovery and survive refresh`, async ({
+    page,
+  }) => {
+    await desktop(page, null);
+    if (provider === "opencode") await choose(page, "Provider", "OpenCode");
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    const refresh = page.getByRole("button", {
+      name: "Refresh sessions",
+      exact: true,
+    });
+    const discoveryError = page.locator(".session-discovery-error");
+    const creationError = page.locator(".session-workspace .error-banner");
+    await expect(refresh).toBeEnabled();
+    await page.evaluate(
+      (provider) =>
+        (window as any).fixture.setCommandError(
+          `${provider}_start_session`,
+          "Session creation failed",
+        ),
+      provider,
+    );
+    await input.fill("Keep my failed prompt");
+    await input.press("Enter");
+    await expect(creationError).toContainText("Session creation failed");
+    await expect(input).toHaveValue("Keep my failed prompt");
+    await expect(discoveryError).toHaveCount(0);
+
+    await page.getByRole("button", {
+      name: provider === "codex" ? "Refine the session workspace" : "OpenCode session",
+      exact: true,
+    }).click();
+    await expect(page.locator(".transcript")).toBeVisible();
+    await expect(creationError).toHaveCount(0);
+    await page.getByRole("button", { name: "New session", exact: true }).click();
+    await expect(input).toHaveValue("Keep my failed prompt");
+    await input.press("Enter");
+    await expect(creationError).toContainText("Session creation failed");
+
+    await page.evaluate(
+      (provider) =>
+        (window as any).fixture.setCommandError(
+          `${provider}_list_sessions`,
+          "Session listing failed",
+        ),
+      provider,
+    );
+    await refresh.click();
+    await expect(discoveryError).toBeVisible();
+    await expect(discoveryError).toHaveAttribute(
+      "title",
+      /Session listing failed/,
+    );
+    await expect(creationError).toContainText("Session creation failed");
+    await expect(
+      page.getByRole("button", {
+        name: "Refine the session workspace",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "OpenCode session", exact: true }),
+    ).toBeVisible();
+
+    await page.evaluate(
+      (provider) =>
+        (window as any).fixture.setCommandError(`${provider}_list_sessions`, null),
+      provider,
+    );
+    await discoveryError
+      .getByRole("button", { name: "Retry", exact: true })
+      .click();
+    await expect(refresh).toBeEnabled();
+    await expect(discoveryError).toHaveCount(0);
+    await expect(creationError).toContainText("Session creation failed");
+    await expect(input).toHaveValue("Keep my failed prompt");
+    await page.evaluate(
+      (provider) =>
+        (window as any).fixture.setCommandError(`${provider}_start_session`, null),
+      provider,
+    );
+    await creationError
+      .getByRole("button", { name: "Retry", exact: true })
+      .click();
+    await expect(creationError).toHaveCount(0);
+    await expect(
+      page.getByRole("article").filter({ hasText: "Keep my failed prompt" }),
+    ).toBeVisible();
+    await expect(discoveryError).toHaveCount(0);
+  });
+}
+
 test("project session discovery reports partial failures and late refreshes do not change the active project", async ({
   page,
 }) => {
@@ -1832,6 +1999,10 @@ test("project session discovery reports partial failures and late refreshes do n
   ).toBeVisible();
   await expect(page.locator(".session-discovery-error")).toContainText(
     "Could not load all sessions",
+  );
+  await expect(page.locator(".session-discovery-error")).toHaveAttribute(
+    "title",
+    "feature/slow · Codex (/external/slow): Provider unavailable in linked checkout",
   );
   await expect(
     page.getByRole("button", {
