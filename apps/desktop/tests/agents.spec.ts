@@ -40,6 +40,9 @@ test("Build and Plan are one-click session controls that distinguish the running
   await expect(input).toBeFocused();
   await expect(plan).toHaveAttribute("aria-pressed", "true");
   await expect(status).toHaveText("Running: Build · Next: Plan");
+  await expect(toolbar.locator(".agent-pending")).toHaveText(
+    "Next message · Plan",
+  );
   const runningIcon = build.locator(".agent-icon");
   await expect(runningIcon).toHaveAttribute("data-running", "true");
   await expect(plan.locator(".agent-icon")).toHaveAttribute(
@@ -69,6 +72,10 @@ test("Build and Plan are one-click session controls that distinguish the running
   await page.screenshot({
     path: "test-results/agent-switch-running.png",
   });
+  await page.setViewportSize({ width: 800, height: 620 });
+  await expect(toolbar.locator(".agent-pending")).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: "test-results/agent-switch-pending-compact.png" });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page
     .getByRole("button", { name: "Stop generation", exact: true })
     .click();
@@ -94,6 +101,7 @@ test("Build and Plan are one-click session controls that distinguish the running
     (window as any).fixture.release("opencode_select_agent"),
   );
   await expect(status).toHaveText("Running: Plan");
+  await expect(toolbar.locator(".agent-pending")).toHaveCount(0);
   await expect(plan).toBeEnabled();
   const calls = await page.evaluate(() =>
     (window as any).fixture.calls.filter((call: any) =>

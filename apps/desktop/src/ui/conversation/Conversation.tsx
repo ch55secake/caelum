@@ -178,7 +178,10 @@ export function ApprovalCard({
   );
 }
 
-export type ConversationHandle = { reveal: (id: string) => void };
+export type ConversationHandle = {
+  reveal: (id: string) => void;
+  restoreScroll: () => void;
+};
 
 export function Conversation({
   ref,
@@ -206,6 +209,7 @@ export function Conversation({
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(session.scrollTop === null);
   const position = useRef(session.scrollTop);
+  const dimensions = useRef({ height: 0, content: 0 });
   const [atBottom, setAtBottom] = useState(following.current);
   // A sliding 100-entry window bounds Markdown and tool DOM, while keeping all records in memory.
   const [end, setEnd] = useState<string | null>(session.windowEndId);
@@ -214,6 +218,20 @@ export function Conversation({
   endRef.current = end;
   const save = useRef(saveView);
   save.current = saveView;
+  function followResize() {
+    const container = scroll.current!;
+    const next = {
+      height: container.clientHeight,
+      content: container.scrollHeight,
+    };
+    const previous = dimensions.current;
+    if (next.height === previous.height && next.content === previous.content)
+      return false;
+    dimensions.current = next;
+    if (following.current && endRef.current === null)
+      container.scrollTop = container.scrollHeight;
+    return true;
+  }
   const entries = useMemo(
     () => conversationPresentation(session.conversation),
     [session.conversation],
@@ -246,6 +264,15 @@ export function Conversation({
   useImperativeHandle(
     ref,
     () => ({
+      restoreScroll() {
+        const container = scroll.current!;
+        // Replacing the composer can briefly clamp WebKit's scroll position,
+        // even when both modes finish at the same height (no resize event).
+        container.scrollTop =
+          following.current && endRef.current === null
+            ? container.scrollHeight
+            : (position.current ?? container.scrollTop);
+      },
       reveal(id) {
         const index = entries.findIndex((entry) => entry.id === id);
         if (index < 0) return;
@@ -263,10 +290,8 @@ export function Conversation({
   useLayoutEffect(() => {
     const container = scroll.current!;
     container.scrollTop = session.scrollTop ?? container.scrollHeight;
-    const observer = new ResizeObserver(() => {
-      if (following.current && endRef.current === null)
-        container.scrollTop = container.scrollHeight;
-    });
+    followResize();
+    const observer = new ResizeObserver(followResize);
     observer.observe(container);
     if (content.current) observer.observe(content.current);
     return () => {
@@ -341,6 +366,9 @@ export function Conversation({
         aria-label="Conversation"
         onScroll={() => {
           const node = scroll.current!;
+          // Layout-induced scroll events can arrive before ResizeObserver.
+          // Preserve the follow intent through composer and content resizes.
+          if (followResize()) return;
           const near =
             node.scrollHeight - node.scrollTop - node.clientHeight < 64 &&
             windowEnd === entries.length;

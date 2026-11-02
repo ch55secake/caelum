@@ -1,17 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { BarChart3, LoaderCircle, RefreshCw, X } from "lucide-react";
-import { localDate, type Stats } from "../../domain/usage/statistics.js";
+import { BarChart3, FolderOpen, LoaderCircle, RefreshCw, X } from "lucide-react";
+import type { Stats } from "../../domain/usage/statistics.js";
+import { ChoicePicker } from "../primitives/ChoicePicker.js";
 import { StatsOverview } from "./StatsOverview.js";
 import "./stats.css";
 
 type Project = { id: string; name?: string; canonical: string };
-function boundary(date: string, nextDay = false) {
-  if (!date) return null;
-  const value = new Date(`${date}T00:00:00`);
-  if (nextDay) value.setDate(value.getDate() + 1);
-  return value.getTime();
-}
 
 export function StatsDialog({
   project,
@@ -22,22 +17,6 @@ export function StatsDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [scope, setScope] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [preset, setPreset] = useState("all");
-  function choosePreset(value: string) {
-    setPreset(value);
-    if (value === "custom") return;
-    if (value === "all") {
-      setFrom("");
-      setTo("");
-      return;
-    }
-    const today = new Date();
-    setTo(localDate(today));
-    today.setDate(today.getDate() - Number(value) + 1);
-    setFrom(localDate(today));
-  }
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [result, setResult] = useState<{ key: string; data: Stats } | null>(
@@ -47,14 +26,8 @@ export function StatsDialog({
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const start = boundary(from),
-    end = boundary(to, true);
-  const invalid =
-    Boolean(from && to && from > to) ||
-    (start !== null && (!Number.isFinite(start) || start < 0)) ||
-    (end !== null && (!Number.isFinite(end) || end < 0));
-  const key = JSON.stringify([project, scope, start, end, timezone]);
-  const data = !invalid && result?.key === key ? result.data : null;
+  const key = JSON.stringify([project, scope, timezone]);
+  const data = result?.key === key ? result.data : null;
   useEffect(() => {
     const element = dialog.current!;
     const previous = document.activeElement;
@@ -83,16 +56,12 @@ export function StatsDialog({
     };
   }, [project, refresh]);
   useEffect(() => {
-    if (invalid) {
-      setLoading(false);
-      return;
-    }
     let disposed = false;
     setLoading(true);
     setError(null);
     void invoke<Stats>("opencode_stats", {
       projectPath: project,
-      filter: { from: start, to: end, project: scope || null, timezone },
+      filter: { from: null, to: null, project: scope || null, timezone },
     })
       .then(
         (value) => {
@@ -108,7 +77,7 @@ export function StatsDialog({
     return () => {
       disposed = true;
     };
-  }, [key, invalid, refresh]);
+  }, [key, refresh]);
   return (
     <dialog
       ref={dialog}
@@ -144,63 +113,25 @@ export function StatsDialog({
       </header>
       <div className="stats-filter-bar">
         <div className="stats-filters">
-          <label>
-            Project
-            <select
-              aria-label="Statistics project"
-              value={scope}
-              onChange={(event) => setScope(event.target.value)}
-            >
-              <option value="">All projects</option>
-              {projects.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name || item.canonical}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="stats-presets" role="group" aria-label="Date range">
-            {[
-              ["7", "7 days"],
-              ["30", "30 days"],
-              ["all", "All time"],
-              ["custom", "Custom"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={preset === value}
-                onClick={() => choosePreset(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <ChoicePicker
+            label="Project"
+            icon={<FolderOpen size={14} />}
+            value={scope}
+            onChange={setScope}
+            searchable
+            choices={[
+              { id: "", name: "All projects" },
+              ...projects.map((item) => ({
+                id: item.id,
+                name:
+                  item.name ||
+                  item.canonical.split(/[\\/]/).filter(Boolean).at(-1) ||
+                  item.canonical,
+                description: item.canonical,
+              })),
+            ]}
+          />
         </div>
-        {preset === "custom" && (
-          <div className="stats-custom-dates">
-            <label>
-              From
-              <input
-                type="date"
-                min="1970-01-01"
-                aria-label="Statistics from"
-                value={from}
-                onChange={(event) => setFrom(event.target.value)}
-              />
-            </label>
-            <label>
-              Through
-              <input
-                type="date"
-                min={from || "1970-01-01"}
-                aria-label="Statistics through"
-                value={to}
-                onChange={(event) => setTo(event.target.value)}
-              />
-            </label>
-          </div>
-        )}
         <p className="stats-range">
           {data
             ? `${new Date(data.range.from).toLocaleDateString()} – ${new Date(Math.max(data.range.from, data.range.to - 1)).toLocaleDateString()}`
@@ -217,12 +148,7 @@ export function StatsDialog({
             </button>
           </p>
         )}
-        {invalid && (
-          <p className="usage-error" role="alert">
-            Choose a valid date range with the end on or after the start.
-          </p>
-        )}
-        {!invalid && error && (
+        {error && (
           <div className="usage-error" role="alert">
             Couldn’t load statistics: {error}
             {data && (
@@ -249,7 +175,7 @@ export function StatsDialog({
       <footer className="settings-footer usage-footer">
         <span>OpenCode server</span>
         <button
-          disabled={loading || invalid}
+          disabled={loading}
           onClick={() => setRefresh((value) => value + 1)}
         >
           <RefreshCw size={12} />

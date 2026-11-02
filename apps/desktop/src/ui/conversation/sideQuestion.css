@@ -1,5 +1,7 @@
 .side-question-panel {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  display: flex;
+  flex-direction: column;
   outline: none;
 }
 .side-question-heading {
@@ -12,14 +14,9 @@
   color: var(--accent);
 }
 .side-question-heading h2 {
-  margin: 0;
+  margin: 0 auto 0 0;
   font-size: 12px;
   font-weight: 550;
-}
-.side-question-heading > span {
-  color: var(--muted);
-  font-size: 10px;
-  margin-right: auto;
 }
 .side-question-heading .icon-button {
   flex-shrink: 0;
@@ -33,15 +30,24 @@
   overscroll-behavior: contain;
 }
 .side-question-panel:has(textarea) .side-question-content {
+  flex: 1;
+  display: flex;
   overflow: visible;
   max-height: none;
+}
+.side-question-content form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
 }
 .side-question-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: auto;
+  padding-top: 6px;
   font-size: 10px;
   color: var(--muted);
 }

@@ -23,6 +23,7 @@ export type Stats = {
   }[];
 };
 export function localDate(date: Date): string;
+export function statsCount(value: number): string;
 export function activityBuckets(
   activity: Stats["activity"],
   range: Stats["range"],

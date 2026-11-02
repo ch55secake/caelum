@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activityBuckets, localDate } from "./statistics.js";
+import { activityBuckets, localDate, statsCount } from "./statistics.js";
+
+test("large statistics counts use M and B without abbreviating thousands", () => {
+  for (const value of [0, 42, 1000, 999999])
+    assert.equal(statsCount(value), value.toLocaleString());
+  assert.equal(statsCount(1_000_000), "1M");
+  assert.equal(statsCount(1_234_567), `${(1.2).toLocaleString()}M`);
+  assert.equal(statsCount(999_940_000), `${(999.9).toLocaleString()}M`);
+  assert.equal(statsCount(999_999_999), "1B");
+  assert.equal(statsCount(1_000_000_000), "1B");
+  assert.equal(statsCount(2_450_000_000), `${(2.5).toLocaleString()}B`);
+});
 
 test("activity includes idle calendar days and keeps local date bounds through DST", () => {
   const range = {

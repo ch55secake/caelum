@@ -16,9 +16,9 @@ Responses, thinking and tool activity stream live. Expand a row for the complete
 
 Provider-owned history loads in pages; choose **Load earlier messages** to read further back. Compaction appears as a checkpoint, including running, completed, failed and interrupted states. Earlier messages remain available. OpenCode checkpoints can include a summary. **Turn cancelled** clears when work resumes; a resumable shutdown appears as **Execution paused**.
 
-Draft or queue another message while a response runs. **Stop** interrupts the active turn. Failed submissions preserve text and attachments for retry; disconnected sessions offer **Reconnect**. Approvals appear in the requesting conversation, with indicators for background sessions.
+Draft or queue another message while a response runs. **Stop** or **Escape twice within 750ms** interrupts the active session's turn and pauses its queue. Menus, dialogs and side-question dismissal take priority over cancellation. Failed submissions preserve text and attachments for retry; disconnected sessions offer **Reconnect**. Approvals appear in the requesting conversation, with indicators for background sessions.
 
-OpenCode's **Build** and **Plan** controls choose the agent for your next message. **More** includes custom agents. **Shift+Tab** cycles available agents without moving the caret. The current, running and pending-next agent states are distinct, and a failed switch preserves the draft.
+OpenCode's **Build** and **Plan** controls choose the agent for your next message. **More** includes custom agents. **Shift+Tab** cycles available agents without moving the caret. A **Next message** badge identifies a pending switch alongside the current/running agent indicator, and a failed switch preserves the draft.
 
 The **Context** meter shows the latest reported context usage and model limit, not cumulative usage. Codex reports its effective limit; OpenCode uses the latest assistant step and its model's limit, resetting after compaction. Missing information is shown as unavailable.
 
@@ -35,8 +35,8 @@ Type **#** to mention a PR associated with the active session, including its sta
 - **/new** opens a new-session draft in the current checkout/provider. It also works during execution and keeps the original session's attachments/settings.
 - **/timeline** searches earlier user messages in the current Codex or OpenCode session. History loads in pages while the picker is open. Choose a message with arrows and Enter, or click it, to reveal and highlight it in the conversation. **Jump to latest** returns to live output. Escape closes the picker and focuses the composer, preserving the reading position and attachments.
 - **/goal objective**, **/goal pause**, **/goal resume**, **/goal clear** use OpenCode's native goal workflow, including during execution.
-- **/usage** opens OpenCode Go allowances, Console budgets and current-session context as separately labelled values. It works before creating a session and keeps attached context. Codex account usage is not included.
-- **/stats** shows recorded OpenCode usage across the connected server, including projects outside Caelum. Filter by project (including linked worktrees), **7 days**, **30 days**, **All time**, or a **Custom** inclusive local date range. Summary totals lead into an activity chart and compact model table; expand **Token breakdown** or a model row for input, output, reasoning and cache details. Hover or focus a chart bar for its steps. Longer ranges group calendar days without dropping usage. Missing pricing/subscription costs may be recorded as zero. Codex usage is not included.
+- **/usage** opens OpenCode Go allowances, Console budgets and current-session context as separately labelled values. It is available only with OpenCode, works before creating a session and keeps attached context.
+- **/stats** shows all recorded OpenCode usage across the connected server, including projects outside Caelum. Search the project picker by name or path (including linked worktrees), or choose **All projects**. Summary totals lead into an activity chart and compact model table; expand **Token breakdown** or a model row for input, output, reasoning and cache details. Millions and billions use **M**/**B**, with exact counts on hover. Hover or focus a chart bar for its steps. Longer histories group calendar days without dropping usage. Missing pricing/subscription costs may be recorded as zero.
 - **/btw [question]** temporarily replaces the composer with a side question. A supplied question is asked immediately; `/btw` alone focuses the question field. Loading, answers, editing and retry stay in the prompt box while the main turn continues. **Back to message** or Escape restores your main draft and attachments. Side questions use the current OpenCode session context, have independent `@`/`#` attachments and never add a conversation turn. You can copy the answer or edit the question. Dismissal and session changes discard delayed replies. Existing OpenCode sessions are required.
 - Other native/custom commands appear when OpenCode reports them and execute with the selected settings and attached snapshots.
 
@@ -76,6 +76,7 @@ Open Settings from the sidebar, collapsed header or **⌘,**. Preferences save a
 | --- | --- |
 | Enter / ⌘Enter | Send or queue |
 | Shift+Enter | Newline |
+| Escape twice | Stop the active turn and pause its queue |
 | ↑ in an empty composer | Recall the session's last message |
 | Shift+Tab in the composer | Cycle OpenCode agents |
 | ⌘N | New-session draft |

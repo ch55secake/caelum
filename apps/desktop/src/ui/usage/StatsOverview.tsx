@@ -2,11 +2,14 @@ import { Fragment, useState } from "react";
 import { BarChart3, ChevronRight } from "lucide-react";
 import {
   activityBuckets,
+  statsCount as count,
   type Stats,
   type Tokens,
 } from "../../domain/usage/statistics.js";
 
-const count = (value: number) => value.toLocaleString();
+const Count = ({ value }: { value: number }) => (
+  <span title={value.toLocaleString()}>{count(value)}</span>
+);
 const total = (tokens: Tokens) =>
   tokens.input +
   tokens.output +
@@ -39,7 +42,9 @@ function TokenBreakdown({ tokens }: { tokens: Tokens }) {
       ).map(([label, value]) => (
         <div key={label}>
           <dt>{label}</dt>
-          <dd>{count(value)}</dd>
+          <dd>
+            <Count value={value} />
+          </dd>
         </div>
       ))}
     </dl>
@@ -57,10 +62,15 @@ function ActivityChart({ data }: { data: Stats }) {
       <div className="stats-section-heading">
         <h2>Activity</h2>
         <span>
-          {count(data.activeDays)} active days · {count(data.streak)} day streak
+          <Count value={data.activeDays} /> active days ·{" "}
+          <Count value={data.streak} /> day streak
         </span>
       </div>
-      <div className="stats-chart-caption" aria-live="polite">
+      <div
+        className="stats-chart-caption"
+        aria-live="polite"
+        title={`${(selected?.steps ?? data.steps).toLocaleString()} model steps`}
+      >
         {selected
           ? `${dayLabel(selected.from)}${selected.to !== selected.from ? ` – ${dayLabel(selected.to)}` : ""} · ${count(selected.steps)} steps`
           : `${count(data.steps)} model steps`}
@@ -78,7 +88,7 @@ function ActivityChart({ data }: { data: Stats }) {
         ))}
         {buckets.map((item, index) => {
           const height = Math.max(2, (item.steps / max) * 88);
-          const label = `${item.from}${item.to !== item.from ? ` through ${item.to}` : ""}: ${count(item.steps)} model steps`;
+          const label = `${item.from}${item.to !== item.from ? ` through ${item.to}` : ""}: ${item.steps.toLocaleString()} model steps`;
           return (
             <rect
               key={item.from}
@@ -114,20 +124,26 @@ export function StatsOverview({ data }: { data: Stats }) {
   return (
     <>
       <dl className="stats-summary" aria-label="Usage totals">
-        {[
+        {(
           [
-            "Total tokens",
-            count(total(data.tokens)),
-            "Including cached tokens",
-          ],
-          ["Recorded cost (USD)", money(data.cost), "Reported by OpenCode"],
-          [
-            "Sessions",
-            count(data.sessions),
-            `${count(data.subagents)} subagent sessions`,
-          ],
-          ["Prompts", count(data.prompts), `${count(data.steps)} model steps`],
-        ].map(([label, value, note]) => (
+            [
+              "Total tokens",
+              <Count value={total(data.tokens)} />,
+              "Including cached tokens",
+            ],
+            ["Recorded cost (USD)", money(data.cost), "Reported by OpenCode"],
+            [
+              "Sessions",
+              <Count value={data.sessions} />,
+              <><Count value={data.subagents} /> subagent sessions</>,
+            ],
+            [
+              "Prompts",
+              <Count value={data.prompts} />,
+              <><Count value={data.steps} /> model steps</>,
+            ],
+          ] as const
+        ).map(([label, value, note]) => (
           <div key={label}>
             <dt>{label}</dt>
             <dd>{value}</dd>
@@ -142,8 +158,8 @@ export function StatsOverview({ data }: { data: Stats }) {
       {!data.steps ? (
         <div className="stats-empty">
           <BarChart3 size={28} />
-          <h2>No recorded model usage in this range.</h2>
-          <p>Try a wider date range or another project.</p>
+          <h2>No recorded model usage.</h2>
+          <p>Choose another project or run a session to see its usage.</p>
         </div>
       ) : (
         <>
@@ -151,7 +167,9 @@ export function StatsOverview({ data }: { data: Stats }) {
           <section className="stats-section" aria-label="Usage by model">
             <div className="stats-section-heading">
               <h2>Models</h2>
-              <span>{data.models.length} used</span>
+              <span>
+                <Count value={data.models.length} /> used
+              </span>
             </div>
             <div className="stats-table-wrap">
               <table>
@@ -193,8 +211,12 @@ export function StatsOverview({ data }: { data: Stats }) {
                               </span>
                             </button>
                           </th>
-                          <td>{count(item.steps)}</td>
-                          <td>{count(total(item.tokens))}</td>
+                          <td>
+                            <Count value={item.steps} />
+                          </td>
+                          <td>
+                            <Count value={total(item.tokens)} />
+                          </td>
                           <td>{money(item.cost)}</td>
                         </tr>
                         {open && (

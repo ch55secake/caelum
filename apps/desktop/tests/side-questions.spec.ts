@@ -2,6 +2,99 @@ import { expect, test } from "@playwright/test";
 import { desktop } from "./fixtures/desktop.js";
 import { choose, emit, attachedContext } from "./fixtures/helpers.js";
 
+for (const following of [true, false]) {
+  test(`side question resizing preserves ${following ? "the latest message" : "an older reading position"}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 800, height: 620 });
+    await desktop(page, null);
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture;
+      fixture.setOpenHistory(
+        Array.from({ length: 120 }, (_, index) => ({
+          id: `message-${index}`,
+          type: "assistant",
+          content: [{ type: "text", text: `Message ${index}\n\nMore context.` }],
+        })),
+      );
+      fixture.hold("opencode_generate");
+      fixture.setGenerateReply("A long side answer.\n\n".repeat(40));
+    });
+    await choose(page, "Provider", "OpenCode");
+    await page
+      .getByRole("button", { name: "OpenCode session", exact: true })
+      .click();
+    const transcript = page.locator(".transcript");
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await expect(page.locator(".conversation-entry")).toHaveCount(100);
+    if (!following) {
+      await transcript.evaluate((node) => {
+        node.scrollTop = 250;
+      });
+      await expect(
+        page.getByRole("button", { name: "Jump to latest" }),
+      ).toBeVisible();
+    }
+    const checkPosition = async () => {
+      await expect
+        .poll(() => transcript.evaluate(
+          (node, following) => following
+            ? node.scrollHeight - node.scrollTop - node.clientHeight
+            : Math.abs(node.scrollTop - 250),
+          following,
+        ))
+        .toBeLessThanOrEqual(1);
+    };
+    const draft = "Main draft\n".repeat(6).trim();
+    await input.fill(draft);
+    await checkPosition();
+    await input.fill("/btw");
+    await input.press("Enter");
+    const panel = page.getByRole("region", {
+      name: "Side question",
+      exact: true,
+    });
+    const question = panel.getByRole("textbox", {
+      name: "Question",
+      exact: true,
+    });
+    await expect(question).toBeFocused();
+    await checkPosition();
+    await question.fill("First\nSecond\nThird\nFourth");
+    await checkPosition();
+    await question.pressSequentially(" more text");
+    await checkPosition();
+    await page.getByRole("button", { name: "Hide changes", exact: true }).click();
+    await checkPosition();
+    await page.getByRole("button", { name: "Show changes", exact: true }).click();
+    await checkPosition();
+    await question.fill("A long question\n".repeat(12));
+    await checkPosition();
+    await question.press("Enter");
+    await expect(panel.getByRole("status")).toContainText("Answering");
+    await checkPosition();
+    await page.evaluate(() =>
+      (window as any).fixture.release("opencode_generate"),
+    );
+    await expect(
+      panel.getByRole("region", { name: "Side answer" }),
+    ).toBeVisible();
+    await checkPosition();
+    await expect(panel).toBeInViewport({ ratio: 1 });
+    await panel.press("Escape");
+    await expect(input).toHaveValue(draft);
+    await checkPosition();
+    await input.fill("Short main draft");
+    await input.fill("/btw");
+    await input.press("Enter");
+    await expect(question).toBeFocused();
+    await checkPosition();
+    await panel.press("Escape");
+    await expect(input).toHaveValue("Short main draft");
+    await checkPosition();
+  });
+}
+
 test("side questions keep the main draft, attachments and running turn intact", async ({
   page,
 }) => {
@@ -55,6 +148,7 @@ test("side questions keep the main draft, attachments and running turn intact", 
     exact: true,
   });
   await expect(question).toBeFocused();
+  await expect(dialog.getByText("Temporary", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await question.fill("Explain this independently α\nSecond line");
   await page.evaluate(() => (window as any).fixture.hold("opencode_generate"));

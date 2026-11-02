@@ -44,7 +44,7 @@ test("slash usage identifies OpenCode Go, keeps attachments and reported limits 
     dialog.getByText("Loading OpenCode Go usage…", { exact: true }),
   ).toBeVisible();
   await expect(dialog).toHaveAccessibleDescription(
-    "Subscription allowances. Codex usage isn’t included.",
+    "Subscription allowances.",
   );
   await expect(dialog).toContainText("No context usage reported");
   await page.keyboard.press("Meta+n");
@@ -213,6 +213,36 @@ test("slash usage identifies OpenCode Go, keeps attachments and reported limits 
   ).toHaveAttribute("value", "57");
   await page.screenshot({ path: "test-results/slash-usage-light.png" });
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
+});
+
+test("Codex rejects usage commands in new, idle and running sessions while keeping the draft and attachments", async ({ page }) => {
+  await desktop(page, null);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  for (const state of ["new", "idle", "running"]) {
+    if (state === "idle")
+      await page.getByRole("button", { name: "Refine the session workspace", exact: true }).click();
+    if (state === "running") {
+      await input.fill("Start the task");
+      await input.press("Enter");
+      await expect(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+    }
+    await input.fill("@README");
+    await page.getByRole("option", { name: "README.md", exact: true }).click();
+    await input.fill("/usage");
+    await expect(page.getByRole("option", { name: /^\/usage/ })).toHaveCount(0);
+    await input.press("Enter");
+    await expect(page.getByRole("alert").filter({ hasText: "/usage is only available with OpenCode." })).toBeVisible();
+    await expect(input).toHaveValue("/usage");
+    await expect(attachedContext(page)).toContainText("README.md");
+    await input.fill("/usage extra");
+    await page.getByRole("button", { name: "Run command", exact: true }).click();
+    await expect(input).toHaveValue("/usage extra");
+  }
+  expect(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) =>
+    call.command.endsWith("_send_prompt") || call.command.endsWith("_start_session") ||
+    call.command.endsWith("_run_command") || call.command.endsWith("_enqueue_prompt") ||
+    call.command === "opencode_usage_limits",
+  ).map((call: any) => call.command))).toEqual(["codex_send_prompt"]);
 });
 
 test("slash usage reports the measured session model and handles missing provider allowances", async ({

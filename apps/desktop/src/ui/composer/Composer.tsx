@@ -44,6 +44,7 @@ export function Composer({
   session,
   loadTimeline,
   revealMessage,
+  onLayoutChange,
   draft,
   setDraft,
   lastMessage,
@@ -86,6 +87,7 @@ export function Composer({
   session: SessionWorkspaceState | null;
   loadTimeline: () => Promise<void>;
   revealMessage: (id: string) => void;
+  onLayoutChange: () => void;
   draft: string;
   setDraft: (text: string) => void;
   lastMessage: string | null;
@@ -133,6 +135,7 @@ export function Composer({
     initial: string;
     files: FileContext[];
     pullRequests: PullRequestContext[];
+    minHeight: number;
     id: number;
   } | null>(null);
   const sideQuestionId = useRef(0);
@@ -196,7 +199,7 @@ export function Composer({
   });
   const command =
     provider === "opencode" ||
-    ["new", "timeline", "btw"].includes(parsed?.name ?? "")
+    ["new", "timeline", "btw", "usage"].includes(parsed?.name ?? "")
       ? parsed
       : null;
   const slash = useSlashCommands({
@@ -232,7 +235,11 @@ export function Composer({
       setCommandError(null);
       setDraft("");
       setTimelineOpen(true);
-    } else if (provider === "opencode" && command?.name === "usage") {
+    } else if (command?.name === "usage") {
+      if (provider !== "opencode") {
+        setCommandError("/usage is only available with OpenCode.");
+        return;
+      }
       if (command.arguments.trim()) {
         setCommandError("/usage does not take arguments.");
         return;
@@ -243,7 +250,7 @@ export function Composer({
     } else if (provider === "opencode" && command?.name === "stats") {
       if (command.arguments.trim()) {
         setCommandError(
-          "/stats does not take arguments. Use the filters in the statistics dialog.",
+          "/stats does not take arguments. Choose a project in the statistics dialog.",
         );
         return;
       }
@@ -253,7 +260,7 @@ export function Composer({
     } else if (command?.name === "btw") {
       if (provider !== "opencode" || !session) {
         setCommandError(
-          "Open an OpenCode session to ask a temporary side question.",
+          "Open an OpenCode session to ask a side question.",
         );
         return;
       }
@@ -263,6 +270,9 @@ export function Composer({
         initial: command.arguments,
         files: sideFiles,
         pullRequests: sidePrs,
+        minHeight:
+          textareaRef.current?.closest("form")?.getBoundingClientRect().height ??
+          0,
         id: ++sideQuestionId.current,
       });
     } else submit();
@@ -306,6 +316,9 @@ export function Composer({
     observer.observe(area);
     return () => observer.disconnect();
   }, [textareaRef, sideQuestion]);
+  useLayoutEffect(() => {
+    onLayoutChange();
+  }, [sideQuestion]);
   return (
     <div className="composer-wrap">
       {sideQuestion && session && (
@@ -318,6 +331,7 @@ export function Composer({
           initialPullRequests={sideQuestion.pullRequests}
           pullRequests={pullRequests}
           available={!disabled}
+          minHeight={sideQuestion.minHeight}
           close={closeSideQuestion}
         />
       )}
@@ -587,7 +601,7 @@ export function Composer({
                   cancel();
                 }}
                 aria-label="Stop generation"
-                title="Stop generation"
+                title="Stop generation · Esc Esc"
               >
                 <Square size={13} />
               </button>

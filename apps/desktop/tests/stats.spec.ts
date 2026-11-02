@@ -32,7 +32,7 @@ const stats = {
   ],
 };
 
-test("slash stats aggregates OpenCode history, filters by project and dates and preserves context", async ({
+test("slash stats searches projects by name and path across all recorded history and preserves context", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 800, height: 620 });
@@ -77,33 +77,32 @@ test("slash stats aggregates OpenCode history, filters by project and dates and 
     from: null,
     to: null,
   });
-  await dialog.getByLabel("Statistics project").selectOption("project-two");
-  await dialog.getByRole("button", { name: "7 days", exact: true }).click();
-  const week = await page.evaluate(() => {
-    const to = new Date();
-    to.setHours(0, 0, 0, 0);
-    to.setDate(to.getDate() + 1);
-    const from = new Date(to);
-    from.setDate(from.getDate() - 7);
-    return { from: from.getTime(), to: to.getTime() };
-  });
+  await expect(dialog.getByRole("group", { name: "Date range" })).toHaveCount(0);
+  await expect(dialog.locator('input[type="date"]')).toHaveCount(0);
+  const project = dialog.getByRole("button", { name: "Project", exact: true });
+  await project.click();
+  const search = dialog.getByRole("combobox", { name: "Search projects" });
+  await expect(search).toBeFocused();
+  await search.fill("/work/other");
+  await expect(dialog.getByRole("option")).toHaveCount(1);
+  await expect(dialog.getByRole("option", { name: "Other /work/other" })).toBeInViewport({ ratio: 1 });
+  await dialog.screenshot({ path: "test-results/stats-project-picker.png" });
+  await search.press("Enter");
   await expect
     .poll(async () => (await calls()).at(-1).filter)
-    .toMatchObject({ project: "project-two", ...week });
-  await dialog.getByRole("button", { name: "Custom", exact: true }).click();
-  await dialog.getByLabel("Statistics from").fill("2026-10-01");
-  await dialog.getByLabel("Statistics through").fill("2026-10-20");
-  const bounds = await page.evaluate(() => ({
-    from: new Date("2026-10-01T00:00:00").getTime(),
-    to: new Date("2026-10-21T00:00:00").getTime(),
-  }));
-  await expect
-    .poll(async () => (await calls()).at(-1).filter)
-    .toMatchObject({ project: "project-two", ...bounds });
-  await dialog.getByLabel("Statistics through").fill("2026-09-01");
-  await expect(dialog.getByRole("alert")).toContainText("valid date range");
-  await expect(dialog.getByRole("definition")).toHaveCount(0);
-  await dialog.getByRole("button", { name: "All time", exact: true }).click();
+    .toMatchObject({ project: "project-two", from: null, to: null });
+  await expect(project).toBeFocused();
+  await expect(project).toContainText("Other");
+  await project.press("ArrowDown");
+  await search.fill("Caelum");
+  await expect(dialog.getByRole("option", { name: "Caelum /work/caelum" })).toBeVisible();
+  await search.press("Escape");
+  await expect(dialog).toBeVisible();
+  await expect(project).toBeFocused();
+  await expect(project).toContainText("Other");
+  await choose(page, "Project", "All projects");
+  await expect.poll(async () => (await calls()).at(-1).filter)
+    .toMatchObject({ project: null, from: null, to: null });
   await expect(
     dialog.getByRole("definition").filter({ hasText: "15,000" }),
   ).toBeVisible();
@@ -171,9 +170,9 @@ test("stats retain same-filter refresh results and reject delayed results after 
     });
     (window as any).fixture.release("opencode_stats");
   }, stats);
-  await dialog.getByLabel("Statistics project").selectOption("project-two");
+  await choose(page, "Project", "Other /work/other");
   await expect(
-    dialog.getByText("No recorded model usage in this range.", { exact: true }),
+    dialog.getByText("No recorded model usage.", { exact: true }),
   ).toBeVisible();
   await expect(
     dialog.getByRole("definition").filter({ hasText: "15,000" }),
@@ -185,4 +184,27 @@ test("stats retain same-filter refresh results and reject delayed results after 
   await page.evaluate(() => (window as any).fixture.release("opencode_stats"));
   await expect(dialog).toHaveCount(0);
   await expect(input).toHaveValue("Keep this draft");
+});
+
+test("stats abbreviate millions and billions with exact totals and token details available", async ({ page }) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page.evaluate((value) => {
+    const tokens = { input: 1_234_567, output: 999_999, reasoning: 42, cache: { read: 2_400_000_000, write: 1_000_000 } };
+    (window as any).fixture.setStats({ ...value, tokens, models: [{ ...value.models[0], tokens }] });
+  }, stats);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("/stats");
+  await input.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "OpenCode statistics" });
+  await expect(dialog.locator(".stats-summary dd").first()).toHaveText("2.4B");
+  await expect(dialog.locator(".stats-summary dd").first().locator("span")).toHaveAttribute("title", "2,403,234,608");
+  await dialog.getByText("Token breakdown", { exact: true }).click();
+  const breakdown = dialog.locator(".stats-token-details");
+  await expect(breakdown.getByTitle("1,234,567", { exact: true })).toHaveText("1.2M");
+  await expect(breakdown.getByTitle("999,999", { exact: true })).toHaveText("999,999");
+  await expect(breakdown.getByTitle("1,000,000", { exact: true })).toHaveText("1M");
+  await expect(breakdown.getByTitle("2,400,000,000", { exact: true })).toHaveText("2.4B");
+  await dialog.getByRole("button", { name: "Token details for model · provider · high" }).click();
+  await expect(dialog.locator(".stats-model-tokens").getByTitle("1,234,567", { exact: true })).toHaveText("1.2M");
 });

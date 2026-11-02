@@ -2144,6 +2144,17 @@ export function useWorkspace(settings: AppSettings) {
       cached,
     );
     const rawText = message ?? cached?.draft ?? snapshot.draft;
+    if (
+      kind === "codex" &&
+      message === undefined &&
+      parseSlashCommand(rawText)?.name === "usage"
+    ) {
+      const error = "/usage is only available with OpenCode.";
+      if (id)
+        mutateSession(target.path, kind, id, (value) => ({ ...value, error }));
+      else mutateProvider(target.path, kind, (value) => ({ ...value, error }));
+      return false;
+    }
     const command =
       kind === "opencode" && message === undefined
         ? parseSlashCommand(rawText)

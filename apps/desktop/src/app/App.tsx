@@ -30,6 +30,7 @@ import { useSidebarView } from "../ui/sidebar/useSidebarView.js";
 import { Sidebar } from "../ui/sidebar/Sidebar.js";
 import { ApprovalCard, Conversation } from "../ui/conversation/Conversation.js";
 import { Composer } from "../ui/composer/Composer.js";
+import { useEscapeCancellation } from "../ui/composer/useEscapeCancellation.js";
 import { MessageQueue } from "../ui/composer/MessageQueue.js";
 import { QuestionCard } from "../ui/sessions/QuestionCard.js";
 import { SessionWorktree } from "../ui/projects/Worktrees.js";
@@ -106,6 +107,15 @@ export default function App() {
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
   const activePullRequest =
     pullRequest?.scope === sessionKey ? pullRequest : null;
+  useEscapeCancellation({
+    scope: sessionKey,
+    enabled:
+      Boolean(app.selected?.isWorking) &&
+      !settingsOpen &&
+      !activePullRequest &&
+      !(expanded && pane),
+    cancel: app.cancel,
+  });
   const currentPullRequest = useRef(activePullRequest);
   currentPullRequest.current = activePullRequest;
   const changesOpen = !activePullRequest && pane === "changes";
@@ -706,6 +716,9 @@ export default function App() {
                       Boolean(app.selected?.historyLoaded && app.selected.nextCursor),
                     )}
                     revealMessage={(id) => conversationRef.current?.reveal(id)}
+                    onLayoutChange={() =>
+                      conversationRef.current?.restoreScroll()
+                    }
                     textareaRef={textareaRef}
                     draft={
                       app.selected?.draft ??

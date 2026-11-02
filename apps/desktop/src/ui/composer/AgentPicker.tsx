@@ -134,14 +134,18 @@ export function AgentPicker({
             {working ? "Running" : "Current"}:{" "}
             {current ? name(current) : "Not reported"}
             {pending && (
-              <span className="agent-pending"> · Next: {name(value)}</span>
+              <span> · Next: {name(value)}</span>
             )}
           </>
         )}
       </span>
       {pending && (
         <span className="agent-selection agent-pending" aria-hidden="true">
-          Next: {name(value)}
+          <AgentIcon agent={value} current={false} working={false} />
+          <span>
+            Next message <span className="agent-pending-divider">·</span>{" "}
+            <strong>{name(value)}</strong>
+          </span>
         </span>
       )}
     </div>

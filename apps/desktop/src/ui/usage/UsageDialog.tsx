@@ -239,7 +239,7 @@ export function UsageDialog({
         <div>
           <h1 id="usage-title">OpenCode Go usage</h1>
           <p id="usage-source">
-            Subscription allowances. Codex usage isn’t included.
+            Subscription allowances.
           </p>
         </div>
         <button

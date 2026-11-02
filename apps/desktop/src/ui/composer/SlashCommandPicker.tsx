@@ -68,7 +68,7 @@ export function useSlashCommands({
           {
             name: "btw",
             description:
-              "Ask a temporary side question using this session’s context",
+                "Ask a side question using this session’s context",
           },
           {
             name: "stats",

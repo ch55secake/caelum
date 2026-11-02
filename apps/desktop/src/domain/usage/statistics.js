@@ -2,6 +2,14 @@ export function localDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+export function statsCount(value) {
+  if (value < 1_000_000) return value.toLocaleString();
+  // Carry rounded millions into billions rather than displaying 1,000M.
+  const billions = Math.round(value / 100_000) / 10 >= 1000;
+  const amount = value / (billions ? 1_000_000_000 : 1_000_000);
+  return `${amount.toLocaleString(undefined, { maximumFractionDigits: 1 })}${billions ? "B" : "M"}`;
+}
+
 // Calendar-day buckets include idle days. Bound the chart without dropping usage
 // when an all-time query spans years; UTC arithmetic avoids DST-sized days.
 export function activityBuckets(activity, range) {

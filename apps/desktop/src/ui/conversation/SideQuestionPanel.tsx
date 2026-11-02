@@ -34,6 +34,7 @@ export function SideQuestionPanel({
   initialPullRequests,
   pullRequests,
   available,
+  minHeight,
   close,
 }: {
   project: string;
@@ -43,10 +44,12 @@ export function SideQuestionPanel({
   initialPullRequests: PullRequestContext[];
   pullRequests: SessionPullRequests;
   available: boolean;
+  minHeight: number;
   close: () => void;
 }) {
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
+  const measurement = useRef<HTMLTextAreaElement>(null);
   const panel = useRef<HTMLElement>(null);
   const mounted = useRef(false);
   const started = useRef(false);
@@ -142,17 +145,33 @@ export function SideQuestionPanel({
     if (editing) input.current?.focus({ preventScroll: true });
     else panel.current?.focus({ preventScroll: true });
   }, [editing]);
+  function resizeInput() {
+    const area = input.current;
+    const measure = measurement.current;
+    if (!area || !measure) return;
+    measure.style.width = `${area.getBoundingClientRect().width}px`;
+    area.style.height = `${Math.min(180, Math.max(56, measure.scrollHeight))}px`;
+  }
+  useLayoutEffect(resizeInput, [question, editing]);
   useLayoutEffect(() => {
     const area = input.current;
     if (!area) return;
-    area.style.height = "auto";
-    area.style.height = `${Math.min(180, Math.max(56, area.scrollHeight))}px`;
-  }, [question, editing]);
+    let width = area.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const next = area.getBoundingClientRect().width;
+      if (next === width) return;
+      width = next;
+      resizeInput();
+    });
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, [editing]);
   return (
     <section
       ref={panel}
       tabIndex={-1}
       className="composer side-question-panel"
+      style={{ minHeight }}
       aria-labelledby={`${id}-title`}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
@@ -174,9 +193,6 @@ export function SideQuestionPanel({
         </button>
         <MessageCircleQuestion size={15} aria-hidden="true" />
         <h2 id={`${id}-title`}>Side question</h2>
-        <span title="Uses this session’s context without adding to its history">
-          Temporary
-        </span>
         {!editing && answer !== null && (
           <CopyButton text={answer} label="Copy side answer" />
         )}
@@ -206,6 +222,14 @@ export function SideQuestionPanel({
             <label className="sr-only" htmlFor={`${id}-input`}>
               Question
             </label>
+            <textarea
+              ref={measurement}
+              className="composer-measure"
+              aria-hidden="true"
+              tabIndex={-1}
+              readOnly
+              value={question}
+            />
             <textarea
               ref={input}
               id={`${id}-input`}

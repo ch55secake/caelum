@@ -78,7 +78,7 @@ export function ChoicePicker({
       )
     : choices;
   const filtered = ordered.filter((choice) =>
-    `${choice.name} ${choice.id} ${choice.source ?? ""} ${choice.group?.name ?? ""}`
+    `${choice.name} ${choice.id} ${choice.description ?? ""} ${choice.source ?? ""} ${choice.group?.name ?? ""}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
