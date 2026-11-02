@@ -1647,6 +1647,8 @@ export function useWorkspace(settings: AppSettings) {
       });
       if (revision(scope) !== version) return;
       const entries = historyEntries(kind, page.data);
+      if (older && page.nextCursor && page.nextCursor === current.nextCursor)
+        throw new Error("History pagination did not advance. Retry loading earlier messages.");
       mutateSession(path, kind, id, (value) => {
         const overlap = entries.some((entry) =>
           value.conversation.some((live) => live.id === entry.id),

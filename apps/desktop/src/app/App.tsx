@@ -75,6 +75,7 @@ export default function App() {
   const sidebarView = useSidebarView(app.rootProject?.path ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const conversationRef = useRef<import("../features/conversation/Conversation.js").ConversationHandle>(null);
   const [focusRequest, setFocusRequest] = useState<{
     target: "search" | "composer";
   } | null>(null);
@@ -583,6 +584,7 @@ export default function App() {
                 </div>
               ) : app.selected ? (
                 <Conversation
+                  ref={conversationRef}
                   key={sessionKey}
                   session={app.selected}
                   saveView={(value) =>
@@ -682,6 +684,9 @@ export default function App() {
                     worktreePicker={<SessionWorktree app={app} />}
                     key={`composer-${sessionKey}`}
                     projectPath={app.project.path}
+                    session={app.selected ?? null}
+                    loadTimeline={() => app.loadHistory(app.project!.path, app.provider, app.selectedId!, Boolean(app.selected?.historyLoaded && app.selected.nextCursor))}
+                    revealMessage={(id) => conversationRef.current?.reveal(id)}
                     textareaRef={textareaRef}
                     draft={
                       app.selected?.draft ??

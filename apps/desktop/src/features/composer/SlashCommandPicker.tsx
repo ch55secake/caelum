@@ -62,6 +62,7 @@ export function useSlashCommands({
   }, [project, provider, open, refresh]);
   const matches = [
     { name: "new", description: "Start a new session in this project" },
+    { name: "timeline", description: "Find and jump to earlier user messages" },
     ...(provider === "opencode"
       ? [
           {
@@ -74,7 +75,7 @@ export function useSlashCommands({
               "View OpenCode Go allowances, Console budgets and session context",
           },
           ...commands.filter(
-            (command) => !["new", "usage", "stats"].includes(command.name),
+            (command) => !["new", "usage", "stats", "timeline"].includes(command.name),
           ),
         ]
       : []),

@@ -196,6 +196,7 @@ export async function desktop(
       >();
       let usageLimits: unknown = null;
       let stats: unknown = null;
+      const historyPages = new Map<string, unknown>();
       let commandResult: {
         text: string;
         working: boolean;
@@ -480,6 +481,17 @@ export async function desktop(
           },
           setStats: (value: unknown) => {
             stats = value;
+          },
+          setHistoryPage: (
+            provider: string,
+            id: string,
+            cursor: string | null,
+            value: unknown,
+          ) => {
+            historyPages.set(
+              `${provider}_session_history:${id}:${cursor ?? "initial"}`,
+              value,
+            );
           },
           setCommandResult: (value: typeof commandResult) => {
             commandResult = value;
@@ -961,6 +973,17 @@ export async function desktop(
               };
               await gates.get(command)?.promise;
               return snapshot;
+            }
+            if (command.endsWith("_session_history")) {
+              const key = `${command}:${args.sessionId ?? args.threadId}:${args.cursor ?? "initial"}`;
+              if (historyPages.has(key)) {
+                const snapshot = historyPages.get(key);
+                const error =
+                  commandErrors.get(key) ?? commandErrors.get(command);
+                await (gates.get(key) ?? gates.get(command))?.promise;
+                if (error) throw new Error(error);
+                return snapshot;
+              }
             }
             if (command === "codex_session_history") {
               const snapshot = codexHistory.get(args.threadId);

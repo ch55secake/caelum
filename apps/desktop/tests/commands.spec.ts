@@ -123,7 +123,7 @@ test("slash picker discovers native commands, preserves agent shortcuts and subm
   await input.fill("/");
   await expect(
     page.getByRole("listbox", { name: "Slash commands" }).getByRole("option"),
-  ).toHaveCount(1);
+  ).toHaveCount(2);
   await expect(page.getByRole("option", { name: /^\/new / })).toBeVisible();
   await input.press("Escape");
   await choose(page, "Provider", "OpenCode");
@@ -135,7 +135,9 @@ test("slash picker discovers native commands, preserves agent shortcuts and subm
   ).toBeVisible();
   await input.fill("/re");
   await input.press("ArrowDown");
-  await expect(list.getByRole("option", { name: /^\/team\/review/ })).toHaveAttribute("aria-selected", "true");
+  await expect(
+    list.getByRole("option", { name: /^\/team\/review/ }),
+  ).toHaveAttribute("aria-selected", "true");
   await input.press("ArrowUp");
   await expect(list.getByRole("option", { name: /^\/review/ })).toHaveAttribute(
     "aria-selected",

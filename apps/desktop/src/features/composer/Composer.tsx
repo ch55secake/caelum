@@ -11,6 +11,7 @@ import type {
   ProviderChoices,
   ModelChoice,
   ContextUsage,
+  SessionWorkspaceState,
 } from "../sessions/workspaceState.js";
 import { ChoicePicker } from "../../shared/ui/ChoicePicker.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -23,9 +24,13 @@ import { useSlashCommands } from "./SlashCommandPicker.js";
 import { UsageDialog } from "../usage/UsageDialog.js";
 import { useFileMentions } from "./FileMentionPicker.js";
 import { StatsDialog } from "../usage/StatsDialog.js";
+import { TimelineDialog } from "../conversation/TimelineDialog.js";
 
 export function Composer({
   projectPath,
+  session,
+  loadTimeline,
+  revealMessage,
   draft,
   setDraft,
   lastMessage,
@@ -61,6 +66,9 @@ export function Composer({
   worktreePicker,
 }: {
   projectPath: string;
+  session: SessionWorkspaceState | null;
+  loadTimeline: () => Promise<void>;
+  revealMessage: (id: string) => void;
   draft: string;
   setDraft: (text: string) => void;
   lastMessage: string | null;
@@ -99,6 +107,7 @@ export function Composer({
   const recalled = useRef(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
   const parsed = parseSlashCommand(draft);
   const mentions = useFileMentions({
@@ -106,7 +115,7 @@ export function Composer({
     input: textareaRef, attach: addFileContext,
   });
   const command =
-    provider === "opencode" || parsed?.name === "new" ? parsed : null;
+    provider === "opencode" || ["new", "timeline"].includes(parsed?.name ?? "") ? parsed : null;
   const slash = useSlashCommands({
     project: projectPath,
     provider,
@@ -127,6 +136,14 @@ export function Composer({
       setCommandError(null);
       setDraft("");
       newSession();
+    } else if (command?.name === "timeline") {
+      if (!session || command.arguments.trim()) {
+        setCommandError(!session ? "Open a session to view its timeline." : "/timeline does not take arguments.");
+        return;
+      }
+      setCommandError(null);
+      setDraft("");
+      setTimelineOpen(true);
     } else if (provider === "opencode" && command?.name === "usage") {
       if (command.arguments.trim()) {
         setCommandError("/usage does not take arguments.");
@@ -462,6 +479,7 @@ export function Composer({
         />
       )}
       {statsOpen && <StatsDialog project={projectPath} close={() => setStatsOpen(false)} />}
+      {timelineOpen && session && <TimelineDialog session={session} loadHistory={loadTimeline} reveal={revealMessage} close={() => setTimelineOpen(false)} />}
     </div>
   );
 }

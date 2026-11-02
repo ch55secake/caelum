@@ -1,4 +1,11 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import {
   ArrowDown,
   ChevronDown,
@@ -170,7 +177,10 @@ export function ApprovalCard({
   );
 }
 
+export type ConversationHandle = { reveal: (id: string) => void };
+
 export function Conversation({
+  ref,
   session,
   saveView,
   loadOlder,
@@ -180,6 +190,7 @@ export function Conversation({
   resolve,
   addToDraft,
 }: {
+  ref?: Ref<ConversationHandle>;
   session: SessionWorkspaceState;
   saveView: (value: Partial<SessionWorkspaceState>) => void;
   loadOlder: () => Promise<void>;
@@ -197,6 +208,7 @@ export function Conversation({
   const [atBottom, setAtBottom] = useState(following.current);
   // A sliding 100-entry window bounds Markdown and tool DOM, while keeping all records in memory.
   const [end, setEnd] = useState<string | null>(session.windowEndId);
+  const [target, setTarget] = useState<{ id: string } | null>(null);
   const endRef = useRef(end);
   endRef.current = end;
   const save = useRef(saveView);
@@ -230,6 +242,23 @@ export function Conversation({
         offset: item.offsetTop - container.scrollTop,
       };
   };
+  useImperativeHandle(
+    ref,
+    () => ({
+      reveal(id) {
+        const index = entries.findIndex((entry) => entry.id === id);
+        if (index < 0) return;
+        anchor.current = null;
+        following.current = false;
+        setAtBottom(false);
+        setEnd(
+          entries[Math.min(entries.length, Math.max(100, index + 50)) - 1].id,
+        );
+        setTarget({ id });
+      },
+    }),
+    [entries],
+  );
   useLayoutEffect(() => {
     const container = scroll.current!;
     container.scrollTop = session.scrollTop ?? container.scrollHeight;
@@ -248,6 +277,9 @@ export function Conversation({
     };
   }, []);
   useLayoutEffect(() => {
+    if (session.isLoadingHistory && !following.current) rememberAnchor();
+  }, [session.isLoadingHistory]);
+  useLayoutEffect(() => {
     const container = scroll.current!;
     if (anchor.current) {
       const item = Array.from(
@@ -258,6 +290,18 @@ export function Conversation({
     } else if (following.current && end === null)
       container.scrollTop = container.scrollHeight;
   }, [entries, end, approvals.length]);
+  useLayoutEffect(() => {
+    if (!target) return;
+    const container = scroll.current!;
+    const item = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-entry-id]"),
+    ).find((node) => node.dataset.entryId === target.id);
+    if (!item) return;
+    container.scrollTop = Math.max(0, item.offsetTop - 24);
+    position.current = container.scrollTop;
+    item.focus({ preventScroll: true });
+    rememberAnchor();
+  }, [target]);
   const followRevision = useRef(session.followRevision);
   useLayoutEffect(() => {
     if (followRevision.current === session.followRevision) return;
@@ -266,6 +310,8 @@ export function Conversation({
     jump();
   }, [session.followRevision]);
   function jump() {
+    anchor.current = null;
+    setTarget(null);
     following.current = true;
     setAtBottom(true);
     setEnd(null);
@@ -331,6 +377,8 @@ export function Conversation({
             <article
               key={entry.id}
               data-entry-id={entry.id}
+              tabIndex={-1}
+              data-timeline-target={target?.id === entry.id || undefined}
               className={`conversation-entry ${entry.kind}${entry.id === latestUserId ? " latest-user" : ""}`}
               onContextMenu={
                 entry.kind === "tool"
