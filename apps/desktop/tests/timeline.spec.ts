@@ -52,6 +52,7 @@ for (const provider of ["codex", "opencode"]) {
   test(`${provider} timeline loads older pages and reveals messages outside the bounded transcript`, async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 800, height: 620 });
     await desktop(page, null);
     if (provider === "opencode") await choose(page, "Provider", "OpenCode");
     await timelineHistory(page, provider);
@@ -74,6 +75,7 @@ for (const provider of ["codex", "opencode"]) {
       name: "Search user messages",
     });
     await expect(search).toBeFocused();
+    await dialog.screenshot({ path: `test-results/${provider}-timeline-compact.png` });
     await search.fill("old anchor");
     await expect(dialog.getByRole("option")).toHaveCount(1);
     await search.press("Enter");

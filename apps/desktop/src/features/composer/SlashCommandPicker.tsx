@@ -66,8 +66,14 @@ export function useSlashCommands({
     ...(provider === "opencode"
       ? [
           {
+            name: "btw",
+            description:
+              "Ask a temporary side question using this session’s context",
+          },
+          {
             name: "stats",
-            description: "View recorded OpenCode tokens, cost and activity across projects",
+            description:
+              "View recorded OpenCode tokens, cost and activity across projects",
           },
           {
             name: "usage",
@@ -75,7 +81,10 @@ export function useSlashCommands({
               "View OpenCode Go allowances, Console budgets and session context",
           },
           ...commands.filter(
-            (command) => !["new", "usage", "stats", "timeline"].includes(command.name),
+            (command) =>
+              !["new", "usage", "stats", "timeline", "btw"].includes(
+                command.name,
+              ),
           ),
         ]
       : []),

@@ -5,6 +5,23 @@ use caelum_protocol::{
 use tauri::State;
 
 #[tauri::command]
+pub(crate) async fn opencode_generate(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+    prompt: String,
+) -> Result<String, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .generate_from_context(project_path, &session_id, &prompt)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) async fn opencode_stats_projects(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,

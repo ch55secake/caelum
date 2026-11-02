@@ -5,7 +5,13 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
-import { ArrowUp, Gauge, Layers, Square } from "lucide-react";
+import {
+  ArrowUp,
+  Gauge,
+  Layers,
+  MessageCircleQuestion,
+  Square,
+} from "lucide-react";
 import type {
   ProviderKind,
   ProviderChoices,
@@ -25,6 +31,7 @@ import { UsageDialog } from "../usage/UsageDialog.js";
 import { useFileMentions } from "./FileMentionPicker.js";
 import { StatsDialog } from "../usage/StatsDialog.js";
 import { TimelineDialog } from "../conversation/TimelineDialog.js";
+import { SideQuestionDialog } from "../conversation/SideQuestionDialog.js";
 
 export function Composer({
   projectPath,
@@ -108,14 +115,24 @@ export function Composer({
   const [usageOpen, setUsageOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [sideQuestion, setSideQuestion] = useState<{ initial: string } | null>(
+    null,
+  );
   const [commandError, setCommandError] = useState<string | null>(null);
   const parsed = parseSlashCommand(draft);
   const mentions = useFileMentions({
-    project: projectPath, draft, setDraft, enabled: !disabled && !submitting,
-    input: textareaRef, attach: addFileContext,
+    project: projectPath,
+    draft,
+    setDraft,
+    enabled: !disabled && !submitting,
+    input: textareaRef,
+    attach: addFileContext,
   });
   const command =
-    provider === "opencode" || ["new", "timeline"].includes(parsed?.name ?? "") ? parsed : null;
+    provider === "opencode" ||
+    ["new", "timeline", "btw"].includes(parsed?.name ?? "")
+      ? parsed
+      : null;
   const slash = useSlashCommands({
     project: projectPath,
     provider,
@@ -138,7 +155,11 @@ export function Composer({
       newSession();
     } else if (command?.name === "timeline") {
       if (!session || command.arguments.trim()) {
-        setCommandError(!session ? "Open a session to view its timeline." : "/timeline does not take arguments.");
+        setCommandError(
+          !session
+            ? "Open a session to view its timeline."
+            : "/timeline does not take arguments.",
+        );
         return;
       }
       setCommandError(null);
@@ -154,12 +175,24 @@ export function Composer({
       setUsageOpen(true);
     } else if (provider === "opencode" && command?.name === "stats") {
       if (command.arguments.trim()) {
-        setCommandError("/stats does not take arguments. Use the filters in the statistics dialog.");
+        setCommandError(
+          "/stats does not take arguments. Use the filters in the statistics dialog.",
+        );
         return;
       }
       setCommandError(null);
       setDraft("");
       setStatsOpen(true);
+    } else if (command?.name === "btw") {
+      if (provider !== "opencode" || !session) {
+        setCommandError(
+          "Open an OpenCode session to ask a temporary side question.",
+        );
+        return;
+      }
+      setCommandError(null);
+      setDraft("");
+      setSideQuestion({ initial: command.arguments });
     } else submit();
   }
   const busy = working || submitting || awaitingApproval;
@@ -249,12 +282,18 @@ export function Composer({
           placeholder={
             working
               ? "Queue your next message…"
-               : "Ask anything, / for commands, @ for files…"
+              : "Ask anything, / for commands, @ for files…"
           }
           value={draft}
           disabled={disabled}
-          onFocus={() => { slash.focus(); mentions.focus(); }}
-          onBlur={() => { slash.blur(); mentions.blur(); }}
+          onFocus={() => {
+            slash.focus();
+            mentions.focus();
+          }}
+          onBlur={() => {
+            slash.blur();
+            mentions.blur();
+          }}
           onSelect={mentions.select}
           onChange={(event) => {
             setDraft(event.target.value);
@@ -275,9 +314,7 @@ export function Composer({
             ) {
               event.preventDefault();
               if (!event.repeat) {
-                const index = agents.findIndex(
-                  (choice) => choice.id === agent,
-                );
+                const index = agents.findIndex((choice) => choice.id === agent);
                 setOption("agent", agents[(index + 1) % agents.length].id);
               }
               return;
@@ -327,6 +364,18 @@ export function Composer({
         <div className="composer-footer">
           <div className="composer-controls">
             {isNew && worktreePicker}
+            {provider === "opencode" && session && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Ask a side question"
+                title="Ask a side question (/btw)"
+                disabled={disabled || submitting}
+                onClick={() => setSideQuestion({ initial: "" })}
+              >
+                <MessageCircleQuestion size={14} />
+              </button>
+            )}
             {isNew ? (
               <ChoicePicker
                 label="Provider"
@@ -478,8 +527,26 @@ export function Composer({
           close={() => setUsageOpen(false)}
         />
       )}
-      {statsOpen && <StatsDialog project={projectPath} close={() => setStatsOpen(false)} />}
-      {timelineOpen && session && <TimelineDialog session={session} loadHistory={loadTimeline} reveal={revealMessage} close={() => setTimelineOpen(false)} />}
+      {statsOpen && (
+        <StatsDialog project={projectPath} close={() => setStatsOpen(false)} />
+      )}
+      {timelineOpen && session && (
+        <TimelineDialog
+          session={session}
+          loadHistory={loadTimeline}
+          reveal={revealMessage}
+          close={() => setTimelineOpen(false)}
+        />
+      )}
+      {sideQuestion && session && (
+        <SideQuestionDialog
+          project={projectPath}
+          sessionId={session.session.thread.id}
+          initial={sideQuestion.initial}
+          available={!disabled}
+          close={() => setSideQuestion(null)}
+        />
+      )}
     </div>
   );
 }

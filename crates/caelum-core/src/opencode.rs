@@ -23,6 +23,7 @@ use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+mod generate;
 mod stats;
 
 use crate::{
@@ -2247,6 +2248,15 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("delivery") == "queue":
                 INBOX.setdefault(body["id"], {"id": body["id"], "type": "user", "delivery": "queue", "payload": {"text": body["text"]}})
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
+        elif path == "/api/session/ses_fake/generate":
+            assert set(body) == {"prompt"}
+            if os.path.exists(os.path.join(PROJECT, "generate-error")):
+                self.send_error(503)
+                return
+            if os.path.exists(os.path.join(PROJECT, "generate-malformed")):
+                self.send_json({"data": {}})
+                return
+            self.send_json({"data": {"text": "Transient answer: " + body["prompt"]}})
         elif path == "/api/session/ses_fake/command":
             assert set(body) == {"name", "text", "files"}
             if body["name"] not in ["goal", "team/review"]:
@@ -2519,6 +2529,42 @@ server.serve_forever()
                 .collect::<Vec<_>>()
         };
         let sent = requests();
+        let answer = provider
+            .generate_from_context(&project_path, "ses_fake", "Side question α\nKeep context")
+            .unwrap();
+        assert_eq!(answer, "Transient answer: Side question α\nKeep context");
+        let generated = requests();
+        assert_eq!(generated.len(), sent.len() + 1);
+        assert_eq!(
+            generated.last().unwrap()["path"],
+            "/api/session/ses_fake/generate"
+        );
+        assert_eq!(
+            generated.last().unwrap()["body"],
+            json!({"prompt": "Side question α\nKeep context"})
+        );
+        assert!(provider
+            .generate_from_context(&project_path, "ses_foreign", "Wrong checkout")
+            .is_err());
+        assert!(provider
+            .generate_from_context(&project_path, "../ses_fake", "Wrong ID")
+            .is_err());
+        assert!(provider
+            .generate_from_context(&project_path, "ses_fake", " \n ")
+            .is_err());
+        assert_eq!(requests().len(), generated.len());
+        fs::write(project_path.join("generate-error"), "").unwrap();
+        assert!(provider
+            .generate_from_context(&project_path, "ses_fake", "Retry later")
+            .is_err());
+        fs::remove_file(project_path.join("generate-error")).unwrap();
+        fs::write(project_path.join("generate-malformed"), "").unwrap();
+        assert!(provider
+            .generate_from_context(&project_path, "ses_fake", "Malformed")
+            .is_err());
+        fs::remove_file(project_path.join("generate-malformed")).unwrap();
+        // Keep subsequent model-selection assertions based on the current log.
+        let before_rejected_model = requests().len();
         let switch = &sent[sent.len() - 2];
         assert_eq!(switch["path"], "/api/session/ses_fake/model");
         assert_eq!(
@@ -2539,7 +2585,7 @@ server.serve_forever()
                 None,
             )
             .is_err());
-        assert_eq!(requests().len(), sent.len() + 1);
+        assert_eq!(requests().len(), before_rejected_model + 1);
         assert_eq!(
             requests().last().unwrap()["path"],
             "/api/session/ses_fake/model"

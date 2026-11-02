@@ -35,6 +35,7 @@ const stats = {
 test("slash stats aggregates OpenCode history, filters by project and dates and preserves context", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 800, height: 620 });
   await desktop(page, null);
   await choose(page, "Provider", "OpenCode");
   await page.evaluate(
@@ -56,6 +57,7 @@ test("slash stats aggregates OpenCode history, filters by project and dates and 
   await expect(
     dialog.getByRole("meter", { name: "2026-10-01 model steps" }),
   ).toHaveAttribute("value", "100");
+  await dialog.screenshot({ path: "test-results/stats-compact.png" });
   const calls = () =>
     page.evaluate(() =>
       (window as any).fixture.calls

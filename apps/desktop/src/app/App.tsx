@@ -75,7 +75,9 @@ export default function App() {
   const sidebarView = useSidebarView(app.rootProject?.path ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const conversationRef = useRef<import("../features/conversation/Conversation.js").ConversationHandle>(null);
+  const conversationRef = useRef<
+    import("../features/conversation/Conversation.js").ConversationHandle
+  >(null);
   const [focusRequest, setFocusRequest] = useState<{
     target: "search" | "composer";
   } | null>(null);
@@ -685,7 +687,12 @@ export default function App() {
                     key={`composer-${sessionKey}`}
                     projectPath={app.project.path}
                     session={app.selected ?? null}
-                    loadTimeline={() => app.loadHistory(app.project!.path, app.provider, app.selectedId!, Boolean(app.selected?.historyLoaded && app.selected.nextCursor))}
+                    loadTimeline={() => app.loadHistory(
+                      app.project!.path,
+                      app.provider,
+                      app.selectedId!,
+                      Boolean(app.selected?.historyLoaded && app.selected.nextCursor),
+                    )}
                     revealMessage={(id) => conversationRef.current?.reveal(id)}
                     textareaRef={textareaRef}
                     draft={
@@ -700,7 +707,9 @@ export default function App() {
                       []
                     }
                     removeFileContext={app.removeFileContext}
-                    addFileContext={(file) => currentSessionKey.current === sessionKey && app.addFileContext(file)}
+                    addFileContext={(file) =>
+                      currentSessionKey.current === sessionKey && app.addFileContext(file)
+                    }
                     lastMessage={lastUserMessage(
                       app.selected?.conversation ?? [],
                     )}

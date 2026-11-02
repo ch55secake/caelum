@@ -196,6 +196,7 @@ export async function desktop(
       >();
       let usageLimits: unknown = null;
       let stats: unknown = null;
+      let generateReply = "A temporary answer.";
       const historyPages = new Map<string, unknown>();
       let commandResult: {
         text: string;
@@ -481,6 +482,9 @@ export async function desktop(
           },
           setStats: (value: unknown) => {
             stats = value;
+          },
+          setGenerateReply: (value: string) => {
+            generateReply = value;
           },
           setHistoryPage: (
             provider: string,
@@ -788,6 +792,13 @@ export async function desktop(
                 defaultModel: "provider/model",
                 agents: args.provider === "opencode" ? choiceAgents : [],
               };
+            }
+            if (command === "opencode_generate") {
+              const reply = generateReply;
+              const error = commandErrors.get(command);
+              await gates.get(command)?.promise;
+              if (error) throw new Error(error);
+              return reply;
             }
             if (
               command === "opencode_stats" ||
