@@ -23,6 +23,8 @@ use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+mod stats;
+
 use crate::{
     approvals::ApprovalBroker,
     processes::{ProcessId, ProcessRegistry},
@@ -2157,6 +2159,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": {"providerID": "local", "id": "model/a"}})
         elif path == "/api/agent":
             self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "plan", "name": "Plan", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}, {"id": "hidden", "name": "Hidden", "mode": "primary", "hidden": True}]})
+        elif path == "/api/project":
+            assert parse_qs(urlsplit(self.path).query) == {"archived": ["true"]}
+            self.send_json([{"id": "project_fake", "canonical": PROJECT, "name": "Fake"}])
+        elif path == "/api/experimental/session/stats":
+            with open(os.path.join(PROJECT, "stats-query.json"), "w") as query:
+                json.dump(parse_qs(urlsplit(self.path).query), query)
+            with open(os.path.join(PROJECT, "stats.json")) as stats:
+                self.send_json({"data": json.load(stats)})
         elif path in ["/api/command", "/api/experimental/usage/limits"]:
             assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
             if os.path.exists(os.path.join(PROJECT, "command-api-error")):
@@ -2346,6 +2356,54 @@ server.serve_forever()
         assert_eq!(provider.usage_limits(&project_path).unwrap(), limits);
         fs::write(project_path.join("usage.json"), "null").unwrap();
         assert!(provider.usage_limits(&project_path).unwrap().is_null());
+        let projects = provider.stats_projects(&project_path).unwrap();
+        assert_eq!(projects[0].id, "project_fake");
+        assert_eq!(projects[0].canonical, path);
+        let stats = json!({
+            "range": {"from": 1000, "to": 2000}, "sessions": 2, "subagents": 1,
+            "prompts": 8, "steps": 12, "tokens": {"input": 100, "output": 50,
+                "reasoning": 20, "cache": {"read": 200, "write": 10}},
+            "cost": 0.12, "tools": {"mode": "none"}, "activeDays": 1, "streak": 1,
+            "activity": [{"date": "2026-11-01", "steps": 12}], "models": []
+        });
+        fs::write(project_path.join("stats.json"), stats.to_string()).unwrap();
+        let filter = caelum_protocol::OpenCodeStatsFilter {
+            from: Some(1793491200000),
+            to: Some(1793577600000),
+            project: Some("project_fake".into()),
+            timezone: Some("Europe/London".into()),
+        };
+        let result = provider.session_stats(&project_path, &filter).unwrap();
+        assert_eq!(result.sessions, 2);
+        assert_eq!(result.tokens.cache.read, 200.0);
+        let query: Value =
+            serde_json::from_slice(&fs::read(project_path.join("stats-query.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            query,
+            json!({"from": ["1793491200000"], "to": ["1793577600000"], "project": ["project_fake"], "timezone": ["Europe/London"], "tools": ["none"]})
+        );
+        provider
+            .session_stats(&project_path, &Default::default())
+            .unwrap();
+        let query: Value =
+            serde_json::from_slice(&fs::read(project_path.join("stats-query.json")).unwrap())
+                .unwrap();
+        assert_eq!(query, json!({"tools": ["none"]}));
+        assert!(provider
+            .session_stats(
+                &project_path,
+                &caelum_protocol::OpenCodeStatsFilter {
+                    from: Some(2000),
+                    to: Some(1000),
+                    ..Default::default()
+                }
+            )
+            .is_err());
+        fs::write(project_path.join("stats.json"), "{}").unwrap();
+        assert!(provider
+            .session_stats(&project_path, &Default::default())
+            .is_err());
         fs::write(project_path.join("command-api-error"), "").unwrap();
         assert!(provider.commands(&project_path).is_err());
         assert!(provider.usage_limits(&project_path).is_err());

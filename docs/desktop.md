@@ -33,6 +33,7 @@ Type **@** at the caret to find files in the current checkout with fuzzy matchin
 - **/new** opens a new-session draft in the current checkout/provider. It also works during execution and keeps the original session's attachments/settings.
 - **/goal objective**, **/goal pause**, **/goal resume**, **/goal clear** use OpenCode's native goal workflow, including during execution.
 - **/usage** opens OpenCode Go allowances, Console budgets and current-session context as separately labelled values. It works before creating a session and keeps attached context. Codex account usage is not included.
+- **/stats** shows all recorded OpenCode usage on the connected server, including projects outside Caelum. Filter by OpenCode project (including linked worktrees) and inclusive local dates, or choose **All time**. Totals include input, output, reasoning, cache read/write, recorded cost, model breakdowns and daily activity. Missing pricing/subscription costs may be recorded as zero. Codex usage is not included.
 - Other native/custom commands appear when OpenCode reports them and execute with the selected settings and attached snapshots.
 
 ## Files and changes

@@ -1,0 +1,121 @@
+.settings-dialog.stats-dialog {
+  width: 900px;
+  height: min(780px, calc(100dvh - 64px));
+  overflow: hidden;
+}
+.stats-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+.stats-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.stats-filters label:first-child {
+  flex: 1;
+  min-width: 200px;
+}
+.stats-filters select,
+.stats-filters input {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+}
+.stats-filters button {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+.stats-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.stats-summary > div {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--sidebar);
+}
+.stats-summary dt,
+.stats-tokens dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.stats-summary dd {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.stats-tokens {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 0;
+}
+.stats-tokens dd {
+  margin: 5px 0 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.stats-table-wrap {
+  overflow: auto;
+  margin-top: 8px;
+}
+.stats-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+.stats-content th,
+.stats-content td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.stats-content th {
+  font-weight: 500;
+}
+.stats-content th:first-child {
+  text-align: left;
+}
+.stats-content small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.stats-activity {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.stats-activity li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0;
+  font-size: 11px;
+}
+.stats-activity meter {
+  flex: 1;
+  min-width: 20px;
+  accent-color: var(--accent);
+}
+.stats-activity span {
+  width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

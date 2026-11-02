@@ -65,12 +65,16 @@ export function useSlashCommands({
     ...(provider === "opencode"
       ? [
           {
+            name: "stats",
+            description: "View recorded OpenCode tokens, cost and activity across projects",
+          },
+          {
             name: "usage",
             description:
               "View OpenCode Go allowances, Console budgets and session context",
           },
           ...commands.filter(
-            (command) => !["new", "usage"].includes(command.name),
+            (command) => !["new", "usage", "stats"].includes(command.name),
           ),
         ]
       : []),

@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+mod stats;
+pub use stats::*;
+
 /// Stable, serializable application metadata shared across Caelum interfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppInfo {

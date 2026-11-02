@@ -22,6 +22,7 @@ import { parseSlashCommand } from "./slashCommands.js";
 import { useSlashCommands } from "./SlashCommandPicker.js";
 import { UsageDialog } from "../usage/UsageDialog.js";
 import { useFileMentions } from "./FileMentionPicker.js";
+import { StatsDialog } from "../usage/StatsDialog.js";
 
 export function Composer({
   projectPath,
@@ -97,6 +98,7 @@ export function Composer({
   const measurement = useRef<HTMLTextAreaElement>(null);
   const recalled = useRef(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
   const parsed = parseSlashCommand(draft);
   const mentions = useFileMentions({
@@ -133,6 +135,14 @@ export function Composer({
       setCommandError(null);
       setDraft("");
       setUsageOpen(true);
+    } else if (provider === "opencode" && command?.name === "stats") {
+      if (command.arguments.trim()) {
+        setCommandError("/stats does not take arguments. Use the filters in the statistics dialog.");
+        return;
+      }
+      setCommandError(null);
+      setDraft("");
+      setStatsOpen(true);
     } else submit();
   }
   const busy = working || submitting || awaitingApproval;
@@ -451,6 +461,7 @@ export function Composer({
           close={() => setUsageOpen(false)}
         />
       )}
+      {statsOpen && <StatsDialog project={projectPath} close={() => setStatsOpen(false)} />}
     </div>
   );
 }

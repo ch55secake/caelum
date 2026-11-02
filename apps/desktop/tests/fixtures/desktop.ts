@@ -195,6 +195,7 @@ export async function desktop(
         { name: string; description?: string }[]
       >();
       let usageLimits: unknown = null;
+      let stats: unknown = null;
       let commandResult: {
         text: string;
         working: boolean;
@@ -476,6 +477,9 @@ export async function desktop(
           },
           setUsageLimits: (value: unknown) => {
             usageLimits = value;
+          },
+          setStats: (value: unknown) => {
+            stats = value;
           },
           setCommandResult: (value: typeof commandResult) => {
             commandResult = value;
@@ -772,6 +776,29 @@ export async function desktop(
                 defaultModel: "provider/model",
                 agents: args.provider === "opencode" ? choiceAgents : [],
               };
+            }
+            if (
+              command === "opencode_stats" ||
+              command === "opencode_stats_projects"
+            ) {
+              const snapshot = stats;
+              const error = commandErrors.get(command);
+              await gates.get(command)?.promise;
+              if (error) throw new Error(error);
+              return command === "opencode_stats"
+                ? snapshot
+                : [
+                    {
+                      id: "project-one",
+                      name: "Caelum",
+                      canonical: "/work/caelum",
+                    },
+                    {
+                      id: "project-two",
+                      name: "Other",
+                      canonical: "/work/other",
+                    },
+                  ];
             }
             if (
               [

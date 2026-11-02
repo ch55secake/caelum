@@ -59,6 +59,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::opencode::opencode_stats_projects,
+            commands::opencode::opencode_stats,
             commands::projects::app_info,
             commands::projects::startup_project,
             commands::projects::open_project,

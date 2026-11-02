@@ -5,6 +5,37 @@ use caelum_protocol::{
 use tauri::State;
 
 #[tauri::command]
+pub(crate) async fn opencode_stats_projects(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+) -> Result<Vec<caelum_protocol::OpenCodeStatsProject>, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .stats_projects(project_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn opencode_stats(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    filter: caelum_protocol::OpenCodeStatsFilter,
+) -> Result<caelum_protocol::OpenCodeStats, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .session_stats(project_path, &filter)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) async fn opencode_list_sessions(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,

@@ -133,9 +133,11 @@ test("slash picker discovers native commands, preserves agent shortcuts and subm
   await expect(
     list.getByRole("option", { name: /^\/team\/review/ }),
   ).toBeVisible();
+  await input.fill("/re");
   await input.press("ArrowDown");
-  await input.press("ArrowDown");
-  await expect(list.getByRole("option", { name: /^\/init/ })).toHaveAttribute(
+  await expect(list.getByRole("option", { name: /^\/team\/review/ })).toHaveAttribute("aria-selected", "true");
+  await input.press("ArrowUp");
+  await expect(list.getByRole("option", { name: /^\/review/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
