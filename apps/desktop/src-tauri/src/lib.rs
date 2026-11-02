@@ -394,6 +394,29 @@ async fn search_project_files(
 }
 
 #[tauri::command]
+async fn read_project_image(project_path: String, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || files::read_image(project_path, &path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_read_image(
+    provider: State<'_, OpenCodeProvider>,
+    project_path: String,
+    hash: String,
+) -> Result<String, String> {
+    let provider = provider.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        provider
+            .read_image(project_path, &hash)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn read_project_file(
     project_path: String,
     path: String,
@@ -849,6 +872,57 @@ async fn opencode_select_agent(
 }
 
 #[tauri::command]
+async fn opencode_enqueue_prompt(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+    message_id: String,
+    prompt: String,
+) -> Result<(), String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .enqueue_prompt(project_path, &session_id, &message_id, &prompt)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_inbox(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .inbox(project_path, &session_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_cancel_queued_prompt(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+    message_id: String,
+) -> Result<(), String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .cancel_queued_prompt(project_path, &session_id, &message_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn opencode_send_prompt(
     opencode: State<'_, OpenCodeProvider>,
     project_path: String,
@@ -1053,6 +1127,8 @@ pub fn run() {
             git_file_versions,
             list_project_directory,
             read_project_file,
+            read_project_image,
+            opencode_read_image,
             search_project_files,
             restore_workspace,
             remember_project,
@@ -1081,6 +1157,9 @@ pub fn run() {
             opencode_resume_session,
             opencode_session_history,
             opencode_send_prompt,
+            opencode_enqueue_prompt,
+            opencode_inbox,
+            opencode_cancel_queued_prompt,
             opencode_select_agent,
             opencode_commands,
             opencode_run_command,

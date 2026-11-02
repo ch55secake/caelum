@@ -116,17 +116,46 @@ export function useBranchPullRequests(
   branches: string[],
   element?: RefObject<HTMLElement | null>,
 ) {
-  const branchKey = JSON.stringify([...new Set(branches)].sort());
+  const result = useScopedBranchPullRequests(
+    branches.map((branch) => ({ projectPath, branch })),
+    element,
+  );
+  return Object.fromEntries(
+    branches.map((branch) => [
+      branch,
+      result[branchPullRequestKey(projectPath, branch)],
+    ]),
+  );
+}
+
+export const branchPullRequestKey = (projectPath: string, branch: string) =>
+  `${projectPath}\0${branch}`;
+
+export function useScopedBranchPullRequests(
+  scopes: { projectPath: string; branch: string }[],
+  element?: RefObject<HTMLElement | null>,
+) {
+  const scopeKey = JSON.stringify(
+    [
+      ...new Set(
+        scopes
+          .filter(({ projectPath }) => projectPath)
+          .map(({ projectPath, branch }) =>
+            branchPullRequestKey(projectPath, branch),
+          ),
+      ),
+    ].sort(),
+  );
   const [result, setResult] = useState<{
-    projectPath: string;
+    scopeKey: string;
     values: Record<string, Snapshot>;
   }>();
   useEffect(() => {
-    if (!projectPath || !isTauri()) return;
+    if (!isTauri()) return;
     let schedule = () => {};
-    const names: string[] = JSON.parse(branchKey);
-    const subscriptions = names.map((branch) => {
-      const key = `${projectPath}\0${branch}`;
+    const keys: string[] = JSON.parse(scopeKey);
+    const subscriptions = keys.map((key) => {
+      const [projectPath, branch] = key.split("\0");
       const entry = cache.get(key) ?? {
         snapshot: { value: null, loading: false, error: null },
         checkedAt: 0,
@@ -136,23 +165,23 @@ export function useBranchPullRequests(
       cache.set(key, entry);
       const receive = (snapshot: Snapshot) => {
         setResult((current) => ({
-          projectPath,
+          scopeKey,
           values: {
-            ...(current?.projectPath === projectPath ? current.values : {}),
-            [branch]: snapshot,
+            ...(current?.scopeKey === scopeKey ? current.values : {}),
+            [key]: snapshot,
           },
         }));
         schedule();
       };
       entry.listeners.add(receive);
       receive(entry.snapshot);
-      return { branch, entry, receive };
+      return { projectPath, branch, entry, receive };
     });
     let visible = !element;
     let timer: number | undefined;
     const update = () => {
       if (visible && !document.hidden)
-        for (const { branch, entry } of subscriptions)
+        for (const { projectPath, branch, entry } of subscriptions)
           refresh(projectPath, branch, entry);
       schedule();
     };
@@ -195,6 +224,6 @@ export function useBranchPullRequests(
       window.removeEventListener("focus", update);
       document.removeEventListener("visibilitychange", update);
     };
-  }, [projectPath, branchKey, element]);
-  return result?.projectPath === projectPath ? result.values : {};
+  }, [scopeKey, element]);
+  return result?.scopeKey === scopeKey ? result.values : {};
 }

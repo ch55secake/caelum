@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+} from "react";
 import { ArrowUp, Gauge, Layers, Square } from "lucide-react";
 import type {
   ProviderKind,
@@ -49,6 +55,7 @@ export function Composer({
   awaitingApproval,
   fileContext,
   removeFileContext,
+  worktreePicker,
 }: {
   projectPath: string;
   draft: string;
@@ -82,6 +89,7 @@ export function Composer({
   awaitingApproval: boolean;
   fileContext: FileContext[];
   removeFileContext: (id: string) => void;
+  worktreePicker?: ReactNode;
 }) {
   const measurement = useRef<HTMLTextAreaElement>(null);
   const recalled = useRef(false);
@@ -118,7 +126,7 @@ export function Composer({
       setCommandError(null);
       setDraft("");
       setUsageOpen(true);
-    } else if (!working || (provider === "opencode" && command)) submit();
+    } else submit();
   }
   const busy = working || submitting || awaitingApproval;
   const agents = choices?.agents ?? [];
@@ -205,7 +213,7 @@ export function Composer({
           title={!draft && lastMessage ? "↑ Recall last message" : undefined}
           placeholder={
             working
-              ? "Draft your next message…"
+              ? "Queue your next message…"
               : "Ask anything, or type / for commands…"
           }
           value={draft}
@@ -230,7 +238,9 @@ export function Composer({
             ) {
               event.preventDefault();
               if (!event.repeat) {
-                const index = agents.findIndex((choice) => choice.id === agent);
+                const index = agents.findIndex(
+                  (choice) => choice.id === agent,
+                );
                 setOption("agent", agents[(index + 1) % agents.length].id);
               }
               return;
@@ -279,6 +289,7 @@ export function Composer({
         )}
         <div className="composer-footer">
           <div className="composer-controls">
+            {isNew && worktreePicker}
             {isNew ? (
               <ChoicePicker
                 label="Provider"
@@ -366,7 +377,7 @@ export function Composer({
                 : working
                   ? activity === "Compacting context…"
                     ? activity
-                    : "Draft while the agent works"
+                    : "↵ Queue · ⇧↵ Newline"
                   : !draft && lastMessage
                     ? "↑ Recall · ↵ Send"
                     : "↵ Send · ⇧↵ Newline"}
@@ -389,21 +400,36 @@ export function Composer({
               <Square size={13} />
             </button>
           ) : null}
-          {(!working || command) && (
+          {
             <button
               key="send"
               type="button"
               className="send-button"
               onClick={() => send()}
               disabled={
-                disabled || submitting || !draft.trim() || draft.trim() === "/"
+                disabled ||
+                submitting ||
+                !draft.trim() ||
+                draft.trim() === "/"
               }
-              aria-label={command ? "Run command" : "Send message"}
-              title={command ? "Run command" : "Send message"}
+              aria-label={
+                command
+                  ? "Run command"
+                  : working
+                    ? "Queue message"
+                    : "Send message"
+              }
+              title={
+                command
+                  ? "Run command"
+                  : working
+                    ? "Queue message"
+                    : "Send message"
+              }
             >
               <ArrowUp size={17} />
             </button>
-          )}
+          }
         </div>
       </form>
       {usageOpen && (

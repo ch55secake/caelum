@@ -4,6 +4,8 @@ import {
   openCodeContextUsage,
   openCodeModel,
 } from "./contextUsage.js";
+import { imageAttachments, toolImages } from "./chatMedia.js";
+import { queueEvent } from "./messageQueueState.js";
 
 const object = (value) => (value && typeof value === "object" ? value : {});
 export const displayValue = (value) =>
@@ -14,7 +16,10 @@ export const displayValue = (value) =>
       : JSON.stringify(value, null, 2);
 const textContent = (content) =>
   Array.isArray(content)
-    ? content.map((part) => part.text ?? displayValue(part)).join("\n")
+    ? content
+        .filter((part) => !imageAttachments([part]).length)
+        .map((part) => part.text ?? displayValue(part))
+        .join("\n")
     : displayValue(content);
 
 const isText = (entry) =>
@@ -103,8 +108,10 @@ export function codexItem(item, completed = false) {
       ...base,
       kind: "user",
       text: (item.content ?? [])
-        .map((part) => part.text ?? (part.type === "image" ? "[Image]" : ""))
+        .map((part) => part.text ?? "")
+        .filter(Boolean)
         .join("\n"),
+      images: imageAttachments(item.content),
     };
   if (item.type === "agentMessage")
     return {
@@ -145,6 +152,10 @@ export function codexItem(item, completed = false) {
     input:
       item.command ?? item.arguments ?? item.changes ?? item.query ?? item,
     output: item.aggregatedOutput ?? item.result ?? item.content,
+    images:
+      item.type === "imageView"
+        ? imageAttachments([{ type: "localImage", path: item.path }])
+        : toolImages(item.result ?? item.content),
     error: item.error
       ? displayValue(item.error)
       : item.exitCode
@@ -173,7 +184,14 @@ export function openCodeMessage(message) {
       },
     ];
   if (message.type === "user")
-    return [{ id, kind: "user", text: message.text ?? "" }];
+    return [
+      {
+        id,
+        kind: "user",
+        text: message.text ?? "",
+        images: imageAttachments(message.files),
+      },
+    ];
   if (message.type === "assistant") {
     const entries = [];
     // V2 ordinals count fragments of each kind within an assistant message.
@@ -201,6 +219,7 @@ export function openCodeMessage(message) {
           status: status(state.status),
           input: state.input,
           output: textContent(state.content),
+          images: imageAttachments(state.content),
           error: state.error
             ? displayValue(state.error.message ?? state.error)
             : undefined,
@@ -235,7 +254,14 @@ export function openCodeMessage(message) {
       },
     ];
   if (["system", "synthetic"].includes(message.type))
-    return [{ id, kind: "status", text: message.text ?? "" }];
+    return [
+      {
+        id,
+        kind: "status",
+        text: message.text ?? "",
+        sourceType: message.type,
+      },
+    ];
   return [];
 }
 
@@ -415,7 +441,8 @@ export function applyConversationEvent(
   data,
   event = {},
 ) {
-  let next = session;
+  let next =
+    provider === "opencode" ? queueEvent(session, method, data) : session;
   const put = (entry) => {
     if (entry)
       next = { ...next, conversation: upsertEntry(next.conversation, entry) };
@@ -445,6 +472,9 @@ export function applyConversationEvent(
       isSubmitting: false,
       activity: null,
       lastOutcome: resumable ? "paused" : outcome,
+      queuePaused:
+        next.queuePaused ||
+        ["failed", "interrupted", "cancelled"].includes(outcome),
       conversation: next.conversation.map((entry) =>
         entry.kind === "compaction" && !entry.complete
           ? {
@@ -636,6 +666,19 @@ export function applyConversationEvent(
         ),
       };
   } else {
+    if (method === "session.inbox.delivered") {
+      const queued = session.queuedMessages?.find(
+        (item) => item.id === data.inboxID,
+      );
+      if (queued) {
+        put({
+          id: `opencode-${queued.id}`,
+          kind: "user",
+          text: queued.prompt,
+        });
+        working();
+      }
+    }
     if (method.startsWith("session.compaction.")) {
       const latest = next.conversation.findLast(
         (entry) => entry.kind === "compaction",
@@ -777,6 +820,9 @@ export function applyConversationEvent(
         output: data.content
           ? textContent(data.content)
           : (data.output ?? previous?.output),
+        images: data.content
+          ? imageAttachments(data.content)
+          : previous?.images,
         error: data.error
           ? displayValue(data.error.message ?? data.error)
           : previous?.error,

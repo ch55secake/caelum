@@ -4,33 +4,42 @@ import { copyAction, useContextMenu } from "./ContextMenu.js";
 import { usePullRequestPreview } from "./PullRequestPreview.js";
 import {
   refreshBranchPullRequests,
-  useBranchPullRequests,
+  useScopedBranchPullRequests,
+  branchPullRequestKey,
 } from "./useBranchPullRequests.js";
 import type { PullRequest } from "./pullRequestState.js";
-import type { ProviderKind, SessionSummary } from "./workspaceState.js";
+import { sessionBranches, type ProjectSession } from "./workspaceState.js";
 import type { WorkspaceController } from "./Sidebar.js";
 
-type Session = SessionSummary & { provider: ProviderKind; title: string };
+type Session = ProjectSession & { title: string };
 
 export function useSessionPullRequests(
   app: WorkspaceController,
   sessions: Session[],
 ) {
-  const path = app.project?.path ?? "";
+  const path = app.rootProject?.path ?? "";
   const sessionKey = JSON.stringify(
-    sessions.map(({ id, provider, updatedAt }) => [provider, id, updatedAt]),
+    sessions.map(({ key, updatedAt, available }) => [
+      key,
+      updatedAt,
+      available,
+    ]),
   );
   const load = useRef(app.loadSessionDetails);
   load.current = app.loadSessionDetails;
   const [loadingDetails, setLoadingDetails] = useState(false);
   useEffect(() => {
     let disposed = false;
-    const pending = [...sessions];
+    const pending = sessions.filter((session) => session.available);
     // Include off-screen and unselected sessions without resuming conversations.
     const collect = async () => {
       while (!disposed && pending.length) {
         const session = pending.shift()!;
-        await load.current(path, session.provider, session.id);
+        await load.current(
+          session.project.path,
+          session.provider,
+          session.id,
+        );
       }
     };
     setLoadingDetails(true);
@@ -41,29 +50,63 @@ export function useSessionPullRequests(
       disposed = true;
     };
   }, [path, sessionKey]);
-  const branches = sessions.flatMap((session) => {
-    const branch =
-      app.workspace?.providers[session.provider].sessionDetails[session.id]
-        ?.branch;
-    return branch ? [branch] : [];
-  });
-  const requests = useBranchPullRequests(path, branches);
-  const entries = new Map<string, { pr: PullRequest; sessions: Session[] }>();
+  const branchesFor = (session: Session) =>
+    sessionBranches(
+      app.workspaces[session.project.path]?.providers[session.provider]
+        .sessionDetails[session.id],
+    );
+  const scopes = sessions.flatMap((session) =>
+    session.available
+      ? branchesFor(session).map((branch) => ({
+          projectPath: session.project.path,
+          branch,
+        }))
+      : [],
+  );
+  const requests = useScopedBranchPullRequests(scopes);
+  const entries = new Map<
+    string,
+    { projectPath: string; pr: PullRequest; sessions: Session[] }
+  >();
   for (const session of sessions) {
-    const branch =
-      app.workspace?.providers[session.provider].sessionDetails[session.id]
-        ?.branch;
-    const pr = branch ? requests[branch]?.value : null;
-    if (!pr) continue;
-    const entry = entries.get(pr.url) ?? { pr, sessions: [] };
-    entry.sessions.push(session);
-    entries.set(pr.url, entry);
+    if (!session.available) continue;
+    for (const branch of branchesFor(session)) {
+      const pr =
+        requests[branchPullRequestKey(session.project.path, branch)]?.value;
+      if (!pr) continue;
+      const entry = entries.get(pr.url) ?? {
+        projectPath: session.project.path,
+        pr,
+        sessions: [],
+      };
+      if (!entry.sessions.some(({ key }) => key === session.key))
+        entry.sessions.push(session);
+      entries.set(pr.url, entry);
+    }
   }
   const loading =
+    app.isLoadingSessions ||
     loadingDetails ||
-    branches.some((branch) => !requests[branch] || requests[branch].loading);
-  const error = branches.map((branch) => requests[branch]?.error).find(Boolean);
-  return { path, entries, loading, error };
+    scopes.some(
+      ({ projectPath, branch }) =>
+        !requests[branchPullRequestKey(projectPath, branch)] ||
+        requests[branchPullRequestKey(projectPath, branch)].loading,
+    );
+  const error = Object.values(requests)
+    .map((request) => request?.error)
+    .find(Boolean);
+  return {
+    path,
+    entries,
+    loading,
+    error,
+    retry: () => {
+      for (const projectPath of new Set(
+        scopes.map((scope) => scope.projectPath),
+      ))
+        refreshBranchPullRequests(projectPath);
+    },
+  };
 }
 
 export function SessionPullRequests({
@@ -71,7 +114,7 @@ export function SessionPullRequests({
 }: {
   result: ReturnType<typeof useSessionPullRequests>;
 }) {
-  const { path, entries, loading, error } = result;
+  const { path, entries, loading, error, retry } = result;
   return (
     <div className="session-pr-section">
       <div className="session-pr-list">
@@ -79,7 +122,6 @@ export function SessionPullRequests({
           ? [...entries.values()].map((entry) => (
               <SessionPullRequest
                 key={`${path}\0${entry.pr.url}`}
-                projectPath={path}
                 {...entry}
               />
             ))
@@ -97,11 +139,7 @@ export function SessionPullRequests({
                 ? "Could not refresh all PRs. Showing last known results."
                 : "Could not load pull requests."}
             </span>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => refreshBranchPullRequests(path)}
-            >
+            <button type="button" disabled={loading} onClick={retry}>
               {loading ? "Retrying…" : "Retry"}
             </button>
           </div>

@@ -4,6 +4,14 @@ const PROVIDERS = ["codex", "opencode"];
 export function sessionTitle(session) {
   return session.name || session.preview || "Untitled session";
 }
+export function sessionBranches(details) {
+  return [
+    ...new Set([
+      ...(details?.branches ?? []),
+      ...(details?.branch ? [details.branch] : []),
+    ]),
+  ];
+}
 function emptyProviderWorkspace() {
   return {
     sessions: [],
@@ -42,6 +50,10 @@ export function createSessionWorkspace(session) {
     effort: null,
     agent: null,
     conversation: [],
+    queuedMessages: [],
+    queuePaused: false,
+    inboxRevision: 0,
+    settledInboxIds: [],
     draft: "",
     fileContext: [],
     isWorking: session.thread.isWorking ?? false,
@@ -68,7 +80,8 @@ export function createSessionWorkspace(session) {
 }
 export function restoreProjectWorkspace(persisted) {
   const workspace = createProjectWorkspace();
-  workspace.provider = persisted.provider === "opencode" ? "opencode" : "codex";
+  workspace.provider =
+    persisted.provider === "opencode" ? "opencode" : "codex";
   for (const provider of PROVIDERS) {
     workspace.providers[provider].selectedSessionId =
       persisted[`${provider}SessionId`] ?? null;
@@ -81,7 +94,9 @@ export function restoreProjectWorkspace(persisted) {
 export function updateProjectWorkspace(workspaces, projectPath, update) {
   const current = workspaces[projectPath] ?? createProjectWorkspace();
   const next = update(current);
-  return next === current ? workspaces : { ...workspaces, [projectPath]: next };
+  return next === current
+    ? workspaces
+    : { ...workspaces, [projectPath]: next };
 }
 export function updateProviderWorkspace(
   workspaces,
@@ -125,11 +140,18 @@ export function updateSessionWorkspace(
   );
 }
 export function projectHasActiveTurn(workspace) {
-  return PROVIDERS.some((provider) =>
-    Object.values(workspace.providers[provider].sessionsById).some(
-      (session) => session.isWorking || session.isSubmitting,
-    ),
-  );
+  return PROVIDERS.some((provider) => {
+    const state = workspace.providers[provider];
+    return (
+      Object.values(state.sessionsById).some(
+        (session) => session.isWorking || session.isSubmitting,
+      ) ||
+      state.sessions.some(
+        (session) =>
+          state.sessionsById[session.id]?.isWorking ?? session.isWorking,
+      )
+    );
+  });
 }
 function applyEvent(
   workspaces,
@@ -148,6 +170,10 @@ function applyEvent(
       if (disconnected)
         return {
           ...workspace,
+          sessions: workspace.sessions.map((session) => ({
+            ...session,
+            isWorking: false,
+          })),
           sessionsById: Object.fromEntries(
             Object.entries(workspace.sessionsById).map(([id, session]) => [
               id,
@@ -178,9 +204,18 @@ function applyEvent(
         data.info?.id;
       if (!id) return workspace;
       const current = workspace.sessionsById[id];
-      const next = current
-        ? applyConversationEvent(current, provider, method, data, event)
+      const summary = workspace.sessions.find((session) => session.id === id);
+      // Unopened sessions still receive activity updates. Keep only their
+      // summary until the user opens the conversation.
+      const seed =
+        current ??
+        (summary
+          ? createSessionWorkspace({ provider, thread: summary })
+          : null);
+      const applied = seed
+        ? applyConversationEvent(seed, provider, method, data, event)
         : null;
+      const next = current ? applied : null;
       const name =
         data.thread?.name ??
         data.session?.title ??
@@ -193,13 +228,14 @@ function applyEvent(
         ].includes(method)
           ? data.title
           : null);
-      const changed = next && next !== current;
+      const changed = applied && applied !== seed;
       const sessions = workspace.sessions
         .map((item) =>
           item.id === id
             ? {
                 ...item,
                 name: name ?? item.name,
+                ...(applied ? { isWorking: applied.isWorking } : {}),
                 updatedAt: changed ? Date.now() : item.updatedAt,
               }
             : item,
@@ -213,7 +249,8 @@ function applyEvent(
               ...workspace.sessionsById,
               [id]: {
                 ...next,
-                eventRevision: (current.eventRevision ?? 0) + (changed ? 1 : 0),
+                eventRevision:
+                  (current.eventRevision ?? 0) + (changed ? 1 : 0),
                 unread: changed ? true : next.unread,
               },
             }

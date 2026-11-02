@@ -22,11 +22,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import type {
-  ProviderKind,
-  SessionSummary,
-  SessionDetails,
-} from "./workspaceState.js";
+import type { ProjectSession, SessionDetails } from "./workspaceState.js";
 import { sessionTitle } from "./workspaceState.js";
 import type { useWorkspace } from "./useWorkspace.js";
 import { ProjectWorktrees } from "./Worktrees.js";
@@ -43,11 +39,13 @@ const MIN_SIDEBAR_WIDTH = 180;
 const MAX_SIDEBAR_WIDTH = 480;
 function SessionContext({
   projectPath,
+  checkoutLabel,
   details,
   load,
   revision,
 }: {
   projectPath: string;
+  checkoutLabel?: string;
   details?: SessionDetails;
   load: () => void;
   revision: number | null;
@@ -67,6 +65,11 @@ function SessionContext({
   }, [revision]);
   return (
     <span className="session-context" ref={element}>
+      {checkoutLabel && (
+        <span className="session-checkout" title={projectPath}>
+          {checkoutLabel}
+        </span>
+      )}
       {details?.branch && (
         <span
           className="session-branch"
@@ -135,9 +138,9 @@ export function Sidebar({
 }) {
   const contextMenu = useContextMenu();
   const { activeUrl } = usePullRequestPreview();
-  const selectSession = (item: SessionSummary, provider: ProviderKind) => {
+  const selectSession = (item: ProjectSession) => {
     showSession();
-    app.selectSession(item, provider);
+    app.selectSession(item, item.provider, item.project);
   };
   const sidebar = useRef<HTMLElement>(null);
   const [layoutWidth, setLayoutWidth] = useState(window.innerWidth);
@@ -151,7 +154,7 @@ export function Sidebar({
     lists: Record<"sessions" | "requests", { top: number; pending: boolean }>;
   } | null>(null);
   const { search, searchOpen } = view;
-  const path = app.project?.path ?? "";
+  const path = app.rootProject?.path ?? "";
   const closeSearch = () => {
     view.update({ search: "", searchOpen: false });
     searchButton.current?.focus();
@@ -177,16 +180,9 @@ export function Sidebar({
   );
   const resize = (value: number) =>
     setPreferredWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(maximum, value)));
-  const allSessions = (["codex", "opencode"] as ProviderKind[])
-    .flatMap((provider) =>
-      (app.workspace?.providers[provider].sessions ?? []).map((session) => ({
-        ...session,
-        provider,
-      })),
-    )
-    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const allSessions = app.projectSessions;
   const sessions = allSessions.filter((item) =>
-    `${sessionTitle(item)} ${item.provider} ${app.workspace?.providers[item.provider].sessionDetails[item.id]?.branch ?? ""}`
+    `${sessionTitle(item)} ${item.provider} ${item.checkoutLabel} ${item.project.path} ${app.workspaces[item.project.path]?.providers[item.provider].sessionDetails[item.id]?.branch ?? ""}`
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
@@ -221,9 +217,7 @@ export function Sidebar({
       list.scrollTop = restore.top;
       // Wait for discovery to rehydrate before accepting an empty list's clamp.
       const loading =
-        name === "sessions"
-          ? app.providerWorkspace?.isLoadingSessions
-          : pullRequests.loading;
+        name === "sessions" ? app.isLoadingSessions : pullRequests.loading;
       if (Math.abs(list.scrollTop - restore.top) < 1 || !loading)
         restore.pending = false;
     }
@@ -232,7 +226,7 @@ export function Sidebar({
     sessions.length,
     pullRequests.entries.size,
     pullRequests.loading,
-    app.providerWorkspace?.isLoadingSessions,
+    app.isLoadingSessions,
   ]);
   return (
     <aside
@@ -337,16 +331,12 @@ export function Sidebar({
                 className="icon-button"
                 title="Refresh sessions"
                 aria-label="Refresh sessions"
-                disabled={
-                  !app.project || app.providerWorkspace?.isLoadingSessions
-                }
+                disabled={!app.project || app.isLoadingSessions}
                 onClick={() => void app.refreshSessions()}
               >
                 <RefreshCw
                   size={13}
-                  className={
-                    app.providerWorkspace?.isLoadingSessions ? "spinning" : ""
-                  }
+                  className={app.isLoadingSessions ? "spinning" : ""}
                 />
               </button>
             </div>
@@ -362,7 +352,9 @@ export function Sidebar({
               placeholder="Search sessions…"
               aria-label="Search sessions"
               value={search}
-              onChange={(event) => view.update({ search: event.target.value })}
+              onChange={(event) =>
+                view.update({ search: event.target.value })
+              }
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
@@ -392,39 +384,59 @@ export function Sidebar({
                 );
             }}
           >
-            {app.providerWorkspace?.isLoadingSessions &&
-              sessions.length === 0 && (
-                <div className="empty-sessions">Connecting…</div>
-              )}
+            {app.sessionErrors.length > 0 && (
+              <div
+                className="session-discovery-error"
+                role="status"
+                title={app.sessionErrors.join("\n")}
+              >
+                <span>Could not load all sessions.</span>
+                <button
+                  type="button"
+                  disabled={app.isLoadingSessions}
+                  onClick={() => void app.refreshSessions()}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            {app.isLoadingSessions && sessions.length === 0 && (
+              <div className="empty-sessions">Connecting…</div>
+            )}
             {sessions.length === 0 &&
-              !app.providerWorkspace?.isLoadingSessions && (
+              !app.isLoadingSessions &&
+              !app.sessionErrors.length && (
                 <div className="empty-sessions">
                   {search ? "No matching sessions" : "No sessions yet"}
                 </div>
               )}
             {sessions.map((item) => {
-              const workspace = app.workspace?.providers[item.provider];
+              const workspace =
+                app.workspaces[item.project.path]?.providers[item.provider];
               const state = workspace?.sessionsById[item.id];
               const archiving = workspace?.archivingSessionIds.includes(
                 item.id,
               );
               const working = state?.isWorking ?? item.isWorking;
-              const approval = app.approvals.some(
+              const approval = [...app.approvals, ...app.questions].some(
                 (request) =>
-                  request.projectPath === app.project?.path &&
+                  request.projectPath === item.project.path &&
                   request.provider === item.provider &&
                   request.sessionId === item.id,
               );
               return (
                 <div
-                  key={`${app.project?.path}-${item.provider}-${item.id}`}
-                  className={`session-row${!activeUrl && app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
+                  key={item.key}
+                  data-project-path={item.project.path}
+                  data-provider={item.provider}
+                  data-session-id={item.id}
+                  className={`session-row${!activeUrl && app.project?.path === item.project.path && app.provider === item.provider && app.selectedId === item.id ? " selected" : ""}`}
                   onContextMenu={(event) =>
                     contextMenu(event, [
                       {
                         text: "Open session",
-                        enabled: !archiving,
-                        action: () => selectSession(item, item.provider),
+                        enabled: !archiving && item.available,
+                        action: () => selectSession(item),
                       },
                       copyAction("Copy session title", sessionTitle(item)),
                       copyAction("Copy session ID", item.id),
@@ -432,13 +444,20 @@ export function Sidebar({
                       {
                         text: "Archive session",
                         enabled: !(
+                          !item.available ||
                           archiving ||
                           working ||
+                          state?.queuedMessages.length ||
                           state?.isSubmitting ||
                           state?.connection === "connecting" ||
                           approval
                         ),
-                        action: () => app.archiveSession(item, item.provider),
+                        action: () =>
+                          app.archiveSession(
+                            item,
+                            item.provider,
+                            item.project,
+                          ),
                       },
                     ])
                   }
@@ -446,17 +465,18 @@ export function Sidebar({
                   <div className="session-item">
                     <button
                       className="sidebar-row-select"
-                      title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}`}
+                      title={`${sessionTitle(item)} · ${item.provider === "codex" ? "Codex" : "OpenCode"}\n${item.checkoutLabel} · ${item.project.path}${item.available ? "" : " · Unavailable"}`}
                       aria-label={sessionTitle(item)}
                       aria-current={
                         !activeUrl &&
+                        app.project?.path === item.project.path &&
                         app.provider === item.provider &&
                         app.selectedId === item.id
                           ? "page"
                           : undefined
                       }
-                      disabled={archiving}
-                      onClick={() => selectSession(item, item.provider)}
+                      disabled={archiving || !item.available}
+                      onClick={() => selectSession(item)}
                     >
                       <span className="session-heading">
                         <span
@@ -495,13 +515,18 @@ export function Sidebar({
                       </span>
                     </button>
                     <SessionContext
-                      projectPath={app.project!.path}
+                      projectPath={item.project.path}
+                      checkoutLabel={
+                        app.projectCheckouts.length > 1
+                          ? `${item.checkoutLabel}${item.available ? "" : " · Missing"}`
+                          : undefined
+                      }
                       details={workspace?.sessionDetails[item.id]}
                       revision={item.updatedAt}
                       load={() => {
-                        if (app.project)
+                        if (item.available)
                           void app.loadSessionDetails(
-                            app.project.path,
+                            item.project.path,
                             item.provider,
                             item.id,
                           );
@@ -517,13 +542,21 @@ export function Sidebar({
                         : `Archive ${sessionTitle(item)}`
                     }
                     disabled={
+                      !item.available ||
                       archiving ||
                       working ||
+                      Boolean(state?.queuedMessages.length) ||
                       state?.isSubmitting ||
                       state?.connection === "connecting" ||
                       approval
                     }
-                    onClick={() => void app.archiveSession(item, item.provider)}
+                    onClick={() =>
+                      void app.archiveSession(
+                        item,
+                        item.provider,
+                        item.project,
+                      )
+                    }
                   >
                     {archiving ? (
                       <LoaderCircle size={13} className="spinning" />
@@ -602,7 +635,9 @@ export function Sidebar({
           drag.current = null;
         }}
         onKeyDown={(event) => {
-          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+          if (
+            ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+          ) {
             event.preventDefault();
             resize(
               event.key === "Home"

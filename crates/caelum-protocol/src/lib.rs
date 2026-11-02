@@ -465,6 +465,9 @@ pub struct SessionHistoryPage {
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetails {
     pub branch: Option<String>,
+    /// All branches attributed to this session, including earlier PR branches.
+    #[serde(default)]
+    pub branches: Vec<String>,
     pub branch_is_current: bool,
     pub changes: Option<LineChanges>,
 }
@@ -477,6 +480,7 @@ pub struct SessionBranchUpdate {
     pub provider: String,
     pub session_id: String,
     pub branch: Option<String>,
+    pub branches: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -8,13 +8,26 @@ export type SessionSummary = {
   updatedAt: number | null;
   isWorking?: boolean;
 };
+export type ProjectSession = SessionSummary & {
+  key: string;
+  project: ProjectInfo;
+  provider: ProviderKind;
+  checkoutLabel: string;
+  available: boolean;
+};
 export function sessionTitle(session: SessionSummary): string;
 export type SessionDetails = {
   branch: string | null;
+  branches?: string[];
   branchIsCurrent: boolean;
   changes: { additions: number; deletions: number } | null;
 };
+export function sessionBranches(
+  details?: Pick<SessionDetails, "branch" | "branches">,
+): string[];
 export type ConversationEntry = {
+  images?: import("./chatMedia.js").ChatImageSource[];
+  sourceType?: "system" | "synthetic";
   fileContext?: FileContext[];
   id: string;
   kind: "user" | "assistant" | "tool" | "status" | "reasoning" | "compaction";
@@ -78,6 +91,10 @@ export type SessionWorkspaceState = {
   /** Pending agent for the next prompt; null keeps the native session agent. */
   agent: string | null;
   conversation: ConversationEntry[];
+  queuedMessages: import("./messageQueueState.js").QueuedMessage[];
+  queuePaused: boolean;
+  inboxRevision: number;
+  settledInboxIds: string[];
   isWorking: boolean;
   isSubmitting: boolean;
   error: string | null;
