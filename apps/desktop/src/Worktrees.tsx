@@ -7,11 +7,16 @@ import {
   GitCommitHorizontal,
   Plus,
   RefreshCw,
+  ShieldAlert,
   Trash2,
   X,
 } from "lucide-react";
 import { ProjectItem } from "./ProjectItem.js";
-import { projectHasActiveTurn, type ProjectInfo } from "./workspaceState.js";
+import {
+  projectHasActiveTurn,
+  sessionTitle,
+  type ProjectInfo,
+} from "./workspaceState.js";
 import type { WorkspaceController } from "./Sidebar.js";
 import { worktreeLabel, type GitWorktree } from "./worktreeState.js";
 import { copyAction, revealAction, useContextMenu } from "./ContextMenu.js";
@@ -267,11 +272,96 @@ export function ProjectWorktrees({
   const menu = useContextMenu();
   const member = (path: string) =>
     (app.projectRoots[path] ?? path) === project.path;
+  const active = member(app.project?.path ?? "");
+  const checkout = app.groupWorktree(project)?.project ?? project;
+  const workspace = app.workspaces[checkout.path];
+  const provider = workspace?.provider;
+  const sessions = provider ? workspace.providers[provider] : undefined;
+  const selectedId = sessions?.selectedSessionId;
+  const session = selectedId
+    ? (sessions?.sessions.find((item) => item.id === selectedId) ??
+      sessions?.sessionsById[selectedId]?.session.thread)
+    : undefined;
+  const subtitle = !selectedId
+    ? "New session"
+    : session?.name || session?.preview
+      ? sessionTitle(session)
+      : !sessions?.sessionsLoaded && !sessions?.error
+        ? "Loading session…"
+        : "Untitled session";
+  useEffect(() => {
+    if (
+      app.ready &&
+      !app.restoring &&
+      provider &&
+      selectedId &&
+      !sessions?.sessionsLoaded &&
+      !sessions?.error
+    )
+      // Restore background project titles without opening their conversations.
+      void app.loadSessions(checkout, provider);
+  }, [
+    app.ready,
+    app.restoring,
+    checkout.path,
+    provider,
+    selectedId,
+    sessions?.sessionsLoaded,
+    sessions?.error,
+  ]);
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      const stored = JSON.parse(
+        localStorage.getItem("caelum.sidebar.worktrees") ?? "{}",
+      )[project.path];
+      return typeof stored === "boolean" ? stored : active;
+    } catch {
+      return active;
+    }
+  });
+  const listId = useId();
+  const expand = (value: boolean) => {
+    setExpanded(value);
+    try {
+      const stored = JSON.parse(
+        localStorage.getItem("caelum.sidebar.worktrees") ?? "{}",
+      );
+      localStorage.setItem(
+        "caelum.sidebar.worktrees",
+        JSON.stringify({ ...stored, [project.path]: value }),
+      );
+    } catch {
+      /* Keep the disclosure usable when storage is unavailable. */
+    }
+  };
+  const previousPath = useRef(app.project?.path);
+  useEffect(() => {
+    const changed = previousPath.current !== app.project?.path;
+    previousPath.current = app.project?.path;
+    if (changed && active && app.project?.path !== project.path) expand(true);
+  }, [app.project?.path]);
   return (
     <div className="project-group">
       <ProjectItem
+        key={checkout.path}
         project={project}
-        selected={app.project?.path === project.path}
+        checkout={checkout}
+        subtitle={subtitle}
+        selected={active}
+        disclosure={
+          worktrees.length > 0 ? (
+            <button
+              type="button"
+              className="icon-button project-disclosure"
+              aria-label={`Worktrees for ${project.name}`}
+              aria-expanded={expanded}
+              aria-controls={listId}
+              onClick={() => expand(!expanded)}
+            >
+              <ChevronDown size={13} />
+            </button>
+          ) : undefined
+        }
         working={Object.entries(app.workspaces).some(
           ([path, workspace]) =>
             member(path) && projectHasActiveTurn(workspace),
@@ -301,8 +391,10 @@ export function ProjectWorktrees({
       />
       {worktrees.length > 0 && (
         <div
+          id={listId}
           className="worktree-list"
           aria-label={`Worktrees for ${project.name}`}
+          hidden={!expanded}
         >
           <div className="worktree-heading">
             <span>Worktrees</span>
@@ -323,7 +415,7 @@ export function ProjectWorktrees({
               <Plus size={12} />
             </button>
           </div>
-          {worktrees.map((entry) => (
+          {catalog!.worktrees.map((entry) => (
             <div
               className="worktree-row"
               key={entry.path}
@@ -348,31 +440,46 @@ export function ProjectWorktrees({
                 }}
               >
                 <GitBranch size={12} />
-                <span>{worktreeLabel(entry)}</span>
+                <span>
+                  {entry.main
+                    ? (entry.branch ?? "Detached HEAD")
+                    : worktreeLabel(entry)}
+                </span>
                 {!entry.available ? (
                   <small>Missing</small>
                 ) : app.workspaces[entry.project.path] &&
                   projectHasActiveTurn(app.workspaces[entry.project.path]) ? (
                   <i className="running-dot" aria-label="Running session" />
                 ) : null}
+                {app.approvals.some(
+                  (request) => request.projectPath === entry.project.path,
+                ) && (
+                  <ShieldAlert
+                    size={12}
+                    className="approval-indicator"
+                    aria-label="Approval required"
+                  />
+                )}
               </button>
-              <button
-                className="icon-button worktree-delete"
-                aria-label={`Remove worktree ${worktreeLabel(entry)}`}
-                title={
-                  app.worktreeInUse(entry)
-                    ? "Stop running sessions before removing"
-                    : entry.locked != null
-                      ? "Worktree is locked"
-                      : "Remove worktree"
-                }
-                disabled={
-                  busy || app.worktreeInUse(entry) || entry.locked != null
-                }
-                onClick={() => setDialog(entry)}
-              >
-                <Trash2 size={11} />
-              </button>
+              {!entry.main && (
+                <button
+                  className="icon-button worktree-delete"
+                  aria-label={`Remove worktree ${worktreeLabel(entry)}`}
+                  title={
+                    app.worktreeInUse(entry)
+                      ? "Stop running sessions before removing"
+                      : entry.locked != null
+                        ? "Worktree is locked"
+                        : "Remove worktree"
+                  }
+                  disabled={
+                    busy || app.worktreeInUse(entry) || entry.locked != null
+                  }
+                  onClick={() => setDialog(entry)}
+                >
+                  <Trash2 size={11} />
+                </button>
+              )}
             </div>
           ))}
         </div>

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   FolderOpen,
@@ -15,13 +22,14 @@ import { ProjectInspector, type InspectorRequest } from "./ProjectInspector.js";
 import { FileNavigation } from "./FileNavigation.js";
 import type { FileLocation } from "./fileContext.js";
 import { useWorkspace } from "./useWorkspace.js";
-import { Sidebar, sessionTitle } from "./Sidebar.js";
+import { useSidebarView } from "./useSidebarView.js";
+import { Sidebar } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
 import { QuestionCard } from "./QuestionCard.js";
 import { SessionWorktree } from "./Worktrees.js";
 import { questionKey } from "./questionState.js";
-import { projectHasActiveTurn } from "./workspaceState.js";
+import { projectHasActiveTurn, sessionTitle } from "./workspaceState.js";
 import { lastUserMessage } from "./shellMessages.js";
 import { Settings } from "./Settings.js";
 import { useSettings } from "./useSettings.js";
@@ -60,9 +68,21 @@ export default function App() {
   const [pullRequest, setPullRequest] = useState<
     (PullRequestTarget & { scope: string }) | null
   >(null);
-  const [search, setSearch] = useState("");
+  const sidebarView = useSidebarView(app.project?.path ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [focusRequest, setFocusRequest] = useState<{
+    target: "search" | "composer";
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (!focusRequest) return;
+    const target =
+      focusRequest.target === "search"
+        ? searchRef.current
+        : textareaRef.current;
+    target?.focus();
+    if (focusRequest.target === "search") target?.select();
+  }, [focusRequest]);
   const questionDockRef = useRef<HTMLDivElement>(null);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
   const activePullRequest =
@@ -108,22 +128,19 @@ export default function App() {
   function newSession() {
     setPullRequest(null);
     app.newSession();
-    setSearch("");
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    sidebarView.update({ search: "", searchOpen: false });
+    setFocusRequest({ target: "composer" });
   }
   function showSession() {
     setPullRequest(null);
     setExpanded(false);
     // Leaving a PR already restores focus through the session effect below.
-    if (!activePullRequest)
-      requestAnimationFrame(() => textareaRef.current?.focus());
+    if (!activePullRequest) setFocusRequest({ target: "composer" });
   }
   function focusSearch() {
     setCollapsed(false);
-    requestAnimationFrame(() => {
-      searchRef.current?.focus();
-      searchRef.current?.select();
-    });
+    sidebarView.update({ searchOpen: true });
+    setFocusRequest({ target: "search" });
   }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -247,9 +264,9 @@ export default function App() {
               preferredWidth={sidebarWidth}
               setPreferredWidth={setSidebarWidth}
               collapse={() => setCollapsed(true)}
-              search={search}
-              setSearch={setSearch}
+              view={sidebarView}
               searchRef={searchRef}
+              focusSearch={focusSearch}
               newSession={newSession}
               changesOpen={changesOpen}
               filesOpen={!activePullRequest && pane === "files"}

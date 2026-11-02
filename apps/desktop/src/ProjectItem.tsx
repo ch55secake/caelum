@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { FolderGit2, GitBranch, ShieldAlert, X } from "lucide-react";
 import {
@@ -7,6 +7,7 @@ import {
   type GitRepositoryStatus,
 } from "./gitStatus.js";
 import type { ProjectInfo } from "./workspaceState.js";
+import { SidebarDetails } from "./SidebarDetails.js";
 import {
   useContextMenu,
   copyAction,
@@ -16,36 +17,43 @@ import {
 
 export function ProjectItem({
   project,
+  checkout,
+  subtitle,
   selected,
   working,
   approval,
   activate,
   close,
   worktreeActions,
+  disclosure,
 }: {
   project: ProjectInfo;
+  checkout: ProjectInfo;
+  subtitle: string;
   selected: boolean;
   working: boolean;
   approval: boolean;
   activate: () => void;
   close: () => void;
   worktreeActions: ContextAction[];
+  disclosure?: ReactNode;
 }) {
   const detailsId = useId();
+  const metadataId = useId();
   const contextMenu = useContextMenu();
   const row = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!isTauri()) return;
-    const unsubscribe = subscribeGitStatus(project.path, (result) => {
+    const unsubscribe = subscribeGitStatus(checkout.path, (result) => {
       setStatus(result.status);
       setError(result.error);
     });
     let visible = false;
     const refresh = () => {
       if (visible && !document.hidden)
-        void readGitStatus(project.path).catch(() => {});
+        void readGitStatus(checkout.path).catch(() => {});
     };
     const observer = new IntersectionObserver(
       (entries) => {
@@ -68,7 +76,7 @@ export function ProjectItem({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [project.path, selected, working]);
+  }, [checkout.path, selected, working]);
   const branch = status?.branch ?? "Detached HEAD";
   const count = status?.changes.length ?? 0;
   return (
@@ -87,17 +95,28 @@ export function ProjectItem({
         ])
       }
     >
-      <div className="project-item">
+      {disclosure}
+      <SidebarDetails
+        id={detailsId}
+        className="project-item"
+        details={
+          <span className="project-details">
+            <span className="project-path">{checkout.path}</span>
+            <span className="project-session-detail">{subtitle}</span>
+            {working && <span>Running session</span>}
+            {approval && <span>Approval required</span>}
+          </span>
+        }
+      >
         <button
           className="sidebar-row-select"
-          title={project.path}
           aria-label={project.name}
-          aria-describedby={detailsId}
+          aria-describedby={`${detailsId} ${metadataId}`}
           aria-current={selected ? "page" : undefined}
           onClick={activate}
         >
           <span className="project-heading">
-            <FolderGit2 size={14} aria-hidden="true" />
+            {!disclosure && <FolderGit2 size={14} aria-hidden="true" />}
             <span className="project-name">{project.name}</span>
             {working && (
               <span
@@ -114,10 +133,8 @@ export function ProjectItem({
               />
             )}
           </span>
-        </button>
-        <span id={detailsId} className="project-details">
-          <span className="project-path">{project.path}</span>
-          <span className="project-context">
+          <span className="project-session">{subtitle}</span>
+          <span id={metadataId} className="project-context">
             {error ? (
               <span title={error}>Git unavailable</span>
             ) : !status ? (
@@ -130,26 +147,17 @@ export function ProjectItem({
                   className="project-branch"
                   title={`Current branch: ${branch}`}
                 >
-                  <GitBranch size={10} aria-hidden="true" />
+                  <GitBranch size={11} aria-hidden="true" />
                   <span>{branch}</span>
                 </span>
-                <span
-                  className={`project-changes${count ? " dirty" : ""}`}
-                  title={
-                    count
-                      ? `${count} changed ${count === 1 ? "file" : "files"} in this project, including staged, unstaged, and untracked changes`
-                      : "Working tree clean"
-                  }
-                >
+                <span className={`project-changes${count ? " dirty" : ""}`}>
                   {count ? `${count} changed` : "Clean"}
                 </span>
               </>
             )}
           </span>
-          {working && <span className="sr-only">Running session</span>}
-          {approval && <span className="sr-only">Approval required</span>}
-        </span>
-      </div>
+        </button>
+      </SidebarDetails>
       <button
         className="icon-button project-close"
         aria-label={`Close ${project.name}`}

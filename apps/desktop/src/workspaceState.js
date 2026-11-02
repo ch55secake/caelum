@@ -1,6 +1,9 @@
 import { applyConversationEvent } from "./conversationState.js";
 
 const PROVIDERS = ["codex", "opencode"];
+export function sessionTitle(session) {
+  return session.name || session.preview || "Untitled session";
+}
 function emptyProviderWorkspace() {
   return {
     sessions: [],

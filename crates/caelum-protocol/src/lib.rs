@@ -469,6 +469,16 @@ pub struct SessionDetails {
     pub changes: Option<LineChanges>,
 }
 
+/// A checkout branch change attributed to its currently executing session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionBranchUpdate {
+    pub project_path: String,
+    pub provider: String,
+    pub session_id: String,
+    pub branch: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LineChanges {
     pub additions: u64,
