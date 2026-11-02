@@ -16,6 +16,8 @@ Use direct imports from the owning feature. Keep cross-feature orchestration in 
 
 ## Provider integration
 
+The desktop Rust crate root wires up application state, plugins, commands and shutdown. `src-tauri/src/state.rs` owns persistence/startup state, `events.rs` forwards provider and approval/question events, and `commands/` groups thin handlers by projects, worktrees, files, Git/GitHub, workspace persistence, sessions and providers. Provider logic remains in `caelum-core`.
+
 Provider adapters, sessions, SQLite storage, Git, terminal/PTY, and filesystem operations belong in `caelum-core` or focused core submodules. Tauri commands should stay thin and validate inputs before calling core APIs. CLI commands should use those same APIs rather than duplicate behavior.
 
 The Codex adapter in `caelum-core` starts one local `codex app-server --listen stdio://` process per project and speaks the official JSONL request/notification protocol. It performs the `initialize`/`initialized` handshake, checks CLI authentication with `codex login status`, scopes thread listing and resumption to the validated project directory, and forwards streamed app-server events to the desktop. Command and file-change requests use the shared one-shot approval broker. Processes are tracked for shutdown and restarted on the next request after an unexpected exit.
