@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { ProjectItem } from "./ProjectItem.js";
+import { ChoicePicker } from "./ChoicePicker.js";
 import {
   projectHasActiveTurn,
   sessionTitle,
@@ -366,7 +367,9 @@ export function ProjectWorktrees({
           ([path, workspace]) =>
             member(path) && projectHasActiveTurn(workspace),
         )}
-        approval={app.approvals.some((request) => member(request.projectPath))}
+        approval={app.approvals.some((request) =>
+          member(request.projectPath),
+        )}
         activate={() => {
           showSession();
           app.activateGroup(project);
@@ -430,7 +433,9 @@ export function ProjectWorktrees({
                 className={`worktree-item${app.project?.path === entry.project.path ? " selected" : ""}`}
                 aria-label={`Switch to worktree ${worktreeLabel(entry)}`}
                 aria-current={
-                  app.project?.path === entry.project.path ? "page" : undefined
+                  app.project?.path === entry.project.path
+                    ? "page"
+                    : undefined
                 }
                 disabled={!entry.available || busy}
                 title={`${entry.branch ?? "Detached HEAD"}\n${entry.project.path}${entry.locked != null ? `\nLocked: ${entry.locked}` : ""}`}
@@ -507,42 +512,37 @@ export function ProjectWorktrees({
 export function SessionWorktree({ app }: { app: WorkspaceController }) {
   const root = app.rootProject;
   const catalog = root ? app.worktreeCatalogs[root.path] : null;
-  const worktrees = catalog?.worktrees.filter((entry) => !entry.main) ?? [];
-  if (!root || !worktrees.length) return null;
+  const worktrees = catalog?.worktrees ?? [];
+  if (!root || !worktrees.some((entry) => !entry.main)) return null;
   return (
-    <label className="session-worktree">
-      Worktree
-      <select
-        aria-label="Session worktree"
-        value={app.currentWorktree?.main ? "" : app.project?.path}
-        disabled={app.worktreeBusy[root.path]}
-        onChange={(event) => {
+    <span className="session-worktree">
+      <ChoicePicker
+        label="Session worktree"
+        icon={<GitBranch size={13} />}
+        value={app.project?.path ?? ""}
+        triggerName={
+          app.currentWorktree?.branch ??
+          (app.currentWorktree
+            ? worktreeLabel(app.currentWorktree)
+            : "Unavailable checkout")
+        }
+        disabled={
+          app.worktreeBusy[root.path] || app.providerWorkspace?.isCreating
+        }
+        searchable
+        onChange={(path) => {
           const entry = worktrees.find(
-            (entry) => entry.project.path === event.target.value,
+            (entry) => entry.project.path === path,
           );
           if (entry) void app.openWorktree(root, entry, true);
         }}
-      >
-        {app.currentWorktree?.main && (
-          <option value="" disabled>
-            Project directory
-          </option>
-        )}
-        {worktrees.map((entry) => (
-          <option
-            key={entry.path}
-            value={entry.project.path}
-            disabled={!entry.available}
-          >
-            {worktreeLabel(entry)}
-          </option>
-        ))}
-        {!app.currentWorktree && (
-          <option value={app.project?.path} disabled>
-            Unavailable checkout
-          </option>
-        )}
-      </select>
-    </label>
+        choices={worktrees.map((entry) => ({
+          id: entry.project.path,
+          name: worktreeLabel(entry),
+          description: `${entry.available ? (entry.branch ?? "Detached HEAD") : "Unavailable"} · ${entry.project.path}`,
+          disabled: !entry.available,
+        }))}
+      />
+    </span>
   );
 }

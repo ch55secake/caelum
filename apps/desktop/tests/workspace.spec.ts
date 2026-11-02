@@ -71,6 +71,7 @@ async function desktop(
         },
       ];
       const calls: { command: string; args: Record<string, unknown> }[] = [];
+      const checkoutSessions = new Map<string, any[]>(JSON.parse(sessionStorage.getItem("checkout-sessions") ?? "[]"));
       let checkouts: GitWorktree[] = JSON.parse(
         sessionStorage.getItem("worktrees") ?? "null",
       ) ?? [
@@ -360,8 +361,12 @@ async function desktop(
           failArchive: () => {
             failNextArchive = true;
           },
-          setSessionDetails: (provider: string, id: string, value: unknown) => {
-            sessionDetails.set(`${provider}:${id}`, value);
+          setSessionDetails: (provider: string, id: string, value: unknown, path?: string) => {
+            sessionDetails.set(`${path ? `${path}\0` : ""}${provider}:${id}`, value);
+          },
+          setCheckoutSessions: (path: string, provider: string, sessions: any[]) => {
+            checkoutSessions.set(`${path}\0${provider}`, sessions);
+            sessionStorage.setItem("checkout-sessions", JSON.stringify([...checkoutSessions]));
           },
           addSession: (id: string, name: string) => {
             threads.push({ id, name, preview: "", updatedAt: 1 });
@@ -611,7 +616,8 @@ async function desktop(
               return args.path === otherProject.path ? otherProject : project;
             if (command === "plugin:dialog|open") return otherProject.path;
             if (command === "session_details") {
-              const key = `${args.provider}:${args.sessionId}`;
+              const scoped = `${args.projectPath}\0${args.provider}:${args.sessionId}`;
+              const key = sessionDetails.has(scoped) ? scoped : `${args.provider}:${args.sessionId}`;
               const details = sessionDetails.has(key)
                 ? sessionDetails.get(key)
                 : {
@@ -767,7 +773,7 @@ async function desktop(
             if (command === "codex_list_sessions") {
               const snapshot = {
                 project,
-                threads: (worktrees
+                threads: (checkoutSessions.get(`${args.projectPath}\0codex`) ?? (worktrees
                   ? (
                       savedProjects.get(args.projectPath)?.codexSessionIds ?? []
                     ).map(
@@ -780,20 +786,23 @@ async function desktop(
                         },
                     )
                   : threads
-                ).filter(
+                )).filter(
                   (item) =>
                     !archived.has(
                       sessionKey(args.projectPath, "codex", item.id),
                     ),
                 ),
               };
-              await gates.get(command)?.promise;
+              const scope = `${command}:${args.projectPath}`;
+              const error = commandErrors.get(scope) ?? commandErrors.get(command);
+              await (gates.get(scope) ?? gates.get(command))?.promise;
+              if (error) throw new Error(error);
               return snapshot;
             }
             if (command === "opencode_list_sessions") {
               const snapshot = {
                 project,
-                sessions: (worktrees
+                sessions: (checkoutSessions.get(`${args.projectPath}\0opencode`) ?? (worktrees
                   ? (
                       savedProjects.get(args.projectPath)?.opencodeSessionIds ??
                       []
@@ -803,14 +812,17 @@ async function desktop(
                       updatedAt: 124,
                     }))
                   : [{ id: "ses-a", title: "OpenCode session", updatedAt: 123 }]
-                ).filter(
+                )).filter(
                   (item) =>
                     !archived.has(
                       sessionKey(args.projectPath, "opencode", item.id),
                     ),
                 ),
               };
-              await gates.get(command)?.promise;
+              const scope = `${command}:${args.projectPath}`;
+              const error = commandErrors.get(scope) ?? commandErrors.get(command);
+              await (gates.get(scope) ?? gates.get(command))?.promise;
+              if (error) throw new Error(error);
               return snapshot;
             }
             if (command === "codex_resume_session") {
@@ -825,7 +837,7 @@ async function desktop(
                   },
                 });
               return {
-                project,
+                project: checkoutProject(args.projectPath),
                 model: models.get(args.threadId),
                 effort: efforts.get(args.threadId),
                 thread: threads.find((item) => item.id === args.threadId) ?? {
@@ -836,7 +848,7 @@ async function desktop(
             }
             if (command === "opencode_resume_session") {
               const snapshot = {
-                project,
+                project: checkoutProject(args.projectPath),
                 session: {
                   id: args.sessionId,
                   title: "OpenCode session",
@@ -1418,8 +1430,8 @@ async function createCheckout(page: Page, branch = "feature/search") {
     .click();
   await expect(dialog).toHaveCount(0);
   await expect(
-    page.getByRole("combobox", { name: "Session worktree" }),
-  ).toHaveValue(destination!);
+    page.getByRole("button", { name: "Session worktree", exact: true }),
+  ).toContainText(branch);
   return destination!;
 }
 
@@ -1434,7 +1446,7 @@ for (const provider of ["codex", "opencode"] as const) {
     ).toHaveCount(0);
     await expect(page.locator(".worktree-row")).toHaveCount(0);
     await expect(
-      page.getByRole("combobox", { name: "Session worktree" }),
+      page.getByRole("button", { name: "Session worktree", exact: true }),
     ).toHaveCount(0);
     const message = page.getByRole("textbox", { name: "Message", exact: true });
     await message.fill("Original checkout draft");
@@ -1446,11 +1458,10 @@ for (const provider of ["codex", "opencode"] as const) {
     const path = await createCheckout(page);
     expect(path).toBe("/custom/checkouts/caelum-a1b2/feature-search");
     await expect(page.locator(".worktree-row")).toHaveCount(2);
-    await expect(
-      page
-        .getByRole("combobox", { name: "Session worktree" })
-        .locator("option"),
-    ).toHaveText(["feature/search"]);
+    await page.getByRole("button", { name: "Session worktree", exact: true }).click();
+    await expect(page.getByRole("option", { name: /^Original checkout/ })).toBeVisible();
+    await expect(page.getByRole("option", { name: /^feature\/search/ })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(page.locator(".project-group")).toHaveCount(1);
     await expect(page.locator(".breadcrumbs")).toContainText("feature/search");
     await findProjectFile(page, "src/App.tsx");
@@ -1482,9 +1493,8 @@ for (const provider of ["codex", "opencode"] as const) {
     await expect(message).toHaveValue("Original checkout draft");
     await findProjectFile(page, "src/App.tsx");
     await expect(page.locator(".code-viewer")).toContainText("ready = true");
-    await page
-      .getByRole("combobox", { name: "Session worktree" })
-      .selectOption(path);
+    await page.getByRole("button", { name: "Session worktree", exact: true }).click();
+    await page.getByRole("option", { name: /^feature\/search/ }).click();
     await expect(message).toHaveValue("");
     if (provider === "opencode") await choose(page, "Provider", "OpenCode");
     await message.fill("First worktree task");
@@ -1565,6 +1575,377 @@ for (const provider of ["codex", "opencode"] as const) {
     ).toHaveValue("/custom/checkouts");
   });
 }
+
+test("project sessions discover unopened checkouts and keep navigation, activity, PRs and archives checkout-scoped", async ({
+  page,
+}) => {
+  await desktop(page, "thread-a", { worktrees: true });
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Original session draft");
+  const path = "/external/linked";
+  await page.evaluate(
+    ({ path, pr }) => {
+      const fixture = (window as any).fixture;
+      fixture.addWorktree(path, "feature/linked");
+      fixture.setCheckoutSessions(path, "codex", [
+        {
+          id: "thread-a",
+          name: "Linked Codex session",
+          preview: "",
+          updatedAt: 125,
+          isWorking: true,
+        },
+      ]);
+      fixture.setCheckoutSessions(path, "opencode", [
+        { id: "ses-a", title: "Linked OpenCode session", updatedAt: 126 },
+      ]);
+      for (const [provider, id] of [
+        ["codex", "thread-a"],
+        ["opencode", "ses-a"],
+      ])
+        fixture.setSessionDetails(
+          provider,
+          id,
+          { branch: "feature/linked", branchIsCurrent: false, changes: null },
+          path,
+        );
+      fixture.setPullRequest("feature/linked", pr, path);
+      fixture.setPullRequestDetails(pr.url, pr);
+    },
+    { path, pr: previewPullRequest },
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  const linked = page.locator(
+    `.session-row[data-project-path="${path}"][data-provider="codex"]`,
+  );
+  const original = page.locator(
+    '.session-row[data-project-path="/work/caelum"][data-session-id="thread-a"]',
+  );
+  await expect(linked).toContainText("Linked Codex session");
+  await expect(
+    page.getByRole("button", {
+      name: "Linked OpenCode session",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(original).toHaveClass(/selected/);
+  await expect(input).toHaveValue("Original session draft");
+  await expect(linked.getByLabel("Running", { exact: true })).toBeVisible();
+  await expect(
+    linked.getByRole("button", { name: "Archive session", exact: true }),
+  ).toBeDisabled();
+  expect(
+    await page.evaluate((path) => {
+      const fixture = (window as any).fixture;
+      return fixture.calls.filter(
+        (call: any) =>
+          [
+            "open_worktree",
+            "remember_project",
+            "sync_provider_sessions",
+            "codex_resume_session",
+            "opencode_resume_session",
+          ].includes(call.command) &&
+          (call.args.projectPath === path || call.args.worktreePath === path),
+      );
+    }, path),
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      (path) =>
+        JSON.parse(
+          sessionStorage.getItem("worktree-workspace")!,
+        ).projects.some((entry: any) => entry.project.path === path),
+      path,
+    ),
+  ).toBe(false);
+  await page.evaluate(
+    (path) =>
+      (window as any).fixture.emit("codex-event", {
+        projectPath: path,
+        method: "turn/completed",
+        params: {
+          threadId: "thread-a",
+          turn: { id: "background", status: "completed" },
+        },
+      }),
+    path,
+  );
+  await expect(linked.getByLabel("Running", { exact: true })).toHaveCount(0);
+  await page.evaluate(
+    (path) =>
+      (window as any).fixture.emit("approval-requests", [
+        {
+          provider: "codex",
+          projectPath: path,
+          sessionId: "thread-a",
+          requestId: "approve-linked",
+          summary: "Run linked task",
+          description: "Run tests",
+        },
+      ]),
+    path,
+  );
+  await expect(
+    linked.getByLabel("Approval required", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    original.getByLabel("Approval required", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as any).fixture.emit("approval-requests", []),
+  );
+  const prs = await showPullRequests(page);
+  const pr = prs.getByRole("button", { name: /View pull request #44/ });
+  await expect(pr).toHaveAccessibleDescription("#44 · 2 sessions");
+  await pr.click();
+  const screen = page.getByRole("region", {
+    name: "Pull request #44",
+    exact: true,
+  });
+  await expect(screen).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.find(
+          (call: any) => call.command === "github_pull_request_details",
+        ).args.projectPath,
+    ),
+  ).toBe(path);
+  await screen.getByRole("button", { name: "Back to session" }).click();
+  await page.keyboard.press("Meta+k");
+  const search = page.getByRole("textbox", {
+    name: "Search sessions",
+    exact: true,
+  });
+  await search.fill("codex");
+  await page.evaluate(() => (window as any).fixture.hold("open_worktree"));
+  await linked
+    .getByRole("button", { name: "Linked Codex session", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (path) =>
+          (window as any).fixture.calls.some(
+            (call: any) =>
+              call.command === "open_worktree" &&
+              call.args.worktreePath === path,
+          ),
+        path,
+      ),
+    )
+    .toBe(true);
+  await original.locator(".sidebar-row-select").click();
+  await page.evaluate(() => (window as any).fixture.release("open_worktree"));
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (path) =>
+          JSON.parse(
+            sessionStorage.getItem("worktree-workspace")!,
+          ).projects.some((entry: any) => entry.project.path === path),
+        path,
+      ),
+    )
+    .toBe(true);
+  await expect(original).toHaveClass(/selected/);
+  await expect(input).toHaveValue("Original session draft");
+  await linked
+    .getByRole("button", { name: "Linked Codex session", exact: true })
+    .click();
+  await expect(linked).toHaveClass(/selected/);
+  await expect(original).not.toHaveClass(/selected/);
+  await expect(search).toHaveValue("codex");
+  await expect(page.locator(".breadcrumbs")).toContainText("feature/linked");
+  await expect(input).toHaveValue("");
+  await input.fill("Linked session draft");
+  await findProjectFile(page, "src/App.tsx");
+  await expect(page.locator(".code-viewer")).toContainText(
+    'checkout = "feature/linked"',
+  );
+  await original.locator(".sidebar-row-select").click();
+  await expect(input).toHaveValue("Original session draft");
+  await expect(page.locator(".session-row.selected")).toHaveCount(1);
+  await linked
+    .getByRole("button", { name: "Archive session", exact: true })
+    .click();
+  await expect(linked).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).fixture.calls.find(
+          (call: any) => call.command === "set_session_archived",
+        ).args,
+    ),
+  ).toMatchObject({
+    projectPath: path,
+    provider: "codex",
+    sessionId: "thread-a",
+    archived: true,
+  });
+  await expect(original).toHaveClass(/selected/);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(linked).toBeVisible();
+  await expect(original).toHaveClass(/selected/);
+  await linked.locator(".sidebar-row-select").click();
+  await expect(input).toHaveValue("Linked session draft");
+  await search.fill("/external/linked");
+  await expect(page.locator(".session-row")).toHaveCount(2);
+  await page.reload();
+  await expect(page.locator(".breadcrumbs")).toContainText("feature/linked");
+  await expect(linked).toHaveClass(/selected/);
+  await expect(original).toBeVisible();
+});
+
+test("project session discovery reports partial failures and late refreshes do not change the active project", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  const path = "/external/slow";
+  await page.evaluate((path) => {
+    const fixture = (window as any).fixture;
+    fixture.addWorktree(path, "feature/slow");
+    fixture.addWorktree("/external/missing", "missing", { available: false });
+    fixture.setCheckoutSessions(path, "codex", [
+      {
+        id: "slow",
+        name: "Recovered linked session",
+        preview: "",
+        updatedAt: 200,
+      },
+    ]);
+    fixture.setCheckoutSessions(path, "opencode", [
+      { id: "ses-linked", title: "Available linked session", updatedAt: 201 },
+    ]);
+    fixture.setCommandError(
+      `codex_list_sessions:${path}`,
+      "Provider unavailable in linked checkout",
+    );
+  }, path);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(
+    page.getByRole("button", {
+      name: "Available linked session",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".session-discovery-error")).toContainText(
+    "Could not load all sessions",
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "Refine the session workspace",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.evaluate((path) => {
+    const fixture = (window as any).fixture;
+    fixture.setCommandError(`codex_list_sessions:${path}`, null);
+    fixture.hold(`codex_list_sessions:${path}`);
+  }, path);
+  await page
+    .locator(".session-discovery-error")
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Refresh sessions", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Open project", exact: true })
+    .click();
+  await expect(page.locator(".breadcrumbs > span").first()).toHaveText(
+    "other",
+  );
+  await page.evaluate(
+    (path) => (window as any).fixture.release(`codex_list_sessions:${path}`),
+    path,
+  );
+  await expect(
+    page.getByRole("button", { name: "Refresh sessions", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", {
+      name: "Recovered linked session",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(page.locator(".breadcrumbs > span").first()).toHaveText(
+    "other",
+  );
+  await page.getByRole("button", { name: "caelum", exact: true }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Recovered linked session",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".session-discovery-error")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      (window as any).fixture.calls.filter(
+        (call: any) =>
+          call.command.endsWith("_list_sessions") &&
+          call.args.projectPath === "/external/missing",
+      ),
+    ),
+  ).toEqual([]);
+});
+
+test("composer worktree picker searches checkouts, skips unavailable options and returns to the original checkout", async ({
+  page,
+}) => {
+  await desktop(page, null, { worktrees: true });
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Original checkout draft");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.addWorktree("/external/missing", "missing", { available: false });
+    fixture.addWorktree("/external/linked", "feature/linked");
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  const picker = page
+    .locator(".composer-controls")
+    .getByRole("button", { name: "Session worktree", exact: true });
+  await expect(picker).toContainText("main");
+  await picker.press("ArrowDown");
+  const search = page.getByRole("combobox", {
+    name: "Search session worktrees",
+    exact: true,
+  });
+  await expect(search).toBeFocused();
+  await expect(
+    page.getByRole("option", { name: /^missing / }),
+  ).toBeDisabled();
+  await search.press("ArrowDown");
+  await search.press("Enter");
+  await expect(picker).toContainText("feature/linked");
+  await expect(input).toHaveValue("");
+  await input.fill("Linked checkout draft");
+  await picker.click();
+  await search.fill("/work/caelum");
+  await expect(page.getByRole("option")).toHaveCount(1);
+  await search.press("Enter");
+  await expect(picker).toContainText("main");
+  await expect(input).toHaveValue("Original checkout draft");
+  await picker.click();
+  await search.press("Escape");
+  await expect(picker).toBeFocused();
+  await page.setViewportSize({ width: 800, height: 620 });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBe(800);
+  await picker.click();
+  await expect(
+    page.getByRole("dialog", {
+      name: "Choose session worktree",
+      exact: true,
+    }),
+  ).toBeInViewport({ ratio: 1 });
+  await page.screenshot({
+    path: "test-results/composer-worktree-picker.png",
+  });
+});
 
 test("worktrees discover external checkouts, reject removal failures and ignore stale inventory after removal", async ({
   page,
@@ -4060,7 +4441,7 @@ test("sidebar metadata and archiving stay scoped when projects reuse a session I
   ]);
 });
 
-test("sidebar shows project details and stacked activity lists with independent scrolling and checkout search", async ({
+test("sidebar shows project details and stacked activity lists with independent scrolling and project search", async ({
   page,
 }) => {
   await desktop(page, "thread-a", { worktrees: true });
@@ -4148,6 +4529,15 @@ test("sidebar shows project details and stacked activity lists with independent 
   await expect
     .poll(() => sessions.evaluate((node) => node.scrollTop))
     .toBe(500);
+  await disclosure.click();
+  await page.getByRole("button", { name: "Switch to worktree feature/sidebar", exact: true }).click();
+  await expect(page.locator(".breadcrumbs")).toContainText("feature/sidebar");
+  await expect(sessions.locator(".session-row")).toHaveCount(26);
+  await expect.poll(() => sessions.evaluate((node) => node.scrollTop)).toBe(500);
+  await expect.poll(() => requests.evaluate((node) => node.scrollTop)).toBe(300);
+  await first.click();
+  await expect(message).toHaveValue("Project A draft");
+  await disclosure.click();
   await page.keyboard.press("Meta+k");
   const search = page.getByRole("textbox", {
     name: "Search sessions",
@@ -4839,7 +5229,7 @@ test("session drafts, expanded tools, search, and navigation survive switching",
   await page.keyboard.press("Meta+n");
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("");
-  await expect(page.locator(".session-item")).toHaveCount(2);
+  await expect(page.locator(".session-item")).toHaveCount(3);
 });
 
 test("disconnects reconnect cached sessions and background approvals open their session", async ({
@@ -8531,7 +8921,7 @@ test("session PR previews share details across linked worktrees without selectin
     .click();
   await page.getByRole("button", { name: /^New session/ }).click();
   const session = page
-    .locator(".session-row")
+    .locator('.session-row[data-project-path="/external/navigation"]')
     .getByRole("button", { name: /pull request #44/ });
   await session.hover();
   await page.clock.runFor(300);

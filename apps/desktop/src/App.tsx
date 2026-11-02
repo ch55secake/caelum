@@ -72,7 +72,7 @@ export default function App() {
   const [pullRequest, setPullRequest] = useState<
     (PullRequestTarget & { scope: string }) | null
   >(null);
-  const sidebarView = useSidebarView(app.project?.path ?? "");
+  const sidebarView = useSidebarView(app.rootProject?.path ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [focusRequest, setFocusRequest] = useState<{
@@ -626,7 +626,6 @@ export default function App() {
                 <div className="session-empty">
                   <h1>New session</h1>
                   <p>What would you like to work on?</p>
-                  <SessionWorktree app={app} />
                 </div>
               )}
               {app.selected && (
@@ -679,6 +678,7 @@ export default function App() {
               ) : (
                 app.project && (
                   <Composer
+                    worktreePicker={<SessionWorktree app={app} />}
                     key={`composer-${sessionKey}`}
                     projectPath={app.project.path}
                     textareaRef={textareaRef}

@@ -401,7 +401,7 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .worktree-control :disabled { cursor: default; }
 .worktree-field-hint { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .worktree-folder-setting { display: grid; gap: 6px; font-size: 12px; }
-.worktree-folder-setting input, .session-worktree select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; }
+.worktree-folder-setting input { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; }
 .worktree-folder-setting { margin-bottom: 12px; }
 .worktree-location { display: grid; gap: 8px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--sidebar); }
 .worktree-location-label { display: flex; align-items: center; gap: 7px; color: var(--secondary-text); font-size: 11px; font-weight: 500; }
@@ -409,7 +409,11 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 .worktree-location .worktree-destination { margin: 0; color: var(--secondary-text); font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .worktree-error { color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
 .worktree-remove { color: var(--danger); }
-.session-worktree { display: flex; align-items: center; gap: 8px; margin: 18px auto 0; max-width: 320px; color: var(--muted); font-size: 12px; }
+.session-worktree { display: inline-flex; min-width: 0; max-width: 160px; }
+.session-checkout { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+.session-discovery-error { display: flex; align-items: center; gap: 6px; padding: 8px; color: var(--muted); font-size: 11px; }
+.session-discovery-error button { margin-left: auto; border: 0; background: transparent; color: var(--text); font-size: inherit; }
+.choice-option:disabled { opacity: 0.45; cursor: default; }
 .question-card + .question-card { margin-top: 8px; }
 .question-title { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--accent); font-size: 11px; }
 .question-fields, .question-field { min-width: 0; border: 0; padding: 0; margin: 0; }

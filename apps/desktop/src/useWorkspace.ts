@@ -3,7 +3,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
-import type { GitWorktree, GitWorktrees } from "./worktreeState.js";
+import {
+  worktreeLabel,
+  type GitWorktree,
+  type GitWorktrees,
+} from "./worktreeState.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
 import {
   inboxMessages,
@@ -50,6 +54,7 @@ import {
   type ProviderWorkspaceState,
   type SessionWorkspaceState,
   type SessionSummary,
+  type ProjectSession,
   type SessionDetails,
   type WorkspaceMap,
   type WorkspaceSessionInfo,
@@ -250,6 +255,63 @@ export function useWorkspace(settings: AppSettings) {
   const checkoutUnavailable = Boolean(
     rootPath && worktreeCatalogs[rootPath] && !currentWorktree?.available,
   );
+  const checkoutProjects = new Map<string, ProjectInfo>();
+  if (rootProject) {
+    checkoutProjects.set(rootProject.path, rootProject);
+    for (const item of projects)
+      if ((projectRoots[item.path] ?? item.path) === rootPath)
+        checkoutProjects.set(item.path, item);
+    for (const entry of worktreeCatalogs[rootProject.path]?.worktrees ?? [])
+      checkoutProjects.set(entry.project.path, entry.project);
+  }
+  const projectCheckouts = [...checkoutProjects.values()].map((target) => {
+    const catalog = rootPath ? worktreeCatalogs[rootPath] : null;
+    const entry = catalog?.worktrees.find(
+      (item) => item.project.path === target.path,
+    );
+    return {
+      project: target,
+      available: !catalog || Boolean(entry?.available),
+      checkoutLabel: entry
+        ? worktreeLabel(entry)
+        : target.path === rootPath
+          ? "Original checkout"
+          : target.path.split("/").at(-1)!,
+    };
+  });
+  const projectSessions: ProjectSession[] = projectCheckouts
+    .flatMap((checkout) =>
+      (["codex", "opencode"] as const).flatMap((kind) =>
+        (
+          workspaces[checkout.project.path]?.providers[kind].sessions ?? []
+        ).map((session) => ({
+          ...session,
+          ...checkout,
+          provider: kind,
+          key: keyFor(checkout.project.path, kind, session.id),
+        })),
+      ),
+    )
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const discovery = projectCheckouts
+    .filter((checkout) => checkout.available)
+    .flatMap((checkout) =>
+      (["codex", "opencode"] as const).map((kind) => ({
+        ...checkout,
+        provider: kind,
+        state: workspaces[checkout.project.path]?.providers[kind],
+      })),
+    );
+  const isLoadingSessions =
+    isTauri() &&
+    discovery.some(
+      ({ state }) =>
+        state?.isLoadingSessions || (!state?.sessionsLoaded && !state?.error),
+    );
+  const sessionErrors = discovery.flatMap(
+    ({ state, provider, checkoutLabel }) =>
+      state?.error ? [`${checkoutLabel} · ${provider}: ${state.error}`] : [],
+  );
 
   function assignRoots(mapping: Record<string, string>) {
     if (
@@ -274,6 +336,9 @@ export function useWorkspace(settings: AppSettings) {
     snapshot: GitWorktrees | null,
   ) {
     const root = snapshot?.project ?? target;
+    for (const entry of snapshot?.worktrees ?? [])
+      if (entry.available)
+        removedDirectories.current.delete(entry.project.path);
     setWorktreeCatalogs((current) => ({ ...current, [root.path]: snapshot }));
     setWorktreeErrors((current) => ({ ...current, [root.path]: "" }));
     const mappings = Object.fromEntries(
@@ -355,8 +420,9 @@ export function useWorkspace(settings: AppSettings) {
     root: ProjectInfo,
     entry: GitWorktree,
     fresh = false,
+    selection?: { thread: SessionSummary; provider: ProviderKind },
   ) {
-    if (worktreeOperations.current.has(root.path)) return;
+    if (!entry.available || worktreeOperations.current.has(root.path)) return;
     const version = ++navigation.current;
     try {
       const pending = queue.current.then(() =>
@@ -371,9 +437,16 @@ export function useWorkspace(settings: AppSettings) {
         return;
       setProjects((current) => addOpenProject(current, target));
       assignRoots({ [target.path]: root.path });
-      if (navigation.current !== version) return;
+      if (
+        navigation.current !== version ||
+        (selection &&
+          unavailable(target.path, selection.provider, selection.thread.id))
+      )
+        return;
       activateProject(target);
-      if (fresh) newSession(target);
+      if (selection)
+        selectCheckoutSession(target, selection.thread, selection.provider);
+      else if (fresh) newSession(target);
     } catch (reason) {
       setError(String(reason));
     }
@@ -973,7 +1046,6 @@ export function useWorkspace(settings: AppSettings) {
   function activateProject(target: ProjectInfo | null) {
     navigation.current++;
     if (target) removedDirectories.current.delete(target.path);
-    const fresh = target && !state.current[target.path];
     if (target)
       update((current) =>
         current[target.path]
@@ -986,10 +1058,10 @@ export function useWorkspace(settings: AppSettings) {
               },
             },
       );
-    if (target && fresh)
+    if (target)
       void persist("set_project_provider", {
         projectPath: target.path,
-        provider: preferences.current.defaultProvider,
+        provider: state.current[target.path].provider,
       });
     setProject(target);
     if (target)
@@ -1171,6 +1243,14 @@ export function useWorkspace(settings: AppSettings) {
     const key = `list:${keyFor(target.path, kind)}`;
     if (locks.current.has(key) || !isTauri()) return;
     locks.current.add(key);
+    if (!state.current[target.path])
+      update((current) => ({
+        ...current,
+        [target.path]: {
+          ...createProjectWorkspace(),
+          provider: preferences.current.defaultProvider,
+        },
+      }));
     mutateProvider(target.path, kind, (value) => ({
       ...value,
       isLoadingSessions: true,
@@ -1225,13 +1305,16 @@ export function useWorkspace(settings: AppSettings) {
         ].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
         sessionsLoaded: true,
       }));
-      void persist("sync_provider_sessions", {
-        projectPath: target.path,
-        provider: kind,
-        sessionIds: state.current[target.path].providers[kind].sessions.map(
-          (item) => item.id,
-        ),
-      });
+      // Unopened checkouts are discovered without changing the persisted open
+      // projects. Their provider-owned IDs are saved when a session is selected.
+      if (openProjects.current.some((item) => item.path === target.path))
+        void persist("sync_provider_sessions", {
+          projectPath: target.path,
+          provider: kind,
+          sessionIds: state.current[target.path].providers[kind].sessions.map(
+            (item) => item.id,
+          ),
+        });
       await Promise.all(
         state.current[target.path].providers[kind].sessions
           .filter(({ id }) => {
@@ -1258,18 +1341,18 @@ export function useWorkspace(settings: AppSettings) {
     }
   }
   async function refreshSessions() {
-    if (!project) return;
-    const path = project.path;
+    if (!rootProject) return;
     // Invalidate discovery at the click, before slower provider metadata reads.
-    refreshBranchPullRequests(path);
+    for (const { project } of projectCheckouts)
+      refreshBranchPullRequests(project.path);
+    const pending = [...discovery];
     await Promise.all(
-      (["codex", "opencode"] as const)
-        .filter(
-          (kind) =>
-            kind === provider ||
-            state.current[path]?.providers[kind].sessionsLoaded,
-        )
-        .map((kind) => loadSessions(project, kind)),
+      Array.from({ length: 4 }, async () => {
+        while (pending.length) {
+          const item = pending.shift()!;
+          await loadSessions(item.project, item.provider);
+        }
+      }),
     );
   }
 
@@ -1346,9 +1429,21 @@ export function useWorkspace(settings: AppSettings) {
     detailsLoads.current.set(key, request);
     return request;
   }
-  async function archiveSession(thread: SessionSummary, kind: ProviderKind) {
-    if (!project || unavailable(project.path, kind, thread.id)) return;
-    const target = project;
+  async function archiveSession(
+    thread: SessionSummary,
+    kind: ProviderKind,
+    target = project,
+  ) {
+    if (!target || unavailable(target.path, kind, thread.id)) return;
+    const catalog =
+      catalogs.current[roots.current[target.path] ?? target.path];
+    if (
+      catalog &&
+      !catalog.worktrees.some(
+        (entry) => entry.project.path === target.path && entry.available,
+      )
+    )
+      return;
     const current = state.current[target.path].providers[kind];
     const cached = current.sessionsById[thread.id];
     if (
@@ -1356,7 +1451,7 @@ export function useWorkspace(settings: AppSettings) {
       Boolean(cached?.queuedMessages.length) ||
       cached?.isSubmitting ||
       cached?.connection === "connecting" ||
-      approvals.some(
+      [...approvals, ...questions].some(
         (request) =>
           request.projectPath === target.path &&
           request.provider === kind &&
@@ -1379,7 +1474,10 @@ export function useWorkspace(settings: AppSettings) {
       const latest = state.current[target.path].providers[kind];
       const wasSelected = latest.selectedSessionId === thread.id;
       const restoreNavigation =
-        wasSelected && navigation.current === nav
+        wasSelected &&
+        activeProject.current?.path === target.path &&
+        state.current[target.path].provider === kind &&
+        navigation.current === nav
           ? ++navigation.current
           : null;
       const notice: ArchivedSession = {
@@ -1472,13 +1570,14 @@ export function useWorkspace(settings: AppSettings) {
           },
         },
       }));
-      void persist("sync_provider_sessions", {
-        projectPath: target.path,
-        provider: kind,
-        sessionIds: state.current[target.path].providers[kind].sessions.map(
-          (item) => item.id,
-        ),
-      });
+      if (openProjects.current.some((item) => item.path === target.path))
+        void persist("sync_provider_sessions", {
+          projectPath: target.path,
+          provider: kind,
+          sessionIds: state.current[target.path].providers[kind].sessions.map(
+            (item) => item.id,
+          ),
+        });
       if (restoreSelection) {
         void persist("select_project_session", {
           projectPath: target.path,
@@ -1690,21 +1789,96 @@ export function useWorkspace(settings: AppSettings) {
       locks.current.delete(key);
     }
   }
-  function selectSession(thread: SessionSummary, kind = provider) {
-    if (!project || unavailable(project.path, kind, thread.id)) return;
+  function selectCheckoutSession(
+    target: ProjectInfo,
+    thread: SessionSummary,
+    kind: ProviderKind,
+  ) {
+    if (unavailable(target.path, kind, thread.id)) return;
     navigation.current++;
-    if (kind !== provider) changeProvider(kind, false);
-    mutateProvider(project.path, kind, (value) => ({
+    update((current) =>
+      updateProjectWorkspace(current, target.path, (value) => ({
+        ...value,
+        provider: kind,
+      })),
+    );
+    void persist("set_project_provider", {
+      projectPath: target.path,
+      provider: kind,
+    });
+    mutateProvider(target.path, kind, (value) => ({
       ...value,
       selectedSessionId: thread.id,
+      sessions: value.sessions.some((item) => item.id === thread.id)
+        ? value.sessions
+        : [thread, ...value.sessions],
     }));
     void persist("select_project_session", {
-      projectPath: project.path,
+      projectPath: target.path,
       provider: kind,
       sessionId: thread.id,
     });
-    void connectSession(project, kind, thread);
+    void connectSession(target, kind, thread);
   }
+  function selectSession(
+    thread: SessionSummary,
+    kind = provider,
+    target = project,
+  ) {
+    if (!target || unavailable(target.path, kind, thread.id)) return;
+    const root = roots.current[target.path] ?? target.path;
+    if (worktreeOperations.current.has(root)) return;
+    const catalog = catalogs.current[root];
+    const entry = catalog?.worktrees.find(
+      (entry) => entry.project.path === target.path,
+    );
+    if (catalog && !entry?.available) return;
+    if (target.path !== activeProject.current?.path) {
+      if (entry) {
+        void openWorktree(catalog!.project, entry, false, {
+          thread,
+          provider: kind,
+        });
+        return;
+      }
+      activateProject(target);
+    }
+    selectCheckoutSession(target, thread, kind);
+  }
+  useEffect(() => {
+    if (
+      !ready ||
+      restoring ||
+      !isTauri() ||
+      (rootPath && worktreeBusy[rootPath])
+    )
+      return;
+    // Discover both providers across available checkouts, with bounded startup
+    // work. Listing never selects a checkout or resumes its conversations.
+    let capacity =
+      4 - [...locks.current].filter((key) => key.startsWith("list:")).length;
+    for (const item of discovery) {
+      if (capacity <= 0) break;
+      const current =
+        state.current[item.project.path]?.providers[item.provider];
+      if (
+        current?.sessionsLoaded ||
+        current?.error ||
+        current?.isLoadingSessions
+      )
+        continue;
+      capacity--;
+      void loadSessions(item.project, item.provider);
+    }
+  }, [
+    rootPath,
+    worktreeCatalogs,
+    projects,
+    workspaces,
+    ready,
+    restoring,
+    worktreeBusy,
+  ]);
   useEffect(() => {
     if (
       !project ||
@@ -1715,8 +1889,6 @@ export function useWorkspace(settings: AppSettings) {
       !isTauri()
     )
       return;
-    if (!providerWorkspace.sessionsLoaded && !providerWorkspace.error)
-      void loadSessions(project, provider);
     if (!providerWorkspace.choices && !providerWorkspace.choicesError)
       void loadChoices(project, provider);
     if (selectedId && !selected) {
@@ -1867,8 +2039,16 @@ export function useWorkspace(settings: AppSettings) {
               queuedMessages: reconcileInbox(
                 value.queuedMessages,
                 inboxMessages(result),
-              ).filter((item) => !item.remote || (!value.settledInboxIds.includes(item.id) &&
-                !value.conversation.some((entry) => entry.id === `opencode-${item.id}` && !entry.optimistic))),
+              ).filter(
+                (item) =>
+                  !item.remote ||
+                  (!value.settledInboxIds.includes(item.id) &&
+                    !value.conversation.some(
+                      (entry) =>
+                        entry.id === `opencode-${item.id}` &&
+                        !entry.optimistic,
+                    )),
+              ),
             },
       );
     } catch {
@@ -2501,6 +2681,38 @@ export function useWorkspace(settings: AppSettings) {
         request.projectPath.split(/[\\/]/).filter(Boolean).at(-1) ??
         request.projectPath,
     };
+    const root = roots.current[target.path] ?? target.path;
+    const catalog = catalogs.current[root];
+    const entry = catalog?.worktrees.find(
+      (item) => item.project.path === target.path,
+    );
+    if (entry) {
+      if (!entry.available) return;
+      const kind = request.provider;
+      const thread = request.sessionId
+        ? (state.current[target.path]?.providers[kind].sessions.find(
+            (item) => item.id === request.sessionId,
+          ) ?? {
+            id: request.sessionId,
+            name: null,
+            preview: request.title ?? "Approval required",
+            updatedAt: null,
+          })
+        : undefined;
+      update((current) =>
+        updateProjectWorkspace(current, target.path, (value) => ({
+          ...value,
+          provider: kind,
+        })),
+      );
+      void openWorktree(
+        catalog!.project,
+        entry,
+        false,
+        thread ? { thread, provider: kind } : undefined,
+      );
+      return;
+    }
     if (!projects.some((item) => item.path === target.path)) {
       setProjects((current) => addOpenProject(current, target));
       void persist("remember_project", { project: target });
@@ -2547,6 +2759,10 @@ export function useWorkspace(settings: AppSettings) {
     projectGroups,
     projectRoots,
     rootProject,
+    projectSessions,
+    projectCheckouts,
+    isLoadingSessions,
+    sessionErrors,
     worktreeCatalogs,
     worktreeErrors,
     worktreeBusy,

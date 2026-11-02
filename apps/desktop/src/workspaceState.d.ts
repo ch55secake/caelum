@@ -8,6 +8,13 @@ export type SessionSummary = {
   updatedAt: number | null;
   isWorking?: boolean;
 };
+export type ProjectSession = SessionSummary & {
+  key: string;
+  project: ProjectInfo;
+  provider: ProviderKind;
+  checkoutLabel: string;
+  available: boolean;
+};
 export function sessionTitle(session: SessionSummary): string;
 export type SessionDetails = {
   branch: string | null;

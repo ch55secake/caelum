@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+  type ReactNode,
+} from "react";
 import { ArrowUp, Gauge, Layers, Square } from "lucide-react";
 import type {
   ProviderKind,
@@ -49,6 +55,7 @@ export function Composer({
   awaitingApproval,
   fileContext,
   removeFileContext,
+  worktreePicker,
 }: {
   projectPath: string;
   draft: string;
@@ -82,6 +89,7 @@ export function Composer({
   awaitingApproval: boolean;
   fileContext: FileContext[];
   removeFileContext: (id: string) => void;
+  worktreePicker?: ReactNode;
 }) {
   const measurement = useRef<HTMLTextAreaElement>(null);
   const recalled = useRef(false);
@@ -281,6 +289,7 @@ export function Composer({
         )}
         <div className="composer-footer">
           <div className="composer-controls">
+            {isNew && worktreePicker}
             {isNew ? (
               <ChoicePicker
                 label="Provider"

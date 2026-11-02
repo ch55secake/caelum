@@ -16,6 +16,7 @@ type Choice = {
   description?: string;
   source?: string;
   group?: { id: string; name: string };
+  disabled?: boolean;
 };
 
 export function ChoicePicker({
@@ -82,9 +83,11 @@ export function ChoicePicker({
       .includes(query.toLowerCase()),
   );
   const selected = choices.find((choice) => choice.id === value);
+  const enabled = filtered.filter((choice) => !choice.disabled);
   const current =
-    filtered.find((choice) => choice.id === active) ?? filtered[0];
+    enabled.find((choice) => choice.id === active) ?? enabled[0];
   const activeIndex = filtered.indexOf(current);
+  const enabledIndex = enabled.indexOf(current);
   const activeId = current ? `${id}-option-${activeIndex}` : undefined;
   const section = (choice: Choice) =>
     !choice.id
@@ -109,6 +112,7 @@ export function ChoicePicker({
     if (restoreFocus) trigger.current?.focus();
   }
   function choose(choice: Choice) {
+    if (choice.disabled) return;
     onChange(choice.id);
     close(true);
   }
@@ -225,12 +229,12 @@ export function ChoicePicker({
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
                 setActive(
-                  filtered.length
-                    ? filtered[
-                        (activeIndex +
+                  enabled.length
+                    ? enabled[
+                        (enabledIndex +
                           (event.key === "ArrowDown" ? 1 : -1) +
-                          filtered.length) %
-                          filtered.length
+                          enabled.length) %
+                          enabled.length
                       ].id
                     : null,
                 );
@@ -288,6 +292,7 @@ export function ChoicePicker({
                     type="button"
                     role={onToggleFavourite ? undefined : "option"}
                     tabIndex={-1}
+                    disabled={choice.disabled}
                     aria-selected={
                       onToggleFavourite ? undefined : choice.id === value
                     }
