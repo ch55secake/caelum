@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
-import type { QuestionPrompt } from "../../src/questionState.js";
-import type { GitWorktree } from "../../src/worktreeState.js";
+import type { QuestionPrompt } from "../../src/features/sessions/questionState.js";
+import type { GitWorktree } from "../../src/features/projects/worktreeState.js";
 
 export async function desktop(
   page: Page,

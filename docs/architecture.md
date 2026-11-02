@@ -8,6 +8,12 @@
 - `apps/desktop/src` is a React UI. It does not access the filesystem directly.
 - `apps/cli` is a separate clap binary and links the same core library.
 
+## Desktop source layout
+
+`apps/desktop/src/main.tsx` is the entry point. `app/` owns application composition, the sidebar and workspace coordination. `features/` groups projects, sessions, conversation, composer, files, Git, pull requests, usage and settings; related components, state helpers, declarations and unit tests live together. `shared/` contains reusable UI, clipboard/editing utilities, code rendering and global theme/layout styles.
+
+Use direct imports from the owning feature. Keep cross-feature orchestration in `app/` and add feature-specific styles beside their components. The unit-test runner discovers `.test.js` files recursively; browser specs and native mocks remain under `apps/desktop/tests/`.
+
 ## Provider integration
 
 Provider adapters, sessions, SQLite storage, Git, terminal/PTY, and filesystem operations belong in `caelum-core` or focused core submodules. Tauri commands should stay thin and validate inputs before calling core APIs. CLI commands should use those same APIs rather than duplicate behavior.
