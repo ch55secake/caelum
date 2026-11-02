@@ -21,28 +21,28 @@ import {
 import {
   ProjectInspector,
   type InspectorRequest,
-} from "../features/files/ProjectInspector.js";
-import { FileNavigation } from "../features/files/FileNavigation.js";
-import type { FileLocation } from "../features/files/fileContext.js";
-import { useWorkspace } from "./useWorkspace.js";
-import { useSidebarView } from "./useSidebarView.js";
-import { Sidebar } from "./Sidebar.js";
-import { ApprovalCard, Conversation } from "../features/conversation/Conversation.js";
-import { Composer } from "../features/composer/Composer.js";
-import { MessageQueue } from "../features/composer/MessageQueue.js";
-import { QuestionCard } from "../features/sessions/QuestionCard.js";
-import { SessionWorktree } from "../features/projects/Worktrees.js";
-import { questionKey } from "../features/sessions/questionState.js";
-import { projectHasActiveTurn, sessionTitle } from "../features/sessions/workspaceState.js";
-import { lastUserMessage } from "../features/conversation/shellMessages.js";
-import { Settings } from "../features/settings/Settings.js";
-import { useSettings } from "../features/settings/useSettings.js";
-import { ContextMenuProvider } from "../shared/ui/ContextMenu.js";
+} from "../ui/files/ProjectInspector.js";
+import { FileNavigation } from "../ui/files/FileNavigation.js";
+import type { FileLocation } from "../domain/files/fileContext.js";
+import { useWorkspace } from "../application/workspace/useWorkspace.js";
+import { useSidebarView } from "../ui/sidebar/useSidebarView.js";
+import { Sidebar } from "../ui/sidebar/Sidebar.js";
+import { ApprovalCard, Conversation } from "../ui/conversation/Conversation.js";
+import { Composer } from "../ui/composer/Composer.js";
+import { MessageQueue } from "../ui/composer/MessageQueue.js";
+import { QuestionCard } from "../ui/sessions/QuestionCard.js";
+import { SessionWorktree } from "../ui/projects/Worktrees.js";
+import { questionKey } from "../domain/sessions/questionState.js";
+import { projectHasActiveTurn, sessionTitle } from "../domain/sessions/workspaceState.js";
+import { lastUserMessage } from "../domain/conversation/shellMessages.js";
+import { Settings } from "../ui/settings/Settings.js";
+import { useSettings } from "../application/useSettings.js";
+import { ContextMenuProvider } from "../ui/primitives/ContextMenu.js";
 import {
   PullRequestPreviewProvider,
   PullRequestScreen,
   type PullRequestTarget,
-} from "../features/pull-requests/PullRequestPreview.js";
+} from "../ui/pull-requests/PullRequestPreview.js";
 
 export default function App() {
   const preferences = useSettings();
@@ -76,7 +76,7 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const conversationRef = useRef<
-    import("../features/conversation/Conversation.js").ConversationHandle
+    import("../ui/conversation/Conversation.js").ConversationHandle
   >(null);
   const [focusRequest, setFocusRequest] = useState<{
     target: "search" | "composer";

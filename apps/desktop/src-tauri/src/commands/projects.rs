@@ -1,4 +1,4 @@
-use crate::state::StartupProject;
+use crate::runtime::persistence::StartupProject;
 use caelum_core::projects::Project;
 use caelum_protocol::{AppInfo, ProjectInfo};
 use std::path::PathBuf;

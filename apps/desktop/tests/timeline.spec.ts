@@ -75,9 +75,16 @@ for (const provider of ["codex", "opencode"]) {
       name: "Search user messages",
     });
     await expect(search).toBeFocused();
-    await dialog.screenshot({ path: `test-results/${provider}-timeline-compact.png` });
+    await expect(dialog.getByRole("option").first()).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await dialog.screenshot({
+      path: `test-results/${provider}-timeline-compact.png`,
+    });
     await search.fill("old anchor");
     await expect(dialog.getByRole("option")).toHaveCount(1);
+    await expect(dialog.locator("mark")).toHaveText("old anchor");
     await search.press("Enter");
     await expect(dialog).toHaveCount(0);
     const target = page.locator(`[data-entry-id="${provider}-u-3"]`);
@@ -114,6 +121,17 @@ for (const provider of ["codex", "opencode"]) {
     await input.fill("/timeline");
     await input.press("Enter");
     await expect(dialog).toBeVisible();
+    await search.press("ArrowDown");
+    await expect(dialog.getByRole("option").nth(1)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await search.press("End");
+    await expect(dialog.getByRole("option").last()).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(dialog.getByRole("option").last()).toBeInViewport();
     await page.keyboard.press("Escape");
     await expect(input).toBeFocused();
     expect(

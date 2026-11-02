@@ -75,6 +75,8 @@ pub struct GitHubPullRequest {
     pub title: String,
     pub url: String,
     pub is_draft: bool,
+    #[serde(default)]
+    pub base_ref_name: String,
 }
 
 /// On-demand GitHub metadata for a pull request, independent of the checkout.
@@ -86,7 +88,6 @@ pub struct GitHubPullRequestDetails {
     pub body: String,
     pub state: String,
     pub author: Option<GitHubAuthor>,
-    pub base_ref_name: String,
     pub head_ref_name: String,
     pub head_ref_oid: String,
     pub mergeable: String,

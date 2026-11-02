@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import type { QuestionPrompt } from "../../src/features/sessions/questionState.js";
+import type { QuestionPrompt } from "../../src/domain/sessions/questionState.js";
 import { desktop } from "./desktop.js";
 
 export async function emit(

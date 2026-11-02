@@ -1,4 +1,4 @@
-use crate::state::PersistenceState;
+use crate::runtime::persistence::PersistenceState;
 use caelum_protocol::{ProjectInfo, WorkspaceSnapshot};
 use tauri::State;
 

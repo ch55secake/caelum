@@ -124,7 +124,7 @@ test("delayed syntax loading preserves the current file, exact text and manual r
   const loading = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route("**/src/shared/code/codeSyntax.ts", async (route) => {
+  await page.route("**/src/ui/code/codeSyntax.ts", async (route) => {
     await loading;
     await route.continue();
   });

@@ -248,6 +248,7 @@ test("session PR section groups open sessions and opens an overview without sele
       title: "Improve provider adapters",
       url: "https://github.com/example/caelum/pull/45",
       isDraft: true,
+      baseRefName: "develop",
     });
   }, previewPullRequest);
   await page.clock.runFor(60_100);
@@ -740,6 +741,101 @@ test("session PR explicit refresh discards older in-flight discovery and picks u
 });
 
 for (const provider of ["codex", "opencode"] as const) {
+  test(`${provider} recovers a ten-PR stack after missed branch switches and scrolls to its end`, async ({
+    page,
+  }) => {
+    await desktop(page, null);
+    await page.setViewportSize({ width: 800, height: 620 });
+    const id = provider === "codex" ? "thread-a" : "ses-a";
+    await page.evaluate(
+      ({ provider, id, pr }) => {
+        const fixture = (window as any).fixture;
+        const branches = Array.from(
+          { length: 10 },
+          (_, index) => `stack/${index}`,
+        );
+        // Only five of ten switches were sampled locally; the tip links the rest.
+        fixture.setSessionDetails(provider, id, {
+          branch: branches[9],
+          branches: [
+            branches[0],
+            branches[2],
+            branches[4],
+            branches[6],
+            branches[9],
+          ],
+          branchIsCurrent: false,
+          changes: null,
+        });
+        branches.forEach((branch, index) => {
+          const request = {
+            ...pr,
+            number: 100 + index,
+            title: `Stacked change ${index}`,
+            url: `https://github.com/example/caelum/pull/${100 + index}`,
+            baseRefName: branches[index - 1] ?? "main",
+          };
+          fixture.setPullRequest(branch, request);
+          fixture.setPullRequestDetails(request.url, request);
+        });
+        fixture.setPullRequest("unrelated", { ...pr, number: 999 });
+      },
+      { provider, id, pr: previewPullRequest },
+    );
+    await page
+      .getByRole("button", { name: "Refresh sessions", exact: true })
+      .click();
+    const section = await showPullRequests(page);
+    await expect(section.locator(".session-pr-item")).toHaveCount(10);
+    await expect(section.locator(".sidebar-section-count")).toHaveText("10");
+    const panel = section.locator(".sidebar-request-panel");
+    const last = section.locator(".session-pr-item").last();
+    await expect(last).not.toBeInViewport();
+    await panel.hover();
+    await page.mouse.wheel(0, 1200);
+    await expect(last).toBeInViewport({ ratio: 1 });
+    await last.focus();
+    await last.press("Enter");
+    await expect(page.locator(".pr-screen")).toBeVisible();
+    await page.screenshot({
+      path: `test-results/${provider}-ten-pr-stack.png`,
+    });
+    const lookedUp = await page.evaluate(() =>
+      (window as any).fixture.calls
+        .filter((call: any) => call.command === "github_open_pull_request")
+        .map((call: any) => call.args.branch),
+    );
+    for (let index = 0; index < 10; index++)
+      expect(lookedUp).toContain(`stack/${index}`);
+    expect(lookedUp).not.toContain("unrelated");
+    // A cycle cannot grow the subscription graph or duplicate rows.
+    await page.evaluate(
+      (pr) =>
+        (window as any).fixture.setPullRequest("stack/0", {
+          ...pr,
+          number: 100,
+          title: "Stacked change 0",
+          url: "https://github.com/example/caelum/pull/100",
+          baseRefName: "stack/9",
+        }),
+      previewPullRequest,
+    );
+    await page
+      .getByRole("button", { name: "Refresh sessions", exact: true })
+      .click();
+    await expect(section.locator(".session-pr-item")).toHaveCount(10);
+    await page.evaluate(() =>
+      (window as any).fixture.setPullRequest("stack/9", null),
+    );
+    await page
+      .getByRole("button", { name: "Refresh sessions", exact: true })
+      .click();
+    await expect(section.locator(".session-pr-item")).toHaveCount(9);
+    await expect(
+      section.getByRole("button", { name: /View pull request #108/ }),
+    ).toBeVisible();
+  });
+
   test(`${provider} session keeps every PR in a branch stack through live updates, archive and merge`, async ({
     page,
   }) => {

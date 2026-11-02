@@ -215,7 +215,7 @@ fn query_pull_request(
     command
         .args(["pr", "list", "--state=open", "--limit=2"])
         .arg(format!("--head={branch}"))
-        .args(["--json", "number,title,url,isDraft"]);
+        .args(["--json", "number,title,url,isDraft,baseRefName"]);
     let output = checked_output(command, timeout)?;
     let requests: Vec<GitHubPullRequest> = serde_json::from_slice(&output.stdout)?;
     if requests.len() > 1 {
@@ -397,13 +397,14 @@ mod tests {
 printf '%s\n' "$@" > arguments
 pwd > directory
 printf '%s' "$GH_PROMPT_DISABLED" > no-prompts
-printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/example/repo/pull/40","isDraft":true}]'
+printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/example/repo/pull/40","isDraft":true,"baseRefName":"feature/previous"}]'
 "#,
         );
         let pr = fixture.query("feat/$(touch unexpected)").unwrap().unwrap();
         assert_eq!(pr.number, 40);
         assert!(pr.is_draft);
-        assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), "pr\nlist\n--state=open\n--limit=2\n--head=feat/$(touch unexpected)\n--json\nnumber,title,url,isDraft\n");
+        assert_eq!(pr.base_ref_name, "feature/previous");
+        assert_eq!(fs::read_to_string(fixture.0.join("arguments")).unwrap(), "pr\nlist\n--state=open\n--limit=2\n--head=feat/$(touch unexpected)\n--json\nnumber,title,url,isDraft,baseRefName\n");
         assert_eq!(
             fs::read_to_string(fixture.0.join("directory"))
                 .unwrap()

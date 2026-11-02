@@ -14,7 +14,6 @@ test("side questions keep the main draft, attachments and running turn intact", 
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("@README");
   await page.getByRole("option", { name: "README.md", exact: true }).click();
-  await input.fill("Keep my main draft α");
   await page.evaluate(() => {
     (window as any).fixture.setOpenWorking(true);
     (window as any).fixture.setGenerateReply(
@@ -27,11 +26,23 @@ test("side questions keep the main draft, attachments and running turn intact", 
     { sessionID: "ses-a" },
     "opencode",
   );
+  await emit(
+    page,
+    "session.text.delta",
+    {
+      sessionID: "ses-a",
+      assistantMessageID: "main-answer",
+      delta: "Continuing the main task.",
+    },
+    "opencode",
+  );
   const transcript = await page.locator(".transcript-content").innerText();
-  await page
-    .getByRole("button", { name: "Ask a side question", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
+  await expect(
+    page.getByRole("button", { name: "Ask a side question", exact: true }),
+  ).toHaveCount(0);
+  await input.fill("/btw");
+  await input.press("Enter");
+  const dialog = page.getByRole("region", {
     name: "Side question",
     exact: true,
   });
@@ -40,19 +51,40 @@ test("side questions keep the main draft, attachments and running turn intact", 
     exact: true,
   });
   await expect(question).toBeFocused();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await question.fill("Explain this independently α\nSecond line");
+  await page.evaluate(() => (window as any).fixture.hold("opencode_generate"));
   await question.press("Enter");
+  await expect(input).toBeFocused();
+  await input.fill("Keep my main draft α");
+  await expect(input).toBeInViewport({ ratio: 1 });
+  await page.evaluate(() =>
+    (window as any).fixture.release("opencode_generate"),
+  );
   await expect(
     dialog.getByRole("region", { name: "Side answer" }),
   ).toContainText("Short answer");
   await expect(dialog.locator("strong")).toHaveText("Short answer");
-  await dialog.screenshot({ path: "test-results/side-question-compact.png" });
+  await expect(input).toBeFocused();
+  await expect(
+    page.getByText("Continuing the main task.", { exact: true }),
+  ).toBeInViewport();
+  expect(
+    await page.locator(".transcript").evaluate((node) => node.clientHeight),
+  ).toBeGreaterThanOrEqual(100);
+  await page.screenshot({ path: "test-results/side-question-compact.png" });
   await dialog
     .getByRole("button", { name: "Copy side answer", exact: true })
     .click();
   expect(
     await page.evaluate(() => (window as any).fixture.clipboard()),
   ).toContain("const independent = true;");
+  await dialog.getByRole("button", { name: "Edit side question" }).click();
+  await expect(question).toBeFocused();
+  await expect(question).toHaveValue(
+    "Explain this independently α\nSecond line",
+  );
+  await expect(input).toHaveValue("Keep my main draft α");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(input).toHaveValue("Keep my main draft α");
@@ -86,9 +118,8 @@ test("side questions keep the main draft, attachments and running turn intact", 
       },
     },
   ]);
-  await page
-    .getByRole("button", { name: "Ask a side question", exact: true })
-    .click();
+  await input.fill("/btw");
+  await input.press("Enter");
   await expect(question).toHaveValue("");
   await expect(dialog.getByRole("region", { name: "Side answer" })).toHaveCount(
     0,
@@ -112,7 +143,7 @@ test("slash btw asks once, retries without losing the question and ignores late 
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("/btw What does this mean?");
   await input.press("Enter");
-  const dialog = page.getByRole("dialog", {
+  const dialog = page.getByRole("region", {
     name: "Side question",
     exact: true,
   });
@@ -123,7 +154,9 @@ test("slash btw asks once, retries without losing the question and ignores late 
   await expect(dialog.getByRole("alert")).toContainText(
     "Temporarily unavailable",
   );
-  await expect(question).toHaveValue("What does this mean?");
+  await expect(dialog.locator(".side-question-prompt")).toHaveText(
+    "What does this mean?",
+  );
   const calls = () =>
     page.evaluate(() =>
       (window as any).fixture.calls.filter(
@@ -136,12 +169,17 @@ test("slash btw asks once, retries without losing the question and ignores late 
     (window as any).fixture.hold("opencode_generate");
     (window as any).fixture.setGenerateReply("Old delayed answer");
   });
-  await dialog.getByRole("button", { name: "Retry side question" }).click();
+  await dialog
+    .getByRole("button", { name: "Retry side question" })
+    .click({ clickCount: 2 });
   await expect(dialog.getByRole("status")).toContainText(
     "Answering independently",
   );
-  await question.press("Enter");
   expect(await calls()).toHaveLength(2);
+  await expect(
+    dialog.getByRole("button", { name: "Edit side question" }),
+  ).toBeDisabled();
+  await input.focus();
   await page.keyboard.press("Escape");
   await input.fill("Main draft after dismissal");
   await page
@@ -162,9 +200,8 @@ test("slash btw asks once, retries without losing the question and ignores late 
   await page.evaluate(() =>
     (window as any).fixture.setGenerateReply("Fresh answer"),
   );
-  await page
-    .getByRole("button", { name: "Ask a side question", exact: true })
-    .click();
+  await input.fill("/btw");
+  await input.press("Enter");
   await expect(question).toHaveValue("");
   await question.fill("Fresh question");
   await question.press("Enter");

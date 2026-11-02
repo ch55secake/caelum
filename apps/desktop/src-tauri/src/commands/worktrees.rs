@@ -1,4 +1,4 @@
-use crate::state::PersistenceState;
+use crate::runtime::persistence::PersistenceState;
 use caelum_core::approvals::ApprovalBroker;
 use caelum_core::codex::CodexProvider;
 use caelum_core::opencode::OpenCodeProvider;
