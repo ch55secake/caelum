@@ -394,6 +394,29 @@ async fn search_project_files(
 }
 
 #[tauri::command]
+async fn read_project_image(project_path: String, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || files::read_image(project_path, &path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn opencode_read_image(
+    provider: State<'_, OpenCodeProvider>,
+    project_path: String,
+    hash: String,
+) -> Result<String, String> {
+    let provider = provider.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        provider
+            .read_image(project_path, &hash)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn read_project_file(
     project_path: String,
     path: String,
@@ -1053,6 +1076,8 @@ pub fn run() {
             git_file_versions,
             list_project_directory,
             read_project_file,
+            read_project_image,
+            opencode_read_image,
             search_project_files,
             restore_workspace,
             remember_project,

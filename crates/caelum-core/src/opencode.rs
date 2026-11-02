@@ -480,6 +480,29 @@ impl OpenCodeProvider {
         Ok(())
     }
 
+    pub fn read_image(
+        &self,
+        project_path: impl AsRef<Path>,
+        hash: &str,
+    ) -> Result<String, OpenCodeError> {
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(OpenCodeError::Protocol("Invalid media hash".into()));
+        }
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let url = api_url(
+            &server.base_url,
+            &format!("/api/experimental/media/{hash}"),
+            &[],
+        )?;
+        let response = server
+            .authenticate(server.client.get(url))
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|error| OpenCodeError::Request(error.to_string()))?;
+        crate::images::data_url(response).map_err(OpenCodeError::Protocol)
+    }
+
     pub fn session_details(
         &self,
         project_path: impl AsRef<Path>,
@@ -2003,6 +2026,12 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 return
+        elif path == "/api/experimental/media/" + "a" * 64:
+            body = b"\x89PNG\r\n\x1a\n"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif path == "/api/form":
             assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
             self.send_json({"data": list(FORMS.values()) + [{"id": "frm_global", "sessionID": "global", "fields": []}]})
@@ -2280,6 +2309,11 @@ server.serve_forever()
         assert_eq!(started.session.id, "ses_fake");
         assert_eq!(started.session.model.as_deref(), Some("local/model/a"));
         assert_eq!(started.session.agent.as_deref(), Some("build"));
+        assert!(provider
+            .read_image(&project_path, &"a".repeat(64))
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        assert!(provider.read_image(&project_path, "../info").is_err());
         let history = provider
             .session_history(&project_path, "ses_fake", None)
             .unwrap();

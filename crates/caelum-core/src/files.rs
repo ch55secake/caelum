@@ -249,6 +249,21 @@ pub fn list_directory(
     })
 }
 
+pub fn read_image(project_path: impl AsRef<Path>, relative_path: &str) -> Result<String, String> {
+    let project = Project::open(project_path).map_err(|error| error.to_string())?;
+    let path =
+        resolve_project_path(&project, relative_path, false).map_err(|error| error.to_string())?;
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    if !file
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
+        return Err("Image source is not a file".into());
+    }
+    crate::images::data_url(file)
+}
+
 /// Read a bounded text preview without loading an arbitrarily large file into memory.
 pub fn read_text_file(
     project_path: impl AsRef<Path>,
@@ -427,6 +442,24 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn image_reads_are_scoped_to_the_project() {
+        let directory = TestDirectory::new("image");
+        let project = directory.project();
+        fs::write(project.join("image.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        assert!(read_image(&project, "image.png")
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        assert!(read_image(&project, "../image.png").is_err());
+        #[cfg(unix)]
+        {
+            fs::write(directory.0.join("outside.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+            std::os::unix::fs::symlink(directory.0.join("outside.png"), project.join("escape.png"))
+                .unwrap();
+            assert!(read_image(&project, "escape.png").is_err());
         }
     }
 

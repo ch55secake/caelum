@@ -9,6 +9,7 @@ import { ToolPatchPreview } from "./ToolPatchPreview.js";
 import { useFileNavigation } from "./FileNavigation.js";
 import { fileReference } from "./fileContext.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
+import { ChatImages } from "./ChatImage.js";
 
 function ShellIdentity({ id }: { id: string }) {
   return (
@@ -188,6 +189,7 @@ export function ToolActivity({
         expanded={expanded}
         toggle={toggle}
       />
+      <ChatImages images={entry.images} />
       {expanded && (
         <div className="tool-details">
           {paths.length > 0 && (

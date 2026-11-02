@@ -18,6 +18,7 @@ import { ToolActivity } from "./ToolActivity.js";
 import { conversationPresentation } from "./shellMessages.js";
 import { useContextMenu, copyAction } from "./ContextMenu.js";
 import { FileContextChips } from "./FileNavigation.js";
+import { ChatImages } from "./ChatImage.js";
 
 function CompactionNotice({
   entry,
@@ -436,6 +437,7 @@ export function Conversation({
                   ) : (
                     <MessageContent text={entry.text} />
                   )}
+                  <ChatImages images={entry.images} />
                 </>
               )}
             </article>

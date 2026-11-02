@@ -13,3 +13,4 @@ export function conversationPresentation(
   entries: ConversationEntry[],
 ): ConversationEntry[];
 export function lastUserMessage(entries: ConversationEntry[]): string | null;
+export function visibleMessageText(text: string): string;

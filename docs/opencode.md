@@ -14,6 +14,8 @@ OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SE
 
 ## Protocol behavior
 
+- Chat displays image attachments, Markdown images, and image tool results with expandable previews. Project images use scoped, bounded native reads; `media:` references use the authenticated provider connection. Internal system messages and reminder envelopes are filtered at the presentation boundary, including copy and recall.
+
 - The adapter verifies the local server by listing sessions through `GET /api/session` and scopes all session operations to the canonical project directory.
 - Sessions are created, restored, and listed through the v2 `/api/session` endpoints. Prompts use `/api/session/{sessionID}/prompt`; cancellation uses `/interrupt`.
 - Archiving uses `PATCH /api/session/{sessionID}` with `archived: true`; Undo sends `false`. Active sessions cannot be archived, and listings request `archived=false`. The desktop removes the scoped saved session/selection, invalidates pending snapshots, and retains the latest archived draft/settings for Undo.
