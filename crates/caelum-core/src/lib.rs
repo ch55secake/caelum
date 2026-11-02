@@ -6,6 +6,7 @@ pub mod database;
 pub mod files;
 pub mod git;
 pub mod github;
+mod images;
 pub mod opencode;
 pub mod processes;
 pub mod projects;

@@ -1269,6 +1269,31 @@ async function emit(
   );
 }
 
+test("chat renders inline images, opens previews and hides internal reminders", async ({ page }) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg==";
+  await setHistory(page, "opencode", [
+    { id: "internal", type: "system", text: "Internal instruction secret" },
+    { id: "user-image", type: "user", text: "<system-reminder>Private reminder</system-reminder>\nExplain the screenshot", files: [{ mime: "image/png", data: png.split(",")[1], name: "Attached screenshot" }] },
+    { id: "markdown-image", type: "assistant", content: [{ type: "text", text: `![Rendered screenshot](${png})` }] },
+  ], false);
+  await page.getByRole("button", { name: "OpenCode session", exact: true }).click();
+  await expect(page.getByText("Explain the screenshot", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Internal instruction secret|Private reminder/)).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "Attached screenshot", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Expand Rendered screenshot" }).click();
+  await expect(page.getByRole("dialog", { name: "Image preview" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Image preview" })).toHaveCount(0);
+  await emit(page, "session.tool.success", { sessionID: "ses-a", id: "screenshot", name: "screenshot", content: [{ type: "file", mime: "image/png", uri: png, name: "Live screenshot" }] }, "opencode");
+  await expect(page.getByRole("img", { name: "Live screenshot" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Message", exact: true }).press("ArrowUp");
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Explain the screenshot");
+  await page.setViewportSize({ width: 800, height: 620 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(800);
+});
+
 async function choose(page: Page, label: string, option: string) {
   await page.getByRole("button", { name: label, exact: true }).click();
   await page

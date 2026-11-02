@@ -15,6 +15,8 @@ export type SessionDetails = {
   changes: { additions: number; deletions: number } | null;
 };
 export type ConversationEntry = {
+  images?: import("./chatMedia.js").ChatImageSource[];
+  sourceType?: "system" | "synthetic";
   fileContext?: FileContext[];
   id: string;
   kind: "user" | "assistant" | "tool" | "status" | "reasoning" | "compaction";

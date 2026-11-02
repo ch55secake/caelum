@@ -561,3 +561,12 @@ button.compaction-heading:hover:not(:disabled) { background: transparent; color:
 @container (max-width: 560px) { .composer-hint { display: none; }.transcript-content { padding: 18px 16px; }.composer-wrap { padding: 0 14px 16px; }.tool-status { font-size: 9px; } }
 @container (max-width: 360px) { .transcript-content { padding-inline: 12px; }.composer-wrap { padding-inline: 10px; }.choice-trigger { max-width: 160px; }.tool-details, .tool-patch-preview { margin-left: 14px; } }
 @media (prefers-reduced-motion: reduce) { .spinning, .pr-file-tree-skeleton, .pr-file-diff-skeleton, .agent-icon[data-running="true"]::after, .composer[data-working="true"]::before, .tool-activity[data-running="true"] .tool-status::before { animation: none; } .agent-mode, .agent-mode::after { transition: none; } }
+.chat-images { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+.chat-image { display: inline-block; max-width: 100%; vertical-align: top; }
+.chat-image-thumbnail { display: inline-flex; position: relative; flex-direction: column; padding: 0; overflow: hidden; max-width: 100%; border: 1px solid var(--border); border-radius: 10px; background: transparent; cursor: zoom-in; }
+.chat-image-thumbnail img { display: block; max-width: min(100%, 560px); max-height: 360px; object-fit: contain; }
+.chat-image-loading, .chat-image-error { display: flex; align-items: center; gap: 8px; padding: 14px; font-size: 12px; color: var(--muted); }
+.chat-image-dialog { position: fixed; padding: 36px 12px 12px; max-width: 94vw; max-height: 94vh; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.chat-image-dialog::backdrop { background: #000b; }
+.chat-image-dialog > .icon-button { position: absolute; top: 4px; right: 4px; }
+.chat-image-dialog > img { display: block; max-width: 88vw; max-height: 82vh; object-fit: contain; }
