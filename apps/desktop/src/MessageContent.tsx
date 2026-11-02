@@ -8,6 +8,8 @@ import { copyText } from "./clipboard.js";
 import { useContextMenu, copyAction, fileActions } from "./ContextMenu.js";
 import { useFileNavigation } from "./FileNavigation.js";
 import { fileReference } from "./fileContext.js";
+import { ChatImage } from "./ChatImage.js";
+import { inlineImage, mediaHash } from "./chatMedia.js";
 
 export function CopyButton({
   text,
@@ -148,6 +150,7 @@ const components: ComponentProps<typeof Markdown>["components"] = {
   pre: CodeBlock,
   a: MessageLink,
   code: InlineCode,
+  img: ({ src, alt }) => <ChatImage src={src ?? ""} alt={alt || "Image"} />,
   table: ({ children }) => (
     <div className="markdown-table">
       <table>{children}</table>
@@ -165,8 +168,9 @@ export const MessageContent = memo(function MessageContent({
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={components}
-        urlTransform={(url) =>
-          navigation && fileReference(url, navigation.projectPath)
+        urlTransform={(url, key) =>
+          (key === "src" && (inlineImage(url) || mediaHash(url))) ||
+          (navigation && fileReference(url, navigation.projectPath))
             ? url
             : defaultUrlTransform(url)
         }

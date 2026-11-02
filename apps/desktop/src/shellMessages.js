@@ -1,5 +1,36 @@
 import { splitFileContext } from "./fileContext.js";
 
+// Only provider-style blocks are hidden. Fenced/quoted examples remain ordinary text.
+export function visibleMessageText(text) {
+  if (!text.includes("<system-reminder>")) return text;
+  let fence = null;
+  let reminder = false;
+  const lines = [];
+  for (const line of text.split("\n")) {
+    if (reminder) {
+      const end = line.indexOf("</system-reminder>");
+      if (end < 0) continue;
+      reminder = false;
+      const rest = line.slice(end + "</system-reminder>".length);
+      if (rest.trim()) lines.push(rest);
+      continue;
+    }
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length)
+        fence = null;
+    }
+    if (!fence && /^ {0,3}<system-reminder>/.test(line)) {
+      const end = line.indexOf("</system-reminder>");
+      reminder = end < 0;
+      if (end >= 0 && line.slice(end + 18).trim())
+        lines.push(line.slice(end + 18));
+    } else lines.push(line);
+  }
+  return lines.join("\n").replace(/^(?:[\t ]*\n)+|(?:\n[\t ]*)+$/g, "");
+}
+
 const decodeAttribute = (text) =>
   text.replace(/&(?:quot|apos|amp|lt|gt|#\d+|#x[\da-f]+);/gi, (entity) => {
     const named = {
@@ -50,9 +81,13 @@ export function splitShellMessages(text) {
     if (
       !attributes.id ||
       !attributes.command ||
-      !["running", "completed", "failed", "cancelled", "interrupted"].includes(
-        attributes.state,
-      )
+      ![
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+      ].includes(attributes.state)
     )
       continue;
     if (match.index > last)
@@ -66,12 +101,19 @@ export function splitShellMessages(text) {
     });
     last = match.index + match[0].length;
   }
-  if (last < text.length) parts.push({ type: "text", text: text.slice(last) });
+  if (last < text.length)
+    parts.push({ type: "text", text: text.slice(last) });
   return parts;
 }
 
 export function conversationPresentation(entries) {
   return entries.flatMap((entry) => {
+    if (entry.sourceType === "system") return [];
+    if (["user", "assistant", "status"].includes(entry.kind)) {
+      entry = { ...entry, text: visibleMessageText(entry.text) };
+      if (!entry.text && !entry.images?.length && !entry.fileContext?.length)
+        return [];
+    }
     if (entry.kind === "user") {
       const { text, files } = splitFileContext(entry.text);
       if (files.length) entry = { ...entry, text, fileContext: files };
@@ -105,6 +147,7 @@ export function conversationPresentation(entries) {
 }
 
 export function lastUserMessage(entries) {
+  entries = conversationPresentation(entries);
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
     if (entry.kind !== "user") continue;
