@@ -83,6 +83,13 @@ test("slash stats searches projects by name and path across all recorded history
   await project.click();
   const search = dialog.getByRole("combobox", { name: "Search projects" });
   await expect(search).toBeFocused();
+  // Results can scroll as a refresh or project change replaces their content.
+  // The project trigger is in the fixed header, outside this scroller.
+  await dialog.locator(".stats-content").evaluate(async (node) => {
+    node.scrollTop = node.scrollTop ? 0 : node.scrollHeight;
+    await new Promise(requestAnimationFrame);
+  });
+  await expect(search).toBeFocused();
   await search.fill("/work/other");
   await expect(dialog.getByRole("option")).toHaveCount(1);
   await expect(dialog.getByRole("option", { name: "Other /work/other" })).toBeInViewport({ ratio: 1 });

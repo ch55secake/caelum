@@ -158,7 +158,10 @@ export function ChoicePicker({
         close();
     };
     const scrolled = (event: Event) => {
-      if (!popup.current?.contains(event.target as Node)) close();
+      // Only scrolling an ancestor can move the trigger. Independent result
+      // panes may scroll during refresh while the user is choosing a filter.
+      if (event.target instanceof Node && event.target.contains(trigger.current))
+        close();
     };
     document.addEventListener("pointerdown", outside);
     document.addEventListener("scroll", scrolled, true);
