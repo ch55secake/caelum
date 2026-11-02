@@ -8,7 +8,7 @@ import {
   branchPullRequestKey,
 } from "./useBranchPullRequests.js";
 import type { PullRequest } from "./pullRequestState.js";
-import type { ProjectSession } from "./workspaceState.js";
+import { sessionBranches, type ProjectSession } from "./workspaceState.js";
 import type { WorkspaceController } from "./Sidebar.js";
 
 type Session = ProjectSession & { title: string };
@@ -50,15 +50,19 @@ export function useSessionPullRequests(
       disposed = true;
     };
   }, [path, sessionKey]);
-  const branchFor = (session: Session) =>
-    app.workspaces[session.project.path]?.providers[session.provider]
-      .sessionDetails[session.id]?.branch;
-  const scopes = sessions.flatMap((session) => {
-    const branch = branchFor(session);
-    return branch && session.available
-      ? [{ projectPath: session.project.path, branch }]
-      : [];
-  });
+  const branchesFor = (session: Session) =>
+    sessionBranches(
+      app.workspaces[session.project.path]?.providers[session.provider]
+        .sessionDetails[session.id],
+    );
+  const scopes = sessions.flatMap((session) =>
+    session.available
+      ? branchesFor(session).map((branch) => ({
+          projectPath: session.project.path,
+          branch,
+        }))
+      : [],
+  );
   const requests = useScopedBranchPullRequests(scopes);
   const entries = new Map<
     string,
@@ -66,18 +70,19 @@ export function useSessionPullRequests(
   >();
   for (const session of sessions) {
     if (!session.available) continue;
-    const branch = branchFor(session);
-    const pr = branch
-      ? requests[branchPullRequestKey(session.project.path, branch)]?.value
-      : null;
-    if (!pr) continue;
-    const entry = entries.get(pr.url) ?? {
-      projectPath: session.project.path,
-      pr,
-      sessions: [],
-    };
-    entry.sessions.push(session);
-    entries.set(pr.url, entry);
+    for (const branch of branchesFor(session)) {
+      const pr =
+        requests[branchPullRequestKey(session.project.path, branch)]?.value;
+      if (!pr) continue;
+      const entry = entries.get(pr.url) ?? {
+        projectPath: session.project.path,
+        pr,
+        sessions: [],
+      };
+      if (!entry.sessions.some(({ key }) => key === session.key))
+        entry.sessions.push(session);
+      entries.set(pr.url, entry);
+    }
   }
   const loading =
     app.isLoadingSessions ||

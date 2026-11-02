@@ -468,6 +468,7 @@ impl CodexProvider {
             });
         Ok(SessionDetails {
             branch,
+            branches: Vec::new(),
             branch_is_current: false,
             changes,
         })

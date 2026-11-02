@@ -10427,6 +10427,169 @@ test("session PR explicit refresh discards older in-flight discovery and picks u
 });
 
 for (const provider of ["codex", "opencode"] as const) {
+  test(`${provider} session keeps every PR in a branch stack through live updates, archive and merge`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await desktop(page, null);
+    const id = provider === "codex" ? "thread-a" : "ses-a";
+    const title =
+      provider === "codex"
+        ? "Refine the session workspace"
+        : "OpenCode session";
+    const branches = [
+      "stack/first",
+      "stack/alias",
+      "stack/second",
+      "stack/third",
+    ];
+    await page.evaluate(
+      ({ provider, id, branches, pr }) => {
+        const fixture = (window as any).fixture;
+        // A restored session has already moved past its first PR branch.
+        fixture.setSessionDetails(provider, id, {
+          branch: "stack/second",
+          branches,
+          branchIsCurrent: false,
+          changes: null,
+        });
+        fixture.setPullRequest("stack/first", pr);
+        fixture.setPullRequest("stack/alias", pr);
+        const second = {
+          ...pr,
+          number: 45,
+          title: "Second stacked PR",
+          url: pr.url.replace("44", "45"),
+        };
+        fixture.setPullRequest("stack/second", second);
+        fixture.setPullRequestDetails(second.url, second);
+      },
+      { provider, id, branches, pr: previewPullRequest },
+    );
+    const refresh = page.getByRole("button", {
+      name: "Refresh sessions",
+      exact: true,
+    });
+    await refresh.click();
+    const section = await showPullRequests(page);
+    const first = section.getByRole("button", {
+      name: /View pull request #44/,
+    });
+    const second = section.getByRole("button", {
+      name: /View pull request #45/,
+    });
+    const third = section.getByRole("button", {
+      name: /View draft pull request #46/,
+    });
+    await expect(section.locator(".session-pr-item")).toHaveCount(2);
+    await expect(first).toHaveAccessibleDescription(`#44 · ${title}`);
+    await expect(second).toHaveAccessibleDescription(`#45 · ${title}`);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).fixture.calls.some(
+            (call: any) =>
+              call.command === "github_open_pull_request" &&
+              call.args.branch === "stack/third",
+          ),
+        ),
+      )
+      .toBe(true);
+
+    await page.evaluate(
+      ({ provider, id, branches, pr }) => {
+        const fixture = (window as any).fixture;
+        // Create a PR on an earlier branch, then move on before the turn ends.
+        fixture.setPullRequest("stack/third", {
+          ...pr,
+          number: 46,
+          title: "Third stacked PR",
+          url: pr.url.replace("44", "46"),
+          isDraft: true,
+        });
+        const details = {
+          branch: "stack/next",
+          branches: [...branches, "stack/next"],
+          branchIsCurrent: false,
+          changes: null,
+        };
+        fixture.setSessionDetails(provider, id, details);
+        fixture.emit("session-branch-updated", {
+          projectPath: "/work/caelum",
+          provider,
+          sessionId: id,
+          branch: details.branch,
+          branches: details.branches,
+        });
+      },
+      { provider, id, branches, pr: previewPullRequest },
+    );
+    await expect(sessionRow(page, title).locator(".session-branch")).toHaveText(
+      "stack/next",
+    );
+    await expect(third).toHaveAccessibleDescription(`#46 · ${title}`);
+    await expect(section.locator(".session-pr-item")).toHaveCount(3);
+
+    await page.evaluate(
+      ({ provider, id, branches, pr }) => {
+        const fixture = (window as any).fixture;
+        fixture.setPullRequest("fix/provider-adapters", pr);
+        fixture.setSessionDetails(provider, id, {
+          branch: null,
+          branches,
+          branchIsCurrent: false,
+          changes: null,
+        });
+        fixture.emit("session-branch-updated", {
+          projectPath: "/work/caelum",
+          provider,
+          sessionId: id,
+          branch: null,
+          branches,
+        });
+      },
+      { provider, id, branches: [...branches, "stack/next"], pr: previewPullRequest },
+    );
+    await refresh.click();
+    await expect(
+      sessionRow(page, title).locator(".session-branch"),
+    ).toHaveCount(0);
+    await expect(first).toHaveAccessibleDescription("#44 · 2 sessions");
+    await expect(section.locator(".session-pr-item")).toHaveCount(3);
+    await sessionRow(page, title)
+      .getByRole("button", { name: "Archive session", exact: true })
+      .click();
+    await showPullRequests(page);
+    await expect(first).toHaveAccessibleDescription(
+      "#44 · Review the provider adapters",
+    );
+    await expect(section.locator(".session-pr-item")).toHaveCount(1);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(section.locator(".session-pr-item")).toHaveCount(3);
+    await expect(first).toHaveAccessibleDescription("#44 · 2 sessions");
+
+    await second.click();
+    const screen = page.getByRole("region", {
+      name: "Pull request #45",
+      exact: true,
+    });
+    await screen
+      .getByRole("region", { name: "Merge pull request", exact: true })
+      .getByRole("button", { name: "Merge pull request", exact: true })
+      .click();
+    await expect(second).toHaveCount(0);
+    await expect(first).toBeVisible();
+    await expect(third).toBeVisible();
+    await page.evaluate(() => {
+      for (const branch of ["stack/first", "stack/alias", "fix/provider-adapters"])
+        (window as any).fixture.setPullRequest(branch, null);
+    });
+    await page.clock.runFor(60_100);
+    await expect(first).toHaveCount(0);
+    await expect(section.locator(".session-pr-item")).toHaveCount(1);
+    await expect(third).toBeVisible();
+  });
+
   test(`${provider} live Git branch updates bypass slow metadata and refresh PR discovery during execution`, async ({
     page,
   }) => {

@@ -18,9 +18,13 @@ export type ProjectSession = SessionSummary & {
 export function sessionTitle(session: SessionSummary): string;
 export type SessionDetails = {
   branch: string | null;
+  branches?: string[];
   branchIsCurrent: boolean;
   changes: { additions: number; deletions: number } | null;
 };
+export function sessionBranches(
+  details?: Pick<SessionDetails, "branch" | "branches">,
+): string[];
 export type ConversationEntry = {
   images?: import("./chatMedia.js").ChatImageSource[];
   sourceType?: "system" | "synthetic";

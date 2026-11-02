@@ -599,6 +599,7 @@ impl OpenCodeProvider {
             // VCS metadata belongs to the directory, not this session. The
             // desktop supplies the branch recorded during session execution.
             branch: None,
+            branches: Vec::new(),
             branch_is_current: false,
             changes,
         })

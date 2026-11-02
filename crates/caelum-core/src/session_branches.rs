@@ -8,7 +8,11 @@ use caelum_protocol::{
     CodexEvent, GitRepositoryStatus, OpenCodeEvent, SessionBranchUpdate, SessionDetails,
 };
 
-use crate::{database::WorkspaceDatabase, git::GitClient, projects::Project};
+use crate::{
+    database::{SessionBranchHistory, WorkspaceDatabase},
+    git::GitClient,
+    projects::Project,
+};
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct Key {
@@ -25,7 +29,7 @@ struct Execution {
 
 #[derive(Default)]
 struct Tracking {
-    branches: HashMap<Key, Option<String>>,
+    branches: HashMap<Key, SessionBranchHistory>,
     active: HashMap<Key, Execution>,
 }
 
@@ -85,22 +89,21 @@ impl SessionBranches {
         let Some(key) = key(path, provider, id) else {
             return details;
         };
-        let tracking = self
+        let mut tracking = self
             .tracking
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let saved = tracking.branches.get(&key).cloned().or_else(|| {
-            self.database
-                .as_ref()?
-                .session_branch(&key.path, provider, id)
-                .ok()
-                .flatten()
-        });
-        if let Some(branch) = saved {
-            details.branch = branch;
+        if let Some(saved) = self.recorded(&mut tracking, &key) {
+            details.branch = saved.branch;
+            details.branches = saved.branches;
         } else if details.branch_is_current {
             // A directory's current branch says nothing about an older session.
             details.branch = None;
+            details.branches.clear();
+        } else if let Some(branch) = &details.branch {
+            // Preserve a provider-owned session branch before execution moves on.
+            self.record(&mut tracking, key, Some(branch.clone()));
+            details.branches = vec![branch.clone()];
         }
         details.branch_is_current = false;
         details
@@ -199,14 +202,34 @@ impl SessionBranches {
         None
     }
 
+    fn recorded(&self, tracking: &mut Tracking, key: &Key) -> Option<SessionBranchHistory> {
+        if let Some(saved) = tracking.branches.get(key) {
+            return Some(saved.clone());
+        }
+        let saved = self
+            .database
+            .as_ref()?
+            .session_branch(&key.path, &key.provider, &key.session)
+            .ok()??;
+        tracking.branches.insert(key.clone(), saved.clone());
+        Some(saved)
+    }
+
     fn record(
         &self,
         tracking: &mut Tracking,
         key: Key,
         branch: Option<String>,
     ) -> Option<SessionBranchUpdate> {
-        if tracking.branches.get(&key) == Some(&branch) {
+        let saved = self.recorded(tracking, &key);
+        if saved.as_ref().is_some_and(|saved| saved.branch == branch) {
             return None;
+        }
+        let mut branches = saved.map(|saved| saved.branches).unwrap_or_default();
+        if let Some(branch) = &branch {
+            if !branches.contains(branch) {
+                branches.push(branch.clone());
+            }
         }
         if let Some(database) = &self.database {
             let _ = database.record_session_branch(
@@ -221,8 +244,11 @@ impl SessionBranches {
             provider: key.provider.clone(),
             session_id: key.session.clone(),
             branch: branch.clone(),
+            branches: branches.clone(),
         };
-        tracking.branches.insert(key, branch);
+        tracking
+            .branches
+            .insert(key, SessionBranchHistory { branch, branches });
         Some(update)
     }
 
@@ -318,6 +344,7 @@ mod tests {
     fn native(branch: Option<&str>, current: bool) -> SessionDetails {
         SessionDetails {
             branch: branch.map(str::to_owned),
+            branches: Vec::new(),
             branch_is_current: current,
             changes: Some(LineChanges {
                 additions: 3,
@@ -378,6 +405,10 @@ mod tests {
             Some("feature/created-during-turn")
         );
         assert!(!details.branch_is_current);
+        assert_eq!(
+            details.branches,
+            ["recorded", "main", "feature/created-during-turn"]
+        );
         assert_eq!(details.changes, native(None, false).changes);
         database
             .remember_project(&Project::open(path).unwrap().info())
@@ -406,6 +437,18 @@ mod tests {
                 .branch
                 .as_deref(),
             Some("feature/other-session")
+        );
+        assert_eq!(
+            restored
+                .details(path, "codex", "same-id", native(None, false))
+                .branches,
+            ["recorded", "main", "feature/created-during-turn"]
+        );
+        assert_eq!(
+            restored
+                .details(path, "opencode", "same-id", native(None, false))
+                .branches,
+            ["feature/other-session"]
         );
         assert_eq!(
             restored
@@ -460,6 +503,7 @@ mod tests {
                     provider: provider.into(),
                     session_id: "session".into(),
                     branch: Some("feature/live".into()),
+                    branches: vec!["main".into(), "feature/live".into()],
                 }]
             );
             assert!(tracker.refresh_checkout(&stale_status).is_empty());
@@ -498,6 +542,66 @@ mod tests {
     }
 
     #[test]
+    fn one_execution_keeps_multiple_branches_through_detach_and_a_cold_restart() {
+        for provider in ["codex", "opencode"] {
+            let fixture = Fixture::new();
+            let tracker = SessionBranches::new(Some(fixture.database()));
+            let path = fixture.path();
+            let start = |tracker: &SessionBranches| {
+                if provider == "codex" {
+                    codex(tracker, path, "session", "turn", "turn/started");
+                } else {
+                    opencode(tracker, path, "session", "session.execution.started");
+                }
+            };
+            start(&tracker);
+            let status = GitClient::new().repository_status(path).unwrap();
+            for branch in ["feature/first", "feature/second", "feature/third"] {
+                git(&fixture.0, &["checkout", "-b", branch]);
+                let updates = tracker.refresh_checkout(&status);
+                assert_eq!(updates.len(), 1);
+                assert_eq!(updates[0].branch.as_deref(), Some(branch));
+                assert_eq!(updates[0].branches.last().map(String::as_str), Some(branch));
+            }
+            git(&fixture.0, &["checkout", "feature/first"]);
+            let updates = tracker.refresh_checkout(&status);
+            let expected = ["main", "feature/first", "feature/second", "feature/third"];
+            assert_eq!(updates[0].branches, expected);
+            git(&fixture.0, &["checkout", "--detach"]);
+            let updates = tracker.refresh_checkout(&status);
+            assert_eq!(updates[0].branch, None);
+            assert_eq!(updates[0].branches, expected);
+            drop(tracker);
+
+            // Execution can resume before the sidebar has loaded any metadata.
+            let tracker = SessionBranches::new(Some(fixture.database()));
+            git(&fixture.0, &["checkout", "-b", "feature/after-restart"]);
+            start(&tracker);
+            let details = tracker.details(
+                path,
+                provider,
+                "session",
+                native(Some("stale-native"), false),
+            );
+            assert_eq!(details.branch.as_deref(), Some("feature/after-restart"));
+            assert_eq!(
+                details.branches,
+                [
+                    "main",
+                    "feature/first",
+                    "feature/second",
+                    "feature/third",
+                    "feature/after-restart",
+                ]
+            );
+            assert!(tracker
+                .details(path, provider, "unobserved", native(None, false))
+                .branches
+                .is_empty());
+        }
+    }
+
+    #[test]
     fn overlapping_sessions_in_the_same_checkout_do_not_claim_each_others_branch() {
         let fixture = Fixture::new();
         let tracker = SessionBranches::new(Some(fixture.database()));
@@ -530,6 +634,16 @@ mod tests {
                 .branch,
             None
         );
+        assert_eq!(
+            tracker
+                .details(fixture.path(), "codex", "first", native(None, false))
+                .branches,
+            ["main"]
+        );
+        assert!(tracker
+            .details(nested, "opencode", "second", native(None, false))
+            .branches
+            .is_empty());
         opencode(&tracker, nested, "second", "session.execution.started");
         opencode(&tracker, nested, "second", "session.execution.failed");
         assert_eq!(
@@ -588,6 +702,18 @@ mod tests {
                 .branch
                 .as_deref(),
             Some("feature/checkout")
+        );
+        assert_eq!(
+            tracker
+                .details(fixture.path(), "codex", "same-id", native(None, false))
+                .branches,
+            ["main", "feature/root"]
+        );
+        assert_eq!(
+            tracker
+                .details(path, "codex", "same-id", native(None, false))
+                .branches,
+            ["feature/worktree", "feature/checkout"]
         );
     }
 

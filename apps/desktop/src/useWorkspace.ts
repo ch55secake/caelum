@@ -45,6 +45,7 @@ import {
   createSessionWorkspace,
   projectHasActiveTurn,
   restoreProjectWorkspace,
+  sessionBranches,
   updateProjectWorkspace,
   updateProviderWorkspace,
   updateSessionWorkspace,
@@ -786,12 +787,23 @@ export function useWorkspace(settings: AppSettings) {
         provider: ProviderKind;
         sessionId: string;
         branch: string | null;
+        branches?: string[];
       }>(
         "session-branch-updated",
-        ({ projectPath: path, provider: kind, sessionId: id, branch }) => {
+        ({
+          projectPath: path,
+          provider: kind,
+          sessionId: id,
+          branch,
+          branches,
+        }) => {
           if (unavailable(path, kind, id)) return;
           const current = state.current[path].providers[kind];
           if (!current.sessions.some((session) => session.id === id)) return;
+          const history = branches ?? sessionBranches({
+            branch,
+            branches: sessionBranches(current.sessionDetails[id]),
+          });
           const key = `details:${keyFor(path, kind, id)}`;
           // A provider metadata read begun before this Git observation must not
           // put the old branch back while the agent is still running.
@@ -804,11 +816,12 @@ export function useWorkspace(settings: AppSettings) {
               [id]: {
                 changes: value.sessionDetails[id]?.changes ?? null,
                 branch,
+                branches: history,
                 branchIsCurrent: false,
               },
             },
           }));
-          if (branch) refreshBranchPullRequests(path, [branch]);
+          refreshBranchPullRequests(path, history);
         },
       ),
       subscribe<Parameters<typeof applyCodexEvent>[1]>(
@@ -1362,9 +1375,10 @@ export function useWorkspace(settings: AppSettings) {
     id: string,
   ) {
     await loadSessionDetails(path, kind, id, true);
-    const branch =
-      state.current[path]?.providers[kind].sessionDetails[id]?.branch;
-    if (branch) refreshBranchPullRequests(path, [branch]);
+    refreshBranchPullRequests(
+      path,
+      sessionBranches(state.current[path]?.providers[kind].sessionDetails[id]),
+    );
   }
 
   async function loadSessionDetails(

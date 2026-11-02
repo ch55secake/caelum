@@ -4,6 +4,14 @@ const PROVIDERS = ["codex", "opencode"];
 export function sessionTitle(session) {
   return session.name || session.preview || "Untitled session";
 }
+export function sessionBranches(details) {
+  return [
+    ...new Set([
+      ...(details?.branches ?? []),
+      ...(details?.branch ? [details.branch] : []),
+    ]),
+  ];
+}
 function emptyProviderWorkspace() {
   return {
     sessions: [],

@@ -10,8 +10,14 @@ use caelum_protocol::{PersistedProject, ProjectInfo, WorkspaceSnapshot};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 const PROVIDERS: [&str; 2] = ["codex", "opencode"];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionBranchHistory {
+    pub branch: Option<String>,
+    pub branches: Vec<String>,
+}
 
 /// Thread-safe access to Caelum's app-owned workspace metadata database.
 /// Provider conversation history is deliberately never stored here.
@@ -376,13 +382,25 @@ impl WorkspaceDatabase {
         path: &str,
         provider: &str,
         session_id: &str,
-    ) -> Result<Option<Option<String>>, DatabaseError> {
+    ) -> Result<Option<SessionBranchHistory>, DatabaseError> {
         validate_provider(provider)?;
-        Ok(self.lock().query_row(
+        let connection = self.lock();
+        let branch: Option<Option<String>> = connection.query_row(
             "SELECT branch FROM session_branches WHERE project_path = ?1 AND provider = ?2 AND session_id = ?3",
             params![path, provider, session_id],
             |row| row.get(0),
-        ).optional()?)
+        ).optional()?;
+        let Some(branch) = branch else {
+            return Ok(None);
+        };
+        let mut statement = connection.prepare(
+            "SELECT branch FROM session_branch_history
+             WHERE project_path = ?1 AND provider = ?2 AND session_id = ?3 ORDER BY rowid",
+        )?;
+        let branches = statement
+            .query_map(params![path, provider, session_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(Some(SessionBranchHistory { branch, branches }))
     }
 
     pub fn record_session_branch(
@@ -395,12 +413,22 @@ impl WorkspaceDatabase {
         validate_nonempty("project path", path)?;
         validate_provider(provider)?;
         validate_nonempty("session ID", session_id)?;
-        self.lock().execute(
+        let mut connection = self.lock();
+        let transaction = connection.transaction()?;
+        transaction.execute(
             "INSERT INTO session_branches (project_path, provider, session_id, branch)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(project_path, provider, session_id) DO UPDATE SET branch = excluded.branch",
             params![path, provider, session_id, branch],
         )?;
+        if let Some(branch) = branch {
+            transaction.execute(
+                "INSERT INTO session_branch_history (project_path, provider, session_id, branch)
+                 VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
+                params![path, provider, session_id, branch],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -577,6 +605,23 @@ fn migrate(connection: &mut Connection) -> Result<(), DatabaseError> {
         transaction.pragma_update(None, "user_version", 5)?;
         transaction.commit()?;
     }
+    if version < 6 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE session_branch_history (
+                project_path TEXT NOT NULL,
+                provider TEXT NOT NULL CHECK (provider IN ('codex', 'opencode')),
+                session_id TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                PRIMARY KEY (project_path, provider, session_id, branch)
+             );
+             INSERT INTO session_branch_history
+                SELECT project_path, provider, session_id, branch FROM session_branches
+                WHERE branch IS NOT NULL;",
+        )?;
+        transaction.pragma_update(None, "user_version", 6)?;
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -716,6 +761,79 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap();
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn v5_branches_seed_scoped_history_and_keep_earlier_branches_after_restart() {
+        let directory = TestDirectory::new("legacy-v5-branches");
+        let path = directory.database_path();
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        for (path, provider, branch) in [
+            ("/work/one", "codex", Some("feature/legacy")),
+            ("/work/one", "opencode", None),
+            ("/work/two", "codex", Some("feature/other")),
+        ] {
+            database
+                .record_session_branch(path, provider, "same-id", branch)
+                .unwrap();
+        }
+        database
+            .lock()
+            .execute_batch("DROP TABLE session_branch_history; PRAGMA user_version = 5;")
+            .unwrap();
+        drop(database);
+
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        assert_eq!(
+            database
+                .session_branch("/work/one", "codex", "same-id")
+                .unwrap(),
+            Some(SessionBranchHistory {
+                branch: Some("feature/legacy".into()),
+                branches: vec!["feature/legacy".into()],
+            })
+        );
+        for branch in [Some("feature/second"), Some("feature/legacy"), None] {
+            database
+                .record_session_branch("/work/one", "codex", "same-id", branch)
+                .unwrap();
+        }
+        drop(database);
+
+        let database = WorkspaceDatabase::open(&path).unwrap();
+        assert_eq!(
+            database
+                .session_branch("/work/one", "codex", "same-id")
+                .unwrap(),
+            Some(SessionBranchHistory {
+                branch: None,
+                branches: vec!["feature/legacy".into(), "feature/second".into()],
+            })
+        );
+        assert_eq!(
+            database
+                .session_branch("/work/one", "opencode", "same-id")
+                .unwrap(),
+            Some(SessionBranchHistory {
+                branch: None,
+                branches: vec![]
+            })
+        );
+        assert_eq!(
+            database
+                .session_branch("/work/two", "codex", "same-id")
+                .unwrap(),
+            Some(SessionBranchHistory {
+                branch: Some("feature/other".into()),
+                branches: vec!["feature/other".into()],
+            })
+        );
+        assert_eq!(
+            database
+                .session_branch("/work/one", "codex", "unknown")
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -869,7 +987,8 @@ mod tests {
             .unwrap();
         database.set_active_project(Some("/work/kept")).unwrap();
         database.lock().execute_batch(
-            "DROP TABLE session_branches;
+            "DROP TABLE session_branch_history;
+             DROP TABLE session_branches;
              DROP TABLE sessions;
              CREATE TABLE sessions (
                 project_path TEXT NOT NULL REFERENCES projects(path) ON DELETE CASCADE,
