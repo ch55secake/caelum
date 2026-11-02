@@ -362,7 +362,9 @@ export function Sidebar({
               placeholder="Search sessions…"
               aria-label="Search sessions"
               value={search}
-              onChange={(event) => view.update({ search: event.target.value })}
+              onChange={(event) =>
+                view.update({ search: event.target.value })
+              }
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
@@ -434,6 +436,7 @@ export function Sidebar({
                         enabled: !(
                           archiving ||
                           working ||
+                          state?.queuedMessages.length ||
                           state?.isSubmitting ||
                           state?.connection === "connecting" ||
                           approval
@@ -519,11 +522,14 @@ export function Sidebar({
                     disabled={
                       archiving ||
                       working ||
+                      Boolean(state?.queuedMessages.length) ||
                       state?.isSubmitting ||
                       state?.connection === "connecting" ||
                       approval
                     }
-                    onClick={() => void app.archiveSession(item, item.provider)}
+                    onClick={() =>
+                      void app.archiveSession(item, item.provider)
+                    }
                   >
                     {archiving ? (
                       <LoaderCircle size={13} className="spinning" />
@@ -602,7 +608,9 @@ export function Sidebar({
           drag.current = null;
         }}
         onKeyDown={(event) => {
-          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+          if (
+            ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+          ) {
             event.preventDefault();
             resize(
               event.key === "Home"

@@ -480,6 +480,74 @@ impl OpenCodeProvider {
         Ok(())
     }
 
+    pub fn enqueue_prompt(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        message_id: &str,
+        prompt: &str,
+    ) -> Result<(), OpenCodeError> {
+        if prompt.trim().is_empty() {
+            return Err(OpenCodeError::EmptyPrompt);
+        }
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        self.session(&server, &project, session_id)?;
+        server.request_json(
+            Method::POST,
+            &format!("/api/session/{session_id}/prompt"),
+            &[],
+            Some(json!({ "id": message_id, "text": prompt, "delivery": "queue" })),
+        )?;
+        Ok(())
+    }
+
+    pub fn inbox(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+    ) -> Result<Vec<Value>, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        self.session(&server, &project, session_id)?;
+        let response = server.request_json(
+            Method::GET,
+            &format!("/api/session/{session_id}/inbox"),
+            &[],
+            None,
+        )?;
+        response
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| OpenCodeError::Protocol("Inbox response has no data array".into()))
+    }
+
+    pub fn cancel_queued_prompt(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<(), OpenCodeError> {
+        if !message_id.starts_with("msg")
+            || !message_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        {
+            return Err(OpenCodeError::Protocol("Invalid inbox message ID".into()));
+        }
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        self.session(&server, &project, session_id)?;
+        server.request_json(
+            Method::DELETE,
+            &format!("/api/session/{session_id}/inbox/{message_id}"),
+            &[],
+            None,
+        )?;
+        Ok(())
+    }
+
     pub fn read_image(
         &self,
         project_path: impl AsRef<Path>,
@@ -1970,6 +2038,7 @@ from urllib.parse import urlsplit, parse_qs
 PROJECT = os.getcwd()
 PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
 SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}, "model": {"providerID": "local", "id": "original"}, "agent": "build"}
+INBOX = {}
 FORMS = {name: {"id": name, "sessionID": "ses_fake", "title": "Questions", "fields": [
     {"key": "q0", "type": "multiselect", "title": "Targets", "custom": True, "options": [{"label": "macOS", "value": "macOS"}], "required": True}
 ]} for name in ["frm_live", "frm_saved", "frm_external", "frm_cancelled"]}
@@ -2057,6 +2126,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
                 return
             self.send_json({"data": [{"additions": 12, "deletions": 2}, {"additions": 3, "deletions": 5}]})
+        elif path == "/api/session/ses_fake/inbox":
+            self.send_json({"data": list(INBOX.values())})
         elif path == "/api/session/ses_fake/message":
             query = parse_qs(urlsplit(self.path).query)
             if "cursor" in query:
@@ -2114,6 +2185,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         if not self.authorized(): return
+        if self.path.startswith("/api/session/ses_fake/inbox/"):
+            INBOX.pop(self.path.rsplit("/", 1)[1], None)
+            self.send_response(204)
+            self.end_headers()
+            return
         assert self.path == "/api/session/ses_fake/form/frm_live"
         FORMS.pop("frm_live")
         self.send_response(204)
@@ -2157,6 +2233,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
         elif path == "/api/session/ses_fake/prompt":
+            if body.get("delivery") == "queue":
+                INBOX.setdefault(body["id"], {"id": body["id"], "type": "user", "delivery": "queue", "payload": {"text": body["text"]}})
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
         elif path == "/api/session/ses_fake/command":
             assert set(body) == {"name", "text", "files"}
@@ -2314,6 +2392,29 @@ server.serve_forever()
             .unwrap()
             .starts_with("data:image/png;base64,"));
         assert!(provider.read_image(&project_path, "../info").is_err());
+        provider
+            .enqueue_prompt(&project_path, "ses_fake", "msg_queue", "Next task")
+            .unwrap();
+        provider
+            .enqueue_prompt(&project_path, "ses_fake", "msg_queue", "Next task")
+            .unwrap();
+        let inbox = provider.inbox(&project_path, "ses_fake").unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0]["delivery"], "queue");
+        assert_eq!(inbox[0]["payload"]["text"], "Next task");
+        assert!(provider
+            .enqueue_prompt(&project_path, "ses_foreign", "msg_queue", "Wrong checkout")
+            .is_err());
+        assert!(provider
+            .cancel_queued_prompt(&project_path, "ses_fake", "../escape")
+            .is_err());
+        provider
+            .cancel_queued_prompt(&project_path, "ses_fake", "msg_queue")
+            .unwrap();
+        assert!(provider
+            .inbox(&project_path, "ses_fake")
+            .unwrap()
+            .is_empty());
         let history = provider
             .session_history(&project_path, "ses_fake", None)
             .unwrap();

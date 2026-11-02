@@ -5,6 +5,11 @@ import { listen } from "@tauri-apps/api/event";
 import { addOpenProject, closeOpenProject } from "./projectWorkspace.js";
 import type { GitWorktree, GitWorktrees } from "./worktreeState.js";
 import { historyEntries, mergeHistory } from "./conversationState.js";
+import {
+  inboxMessages,
+  reconcileInbox,
+  type QueuedMessage,
+} from "./messageQueueState.js";
 import { contextUsageSince, openCodeHistoryUsage } from "./contextUsage.js";
 import { refreshBranchPullRequests } from "./useBranchPullRequests.js";
 import {
@@ -155,7 +160,9 @@ export function useWorkspace(settings: AppSettings) {
   openProjects.current = projects;
   const activeProject = useRef(project);
   activeProject.current = project;
-  const [projectRoots, setProjectRoots] = useState<Record<string, string>>({});
+  const [projectRoots, setProjectRoots] = useState<Record<string, string>>(
+    {},
+  );
   const roots = useRef(projectRoots);
   roots.current = projectRoots;
   const [selectedWorktrees, setSelectedWorktrees] = useState<
@@ -166,10 +173,12 @@ export function useWorkspace(settings: AppSettings) {
   >({});
   const catalogs = useRef(worktreeCatalogs);
   catalogs.current = worktreeCatalogs;
-  const [worktreeErrors, setWorktreeErrors] = useState<Record<string, string>>(
+  const [worktreeErrors, setWorktreeErrors] = useState<
+    Record<string, string>
+  >({});
+  const [worktreeBusy, setWorktreeBusy] = useState<Record<string, boolean>>(
     {},
   );
-  const [worktreeBusy, setWorktreeBusy] = useState<Record<string, boolean>>({});
   const worktreeVersions = useRef(new Map<string, number>());
   const worktreeOperations = useRef(new Set<string>());
   const removedDirectories = useRef(new Set<string>());
@@ -230,7 +239,8 @@ export function useWorkspace(settings: AppSettings) {
   const rootProject =
     projects.find((item) => item.path === rootPath) ?? project;
   const projectGroups = projects.filter(
-    (item) => !projectRoots[item.path] || projectRoots[item.path] === item.path,
+    (item) =>
+      !projectRoots[item.path] || projectRoots[item.path] === item.path,
   );
   const currentWorktree = rootPath
     ? worktreeCatalogs[rootPath]?.worktrees.find(
@@ -319,7 +329,10 @@ export function useWorkspace(settings: AppSettings) {
       receiveWorktrees(target, snapshot);
     } catch (reason) {
       if (version === worktreeVersions.current.get(key))
-        setWorktreeErrors((current) => ({ ...current, [key]: String(reason) }));
+        setWorktreeErrors((current) => ({
+          ...current,
+          [key]: String(reason),
+        }));
     }
   }
 
@@ -354,7 +367,8 @@ export function useWorkspace(settings: AppSettings) {
       );
       queue.current = pending.catch(() => {});
       const target = await pending;
-      if (!openProjects.current.some((item) => item.path === root.path)) return;
+      if (!openProjects.current.some((item) => item.path === root.path))
+        return;
       setProjects((current) => addOpenProject(current, target));
       assignRoots({ [target.path]: root.path });
       if (navigation.current !== version) return;
@@ -393,6 +407,9 @@ export function useWorkspace(settings: AppSettings) {
             Object.values(workspace.providers).some(
               (value) =>
                 value.isCreating ||
+                Object.values(value.sessionsById).some(
+                  (session) => session.queuedMessages.length > 0,
+                ) ||
                 value.archivingSessionIds.length > 0 ||
                 value.sessions.some(
                   (session) =>
@@ -490,7 +507,9 @@ export function useWorkspace(settings: AppSettings) {
         );
         for (const kind of ["codex", "opencode"] as const) {
           invalidateSession(path, kind, "");
-          for (const id of Object.keys(workspace.providers[kind].sessionsById))
+          for (const id of Object.keys(
+            workspace.providers[kind].sessionsById,
+          ))
             invalidateSession(path, kind, id);
         }
       }
@@ -640,13 +659,19 @@ export function useWorkspace(settings: AppSettings) {
       });
       if (questionLifetimes.current.get(key) === lifetime)
         receiveQuestions(
-          pendingQuestions.current.filter((item) => questionKey(item) !== key),
+          pendingQuestions.current.filter(
+            (item) => questionKey(item) !== key,
+          ),
         );
     } catch (reason) {
       if (questionLifetimes.current.get(key) === lifetime)
         setQuestionEdits((current) => ({
           ...current,
-          [key]: { ...current[key], submitting: false, error: String(reason) },
+          [key]: {
+            ...current[key],
+            submitting: false,
+            error: String(reason),
+          },
         }));
       if (request.provider === "opencode")
         void refreshQuestions(request.projectPath);
@@ -697,7 +722,8 @@ export function useWorkspace(settings: AppSettings) {
           const key = `details:${keyFor(path, kind, id)}`;
           // A provider metadata read begun before this Git observation must not
           // put the old branch back while the agent is still running.
-          if (detailsLoads.current.has(key)) detailsRefreshes.current.add(key);
+          if (detailsLoads.current.has(key))
+            detailsRefreshes.current.add(key);
           mutateProvider(path, kind, (value) => ({
             ...value,
             sessionDetails: {
@@ -723,7 +749,11 @@ export function useWorkspace(settings: AppSettings) {
               "contextCompaction" &&
             typeof event.params.threadId === "string"
           )
-            void loadHistory(event.projectPath, "codex", event.params.threadId);
+            void loadHistory(
+              event.projectPath,
+              "codex",
+              event.params.threadId,
+            );
           if (
             ["turn/started", "turn/completed"].includes(event.method) &&
             typeof event.params.threadId === "string"
@@ -740,6 +770,15 @@ export function useWorkspace(settings: AppSettings) {
         (event) => {
           if (removedDirectories.current.has(event.projectPath)) return;
           update((current) => applyOpenCodeEvent(current, event));
+          if (
+            event.eventType === "session.inbox.delivered" &&
+            typeof event.data.sessionID === "string"
+          )
+            void loadHistory(
+              event.projectPath,
+              "opencode",
+              event.data.sessionID,
+            );
           if (
             [
               "session.compaction.started",
@@ -865,7 +904,8 @@ export function useWorkspace(settings: AppSettings) {
           (entry) =>
             !restored.some(
               (item) => item.project.path === entry.project.path,
-            ) && restored.some((item) => item.rootPath === entry.project.path),
+            ) &&
+            restored.some((item) => item.rootPath === entry.project.path),
         );
         const nextProjects = [...restored, ...groupRoots].map(
           (entry) => entry.project,
@@ -1104,7 +1144,8 @@ export function useWorkspace(settings: AppSettings) {
             }
           : key === "agent"
             ? {
-                agent: !value || value === current.session.agent ? null : value,
+                agent:
+                  !value || value === current.session.agent ? null : value,
               }
             : { effort: value }),
       }));
@@ -1264,7 +1305,10 @@ export function useWorkspace(settings: AppSettings) {
       if (force) detailsRefreshes.current.add(key);
       return pending;
     }
-    if (!force && Date.now() - (detailsChecked.current.get(key) ?? 0) < 15_000)
+    if (
+      !force &&
+      Date.now() - (detailsChecked.current.get(key) ?? 0) < 15_000
+    )
       return;
     const version = revision(scope);
     const request = (async () => {
@@ -1292,7 +1336,10 @@ export function useWorkspace(settings: AppSettings) {
           detailsChecked.current.set(key, Date.now());
         // All callers wait for the queued fresh read, including execution events
         // that need its branch before invalidating cached PR discovery.
-        if (detailsRefreshes.current.delete(key) || revision(scope) !== version)
+        if (
+          detailsRefreshes.current.delete(key) ||
+          revision(scope) !== version
+        )
           await loadSessionDetails(path, kind, id, true);
       }
     })();
@@ -1306,6 +1353,7 @@ export function useWorkspace(settings: AppSettings) {
     const cached = current.sessionsById[thread.id];
     if (
       (cached?.isWorking ?? thread.isWorking) ||
+      Boolean(cached?.queuedMessages.length) ||
       cached?.isSubmitting ||
       cached?.connection === "connecting" ||
       approvals.some(
@@ -1331,11 +1379,14 @@ export function useWorkspace(settings: AppSettings) {
       const latest = state.current[target.path].providers[kind];
       const wasSelected = latest.selectedSessionId === thread.id;
       const restoreNavigation =
-        wasSelected && navigation.current === nav ? ++navigation.current : null;
+        wasSelected && navigation.current === nav
+          ? ++navigation.current
+          : null;
       const notice: ArchivedSession = {
         project: target,
         provider: kind,
-        thread: latest.sessions.find((item) => item.id === thread.id) ?? thread,
+        thread:
+          latest.sessions.find((item) => item.id === thread.id) ?? thread,
         cached: latest.sessionsById[thread.id],
         details: latest.sessionDetails[thread.id],
         restoreNavigation,
@@ -1386,7 +1437,8 @@ export function useWorkspace(settings: AppSettings) {
         archived: false,
       });
       invalidateSession(target.path, kind, thread.id);
-      const restoreSelection = notice.restoreNavigation === navigation.current;
+      const restoreSelection =
+        notice.restoreNavigation === navigation.current;
       mutateProvider(target.path, kind, (value) => ({
         ...value,
         archivedSessionIds: value.archivedSessionIds.filter(
@@ -1576,6 +1628,7 @@ export function useWorkspace(settings: AppSettings) {
     const cached =
       state.current[target.path]?.providers[kind].sessionsById[thread.id];
     if (cached?.connection === "connected") {
+      if (kind === "opencode") void refreshInbox(target.path, thread.id);
       if (kind === "opencode") void refreshQuestions(target.path);
       await loadHistory(target.path, kind, thread.id);
       return;
@@ -1624,6 +1677,7 @@ export function useWorkspace(settings: AppSettings) {
         };
       });
       void loadHistory(target.path, kind, thread.id);
+      if (kind === "opencode") void refreshInbox(target.path, thread.id);
       if (kind === "opencode") void refreshQuestions(target.path);
     } catch (reason) {
       if (revision(scope) === version)
@@ -1690,7 +1744,13 @@ export function useWorkspace(settings: AppSettings) {
   }, [project?.path, provider, selectedId, selected?.unread]);
 
   useEffect(() => {
-    if (!project || !selectedId || !ready || checkoutUnavailable || !isTauri())
+    if (
+      !project ||
+      !selectedId ||
+      !ready ||
+      checkoutUnavailable ||
+      !isTauri()
+    )
       return;
     const path = project.path,
       kind = provider,
@@ -1707,6 +1767,7 @@ export function useWorkspace(settings: AppSettings) {
         return;
       refreshed = Date.now();
       void loadHistory(path, kind, id);
+      if (kind === "opencode") void refreshInbox(path, id);
       if (kind === "opencode") void refreshQuestions(path);
     };
     refresh();
@@ -1787,6 +1848,310 @@ export function useWorkspace(settings: AppSettings) {
       return [...rest, file];
     }, ask);
   }
+  async function refreshInbox(path: string, id: string) {
+    const session = state.current[path]?.providers.opencode.sessionsById[id];
+    if (!session || unavailable(path, "opencode", id)) return;
+    const version = session.inboxRevision;
+    const scopeVersion = revision(keyFor(path, "opencode", id));
+    try {
+      const result = await invoke<unknown[]>("opencode_inbox", {
+        projectPath: path,
+        sessionId: id,
+      });
+      if (revision(keyFor(path, "opencode", id)) !== scopeVersion) return;
+      mutateSession(path, "opencode", id, (value) =>
+        value.inboxRevision !== version
+          ? value
+          : {
+              ...value,
+              queuedMessages: reconcileInbox(
+                value.queuedMessages,
+                inboxMessages(result),
+              ).filter((item) => !item.remote || (!value.settledInboxIds.includes(item.id) &&
+                !value.conversation.some((entry) => entry.id === `opencode-${item.id}` && !entry.optimistic))),
+            },
+      );
+    } catch {
+      // Older servers can still send ordinary prompts. Failed admissions are
+      // reported on their queue item, never discarded by a failed snapshot.
+    }
+  }
+
+  async function enqueueMessage(
+    path: string,
+    kind: ProviderKind,
+    id: string,
+    prompt: string,
+  ) {
+    const session = state.current[path].providers[kind].sessionsById[id];
+    const previous = session.queuedMessages.at(-1);
+    const remote =
+      kind === "opencode" &&
+      session.model === null &&
+      session.effort === null &&
+      session.agent === null &&
+      !session.queuedMessages.some((item) => !item.remote);
+    const item: QueuedMessage = {
+      id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
+      prompt,
+      remote,
+      pending: remote,
+      model:
+        session.model ?? previous?.model ?? session.session.model ?? null,
+      effort:
+        session.effort ?? previous?.effort ?? session.session.effort ?? null,
+      agent:
+        session.agent ?? previous?.agent ?? session.session.agent ?? null,
+    };
+    const key = `send:${keyFor(path, kind, id)}`;
+    if (remote) locks.current.add(key);
+    mutateSession(path, kind, id, (value) => ({
+      ...value,
+      draft: "",
+      fileContext: [],
+      model: remote ? value.model : null,
+      effort: remote ? value.effort : null,
+      agent: remote ? value.agent : null,
+      isSubmitting: remote,
+      queuedMessages: [...value.queuedMessages, item],
+      inboxRevision: value.inboxRevision + 1,
+    }));
+    if (!remote) return true;
+    try {
+      await invoke("opencode_enqueue_prompt", {
+        projectPath: path,
+        sessionId: id,
+        messageId: item.id,
+        prompt,
+      });
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        queuedMessages: value.queuedMessages.map((entry) =>
+          entry.id === item.id ? { ...entry, pending: false } : entry,
+        ),
+        inboxRevision: value.inboxRevision + 1,
+      }));
+      void refreshInbox(path, id);
+    } catch (reason) {
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        queuedMessages: value.queuedMessages.map((entry) =>
+          entry.id === item.id
+            ? { ...entry, pending: false, error: String(reason) }
+            : entry,
+        ),
+        queuePaused: true,
+      }));
+    } finally {
+      locks.current.delete(key);
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        isSubmitting: false,
+      }));
+    }
+    return true;
+  }
+
+  async function sendQueued(
+    path: string,
+    kind: ProviderKind,
+    id: string,
+    item: QueuedMessage,
+  ) {
+    const key = `send:${keyFor(path, kind, id)}`;
+    if (locks.current.has(key) || unavailable(path, kind, id)) return;
+    locks.current.add(key);
+    const optimisticId =
+      kind === "opencode" ? `opencode-${item.id}` : `local-${item.id}`;
+    mutateSession(path, kind, id, (value) => ({
+      ...value,
+      isSubmitting: true,
+      isWorking: true,
+      lastOutcome: null,
+      activity: { label: "Working…" },
+      error: null,
+      queuedMessages: value.queuedMessages.map((entry) =>
+        entry.id === item.id
+          ? { ...entry, pending: true, error: undefined }
+          : entry,
+      ),
+      conversation: [
+        ...value.conversation,
+        {
+          id: optimisticId,
+          kind: "user",
+          text: item.prompt,
+          optimistic: true,
+        },
+      ],
+    }));
+    try {
+      if (kind === "opencode" && item.agent)
+        await invoke("opencode_select_agent", {
+          projectPath: path,
+          sessionId: id,
+          agent: item.agent,
+        });
+      await invoke(`${kind}_send_prompt`, {
+        projectPath: path,
+        sessionId: id,
+        threadId: id,
+        messageId: item.id,
+        prompt: item.prompt,
+        model: item.model,
+        effort: item.effort,
+      });
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        queuedMessages: value.queuedMessages.filter(
+          (entry) => entry.id !== item.id,
+        ),
+        session: {
+          ...value.session,
+          ...(item.model ? { model: item.model } : {}),
+          ...(item.effort !== null ? { effort: item.effort } : {}),
+          ...(item.agent ? { agent: item.agent } : {}),
+        },
+      }));
+    } catch (reason) {
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        isWorking: false,
+        activity: null,
+        queuePaused: true,
+        queuedMessages: value.queuedMessages.map((entry) =>
+          entry.id === item.id
+            ? { ...entry, pending: false, error: String(reason) }
+            : entry,
+        ),
+        conversation: value.conversation.filter(
+          (entry) => entry.id !== optimisticId,
+        ),
+      }));
+    } finally {
+      locks.current.delete(key);
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        isSubmitting: false,
+      }));
+    }
+  }
+
+  useEffect(() => {
+    if (!ready || restoring) return;
+    for (const [path, workspace] of Object.entries(workspaces)) {
+      if (worktreeOperations.current.has(roots.current[path] ?? path))
+        continue;
+      for (const kind of ["codex", "opencode"] as const) {
+        for (const [id, session] of Object.entries(
+          workspace.providers[kind].sessionsById,
+        )) {
+          const first = session.queuedMessages[0];
+          if (
+            !first ||
+            first.remote ||
+            first.pending ||
+            session.queuePaused ||
+            session.isWorking ||
+            session.isSubmitting ||
+            session.connection !== "connected"
+          )
+            continue;
+          if (
+            [...approvals, ...questions].some(
+              (request) =>
+                request.projectPath === path &&
+                request.provider === kind &&
+                request.sessionId === id,
+            )
+          )
+            continue;
+          void sendQueued(path, kind, id, first);
+        }
+      }
+    }
+  }, [workspaces, approvals, questions, ready, restoring, worktreeBusy]);
+
+  async function removeQueued(id: string) {
+    if (!project || !selectedId) return;
+    const path = project.path,
+      kind = provider,
+      sessionId = selectedId;
+    const item = state.current[path].providers[kind].sessionsById[
+      sessionId
+    ]?.queuedMessages.find((entry) => entry.id === id);
+    if (!item || item.pending) return;
+    try {
+      if (item.remote)
+        await invoke("opencode_cancel_queued_prompt", {
+          projectPath: path,
+          sessionId,
+          messageId: id,
+        });
+      mutateSession(path, kind, sessionId, (value) => ({
+        ...value,
+        queuedMessages: value.queuedMessages.filter(
+          (entry) => entry.id !== id,
+        ),
+        inboxRevision: value.inboxRevision + 1,
+      }));
+    } catch (reason) {
+      mutateSession(path, kind, sessionId, (value) => ({
+        ...value,
+        error: String(reason),
+      }));
+    }
+  }
+
+  async function resumeQueue() {
+    if (!project || !selectedId) return;
+    const path = project.path,
+      kind = provider,
+      id = selectedId;
+    const session = state.current[path].providers[kind].sessionsById[id];
+    const first = session?.queuedMessages[0];
+    if (!first || first.pending || session.isSubmitting || session.isWorking)
+      return;
+    if (!first.remote) {
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        queuePaused: false,
+      }));
+      return;
+    }
+    mutateSession(path, kind, id, (value) => ({
+      ...value,
+      isSubmitting: true,
+    }));
+    try {
+      // Reusing the inbox ID makes retrying a lost admission response idempotent.
+      await invoke("opencode_enqueue_prompt", {
+        projectPath: path,
+        sessionId: id,
+        messageId: first.id,
+        prompt: first.prompt,
+      });
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        queuePaused: false,
+        queuedMessages: value.queuedMessages.map((entry) =>
+          entry.id === first.id ? { ...entry, error: undefined } : entry,
+        ),
+      }));
+      void refreshInbox(path, id);
+    } catch (reason) {
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        error: String(reason),
+      }));
+    } finally {
+      mutateSession(path, kind, id, (value) => ({
+        ...value,
+        isSubmitting: false,
+      }));
+    }
+  }
+
   async function submit(message?: string): Promise<boolean> {
     if (
       checkoutUnavailable ||
@@ -1841,11 +2206,19 @@ export function useWorkspace(settings: AppSettings) {
       (kind === "opencode" && text === "/") ||
       (id && unavailable(target.path, kind, id)) ||
       locks.current.has(key) ||
-      (cached?.isWorking && !command) ||
+      (cached?.isWorking && !command && message !== undefined) ||
       cached?.isSubmitting ||
       (id && (!cached || cached.connection !== "connected"))
     )
       return false;
+    if (
+      id &&
+      cached &&
+      !command &&
+      message === undefined &&
+      (cached.isWorking || cached.queuedMessages.length)
+    )
+      return enqueueMessage(target.path, kind, id, prompt);
     locks.current.add(key);
     const nav = navigation.current;
     const creating = !id;
@@ -1935,6 +2308,7 @@ export function useWorkspace(settings: AppSettings) {
         isWorking: command ? value.isWorking : true,
         activity: command ? value.activity : { label: "Working…" },
         lastOutcome: null,
+        queuePaused: false,
         scrollTop: null,
         windowEndId: null,
         followRevision: value.followRevision + 1,
@@ -2073,6 +2447,10 @@ export function useWorkspace(settings: AppSettings) {
     const target = project,
       kind = provider,
       id = selectedId;
+    mutateSession(target.path, kind, id, (value) => ({
+      ...value,
+      queuePaused: true,
+    }));
     try {
       await invoke(`${kind}_cancel_turn`, {
         projectPath: target.path,
@@ -2106,11 +2484,15 @@ export function useWorkspace(settings: AppSettings) {
     }
   }
   function viewRequest(
-    request: Pick<ApprovalPrompt, "provider" | "projectPath" | "sessionId"> & {
+    request: Pick<
+      ApprovalPrompt,
+      "provider" | "projectPath" | "sessionId"
+    > & {
       title?: string;
     },
   ) {
-    if (request.provider !== "codex" && request.provider !== "opencode") return;
+    if (request.provider !== "codex" && request.provider !== "opencode")
+      return;
     const target = projects.find(
       (item) => item.path === request.projectPath,
     ) ?? {
@@ -2221,6 +2603,8 @@ export function useWorkspace(settings: AppSettings) {
     removeFileContext: (id: string) =>
       updateFileContext((files) => files.filter((file) => file.id !== id)),
     submit,
+    removeQueued,
+    resumeQueue,
     cancel,
     resolveApproval,
     mutateSession,

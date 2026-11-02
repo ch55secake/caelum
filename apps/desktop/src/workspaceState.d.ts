@@ -80,6 +80,10 @@ export type SessionWorkspaceState = {
   /** Pending agent for the next prompt; null keeps the native session agent. */
   agent: string | null;
   conversation: ConversationEntry[];
+  queuedMessages: import("./messageQueueState.js").QueuedMessage[];
+  queuePaused: boolean;
+  inboxRevision: number;
+  settledInboxIds: string[];
   isWorking: boolean;
   isSubmitting: boolean;
   error: string | null;

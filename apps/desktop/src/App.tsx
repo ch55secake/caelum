@@ -18,7 +18,10 @@ import {
   Settings as SettingsIcon,
   X,
 } from "lucide-react";
-import { ProjectInspector, type InspectorRequest } from "./ProjectInspector.js";
+import {
+  ProjectInspector,
+  type InspectorRequest,
+} from "./ProjectInspector.js";
 import { FileNavigation } from "./FileNavigation.js";
 import type { FileLocation } from "./fileContext.js";
 import { useWorkspace } from "./useWorkspace.js";
@@ -26,6 +29,7 @@ import { useSidebarView } from "./useSidebarView.js";
 import { Sidebar } from "./Sidebar.js";
 import { ApprovalCard, Conversation } from "./Conversation.js";
 import { Composer } from "./Composer.js";
+import { MessageQueue } from "./MessageQueue.js";
 import { QuestionCard } from "./QuestionCard.js";
 import { SessionWorktree } from "./Worktrees.js";
 import { questionKey } from "./questionState.js";
@@ -222,7 +226,9 @@ export default function App() {
       )
         return;
       const target = activeQuestionKey
-        ? questionDockRef.current?.querySelector<HTMLElement>(".question-card")
+        ? questionDockRef.current?.querySelector<HTMLElement>(
+            ".question-card",
+          )
         : textareaRef.current;
       target?.focus({ preventScroll: true });
     });
@@ -312,7 +318,9 @@ export default function App() {
                   </>
                 )}
               <strong title={activePullRequest?.pr.title ?? title}>
-                {activePullRequest ? `#${activePullRequest.pr.number}` : title}
+                {activePullRequest
+                  ? `#${activePullRequest.pr.number}`
+                  : title}
               </strong>
             </div>
             <div className="topbar-actions">
@@ -471,7 +479,7 @@ export default function App() {
                         app.checkoutUnavailable ||
                         Boolean(
                           app.rootProject &&
-                            app.worktreeBusy[app.rootProject.path],
+                          app.worktreeBusy[app.rootProject.path],
                         )
                           ? "This checkout is unavailable or busy."
                           : app.selected.connection !== "connected"
@@ -479,7 +487,8 @@ export default function App() {
                             : app.selected.isWorking ||
                                 app.selected.isSubmitting
                               ? "Wait for the current turn to finish."
-                              : activeQuestions.length || activeApprovals.length
+                              : activeQuestions.length ||
+                                  activeApprovals.length
                                 ? "Answer the session's pending request first."
                                 : app.providerWorkspace?.archivingSessionIds.includes(
                                       app.selectedId,
@@ -597,7 +606,8 @@ export default function App() {
                       app.provider,
                       app.selectedId!,
                       Boolean(
-                        app.selected?.historyLoaded && app.selected.nextCursor,
+                        app.selected?.historyLoaded &&
+                        app.selected.nextCursor,
                       ),
                     )
                   }
@@ -618,6 +628,19 @@ export default function App() {
                   <p>What would you like to work on?</p>
                   <SessionWorktree app={app} />
                 </div>
+              )}
+              {app.selected && (
+                <MessageQueue
+                  messages={app.selected.queuedMessages}
+                  paused={app.selected.queuePaused}
+                  working={app.selected.isWorking}
+                  disabled={
+                    app.selected.isSubmitting ||
+                    app.selected.connection !== "connected"
+                  }
+                  remove={(id) => void app.removeQueued(id)}
+                  resume={() => void app.resumeQueue()}
+                />
               )}
               {activeQuestions.length > 0 ? (
                 <div
@@ -642,7 +665,9 @@ export default function App() {
                         setDraft={(draft) =>
                           app.setQuestionDraft(request, draft)
                         }
-                        submitting={Boolean(app.questionEdits[key]?.submitting)}
+                        submitting={Boolean(
+                          app.questionEdits[key]?.submitting,
+                        )}
                         error={app.questionEdits[key]?.error}
                         resolve={(answer) =>
                           void app.resolveQuestion(request, answer)
@@ -658,7 +683,9 @@ export default function App() {
                     projectPath={app.project.path}
                     textareaRef={textareaRef}
                     draft={
-                      app.selected?.draft ?? app.providerWorkspace?.draft ?? ""
+                      app.selected?.draft ??
+                      app.providerWorkspace?.draft ??
+                      ""
                     }
                     setDraft={app.setDraft}
                     fileContext={
@@ -678,22 +705,23 @@ export default function App() {
                     awaitingApproval={activeApprovals.length > 0}
                     submitting={
                       app.selected?.isSubmitting ||
-                      (!app.selectedId && app.providerWorkspace?.isCreating) ||
+                      (!app.selectedId &&
+                        app.providerWorkspace?.isCreating) ||
                       false
                     }
                     disabled={
                       app.checkoutUnavailable ||
                       Boolean(
                         app.rootProject &&
-                          app.worktreeBusy[app.rootProject.path],
+                        app.worktreeBusy[app.rootProject.path],
                       ) ||
                       Boolean(
                         app.selectedId &&
-                          (!app.selected ||
-                            app.providerWorkspace?.archivingSessionIds.includes(
-                              app.selectedId,
-                            ) ||
-                            app.selected.connection !== "connected"),
+                        (!app.selected ||
+                          app.providerWorkspace?.archivingSessionIds.includes(
+                            app.selectedId,
+                          ) ||
+                          app.selected.connection !== "connected"),
                       ) ||
                       Boolean(
                         !app.selectedId && app.providerWorkspace?.isCreating,

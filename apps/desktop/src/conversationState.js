@@ -5,6 +5,7 @@ import {
   openCodeModel,
 } from "./contextUsage.js";
 import { imageAttachments, toolImages } from "./chatMedia.js";
+import { queueEvent } from "./messageQueueState.js";
 
 const object = (value) => (value && typeof value === "object" ? value : {});
 export const displayValue = (value) =>
@@ -440,7 +441,8 @@ export function applyConversationEvent(
   data,
   event = {},
 ) {
-  let next = session;
+  let next =
+    provider === "opencode" ? queueEvent(session, method, data) : session;
   const put = (entry) => {
     if (entry)
       next = { ...next, conversation: upsertEntry(next.conversation, entry) };
@@ -470,6 +472,9 @@ export function applyConversationEvent(
       isSubmitting: false,
       activity: null,
       lastOutcome: resumable ? "paused" : outcome,
+      queuePaused:
+        next.queuePaused ||
+        ["failed", "interrupted", "cancelled"].includes(outcome),
       conversation: next.conversation.map((entry) =>
         entry.kind === "compaction" && !entry.complete
           ? {
@@ -661,6 +666,19 @@ export function applyConversationEvent(
         ),
       };
   } else {
+    if (method === "session.inbox.delivered") {
+      const queued = session.queuedMessages?.find(
+        (item) => item.id === data.inboxID,
+      );
+      if (queued) {
+        put({
+          id: `opencode-${queued.id}`,
+          kind: "user",
+          text: queued.prompt,
+        });
+        working();
+      }
+    }
     if (method.startsWith("session.compaction.")) {
       const latest = next.conversation.findLast(
         (entry) => entry.kind === "compaction",
