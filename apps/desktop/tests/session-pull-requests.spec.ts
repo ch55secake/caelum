@@ -793,7 +793,15 @@ for (const provider of ["codex", "opencode"] as const) {
     await expect(last).not.toBeInViewport();
     await panel.hover();
     await page.mouse.wheel(0, 1200);
-    await expect(last).toBeInViewport({ ratio: 1 });
+    await expect
+      .poll(() =>
+        panel.evaluate(
+          (node) => node.scrollHeight - node.scrollTop - node.clientHeight,
+        ),
+      )
+      .toBeLessThanOrEqual(1);
+    // Fractional flex/scroll dimensions can clip a subpixel at the bottom.
+    await expect(last).toBeInViewport({ ratio: 0.99 });
     await last.focus();
     await last.press("Enter");
     await expect(page.locator(".pr-screen")).toBeVisible();
