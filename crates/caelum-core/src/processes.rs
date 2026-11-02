@@ -168,7 +168,11 @@ impl From<std::io::Error> for ProcessError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{process::Command, thread, time::Duration};
+    use std::{
+        process::Command,
+        thread,
+        time::{Duration, Instant},
+    };
 
     #[cfg(unix)]
     fn sleeper() -> Child {
@@ -176,6 +180,19 @@ mod tests {
             .arg("30")
             .spawn()
             .expect("start test child")
+    }
+
+    #[cfg(unix)]
+    fn wait_for_exited(registry: &ProcessRegistry) -> Vec<(ProcessId, ExitStatus)> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let exited = registry.poll_exited().unwrap();
+            if !exited.is_empty() {
+                return exited;
+            }
+            assert!(Instant::now() < deadline, "test child did not exit in time");
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[cfg(unix)]
@@ -213,9 +230,7 @@ mod tests {
         let id = registry
             .register(Command::new("/usr/bin/true").spawn().unwrap())
             .unwrap();
-        thread::sleep(Duration::from_millis(20));
-
-        let exited = registry.poll_exited().unwrap();
+        let exited = wait_for_exited(&registry);
 
         assert_eq!(exited.len(), 1);
         assert_eq!(exited[0].0, id);
@@ -226,13 +241,13 @@ mod tests {
     #[test]
     fn a_provider_can_register_a_replacement_after_a_child_exits() {
         let registry = ProcessRegistry::default();
-        registry
+        let id = registry
             .register(Command::new("/usr/bin/false").spawn().unwrap())
             .unwrap();
-        thread::sleep(Duration::from_millis(20));
 
-        let failed = registry.poll_exited().unwrap();
+        let failed = wait_for_exited(&registry);
         assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, id);
         assert!(!failed[0].1.success());
 
         let replacement = registry.register(sleeper()).unwrap();

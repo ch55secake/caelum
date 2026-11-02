@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "test": "node --test src/*.test.js",
+    "build": "node scripts/check-boundaries.mjs && tsc --noEmit && vite build",
+    "test": "node scripts/check-boundaries.mjs && node scripts/test.mjs",
     "test:ui": "playwright test",
     "tauri": "tauri"
   },

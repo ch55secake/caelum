@@ -1,0 +1,42 @@
+.pr-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 0 8px;
+}
+.conversation-entry .pr-context-chips {
+  margin: 8px 0 0;
+}
+.pr-context-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+}
+.pr-context-chip a,
+.pr-context-chip button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 5px 6px;
+  font-size: 10px;
+  color: var(--secondary-text);
+  text-decoration: none;
+}
+.pr-context-chip svg {
+  flex-shrink: 0;
+}
+.pr-context-chip a > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-context-chip a:hover {
+  color: var(--accent);
+}

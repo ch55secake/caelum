@@ -1,9 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import App from "./App";
-import "./styles.css";
-import { initializeAppearance } from "./useSettings.js";
+import App from "./app/App";
+import "./ui/styles/styles.css";
+import { initializeAppearance } from "./application/useSettings.js";
 
 initializeAppearance();
 

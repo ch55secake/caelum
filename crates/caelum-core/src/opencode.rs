@@ -23,6 +23,9 @@ use reqwest::{blocking::Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+mod generate;
+mod stats;
+
 use crate::{
     approvals::ApprovalBroker,
     processes::{ProcessId, ProcessRegistry},
@@ -2157,6 +2160,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": {"providerID": "local", "id": "model/a"}})
         elif path == "/api/agent":
             self.send_json({"data": [{"id": "build", "name": "Build", "mode": "primary", "hidden": False}, {"id": "plan", "name": "Plan", "mode": "primary", "hidden": False}, {"id": "child", "name": "Child", "mode": "subagent", "hidden": False}, {"id": "hidden", "name": "Hidden", "mode": "primary", "hidden": True}]})
+        elif path == "/api/project":
+            assert parse_qs(urlsplit(self.path).query) == {"archived": ["true"]}
+            self.send_json([{"id": "project_fake", "canonical": PROJECT, "name": "Fake"}])
+        elif path == "/api/experimental/session/stats":
+            with open(os.path.join(PROJECT, "stats-query.json"), "w") as query:
+                json.dump(parse_qs(urlsplit(self.path).query), query)
+            with open(os.path.join(PROJECT, "stats.json")) as stats:
+                self.send_json({"data": json.load(stats)})
         elif path in ["/api/command", "/api/experimental/usage/limits"]:
             assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
             if os.path.exists(os.path.join(PROJECT, "command-api-error")):
@@ -2237,6 +2248,15 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("delivery") == "queue":
                 INBOX.setdefault(body["id"], {"id": body["id"], "type": "user", "delivery": "queue", "payload": {"text": body["text"]}})
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
+        elif path == "/api/session/ses_fake/generate":
+            assert set(body) == {"prompt"}
+            if os.path.exists(os.path.join(PROJECT, "generate-error")):
+                self.send_error(503)
+                return
+            if os.path.exists(os.path.join(PROJECT, "generate-malformed")):
+                self.send_json({"data": {}})
+                return
+            self.send_json({"data": {"text": "Transient answer: " + body["prompt"]}})
         elif path == "/api/session/ses_fake/command":
             assert set(body) == {"name", "text", "files"}
             if body["name"] not in ["goal", "team/review"]:
@@ -2346,6 +2366,54 @@ server.serve_forever()
         assert_eq!(provider.usage_limits(&project_path).unwrap(), limits);
         fs::write(project_path.join("usage.json"), "null").unwrap();
         assert!(provider.usage_limits(&project_path).unwrap().is_null());
+        let projects = provider.stats_projects(&project_path).unwrap();
+        assert_eq!(projects[0].id, "project_fake");
+        assert_eq!(projects[0].canonical, path);
+        let stats = json!({
+            "range": {"from": 1000, "to": 2000}, "sessions": 2, "subagents": 1,
+            "prompts": 8, "steps": 12, "tokens": {"input": 100, "output": 50,
+                "reasoning": 20, "cache": {"read": 200, "write": 10}},
+            "cost": 0.12, "tools": {"mode": "none"}, "activeDays": 1, "streak": 1,
+            "activity": [{"date": "2026-11-01", "steps": 12}], "models": []
+        });
+        fs::write(project_path.join("stats.json"), stats.to_string()).unwrap();
+        let filter = caelum_protocol::OpenCodeStatsFilter {
+            from: Some(1793491200000),
+            to: Some(1793577600000),
+            project: Some("project_fake".into()),
+            timezone: Some("Europe/London".into()),
+        };
+        let result = provider.session_stats(&project_path, &filter).unwrap();
+        assert_eq!(result.sessions, 2);
+        assert_eq!(result.tokens.cache.read, 200.0);
+        let query: Value =
+            serde_json::from_slice(&fs::read(project_path.join("stats-query.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            query,
+            json!({"from": ["1793491200000"], "to": ["1793577600000"], "project": ["project_fake"], "timezone": ["Europe/London"], "tools": ["none"]})
+        );
+        provider
+            .session_stats(&project_path, &Default::default())
+            .unwrap();
+        let query: Value =
+            serde_json::from_slice(&fs::read(project_path.join("stats-query.json")).unwrap())
+                .unwrap();
+        assert_eq!(query, json!({"tools": ["none"]}));
+        assert!(provider
+            .session_stats(
+                &project_path,
+                &caelum_protocol::OpenCodeStatsFilter {
+                    from: Some(2000),
+                    to: Some(1000),
+                    ..Default::default()
+                }
+            )
+            .is_err());
+        fs::write(project_path.join("stats.json"), "{}").unwrap();
+        assert!(provider
+            .session_stats(&project_path, &Default::default())
+            .is_err());
         fs::write(project_path.join("command-api-error"), "").unwrap();
         assert!(provider.commands(&project_path).is_err());
         assert!(provider.usage_limits(&project_path).is_err());
@@ -2461,6 +2529,42 @@ server.serve_forever()
                 .collect::<Vec<_>>()
         };
         let sent = requests();
+        let answer = provider
+            .generate_from_context(&project_path, "ses_fake", "Side question α\nKeep context")
+            .unwrap();
+        assert_eq!(answer, "Transient answer: Side question α\nKeep context");
+        let generated = requests();
+        assert_eq!(generated.len(), sent.len() + 1);
+        assert_eq!(
+            generated.last().unwrap()["path"],
+            "/api/session/ses_fake/generate"
+        );
+        assert_eq!(
+            generated.last().unwrap()["body"],
+            json!({"prompt": "Side question α\nKeep context"})
+        );
+        assert!(provider
+            .generate_from_context(&project_path, "ses_foreign", "Wrong checkout")
+            .is_err());
+        assert!(provider
+            .generate_from_context(&project_path, "../ses_fake", "Wrong ID")
+            .is_err());
+        assert!(provider
+            .generate_from_context(&project_path, "ses_fake", " \n ")
+            .is_err());
+        assert_eq!(requests().len(), generated.len());
+        fs::write(project_path.join("generate-error"), "").unwrap();
+        assert!(provider
+            .generate_from_context(&project_path, "ses_fake", "Retry later")
+            .is_err());
+        fs::remove_file(project_path.join("generate-error")).unwrap();
+        fs::write(project_path.join("generate-malformed"), "").unwrap();
+        assert!(provider
+            .generate_from_context(&project_path, "ses_fake", "Malformed")
+            .is_err());
+        fs::remove_file(project_path.join("generate-malformed")).unwrap();
+        // Keep subsequent model-selection assertions based on the current log.
+        let before_rejected_model = requests().len();
         let switch = &sent[sent.len() - 2];
         assert_eq!(switch["path"], "/api/session/ses_fake/model");
         assert_eq!(
@@ -2481,7 +2585,7 @@ server.serve_forever()
                 None,
             )
             .is_err());
-        assert_eq!(requests().len(), sent.len() + 1);
+        assert_eq!(requests().len(), before_rejected_model + 1);
         assert_eq!(
             requests().last().unwrap()["path"],
             "/api/session/ses_fake/model"

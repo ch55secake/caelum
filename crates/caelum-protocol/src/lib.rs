@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+mod stats;
+pub use stats::*;
+
 /// Stable, serializable application metadata shared across Caelum interfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppInfo {
@@ -72,6 +75,8 @@ pub struct GitHubPullRequest {
     pub title: String,
     pub url: String,
     pub is_draft: bool,
+    #[serde(default)]
+    pub base_ref_name: String,
 }
 
 /// On-demand GitHub metadata for a pull request, independent of the checkout.
@@ -83,7 +88,6 @@ pub struct GitHubPullRequestDetails {
     pub body: String,
     pub state: String,
     pub author: Option<GitHubAuthor>,
-    pub base_ref_name: String,
     pub head_ref_name: String,
     pub head_ref_oid: String,
     pub mergeable: String,
@@ -388,6 +392,14 @@ pub struct CodexSessionInfo {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+}
+
+/// Session discovery distinguishes an optional, uninstalled provider from a failed listing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "message", rename_all = "camelCase")]
+pub enum SessionListError {
+    NotInstalled(String),
+    Failed(String),
 }
 
 /// Recent Codex-owned threads scoped to one project.

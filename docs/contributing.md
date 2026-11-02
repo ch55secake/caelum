@@ -9,9 +9,17 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 pnpm --filter @caelum/desktop build
+pnpm --filter @caelum/desktop test
+pnpm --filter @caelum/desktop test:ui
 ```
 
 Use small, focused changes. Keep `caelum-core` independent from Tauri and UI code, and do not claim incomplete integrations as working features. Add tests with core behavior and update the docs when architecture or setup changes.
+
+## Browser tests
+
+Playwright scenarios live in feature-specific `apps/desktop/tests/*.spec.ts` files. `tests/fixtures/desktop.ts` supplies an isolated mock of the native command/event boundary for each page; `tests/fixtures/helpers.ts` contains shared navigation and provider-history helpers. Specs must not import other specs or depend on their execution order.
+
+Run one area with `pnpm --filter @caelum/desktop test:ui tests/images.spec.ts`, or use `--grep` to select a scenario. Keep provider-specific variants in the same feature spec and use scoped fixture failures and gates for race-condition checks.
 
 ## Security
 
