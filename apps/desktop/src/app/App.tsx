@@ -695,6 +695,7 @@ export default function App() {
                       []
                     }
                     removeFileContext={app.removeFileContext}
+                    addFileContext={(file) => currentSessionKey.current === sessionKey && app.addFileContext(file)}
                     lastMessage={lastUserMessage(
                       app.selected?.conversation ?? [],
                     )}

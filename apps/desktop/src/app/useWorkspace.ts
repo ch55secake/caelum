@@ -2017,29 +2017,27 @@ export function useWorkspace(settings: AppSettings) {
     } else mutateProvider(project.path, provider, updateDraft);
   }
   function addFileContext(file: FileContext, ask = false) {
-    if (!project) return;
+    if (!project || removedDirectories.current.has(project.path) ||
+      (selectedId && unavailable(project.path, provider, selectedId))) return false;
     const current = state.current[project.path]?.providers[provider];
     if (
       selectedId
         ? current?.sessionsById[selectedId]?.isSubmitting
         : current?.isCreating
     )
-      return;
-    updateFileContext((files) => {
-      const rest = files.filter(
-        (item) =>
-          item.path !== file.path ||
-          item.startLine !== file.startLine ||
-          item.endLine !== file.endLine,
-      );
-      if (rest.length >= MAX_FILE_CONTEXT) {
-        setError(
-          `Attach up to ${MAX_FILE_CONTEXT} files or selections per message.`,
-        );
-        return files;
-      }
-      return [...rest, file];
-    }, ask);
+      return false;
+    const files = selectedId
+      ? current?.sessionsById[selectedId]?.fileContext
+      : current?.fileContext;
+    const rest = files?.filter((item) =>
+      item.path !== file.path || item.startLine !== file.startLine || item.endLine !== file.endLine,
+    );
+    if (!rest || rest.length >= MAX_FILE_CONTEXT) {
+      setError(`Attach up to ${MAX_FILE_CONTEXT} files or selections per message.`);
+      return false;
+    }
+    updateFileContext(() => [...rest, file], ask);
+    return true;
   }
   async function refreshInbox(path: string, id: string) {
     const session = state.current[path]?.providers.opencode.sessionsById[id];

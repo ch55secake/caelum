@@ -21,6 +21,7 @@ import type { FileContext } from "../files/fileContext.js";
 import { parseSlashCommand } from "./slashCommands.js";
 import { useSlashCommands } from "./SlashCommandPicker.js";
 import { UsageDialog } from "../usage/UsageDialog.js";
+import { useFileMentions } from "./FileMentionPicker.js";
 
 export function Composer({
   projectPath,
@@ -55,6 +56,7 @@ export function Composer({
   awaitingApproval,
   fileContext,
   removeFileContext,
+  addFileContext,
   worktreePicker,
 }: {
   projectPath: string;
@@ -89,6 +91,7 @@ export function Composer({
   awaitingApproval: boolean;
   fileContext: FileContext[];
   removeFileContext: (id: string) => void;
+  addFileContext: (file: FileContext) => boolean;
   worktreePicker?: ReactNode;
 }) {
   const measurement = useRef<HTMLTextAreaElement>(null);
@@ -96,6 +99,10 @@ export function Composer({
   const [usageOpen, setUsageOpen] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
   const parsed = parseSlashCommand(draft);
+  const mentions = useFileMentions({
+    project: projectPath, draft, setDraft, enabled: !disabled && !submitting,
+    input: textareaRef, attach: addFileContext,
+  });
   const command =
     provider === "opencode" || parsed?.name === "new" ? parsed : null;
   const slash = useSlashCommands({
@@ -108,7 +115,7 @@ export function Composer({
     input: textareaRef,
   });
   function send(text = draft) {
-    if (disabled || submitting) return;
+    if (disabled || submitting || mentions.reading) return;
     const command = parseSlashCommand(text);
     if (command?.name === "new") {
       if (command.arguments.trim()) {
@@ -189,6 +196,7 @@ export function Composer({
         }}
       >
         {slash.menu}
+        {mentions.menu}
         <FileContextChips
           files={fileContext}
           remove={removeFileContext}
@@ -207,26 +215,28 @@ export function Composer({
           aria-label="Message"
           aria-autocomplete="list"
           aria-haspopup="listbox"
-          aria-controls={slash.controls}
-          aria-activedescendant={slash.activeId}
+          aria-controls={mentions.controls ?? slash.controls}
+          aria-activedescendant={mentions.activeId ?? slash.activeId}
           aria-keyshortcuts={canCycleAgent ? "Shift+Tab" : undefined}
           title={!draft && lastMessage ? "↑ Recall last message" : undefined}
           placeholder={
             working
               ? "Queue your next message…"
-              : "Ask anything, or type / for commands…"
+               : "Ask anything, / for commands, @ for files…"
           }
           value={draft}
           disabled={disabled}
-          onFocus={slash.focus}
-          onBlur={slash.blur}
+          onFocus={() => { slash.focus(); mentions.focus(); }}
+          onBlur={() => { slash.blur(); mentions.blur(); }}
+          onSelect={mentions.select}
           onChange={(event) => {
             setDraft(event.target.value);
             setCommandError(null);
             slash.changed();
+            mentions.changed();
           }}
           onKeyDown={(event) => {
-            if (slash.keyDown(event)) return;
+            if (mentions.keyDown(event) || slash.keyDown(event)) return;
             if (
               event.key === "Tab" &&
               event.shiftKey &&
@@ -409,6 +419,7 @@ export function Composer({
               disabled={
                 disabled ||
                 submitting ||
+                mentions.reading ||
                 !draft.trim() ||
                 draft.trim() === "/"
               }

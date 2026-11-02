@@ -28,6 +28,8 @@ Click an image to open the centred viewer. Use **Fit**, **100%**, or the zoom co
 
 Type **/** for local commands and OpenCode's discovered native/custom project commands. Use arrows to navigate, Tab or click to complete, Enter to run and Escape to dismiss.
 
+Type **@** at the caret to find files in the current checkout with fuzzy matching. Use arrows and Tab/Enter, or click a result, to insert its path and attach a text snapshot for either provider. Escape dismisses completion. Read failures preserve the draft and existing attachments; the same 16-snapshot and 64 KiB limits apply.
+
 - **/new** opens a new-session draft in the current checkout/provider. It also works during execution and keeps the original session's attachments/settings.
 - **/goal objective**, **/goal pause**, **/goal resume**, **/goal clear** use OpenCode's native goal workflow, including during execution.
 - **/usage** opens OpenCode Go allowances, Console budgets and current-session context as separately labelled values. It works before creating a session and keeps attached context. Codex account usage is not included.
