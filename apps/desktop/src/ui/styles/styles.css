@@ -287,8 +287,8 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .session-empty { display: flex; min-height: 100px; flex: 1; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: var(--muted); font-size: 13px; }
 .session-empty h1 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -.6px; color: var(--text); }
 .session-empty p { margin: 0; }
-.prompt-timing { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 0 7px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-.prompt-wait { margin-left: auto; }.queue-wait { display: block; color: var(--muted); font-variant-numeric: tabular-nums; }
+.prompt-timing { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }.prompt-timing.composer-wrap { padding-block: 12px 6px; }
+.prompt-wait.composer-wrap { padding-block: 4px 7px; color: var(--muted); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }.queue-wait { display: block; color: var(--muted); font-variant-numeric: tabular-nums; }
 .shell-context { display: flex; flex-wrap: wrap; gap: 5px 8px; margin: 0 0 4px 37px; color: var(--muted); font-size: 10px; }.shell-context:empty { display: none; }
 .shell-context > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }.shell-badge { font-variant-numeric: tabular-nums; }
 .shell-recent { margin: 5px 0 8px 37px; padding: 7px 10px; max-height: 100px; overflow: hidden; border-left: 2px solid var(--border); color: var(--muted); font: 10px/1.5 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

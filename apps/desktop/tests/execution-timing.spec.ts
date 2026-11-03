@@ -132,7 +132,9 @@ test("queued waiting stays separate from execution and failed sends stop the pro
   });
   const timing = page.getByLabel("Prompt timing", { exact: true });
   await expect(timing).toContainText("Working · 0s");
-  await expect(timing).toContainText("Queued for 10s");
+  await expect(
+    page.getByLabel("Prompt queue time", { exact: true }),
+  ).toContainText("Queued for 10s");
   await page.clock.fastForward(5000);
   await emit(page, "turn/completed", {
     threadId: "thread-a",

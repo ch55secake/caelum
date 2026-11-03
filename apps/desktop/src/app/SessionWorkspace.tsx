@@ -12,7 +12,10 @@ import { MessageQueue } from "../ui/composer/MessageQueue.js";
 import { QuestionCard } from "../ui/sessions/QuestionCard.js";
 import { NewSessionWelcome } from "../ui/sessions/NewSessionWelcome.js";
 import { SessionComposer } from "./SessionComposer.js";
-import { PromptTiming } from "../ui/conversation/PromptTiming.js";
+import {
+  PromptQueueWait,
+  PromptTiming,
+} from "../ui/conversation/PromptTiming.js";
 import type { WorkspaceFocus } from "./useWorkspaceFocus.js";
 import type { WorkspaceSurfaces } from "./useWorkspaceSurfaces.js";
 
@@ -88,6 +91,12 @@ export function SessionWorkspace({
           resolve={(decision) => void app.resolveApproval(request, decision)}
         />
       ))}
+      {run && (
+        <PromptTiming
+          run={run}
+          waiting={activeApprovals.length > 0 || activeQuestions.length > 0}
+        />
+      )}
       {!app.project ? (
         <div className="session-empty">
           {app.restoring ? (
@@ -152,12 +161,7 @@ export function SessionWorkspace({
       ) : (
         <NewSessionWelcome app={app} setup={setupSession} />
       )}
-      {run && (
-        <PromptTiming
-          run={run}
-          waiting={activeApprovals.length > 0 || activeQuestions.length > 0}
-        />
-      )}
+      {run?.queuedMs != null && <PromptQueueWait queuedMs={run.queuedMs} />}
       {app.selected && (
         <MessageQueue
           messages={app.selected.queuedMessages}

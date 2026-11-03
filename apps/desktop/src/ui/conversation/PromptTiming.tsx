@@ -28,18 +28,21 @@ export function PromptTiming({
       aria-label="Prompt timing"
       title="Elapsed time for the whole prompt, including tools and time waiting for input"
     >
-      <Timer size={12} aria-hidden="true" />
+      <Timer size={16} aria-hidden="true" />
       <span>
         {label} ·{" "}
         {run.outcome === "reconciled"
           ? "timing unavailable"
           : elapsedTime((run.finishedAt ?? now) - run.startedAt)}
       </span>
-      {run.queuedMs != null && (
-        <span className="prompt-wait">
-          Queued for {elapsedTime(run.queuedMs)}
-        </span>
-      )}
+    </div>
+  );
+}
+
+export function PromptQueueWait({ queuedMs }: { queuedMs: number }) {
+  return (
+    <div className="prompt-wait composer-wrap" aria-label="Prompt queue time">
+      Queued for {elapsedTime(queuedMs)}
     </div>
   );
 }
