@@ -225,7 +225,11 @@ export function useWorkspace(settings: AppSettings) {
     refreshSessionPullRequest,
     receiveBranches,
   } = useSessionMetadata(store);
-  const loadHistory = useSessionHistory(store, loadSessionDetails);
+  const loadHistory = useSessionHistory(
+    store,
+    loadSessionDetails,
+    activity.reconcile,
+  );
   const navigation = useRef(0);
   const workspace = project ? workspaces[project.path] : undefined;
   const provider = workspace?.provider ?? "codex";
@@ -801,6 +805,22 @@ export function useWorkspace(settings: AppSettings) {
         "opencode-event",
         (event) => {
           if (removedDirectories.current.has(event.projectPath)) return;
+          if (
+            event.eventType === "session.inbox.delivered" &&
+            typeof event.data.sessionID === "string"
+          ) {
+            const queued = state.current[
+              event.projectPath
+            ]?.providers.opencode.sessionsById[
+              event.data.sessionID
+            ]?.queuedMessages.find((item) => item.id === event.data.inboxID);
+            if (queued)
+              activity.delivered(
+                keyFor(event.projectPath, "opencode", event.data.sessionID),
+                queued.id,
+                queued.queuedAt,
+              );
+          }
           update((current) => applyOpenCodeEvent(current, event));
           if (
             !state.current[
@@ -1902,6 +1922,7 @@ export function useWorkspace(settings: AppSettings) {
       !session.queuedMessages.some((item) => !item.remote);
     const item: QueuedMessage = {
       id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
+      queuedAt: Date.now(),
       prompt,
       remote,
       pending: remote,
@@ -1971,6 +1992,12 @@ export function useWorkspace(settings: AppSettings) {
     locks.current.add(key);
     const optimisticId =
       kind === "opencode" ? `opencode-${item.id}` : `local-${item.id}`;
+    activity.begin(
+      keyFor(path, kind, id),
+      item.id,
+      Date.now(),
+      item.queuedAt == null ? undefined : Date.now() - item.queuedAt,
+    );
     mutateSession(path, kind, id, (value) => ({
       ...value,
       isSubmitting: true,
@@ -2022,6 +2049,7 @@ export function useWorkspace(settings: AppSettings) {
         },
       }));
     } catch (reason) {
+      activity.fail(keyFor(path, kind, id), item.id);
       mutateSession(path, kind, id, (value) => ({
         ...value,
         isWorking: false,
@@ -2247,6 +2275,9 @@ export function useWorkspace(settings: AppSettings) {
     const creating = !id;
     let prepared = false;
     const messageId = `msg_${crypto.randomUUID().replaceAll("-", "")}`;
+    const submittedAt = Date.now();
+    if (id && !command)
+      activity.begin(keyFor(target.path, kind, id), messageId, submittedAt);
     const optimisticId =
       kind === "opencode" ? `opencode-${messageId}` : `local-${messageId}`;
     if (id)
@@ -2322,6 +2353,12 @@ export function useWorkspace(settings: AppSettings) {
           });
       }
       const sessionId = id;
+      if (creating && !command)
+        activity.begin(
+          keyFor(target.path, kind, sessionId),
+          messageId,
+          submittedAt,
+        );
       prepared = true;
       mutateSession(target.path, kind, sessionId, (value) => ({
         ...value,
@@ -2425,6 +2462,7 @@ export function useWorkspace(settings: AppSettings) {
         }));
       return true;
     } catch (reason) {
+      if (id) activity.fail(keyFor(target.path, kind, id), messageId);
       if (id)
         mutateSession(target.path, kind, id, (value) => ({
           ...value,

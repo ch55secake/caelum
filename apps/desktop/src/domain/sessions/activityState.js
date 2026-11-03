@@ -73,19 +73,31 @@ export function applyActivity(record, event, viewed, now) {
     if (run && run.finishedAt === null && (!identity || run.id === identity))
       return { record };
     run = {
+      ...(run?.awaitingStart && run.finishedAt === null ? run : {}),
       id: identity ?? `live-${now}`,
-      startedAt: at,
+      startedAt:
+        run?.awaitingStart && run.finishedAt === null
+          ? Math.min(run.startedAt, at)
+          : at,
+      awaitingStart: false,
       finishedAt: null,
       outcome: null,
     };
   } else if (event.type === "completed") {
-    if (event.executionId && run && event.executionId !== run.id)
+    if (
+      event.executionId &&
+      run &&
+      !run.awaitingStart &&
+      event.executionId !== run.id
+    )
       return { record };
     // A repeated unidentifiable terminal is quiet until a new start arrives.
     if (!identity && run?.finishedAt != null) return { record };
     if (run && run.finishedAt === null) {
       run = {
         ...run,
+        id: event.executionId ?? run.id,
+        awaitingStart: false,
         finishedAt: Math.max(run.startedAt, at),
         outcome: event.outcome,
       };

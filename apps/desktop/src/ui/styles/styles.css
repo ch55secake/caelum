@@ -285,6 +285,8 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .session-empty { display: flex; min-height: 100px; flex: 1; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: var(--muted); font-size: 13px; }
 .session-empty h1 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -.6px; color: var(--text); }
 .session-empty p { margin: 0; }
+.prompt-timing { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 0 7px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.prompt-wait { margin-left: auto; }.queue-wait { display: block; color: var(--muted); font-variant-numeric: tabular-nums; }
 .new-session-welcome { padding: 24px; gap: 14px; text-align: center; }
 .new-session-emblem { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 4px; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--composer-focus); border-radius: 14px; }
 .new-session-welcome h1 { font-size: clamp(18px, 2vw, 24px); line-height: 1.3; }

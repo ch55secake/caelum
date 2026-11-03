@@ -172,6 +172,70 @@ export function useSessionActivity() {
     }
   }
   return {
+    begin: (
+      key: string,
+      submissionId: string,
+      startedAt = Date.now(),
+      queuedMs?: number,
+    ) => {
+      const record = records.current.get(key) ?? emptyActivity();
+      if (record.run?.finishedAt === null) return;
+      write(key, {
+        ...record,
+        run: {
+          id: submissionId,
+          submissionId,
+          startedAt,
+          queuedMs,
+          awaitingStart: true,
+          finishedAt: null,
+          outcome: null,
+        },
+      });
+    },
+    fail: (key: string, submissionId: string) => {
+      const record = records.current.get(key);
+      if (
+        record?.run?.submissionId === submissionId &&
+        record.run.finishedAt === null
+      )
+        write(key, {
+          ...record,
+          run: { ...record.run, finishedAt: Date.now(), outcome: "failed" },
+        });
+    },
+    reconcile: (key: string, working: boolean) => {
+      const record = records.current.get(key);
+      // A fresh idle snapshot recovers a missed terminal quietly. Its arrival
+      // time is not the execution's completion time, so do not report a duration.
+      if (!working && record?.run?.finishedAt === null)
+        write(key, {
+          ...record,
+          run: { ...record.run, finishedAt: Date.now(), outcome: "reconciled" },
+        });
+    },
+    delivered: (key: string, id: string, queuedAt?: number) => {
+      const record = records.current.get(key) ?? emptyActivity();
+      const now = Date.now();
+      const run =
+        record.run?.finishedAt === null
+          ? record.run
+          : {
+              id,
+              submissionId: id,
+              startedAt: now,
+              finishedAt: null,
+              outcome: null,
+              awaitingStart: true,
+            };
+      write(key, {
+        ...record,
+        run: {
+          ...run,
+          queuedMs: queuedAt == null ? undefined : Math.max(0, now - queuedAt),
+        },
+      });
+    },
     receive,
     observeSessions,
     get: (key: string) => records.current.get(key),

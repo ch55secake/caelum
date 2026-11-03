@@ -8,6 +8,9 @@ export type PromptRun = {
   startedAt: number;
   finishedAt: number | null;
   outcome: string | null;
+  awaitingStart?: boolean;
+  submissionId?: string;
+  queuedMs?: number;
 };
 export type SessionActivity = {
   unread: boolean;

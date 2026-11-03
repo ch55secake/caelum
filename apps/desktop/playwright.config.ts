@@ -7,7 +7,7 @@ export default defineConfig({
     {
       name: "webkit",
       testMatch:
-        /(?:timeline|side-questions|stats|pull-request-mentions|cancellation|usage|agents|composer|settings|themes|about|session-launcher|activity)\.spec\.ts/,
+        /(?:timeline|side-questions|stats|pull-request-mentions|cancellation|usage|agents|composer|settings|themes|about|session-launcher|activity|execution-timing)\.spec\.ts/,
       use: { browserName: "webkit" },
     },
   ],

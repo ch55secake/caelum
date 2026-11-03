@@ -12,6 +12,7 @@ import { MessageQueue } from "../ui/composer/MessageQueue.js";
 import { QuestionCard } from "../ui/sessions/QuestionCard.js";
 import { NewSessionWelcome } from "../ui/sessions/NewSessionWelcome.js";
 import { SessionComposer } from "./SessionComposer.js";
+import { PromptTiming } from "../ui/conversation/PromptTiming.js";
 import type { WorkspaceFocus } from "./useWorkspaceFocus.js";
 import type { WorkspaceSurfaces } from "./useWorkspaceSurfaces.js";
 
@@ -43,6 +44,7 @@ export function SessionWorkspace({
   const sessionError = app.selected
     ? app.selected.error
     : app.providerWorkspace?.error;
+  const run = app.activity.get(sessionKey)?.run;
   return (
     <div
       className="session-workspace"
@@ -149,6 +151,12 @@ export function SessionWorkspace({
         />
       ) : (
         <NewSessionWelcome app={app} setup={setupSession} />
+      )}
+      {run && (
+        <PromptTiming
+          run={run}
+          waiting={activeApprovals.length > 0 || activeQuestions.length > 0}
+        />
       )}
       {app.selected && (
         <MessageQueue

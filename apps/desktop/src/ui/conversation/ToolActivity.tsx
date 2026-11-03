@@ -2,9 +2,13 @@ import { Check, ChevronRight, CircleAlert, Wrench } from "lucide-react";
 import { displayValue } from "../../domain/conversation/conversationState.js";
 import type { ConversationEntry } from "../../domain/sessions/workspaceState.js";
 import { CopyButton } from "./MessageContent.js";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { elapsedTime, useClock } from "../../application/useClock.js";
 import { splitShellMessages } from "../../domain/conversation/shellMessages.js";
-import { toolSummary, toolFilePaths } from "../../domain/conversation/toolSummary.js";
+import {
+  toolSummary,
+  toolFilePaths,
+} from "../../domain/conversation/toolSummary.js";
 import { ToolPatchPreview } from "./ToolPatchPreview.js";
 import { useFileNavigation } from "../files/FileNavigation.js";
 import { fileReference } from "../../domain/files/fileContext.js";
@@ -116,21 +120,8 @@ export function ToolActivity({
   );
   const running = entry.status === "running";
   const [observedStart] = useState(Date.now);
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!running) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  const seconds = Math.max(
-    0,
-    Math.floor((now - (entry.startedAt ?? observedStart)) / 1000),
-  );
-  const elapsed =
-    seconds >= 60
-      ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
-      : `${seconds}s`;
+  const now = useClock(running);
+  const elapsed = elapsedTime(now - (entry.startedAt ?? observedStart));
   const summary = toolSummary(entry.input);
   const failed = entry.status === "failed" || Boolean(entry.error);
   const Icon = failed

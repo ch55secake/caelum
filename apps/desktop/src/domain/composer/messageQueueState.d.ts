@@ -8,6 +8,7 @@ export type QueuedMessage = {
   effort: string | null;
   agent: string | null;
   error?: string;
+  queuedAt?: number;
 };
 export function inboxMessages(items: unknown): QueuedMessage[];
 export function reconcileInbox(
@@ -18,4 +19,5 @@ export function queueEvent(
   session: SessionWorkspaceState,
   method: string,
   data: Record<string, unknown>,
+  at?: number,
 ): SessionWorkspaceState;

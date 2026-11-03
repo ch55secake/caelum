@@ -149,8 +149,7 @@ export function codexItem(item, completed = false) {
     status: item.exitCode
       ? "failed"
       : status(item.status ?? (completed ? "completed" : "running")),
-    input:
-      item.command ?? item.arguments ?? item.changes ?? item.query ?? item,
+    input: item.command ?? item.arguments ?? item.changes ?? item.query ?? item,
     output: item.aggregatedOutput ?? item.result ?? item.content,
     images:
       item.type === "imageView"
@@ -292,10 +291,7 @@ export function historyEntries(provider, data) {
         const compacted =
           item.type === "contextCompaction" &&
           (item.completedAtMs != null || index < items.length - 1);
-        const entry = codexItem(
-          item,
-          compacted || turnStatus !== "inProgress",
-        );
+        const entry = codexItem(item, compacted || turnStatus !== "inProgress");
         if (
           entry?.kind === "compaction" &&
           !compacted &&
@@ -329,12 +325,7 @@ export function upsertEntry(entries, entry) {
   return next;
 }
 
-export function mergeHistory(
-  live,
-  history,
-  mode = "prepend",
-  beforeId = null,
-) {
+export function mergeHistory(live, history, mode = "prepend", beforeId = null) {
   const liveById = new Map(live.map((entry) => [entry.id, entry]));
   const adopted = new Set();
   const merged = history.map((entry) => {
@@ -442,7 +433,9 @@ export function applyConversationEvent(
   event = {},
 ) {
   let next =
-    provider === "opencode" ? queueEvent(session, method, data) : session;
+    provider === "opencode"
+      ? queueEvent(session, method, data, event.created)
+      : session;
   const put = (entry) => {
     if (entry)
       next = { ...next, conversation: upsertEntry(next.conversation, entry) };
@@ -503,9 +496,8 @@ export function applyConversationEvent(
     if (isText({ kind })) {
       const streamText =
         (existing?.streamText ??
-          (existing?.historyText === undefined
-            ? (existing?.text ?? "")
-            : "")) + text;
+          (existing?.historyText === undefined ? (existing?.text ?? "") : "")) +
+        text;
       put({
         ...existing,
         id,
@@ -567,17 +559,13 @@ export function applyConversationEvent(
     if (["item/started", "item/completed"].includes(method)) {
       const entry = codexItem(object(data.item), method === "item/completed");
       if (entry?.kind === "tool") {
-        const previous = next.conversation.find(
-          (item) => item.id === entry.id,
-        );
+        const previous = next.conversation.find((item) => item.id === entry.id);
         entry.startedAt = previous?.startedAt ?? Date.now();
         if (method === "item/completed")
           entry.durationMs ??= Date.now() - entry.startedAt;
       }
       if (entry?.kind === "compaction") {
-        const previous = next.conversation.find(
-          (item) => item.id === entry.id,
-        );
+        const previous = next.conversation.find((item) => item.id === entry.id);
         entry.startedAt ??= previous?.startedAt ?? Date.now();
       }
       if (entry && method === "item/started")
@@ -661,9 +649,7 @@ export function applyConversationEvent(
     if (method === "error")
       next = {
         ...next,
-        error: displayValue(
-          data.error?.message ?? data.message ?? data.error,
-        ),
+        error: displayValue(data.error?.message ?? data.message ?? data.error),
       };
   } else {
     if (method === "session.inbox.delivered") {
@@ -784,8 +770,7 @@ export function applyConversationEvent(
         });
         if (next.isWorking) working();
       } else if (!previous?.complete) {
-        if (!previous)
-          put({ id, messageId, kind, text: "", complete: false });
+        if (!previous) put({ id, messageId, kind, text: "", complete: false });
         if (phase === "delta") delta(id, kind, data.delta ?? data.text);
         working(kind === "reasoning" ? "Thinking…" : "Responding…");
       }
