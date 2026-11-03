@@ -1,5 +1,8 @@
 # Performance measurements
 
+Results: [release baseline](baseline-0.1.12.md) and
+[feature stack with bounded render publication](stack-0.1.12.md).
+
 Run measurements on the same machine, power mode, viewport, and commit stack,
 without simultaneous builds or test suites. Keep the raw JSON alongside the
 report; `apps/desktop/profile-results/` is ignored. Repeat each scenario at least
