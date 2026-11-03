@@ -521,7 +521,7 @@ test("project rows show scoped live Git details and background activity, includi
   const otherDetails = other.locator("..");
   await expect(otherDetails).toContainText("Checking Git…");
   await expect(
-    currentDetails.locator(".project-activity .running-dot"),
+    currentDetails.locator(".project-heading .running-dot"),
   ).toBeVisible();
   await current.click();
   await page.evaluate(() =>

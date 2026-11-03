@@ -1,32 +1,19 @@
 import { ShieldAlert } from "lucide-react";
 
 export function ProjectActivity({
-  working,
   unread,
   attention,
   openUnread,
   openAttention,
 }: {
-  working: number;
   unread: number;
   attention: number;
   openUnread: () => void;
   openAttention: () => void;
 }) {
-  if (!working && !unread && !attention) return null;
+  if (!unread && !attention) return null;
   return (
     <div className="project-activity" aria-label="Project activity">
-      {working > 0 && (
-        <span
-          className="project-activity-badge"
-          title={`${working} working ${working === 1 ? "session" : "sessions"}`}
-          aria-label={`${working} working ${working === 1 ? "session" : "sessions"}`}
-        >
-          <span className="running-dot" aria-hidden="true" />
-          {working}
-          <span>working</span>
-        </span>
-      )}
       {unread > 0 && (
         <button
           className="project-activity-badge unread"

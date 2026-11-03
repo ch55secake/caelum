@@ -387,11 +387,10 @@ export function ProjectWorktrees({
             </button>
           ) : undefined
         }
-        working={activity.working.length > 0}
+        workingCount={activity.working.length}
         approval={app.approvals.some((request) => member(request.projectPath))}
         activity={
           <ProjectActivity
-            working={activity.working.length}
             unread={activity.unread.length}
             attention={activity.attention.length}
             openUnread={() => {

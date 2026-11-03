@@ -20,7 +20,7 @@ export function ProjectItem({
   checkout,
   subtitle,
   selected,
-  working,
+  workingCount,
   approval,
   activate,
   close,
@@ -32,7 +32,7 @@ export function ProjectItem({
   checkout: ProjectInfo;
   subtitle: string;
   selected: boolean;
-  working: boolean;
+  workingCount: number;
   approval: boolean;
   activate: () => void;
   close: () => void;
@@ -46,6 +46,8 @@ export function ProjectItem({
   const row = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const working = workingCount > 0;
+  const workingLabel = `${workingCount} working ${workingCount === 1 ? "session" : "sessions"}`;
   useEffect(() => {
     if (!isTauri()) return;
     const unsubscribe = subscribeGitStatus(checkout.path, (result) => {
@@ -120,6 +122,17 @@ export function ProjectItem({
           <span className="project-heading">
             {!disclosure && <FolderGit2 size={14} aria-hidden="true" />}
             <span className="project-name">{project.name}</span>
+            {working && (
+              <span
+                className="project-working"
+                title={workingLabel}
+                aria-label={workingLabel}
+              >
+                <span className="running-dot" aria-hidden="true" />
+                {workingCount}
+                <span>working</span>
+              </span>
+            )}
           </span>
           <span className="project-session">{subtitle}</span>
           <span id={metadataId} className="project-context">
