@@ -8,6 +8,7 @@ for (const provider of ["codex", "opencode"] as const) {
   }) => {
     await page.clock.install();
     await desktop(page, provider === "codex" ? "thread-a" : null);
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
     if (provider === "opencode") {
       await choose(page, "Provider", "OpenCode");
       await page
@@ -115,6 +116,7 @@ test("queued waiting stays separate from execution and failed sends stop the pro
 }) => {
   await page.clock.install();
   await desktop(page);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   await emit(page, "turn/started", {
     threadId: "thread-a",
     turn: { id: "first" },
