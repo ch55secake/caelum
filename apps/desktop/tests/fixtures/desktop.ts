@@ -269,6 +269,24 @@ export async function desktop(
       const pullRequests = new Map<string, unknown>();
       const pullRequestPages = new Map<string, unknown>();
       let diffVersion = 1;
+      const repository = "https://github.com/ch55secake/caelum";
+      let appInfo = {
+        name: "Caelum",
+        version: "0.1.12",
+        platform: "macos",
+        architecture: "aarch64",
+        repositoryUrl: repository,
+        releasesUrl: `${repository}/releases`,
+        license: "MIT",
+        licenseUrl: `${repository}/blob/main/LICENSE`,
+      };
+      let updateCheck = {
+        currentVersion: "0.1.12",
+        latestVersion: "0.2.0",
+        status: "available",
+        releaseUrl: `${repository}/releases/tag/v0.2.0`,
+        downloadUrl: `${repository}/releases/download/v0.2.0/Caelum-v0.2.0-aarch64.dmg`,
+      };
       const codexHistory = new Map<
         string,
         { data: unknown[]; isWorking: boolean }
@@ -295,6 +313,12 @@ export async function desktop(
         isTauri: true,
         fixture: {
           calls,
+          setAppInfo: (value: typeof appInfo) => {
+            appInfo = value;
+          },
+          setUpdateCheck: (value: typeof updateCheck) => {
+            updateCheck = value;
+          },
           addWorktree,
           forgetWorktree: (path: string) => {
             checkouts = checkouts.filter((entry) => entry.path !== path);
@@ -545,6 +569,15 @@ export async function desktop(
           },
           invoke: async (command: string, args: Record<string, any> = {}) => {
             calls.push({ command, args });
+            if (command === "app_info" || command === "check_for_updates") {
+              const error = commandErrors.get(command);
+              const snapshot = structuredClone(
+                command === "app_info" ? appInfo : updateCheck,
+              );
+              await gates.get(command)?.promise;
+              if (error) throw new Error(error);
+              return snapshot;
+            }
             if (command === "plugin:clipboard-manager|read_text") {
               await gates.get(command)?.promise;
               return clipboard;

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { GitBranch, Layers, Palette, X } from "lucide-react";
+import { GitBranch, Info, Layers, Palette, X } from "lucide-react";
 import type { WorkspaceController } from "../../application/workspace/controller.js";
 import type { Preferences } from "../../application/useSettings.js";
 import { AppearanceSettings } from "./AppearanceSettings.js";
 import { ProviderSettings } from "./ProviderSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
+import { AboutSettings } from "./AboutSettings.js";
+import { useAbout } from "../../application/useAbout.js";
 
 const sections = [
   {
@@ -25,6 +27,7 @@ const sections = [
     label: "Worktree settings",
     Icon: GitBranch,
   },
+  { id: "about", name: "About", label: "About Caelum", Icon: Info },
 ] as const;
 
 export function Settings({
@@ -40,6 +43,7 @@ export function Settings({
   const [section, setSection] =
     useState<(typeof sections)[number]["id"]>("appearance");
   const [provider, setProvider] = useState(app.provider);
+  const about = useAbout();
   useEffect(() => {
     const element = dialog.current!;
     const previous = document.activeElement;
@@ -99,7 +103,9 @@ export function Settings({
           className="settings-content"
           aria-label={sections.find(({ id }) => id === section)!.label}
         >
-          {section === "appearance" ? (
+          {section === "about" ? (
+            <AboutSettings about={about} />
+          ) : section === "appearance" ? (
             <AppearanceSettings preferences={preferences} />
           ) : section === "worktrees" ? (
             <WorktreeSettings app={app} preferences={preferences} />

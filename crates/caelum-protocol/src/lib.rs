@@ -7,9 +7,34 @@ pub use stats::*;
 
 /// Stable, serializable application metadata shared across Caelum interfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub name: String,
     pub version: String,
+    pub platform: String,
+    pub architecture: String,
+    pub repository_url: String,
+    pub releases_url: String,
+    pub license: String,
+    pub license_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateStatus {
+    Available,
+    UpToDate,
+    Ahead,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheck {
+    pub current_version: String,
+    pub latest_version: String,
+    pub status: UpdateStatus,
+    pub release_url: String,
+    pub download_url: Option<String>,
 }
 
 /// A project path approved and normalized by the Rust core.
