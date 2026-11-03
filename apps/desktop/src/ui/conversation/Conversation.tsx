@@ -103,23 +103,16 @@ function CompactionNotice({
 function ThinkingTrace({
   entry,
   active,
-  onExpand,
 }: {
   entry: ConversationEntry;
   active: boolean;
-  onExpand: () => void;
 }) {
   const preview = entry.text
     .replace(/[#*_`>\[\]]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return (
-    <details
-      className="reasoning"
-      onToggle={(event) => {
-        if (event.currentTarget.open) onExpand();
-      }}
-    >
+    <details className="reasoning">
       <summary aria-label="Thinking trace">
         <BrainCircuit size={13} />
         <span>
@@ -184,6 +177,25 @@ export type ConversationHandle = {
   restoreScroll: () => void;
 };
 
+function canScrollTranscriptUp(target: EventTarget | null, scroll: HTMLElement) {
+  if (scroll.scrollTop <= 0) return false;
+  // A wheel or touch gesture inside a scrollable tool/code block belongs to
+  // that block until it reaches its edge and can scroll the conversation.
+  for (
+    let node = target instanceof Element ? target : null;
+    node && node !== scroll;
+    node = node.parentElement
+  ) {
+    const style = getComputedStyle(node);
+    if (
+      /auto|scroll/.test(style.overflowY) &&
+      (node.scrollTop > 0 || /contain|none/.test(style.overscrollBehaviorY))
+    )
+      return false;
+  }
+  return true;
+}
+
 export function Conversation({
   ref,
   session,
@@ -212,6 +224,7 @@ export function Conversation({
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(session.scrollTop === null);
   const position = useRef(session.scrollTop);
+  const touchY = useRef<number | null>(null);
   const dimensions = useRef({ height: 0, content: 0 });
   const [atBottom, setAtBottom] = useState(following.current);
   // A sliding 100-entry window bounds Markdown and tool DOM, while keeping all records in memory.
@@ -248,9 +261,16 @@ export function Conversation({
   const pinnedEnd = endIndex < 0 ? entries.length : endIndex + 1;
   const start = Math.max(0, pinnedEnd - 100);
   // Keep appending while there is room in the window, even when the reader
-  // has expanded a trace/tool. Pinning only prevents older entries being evicted.
+  // has scrolled up. Pinning only prevents older entries being evicted.
   const windowEnd =
     endIndex < 0 ? entries.length : Math.min(entries.length, start + 100);
+  function pauseFollowing() {
+    if (!following.current) return;
+    following.current = false;
+    position.current = scroll.current!.scrollTop;
+    setAtBottom(false);
+    setEnd(entries[windowEnd - 1]?.id ?? null);
+  }
   const anchor = useRef<{ id: string; offset: number } | null>(null);
   const rememberAnchor = () => {
     const container = scroll.current;
@@ -356,7 +376,7 @@ export function Conversation({
     setEnd(null);
     position.current = null;
     requestAnimationFrame(() => {
-      if (scroll.current)
+      if (scroll.current && following.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
     });
   }
@@ -377,13 +397,63 @@ export function Conversation({
         ref={scroll}
         className="transcript"
         aria-label="Conversation"
+        tabIndex={0}
+        onWheelCapture={(event) => {
+          if (
+            following.current &&
+            event.deltaY < 0 &&
+            !event.ctrlKey &&
+            canScrollTranscriptUp(event.target, event.currentTarget)
+          )
+            pauseFollowing();
+        }}
+        onTouchStart={(event) => {
+          touchY.current =
+            event.touches.length === 1 ? event.touches[0].clientY : null;
+        }}
+        onTouchMove={(event) => {
+          const next =
+            event.touches.length === 1 ? event.touches[0].clientY : null;
+          if (
+            following.current &&
+            next !== null &&
+            touchY.current !== null &&
+            next > touchY.current &&
+            canScrollTranscriptUp(event.target, event.currentTarget)
+          )
+            pauseFollowing();
+          touchY.current = next;
+        }}
+        onTouchEnd={() => {
+          touchY.current = null;
+        }}
+        onTouchCancel={() => {
+          touchY.current = null;
+        }}
+        onKeyDown={(event) => {
+          const target = event.target as HTMLElement;
+          if (
+            following.current &&
+            !event.defaultPrevented &&
+            !target.closest("input, textarea, select, [contenteditable='true']") &&
+            (["ArrowUp", "PageUp", "Home"].includes(event.key) ||
+              (event.key === " " &&
+                event.shiftKey &&
+                !target.closest("button, summary, a[href]"))) &&
+            canScrollTranscriptUp(target, event.currentTarget)
+          )
+            pauseFollowing();
+        }}
         onScroll={() => {
           const node = scroll.current!;
           // Layout-induced scroll events can arrive before ResizeObserver.
           // Preserve the follow intent through composer and content resizes.
-          if (followResize()) return;
+          if (followResize()) {
+            position.current = node.scrollTop;
+            return;
+          }
           const near =
-            node.scrollHeight - node.scrollTop - node.clientHeight < 64 &&
+            node.scrollHeight - node.scrollTop - node.clientHeight <= 1 &&
             windowEnd === entries.length;
           following.current = near;
           position.current = node.scrollTop;
@@ -450,9 +520,6 @@ export function Conversation({
                     session.expandedTools[entry.id] ?? entry.status === "failed"
                   }
                   toggle={() => {
-                    following.current = false;
-                    setAtBottom(false);
-                    setEnd(entries[windowEnd - 1]?.id ?? null);
                     saveView({
                       expandedTools: {
                         ...session.expandedTools,
@@ -472,11 +539,6 @@ export function Conversation({
                     !entry.complete &&
                     entry.status !== "interrupted"
                   }
-                  onExpand={() => {
-                    following.current = false;
-                    setAtBottom(false);
-                    setEnd(entries[windowEnd - 1]?.id ?? null);
-                  }}
                 />
               ) : entry.kind === "compaction" ? (
                 <CompactionNotice
@@ -486,9 +548,6 @@ export function Conversation({
                     session.expandedTools[entry.id] ?? entry.status === "failed"
                   }
                   toggle={() => {
-                    following.current = false;
-                    setAtBottom(false);
-                    setEnd(entries[windowEnd - 1]?.id ?? null);
                     saveView({
                       expandedTools: {
                         ...session.expandedTools,

@@ -388,24 +388,24 @@ export function ProjectWorktrees({
           ) : undefined
         }
         workingCount={activity.working.length}
+        unreadCount={activity.unread.length}
+        openUnread={() => {
+          const next = activity.unread[0];
+          if (!next) return;
+          showSession();
+          app.selectSession(
+            next.session,
+            next.provider,
+            app.projects.find((item) => item.path === next.path) ?? {
+              name: project.name,
+              path: next.path,
+            },
+          );
+        }}
         approval={app.approvals.some((request) => member(request.projectPath))}
         activity={
           <ProjectActivity
-            unread={activity.unread.length}
             attention={activity.attention.length}
-            openUnread={() => {
-              const next = activity.unread[0];
-              if (!next) return;
-              showSession();
-              app.selectSession(
-                next.session,
-                next.provider,
-                app.projects.find((item) => item.path === next.path) ?? {
-                  name: project.name,
-                  path: next.path,
-                },
-              );
-            }}
             openAttention={() => {
               const next = activity.attention[0];
               if (!next) return;
