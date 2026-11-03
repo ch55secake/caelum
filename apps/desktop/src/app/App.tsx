@@ -1,54 +1,33 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import {
-  FolderOpen,
-  LoaderCircle,
-  PanelLeftOpen,
-  PanelRight,
-  Search,
-  ShieldAlert,
-  MessageCircleQuestion,
-  Settings as SettingsIcon,
-  X,
-} from "lucide-react";
-import {
-  ProjectInspector,
-  type InspectorRequest,
-} from "../ui/files/ProjectInspector.js";
-import { FileNavigation } from "../ui/files/FileNavigation.js";
-import type { FileLocation } from "../domain/files/fileContext.js";
 import { useWorkspace } from "../application/workspace/useWorkspace.js";
 import { useSessionPullRequests } from "../application/github/useSessionPullRequests.js";
+import { useSettings } from "../application/useSettings.js";
+import { questionKey } from "../domain/sessions/questionState.js";
+import { sessionTitle } from "../domain/sessions/workspaceState.js";
 import { useSidebarView } from "../ui/sidebar/useSidebarView.js";
 import { Sidebar } from "../ui/sidebar/Sidebar.js";
-import { ApprovalCard, Conversation } from "../ui/conversation/Conversation.js";
-import { Composer } from "../ui/composer/Composer.js";
-import { useEscapeCancellation } from "../ui/composer/useEscapeCancellation.js";
-import { MessageQueue } from "../ui/composer/MessageQueue.js";
-import { QuestionCard } from "../ui/sessions/QuestionCard.js";
-import { SessionWorktree } from "../ui/projects/Worktrees.js";
-import { questionKey } from "../domain/sessions/questionState.js";
-import { projectHasActiveTurn, sessionTitle } from "../domain/sessions/workspaceState.js";
-import { lastUserMessage } from "../domain/conversation/shellMessages.js";
 import { Settings } from "../ui/settings/Settings.js";
-import { useSettings } from "../application/useSettings.js";
+import { useEscapeCancellation } from "../ui/composer/useEscapeCancellation.js";
+import { FileNavigation } from "../ui/files/FileNavigation.js";
 import { ContextMenuProvider } from "../ui/primitives/ContextMenu.js";
-import {
-  PullRequestPreviewProvider,
-  PullRequestScreen,
-  type PullRequestTarget,
-} from "../ui/pull-requests/PullRequestPreview.js";
+import { PullRequestPreviewProvider } from "../ui/pull-requests/PullRequestPreview.js";
+import { useWorkspaceSurfaces } from "./useWorkspaceSurfaces.js";
+import { useWorkspaceFocus } from "./useWorkspaceFocus.js";
+import { useWorkspaceShortcuts } from "./useWorkspaceShortcuts.js";
+import { WorkspaceHeader } from "./WorkspaceHeader.js";
+import { WorkspaceNotices } from "./WorkspaceNotices.js";
+import { WorkspaceInspector } from "./WorkspaceInspector.js";
+import { WorkspacePullRequest } from "./WorkspacePullRequest.js";
+import { SessionWorkspace } from "./SessionWorkspace.js";
 
 export default function App() {
   const preferences = useSettings();
   const app = useWorkspace(preferences.settings);
+  const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
+  const surfaces = useWorkspaceSurfaces(app.project?.path, sessionKey);
+  const { activePullRequest, settingsOpen, collapsed, pane, expanded } =
+    surfaces;
+  const sidebarView = useSidebarView(app.rootProject?.path ?? "");
   const sessionPullRequests = useSessionPullRequests(
     app,
     app.projectSessions
@@ -60,166 +39,6 @@ export default function App() {
       )
       .map((session) => ({ ...session, title: sessionTitle(session) })),
   );
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState<number | null>(() => {
-    try {
-      const width = Number(localStorage.getItem("caelum.sidebar.width"));
-      return Number.isFinite(width) && width > 0 ? width : null;
-    } catch {
-      return null;
-    }
-  });
-  useEffect(() => {
-    if (sidebarWidth === null) return;
-    try {
-      localStorage.setItem("caelum.sidebar.width", String(sidebarWidth));
-    } catch {
-      /* Keep the preferred width for this window, including after collapse. */
-    }
-  }, [sidebarWidth]);
-  const [pane, setPane] = useState<"files" | "changes" | null>("changes");
-  const [expanded, setExpanded] = useState(false);
-  const [fileRequest, setFileRequest] = useState<InspectorRequest>();
-  const fileRequestId = useRef(0);
-  const [pullRequest, setPullRequest] = useState<
-    (PullRequestTarget & { scope: string }) | null
-  >(null);
-  const sidebarView = useSidebarView(app.rootProject?.path ?? "");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const conversationRef = useRef<
-    import("../ui/conversation/Conversation.js").ConversationHandle
-  >(null);
-  const [focusRequest, setFocusRequest] = useState<{
-    target: "search" | "composer";
-  } | null>(null);
-  useLayoutEffect(() => {
-    if (!focusRequest) return;
-    const target =
-      focusRequest.target === "search"
-        ? searchRef.current
-        : textareaRef.current;
-    target?.focus();
-    if (focusRequest.target === "search") target?.select();
-  }, [focusRequest]);
-  const questionDockRef = useRef<HTMLDivElement>(null);
-  const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
-  const activePullRequest =
-    pullRequest?.scope === sessionKey ? pullRequest : null;
-  useEscapeCancellation({
-    scope: sessionKey,
-    enabled:
-      Boolean(app.selected?.isWorking) &&
-      !settingsOpen &&
-      !activePullRequest &&
-      !(expanded && pane),
-    cancel: app.cancel,
-  });
-  const currentPullRequest = useRef(activePullRequest);
-  currentPullRequest.current = activePullRequest;
-  const changesOpen = !activePullRequest && pane === "changes";
-  const currentSessionKey = useRef(sessionKey);
-  currentSessionKey.current = sessionKey;
-  const title = app.selected
-    ? sessionTitle(
-        app.providerWorkspace?.sessions.find(
-          (item) => item.id === app.selectedId,
-        ) ?? app.selected.session.thread,
-      )
-    : "New session";
-  function toggleChanges() {
-    setPullRequest(null);
-    setPane((value) =>
-      !activePullRequest && value === "changes" ? null : "changes",
-    );
-    setFileRequest(undefined);
-    setExpanded(false);
-  }
-  const projectPath = app.project?.path;
-  const openFile = useCallback(
-    (location: FileLocation) => {
-      if (!projectPath) return;
-      setPullRequest(null);
-      setPane("files");
-      setFileRequest({
-        project: projectPath,
-        id: ++fileRequestId.current,
-        location,
-      });
-    },
-    [projectPath],
-  );
-  const fileNavigation = useMemo(
-    () => (projectPath ? { projectPath, open: openFile } : null),
-    [projectPath, openFile],
-  );
-  function newSession() {
-    setPullRequest(null);
-    app.newSession();
-    sidebarView.update({ search: "", searchOpen: false });
-    setFocusRequest({ target: "composer" });
-  }
-  function showSession() {
-    setPullRequest(null);
-    setExpanded(false);
-    // Leaving a PR already restores focus through the session effect below.
-    if (!activePullRequest) setFocusRequest({ target: "composer" });
-  }
-  function focusSearch() {
-    setCollapsed(false);
-    sidebarView.update({ searchOpen: true });
-    setFocusRequest({ target: "search" });
-  }
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
-      if (document.querySelector("dialog[open]")) return;
-      if (event.key === ",") {
-        event.preventDefault();
-        setSettingsOpen(true);
-        return;
-      }
-      if (settingsOpen) return;
-      if (
-        app.project &&
-        (event.key.toLowerCase() === "p" ||
-          (event.shiftKey && event.key.toLowerCase() === "f"))
-      ) {
-        event.preventDefault();
-        const id = ++fileRequestId.current;
-        setPullRequest(null);
-        setPane("files");
-        setFileRequest({
-          project: app.project.path,
-          id,
-          search: {
-            id,
-            mode: event.key.toLowerCase() === "p" ? "files" : "content",
-          },
-        });
-      }
-      if (event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        newSession();
-      }
-      if (event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        focusSearch();
-      }
-      if (event.key === "\\") {
-        event.preventDefault();
-        setCollapsed((value) => !value);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  });
-  useEffect(() => {
-    setPullRequest(null);
-    setExpanded(false);
-    setFileRequest(undefined);
-  }, [sessionKey]);
   const activeApprovals = app.approvals.filter(
     (request) =>
       request.projectPath === app.project?.path &&
@@ -236,35 +55,52 @@ export default function App() {
       request.provider === app.provider &&
       request.sessionId === app.selectedId,
   );
-  const activeQuestionKey = activeQuestions[0]
-    ? questionKey(activeQuestions[0])
-    : null;
-  useEffect(() => {
-    if (activePullRequest) return;
-    const previousFocus = document.activeElement;
-    const frame = requestAnimationFrame(() => {
-      if (document.querySelector("dialog[open]")) return;
-      // Respect a newer keyboard or pointer selection made before this frame.
-      if (
-        document.activeElement !== previousFocus &&
-        document.activeElement !== document.body
+  const focus = useWorkspaceFocus(
+    sessionKey,
+    activeQuestions[0] ? questionKey(activeQuestions[0]) : null,
+    Boolean(activePullRequest),
+  );
+  function newSession() {
+    surfaces.dismissPullRequest();
+    app.newSession();
+    sidebarView.update({ search: "", searchOpen: false });
+    focus.request("composer");
+  }
+  function showSession() {
+    surfaces.showSession();
+    // Leaving a PR already restores focus through the session-focus effect.
+    if (!activePullRequest) focus.request("composer");
+  }
+  function focusSearch() {
+    surfaces.setCollapsed(false);
+    sidebarView.update({ searchOpen: true });
+    focus.request("search");
+  }
+  useWorkspaceShortcuts({
+    hasProject: Boolean(app.project),
+    surfaces,
+    newSession,
+    focusSearch,
+  });
+  useEscapeCancellation({
+    scope: sessionKey,
+    enabled:
+      Boolean(app.selected?.isWorking) &&
+      !settingsOpen &&
+      !activePullRequest &&
+      !(expanded && pane),
+    cancel: app.cancel,
+  });
+  const title = app.selected
+    ? sessionTitle(
+        app.providerWorkspace?.sessions.find(
+          (item) => item.id === app.selectedId,
+        ) ?? app.selected.session.thread,
       )
-        return;
-      const target = activeQuestionKey
-        ? questionDockRef.current?.querySelector<HTMLElement>(
-            ".question-card",
-          )
-        : textareaRef.current;
-      target?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [sessionKey, activeQuestionKey, Boolean(activePullRequest)]);
-  const sessionError = app.selected
-    ? app.selected.error
-    : app.providerWorkspace?.error;
+    : "New session";
   const mac = isTauri() && /Macintosh|Mac OS X/.test(navigator.userAgent);
   return (
-    <FileNavigation.Provider value={fileNavigation}>
+    <FileNavigation.Provider value={surfaces.fileNavigation}>
       <ContextMenuProvider
         className={`app-shell${mac ? " macos-titlebar-overlay" : ""}${collapsed ? " sidebar-collapsed" : ""}`}
         scope={`${sessionKey}\0${pane}\0${expanded}\0${settingsOpen}\0${activePullRequest?.pr.url}`}
@@ -281,568 +117,78 @@ export default function App() {
             action: app.chooseProject,
           },
           { item: "Separator" },
-          { text: "Settings…", action: () => setSettingsOpen(true) },
+          { text: "Settings…", action: () => surfaces.setSettingsOpen(true) },
         ]}
       >
         {!collapsed && (
           <PullRequestPreviewProvider
             scope={`${sessionKey}\0${settingsOpen}\0${pane}\0${expanded}\0${activePullRequest?.pr.url}`}
             activeUrl={activePullRequest?.pr.url ?? null}
-            onOpen={(target) =>
-              setPullRequest({ ...target, scope: sessionKey })
-            }
+            onOpen={surfaces.openPullRequest}
           >
             <Sidebar
               app={app}
-              preferredWidth={sidebarWidth}
-              setPreferredWidth={setSidebarWidth}
-              collapse={() => setCollapsed(true)}
+              preferredWidth={surfaces.sidebarWidth}
+              setPreferredWidth={surfaces.setSidebarWidth}
+              collapse={() => surfaces.setCollapsed(true)}
               view={sidebarView}
-              searchRef={searchRef}
+              searchRef={focus.searchRef}
               focusSearch={focusSearch}
               newSession={newSession}
-              changesOpen={changesOpen}
+              changesOpen={surfaces.changesOpen}
               filesOpen={!activePullRequest && pane === "files"}
               sessionVisible={!activePullRequest && (!expanded || !pane)}
-              openFiles={() => {
-                setPullRequest(null);
-                setPane("files");
-                setExpanded(false);
-                setFileRequest(undefined);
-              }}
+              openFiles={() => surfaces.openFiles()}
               showSession={showSession}
-              toggleChanges={toggleChanges}
-              openSettings={() => setSettingsOpen(true)}
+              toggleChanges={surfaces.toggleChanges}
+              openSettings={() => surfaces.setSettingsOpen(true)}
             />
           </PullRequestPreviewProvider>
         )}
         <section className="main-panel">
-          <header className="topbar" data-tauri-drag-region>
-            <div className="breadcrumbs">
-              {collapsed && (
-                <button
-                  className="icon-button"
-                  aria-label="Expand sidebar"
-                  onClick={() => setCollapsed(false)}
-                >
-                  <PanelLeftOpen size={16} />
-                </button>
-              )}
-              <span title={activePullRequest ? undefined : app.project?.path}>
-                {activePullRequest
-                  ? "Pull requests"
-                  : (app.rootProject?.name ?? "Caelum")}
-              </span>
-              <span className="crumb-divider">/</span>
-              {!activePullRequest &&
-                app.currentWorktree &&
-                !app.currentWorktree.main && (
-                  <>
-                    <span title={app.project?.path}>
-                      {app.currentWorktree.branch ?? "Detached HEAD"}
-                    </span>
-                    <span className="crumb-divider">/</span>
-                  </>
-                )}
-              <strong title={activePullRequest?.pr.title ?? title}>
-                {activePullRequest
-                  ? `#${activePullRequest.pr.number}`
-                  : title}
-              </strong>
-            </div>
-            <div className="topbar-actions">
-              {collapsed && (
-                <button
-                  className="icon-button"
-                  aria-label="Settings"
-                  title="Settings (⌘,)"
-                  onClick={(event) => {
-                    event.currentTarget.focus({ preventScroll: true });
-                    setSettingsOpen(true);
-                  }}
-                >
-                  <SettingsIcon size={16} />
-                </button>
-              )}
-              {app.selected && (
-                <span className="connection-status">
-                  {app.selected.connection === "connecting" ? (
-                    "Connecting…"
-                  ) : app.selected.connection === "disconnected" ? (
-                    "Disconnected"
-                  ) : activeApprovals.length ? (
-                    "Approval required"
-                  ) : activeQuestions.length ? (
-                    "Waiting for your answer"
-                  ) : app.selected.isWorking ? (
-                    <LoaderCircle
-                      size={14}
-                      className="spinning"
-                      role="img"
-                      aria-label="Agent running"
-                    />
-                  ) : (
-                    ""
-                  )}
-                </span>
-              )}
-              {app.approvals.length > 0 && (
-                <button
-                  className="approval-shortcut"
-                  aria-label={`${app.approvals.length} pending approvals`}
-                  onClick={() => {
-                    showSession();
-                    app.viewApproval(
-                      app.approvals.find(
-                        (request) => !activeApprovals.includes(request),
-                      ) ?? app.approvals[0],
-                    );
-                  }}
-                >
-                  <ShieldAlert size={14} />
-                  {app.approvals.length}
-                </button>
-              )}
-              {app.questions.length > 0 && (
-                <button
-                  className="question-shortcut"
-                  aria-label={`${app.questions.length} pending questions`}
-                  onClick={() => {
-                    setPullRequest(null);
-                    setExpanded(false);
-                    app.viewQuestion(
-                      app.questions.find(
-                        (request) => !activeQuestions.includes(request),
-                      ) ?? app.questions[0],
-                    );
-                    requestAnimationFrame(() =>
-                      document
-                        .querySelector<HTMLElement>(
-                          ".question-card input, .question-card textarea, .question-card button",
-                        )
-                        ?.focus(),
-                    );
-                  }}
-                >
-                  <MessageCircleQuestion size={14} />
-                  {app.questions.length}
-                </button>
-              )}
-              <button
-                className="icon-button"
-                aria-label="Search sessions"
-                title="Search sessions (⌘K)"
-                onClick={focusSearch}
-              >
-                <Search size={15} />
-              </button>
-              {app.project && (
-                <button
-                  className="icon-button changes-toggle"
-                  aria-label={changesOpen ? "Hide changes" : "Show changes"}
-                  aria-expanded={changesOpen}
-                  aria-controls="changes-pane"
-                  title="Toggle changes pane"
-                  onClick={toggleChanges}
-                >
-                  <PanelRight size={16} />
-                </button>
-              )}
-            </div>
-          </header>
-          {app.error && (
-            <div className="error-banner" role="alert">
-              <span>{app.error}</span>
-              <button
-                className="icon-button"
-                aria-label="Dismiss error"
-                onClick={() => app.setError(null)}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
-          {app.checkoutUnavailable && (
-            <div className="connection-banner" role="status">
-              This worktree is unavailable. Choose another checkout from the
-              sidebar.
-            </div>
-          )}
-          {app.archivedSession && (
-            <div
-              className="archive-notice"
-              role="status"
-              aria-label="Session archived"
-            >
-              <span title={sessionTitle(app.archivedSession.thread)}>
-                Archived{" "}
-                <strong>{sessionTitle(app.archivedSession.thread)}</strong>
-              </span>
-              <button
-                onClick={() => void app.undoArchive()}
-                disabled={app.undoingArchive}
-              >
-                {app.undoingArchive ? "Restoring…" : "Undo"}
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Dismiss archived session notice"
-                onClick={app.dismissArchive}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
-          {activePullRequest && (
-            <PullRequestScreen
-              key={activePullRequest.pr.url}
-              target={activePullRequest}
-              back={showSession}
-              session={
-                app.selected && app.selectedId
-                  ? {
-                      name: title,
-                      disabledReason:
-                        app.checkoutUnavailable ||
-                        Boolean(
-                          app.rootProject &&
-                          app.worktreeBusy[app.rootProject.path],
-                        )
-                          ? "This checkout is unavailable or busy."
-                          : app.selected.connection !== "connected"
-                            ? "Reconnect this session to address feedback."
-                            : app.selected.isWorking ||
-                                app.selected.isSubmitting
-                              ? "Wait for the current turn to finish."
-                              : activeQuestions.length ||
-                                  activeApprovals.length
-                                ? "Answer the session's pending request first."
-                                : app.providerWorkspace?.archivingSessionIds.includes(
-                                      app.selectedId,
-                                    )
-                                  ? "This session is being archived."
-                                  : null,
-                      address: async (prompt) => {
-                        const sent = await app.submit(prompt);
-                        if (
-                          sent &&
-                          currentSessionKey.current === sessionKey &&
-                          currentPullRequest.current?.pr.url ===
-                            activePullRequest.pr.url
-                        )
-                          showSession();
-                        return sent;
-                      },
-                    }
-                  : undefined
-              }
-            />
-          )}
+          <WorkspaceHeader
+            app={app}
+            title={title}
+            surfaces={surfaces}
+            activeApprovals={activeApprovals}
+            activeQuestions={activeQuestions}
+            showSession={showSession}
+            focusSearch={focusSearch}
+          />
+          <WorkspaceNotices app={app} />
+          <WorkspacePullRequest
+            app={app}
+            title={title}
+            surfaces={surfaces}
+            pendingInput={Boolean(
+              activeApprovals.length || activeQuestions.length,
+            )}
+            showSession={showSession}
+          />
           <div
             className={`session-layout${pane && app.project ? " with-changes" : ""}`}
             hidden={Boolean(activePullRequest)}
           >
-            <div
-              className="session-workspace"
-              hidden={expanded && Boolean(pane)}
-            >
-              {sessionError && (
-                <div className="error-banner" role="alert">
-                  <span>{sessionError}</span>
-                  {!app.selected && app.project && (
-                    <button
-                      disabled={app.providerWorkspace?.isCreating}
-                      onClick={() => void app.submit()}
-                    >
-                      Retry
-                    </button>
-                  )}
-                </div>
-              )}
-              {app.selected?.connection === "disconnected" && (
-                <div className="connection-banner">
-                  <span>
-                    Connection lost. Reconnect to continue this session.
-                  </span>
-                  <button
-                    onClick={() => {
-                      if (app.project && app.selected)
-                        void app.connectSession(
-                          app.project,
-                          app.provider,
-                          app.selected.session.thread,
-                        );
-                    }}
-                  >
-                    Reconnect
-                  </button>
-                </div>
-              )}
-              {projectApprovals.map((request) => (
-                <ApprovalCard
-                  key={request.requestId}
-                  request={request}
-                  resolving={Boolean(app.resolving)}
-                  resolve={(decision) =>
-                    void app.resolveApproval(request, decision)
-                  }
-                />
-              ))}
-              {!app.project ? (
-                <div className="session-empty">
-                  {app.restoring ? (
-                    <>
-                      <LoaderCircle size={22} className="spinning" />
-                      <span>Restoring workspace…</span>
-                    </>
-                  ) : (
-                    <button
-                      className="open-project-button"
-                      onClick={() => void app.chooseProject()}
-                      disabled={app.selecting}
-                    >
-                      <FolderOpen size={18} />
-                      Open project
-                    </button>
-                  )}
-                </div>
-              ) : app.selected ? (
-                <Conversation
-                  ref={conversationRef}
-                  key={sessionKey}
-                  session={app.selected}
-                  saveView={(value) =>
-                    app.mutateSession(
-                      app.project!.path,
-                      app.provider,
-                      app.selectedId!,
-                      (current) => ({ ...current, ...value }),
-                    )
-                  }
-                  loadOlder={() =>
-                    app.loadHistory(
-                      app.project!.path,
-                      app.provider,
-                      app.selectedId!,
-                      true,
-                    )
-                  }
-                  retryHistory={() =>
-                    void app.loadHistory(
-                      app.project!.path,
-                      app.provider,
-                      app.selectedId!,
-                      Boolean(
-                        app.selected?.historyLoaded &&
-                        app.selected.nextCursor,
-                      ),
-                    )
-                  }
-                  approvals={activeApprovals}
-                  resolving={Boolean(app.resolving)}
-                  addToDraft={(text) => {
-                    const draft = app.selected?.draft ?? "";
-                    app.setDraft(draft ? `${draft}\n\n${text}` : text);
-                    textareaRef.current?.focus();
-                  }}
-                  resolve={(request, decision) =>
-                    void app.resolveApproval(request, decision)
-                  }
-                />
-              ) : (
-                <div className="session-empty">
-                  <h1>New session</h1>
-                  <p>What would you like to work on?</p>
-                </div>
-              )}
-              {app.selected && (
-                <MessageQueue
-                  messages={app.selected.queuedMessages}
-                  paused={app.selected.queuePaused}
-                  working={app.selected.isWorking}
-                  disabled={
-                    app.selected.isSubmitting ||
-                    app.selected.connection !== "connected"
-                  }
-                  remove={(id) => void app.removeQueued(id)}
-                  resume={() => void app.resumeQueue()}
-                />
-              )}
-              {activeQuestions.length > 0 ? (
-                <div
-                  ref={questionDockRef}
-                  className="composer-wrap question-dock"
-                  aria-label="Agent questions"
-                >
-                  <span
-                    className="sr-only"
-                    role="status"
-                    aria-label="Agent activity"
-                  >
-                    Waiting for your answer
-                  </span>
-                  {activeQuestions.map((request) => {
-                    const key = questionKey(request);
-                    return (
-                      <QuestionCard
-                        key={key}
-                        request={request}
-                        draft={app.questionDraft(request)}
-                        setDraft={(draft) =>
-                          app.setQuestionDraft(request, draft)
-                        }
-                        submitting={Boolean(
-                          app.questionEdits[key]?.submitting,
-                        )}
-                        error={app.questionEdits[key]?.error}
-                        resolve={(answer) =>
-                          void app.resolveQuestion(request, answer)
-                        }
-                      />
-                    );
-                  })}
-                </div>
-              ) : (
-                app.project && (
-                  <Composer
-                    worktreePicker={<SessionWorktree app={app} />}
-                    key={`composer-${sessionKey}`}
-                    projectPath={app.project.path}
-                    session={app.selected ?? null}
-                    loadTimeline={() => app.loadHistory(
-                      app.project!.path,
-                      app.provider,
-                      app.selectedId!,
-                      Boolean(app.selected?.historyLoaded && app.selected.nextCursor),
-                    )}
-                    revealMessage={(id) => conversationRef.current?.reveal(id)}
-                    onLayoutChange={() =>
-                      conversationRef.current?.restoreScroll()
-                    }
-                    textareaRef={textareaRef}
-                    draft={
-                      app.selected?.draft ??
-                      app.providerWorkspace?.draft ??
-                      ""
-                    }
-                    setDraft={app.setDraft}
-                    fileContext={
-                      app.selected?.fileContext ??
-                      app.providerWorkspace?.fileContext ??
-                      []
-                    }
-                    removeFileContext={app.removeFileContext}
-                    pullRequests={sessionPullRequests}
-                    pullRequestContext={app.selected?.pullRequestContext ?? []}
-                    removePullRequestContext={app.removePullRequestContext}
-                    addPullRequestContext={(pr) =>
-                      currentSessionKey.current === sessionKey &&
-                      app.addPullRequestContext(pr)
-                    }
-                    addFileContext={(file) =>
-                      currentSessionKey.current === sessionKey && app.addFileContext(file)
-                    }
-                    lastMessage={lastUserMessage(
-                      app.selected?.conversation ?? [],
-                    )}
-                    provider={app.provider}
-                    changeProvider={app.changeProvider}
-                    isNew={!app.selectedId}
-                    working={app.selected?.isWorking ?? false}
-                    activity={app.selected?.activity?.label}
-                    awaitingApproval={activeApprovals.length > 0}
-                    submitting={
-                      app.selected?.isSubmitting ||
-                      (!app.selectedId &&
-                        app.providerWorkspace?.isCreating) ||
-                      false
-                    }
-                    disabled={
-                      app.checkoutUnavailable ||
-                      Boolean(
-                        app.rootProject &&
-                        app.worktreeBusy[app.rootProject.path],
-                      ) ||
-                      Boolean(
-                        app.selectedId &&
-                        (!app.selected ||
-                          app.providerWorkspace?.archivingSessionIds.includes(
-                            app.selectedId,
-                          ) ||
-                          app.selected.connection !== "connected"),
-                      ) ||
-                      Boolean(
-                        !app.selectedId && app.providerWorkspace?.isCreating,
-                      )
-                    }
-                    submit={() => void app.submit()}
-                    newSession={newSession}
-                    cancel={() => void app.cancel()}
-                    choices={app.providerWorkspace?.choices ?? null}
-                    choicesError={app.providerWorkspace?.choicesError ?? null}
-                    model={app.options.model}
-                    modelPending={Boolean(app.selected?.model)}
-                    effort={app.options.effort}
-                    modelChoice={app.options.modelChoice}
-                    contextUsage={app.selected?.contextUsage ?? null}
-                    favouriteModels={
-                      preferences.settings.favoriteModels[app.provider]
-                    }
-                    toggleFavouriteModel={(id) =>
-                      preferences.toggleModelFavourite(app.provider, id)
-                    }
-                    effortPending={app.selected?.effort != null}
-                    agent={app.options.agent}
-                    currentAgent={app.selected?.session.agent ?? null}
-                    setOption={app.setOption}
-                    retryChoices={() =>
-                      void app.loadChoices(app.project!, app.provider)
-                    }
-                  />
-                )
-              )}
-            </div>
-            {pane && app.project && (
-              <ProjectInspector
-                key={app.project.path}
-                project={app.project}
-                mode={pane}
-                changeMode={(mode) => {
-                  setPane(mode);
-                  setFileRequest(undefined);
-                }}
-                expanded={expanded}
-                setExpanded={setExpanded}
-                request={fileRequest}
-                canAttach={
-                  !app.selected?.isSubmitting &&
-                  !(!app.selectedId && app.providerWorkspace?.isCreating)
-                }
-                attach={(file, ask) => {
-                  if (currentSessionKey.current !== sessionKey) return;
-                  app.addFileContext(file, ask);
-                  setExpanded(false);
-                  requestAnimationFrame(() => {
-                    if (currentSessionKey.current === sessionKey)
-                      textareaRef.current?.focus();
-                  });
-                }}
-                working={Boolean(
-                  app.workspace && projectHasActiveTurn(app.workspace),
-                )}
-                close={() => {
-                  setPane(null);
-                  setExpanded(false);
-                }}
-              />
-            )}
+            <SessionWorkspace
+              app={app}
+              preferences={preferences}
+              pullRequests={sessionPullRequests}
+              sessionKey={sessionKey}
+              surfaces={surfaces}
+              focus={focus}
+              activeApprovals={activeApprovals}
+              projectApprovals={projectApprovals}
+              activeQuestions={activeQuestions}
+              newSession={newSession}
+            />
+            <WorkspaceInspector app={app} surfaces={surfaces} focus={focus} />
           </div>
         </section>
         {settingsOpen && (
           <Settings
             app={app}
             preferences={preferences}
-            close={() => setSettingsOpen(false)}
+            close={() => surfaces.setSettingsOpen(false)}
           />
         )}
       </ContextMenuProvider>
