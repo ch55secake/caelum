@@ -6,6 +6,7 @@ import { keyFor, useWorkspaceStore } from "./store.js";
 import { useSessionHistory } from "./useSessionHistory.js";
 import { useSessionMetadata } from "./useSessionMetadata.js";
 import { useSessionActivity } from "./useSessionActivity.js";
+import { deferredOutput } from "./publication.js";
 import {
   addOpenProject,
   closeOpenProject,
@@ -769,7 +770,10 @@ export function useWorkspace(settings: AppSettings) {
         "codex-event",
         (event) => {
           if (removedDirectories.current.has(event.projectPath)) return;
-          update((current) => applyCodexEvent(current, event));
+          update(
+            (current) => applyCodexEvent(current, event),
+            deferredOutput("codex", event.method),
+          );
           if (
             !state.current[
               event.projectPath
@@ -821,7 +825,10 @@ export function useWorkspace(settings: AppSettings) {
                 queued.queuedAt,
               );
           }
-          update((current) => applyOpenCodeEvent(current, event));
+          update(
+            (current) => applyOpenCodeEvent(current, event),
+            deferredOutput("opencode", event.eventType),
+          );
           if (
             !state.current[
               event.projectPath
@@ -882,6 +889,7 @@ export function useWorkspace(settings: AppSettings) {
         },
       ),
       subscribe<ApprovalPrompt[]>("approval-requests", (payload) => {
+        store.flush();
         approvalRevision++;
         activity.observeAttention(
           payload.filter(
@@ -897,6 +905,7 @@ export function useWorkspace(settings: AppSettings) {
         );
       }),
       subscribe<QuestionPrompt[]>("question-requests", (payload) => {
+        store.flush();
         activity.observeAttention(
           payload.filter(
             (request) => !removedDirectories.current.has(request.projectPath),
