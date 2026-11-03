@@ -338,6 +338,11 @@ export function Conversation({
     anchor.current = null;
     jump();
   }, [session.followRevision]);
+  useLayoutEffect(() => {
+    // Prompt timing and composer changes can resize the viewport before the
+    // observer runs. Follow that resize before reporting the latest view.
+    followResize();
+  });
   useLatestView(
     scroll,
     session.historyLoaded && windowEnd === entries.length,
