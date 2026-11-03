@@ -291,6 +291,9 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .shell-context > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }.shell-badge { font-variant-numeric: tabular-nums; }
 .shell-recent { margin: 5px 0 8px 37px; padding: 7px 10px; max-height: 100px; overflow: hidden; border-left: 2px solid var(--border); color: var(--muted); font: 10px/1.5 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .shell-truncated { color: var(--muted); font-size: 11px; }
+.notification-options { grid-template-columns: repeat(3, 1fr); }.notification-options .theme-option-name { justify-content: center; }
+.sound-volume { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; font-size: 12px; }.sound-volume output { margin-left: auto; color: var(--muted); }.sound-volume input { width: 100%; accent-color: var(--accent); }
+.test-sound { display: inline-flex; align-items: center; gap: 7px; margin: 12px 0 24px; padding: 7px 10px; font-size: 12px; }.sound-option { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 12px; }.sound-option input { accent-color: var(--accent); }
 .new-session-welcome { padding: 24px; gap: 14px; text-align: center; }
 .new-session-emblem { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 4px; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--composer-focus); border-radius: 14px; }
 .new-session-welcome h1 { font-size: clamp(18px, 2vw, 24px); line-height: 1.3; }

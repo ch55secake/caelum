@@ -12,6 +12,12 @@ export type ProviderDefaults = {
   agent: string;
 };
 export type AppSettings = {
+  notifications: {
+    mode: "off" | "background" | "always";
+    volume: number;
+    backgroundShells: boolean;
+    inputNeeded: boolean;
+  };
   theme: Theme;
   themeFamily: ThemeFamily;
   accentColor: AccentColor;

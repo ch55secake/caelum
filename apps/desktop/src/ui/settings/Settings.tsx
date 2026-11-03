@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { GitBranch, Info, Layers, Palette, X } from "lucide-react";
+import { Bell, GitBranch, Info, Layers, Palette, X } from "lucide-react";
 import type { WorkspaceController } from "../../application/workspace/controller.js";
 import type { Preferences } from "../../application/useSettings.js";
 import { AppearanceSettings } from "./AppearanceSettings.js";
@@ -7,6 +7,7 @@ import { ProviderSettings } from "./ProviderSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
 import { AboutSettings } from "./AboutSettings.js";
 import { useAbout } from "../../application/useAbout.js";
+import { NotificationSettings } from "./NotificationSettings.js";
 
 const sections = [
   {
@@ -26,6 +27,12 @@ const sections = [
     name: "Worktrees",
     label: "Worktree settings",
     Icon: GitBranch,
+  },
+  {
+    id: "notifications",
+    name: "Notifications",
+    label: "Notification settings",
+    Icon: Bell,
   },
   { id: "about", name: "About", label: "About Caelum", Icon: Info },
 ] as const;
@@ -103,7 +110,9 @@ export function Settings({
           className="settings-content"
           aria-label={sections.find(({ id }) => id === section)!.label}
         >
-          {section === "about" ? (
+          {section === "notifications" ? (
+            <NotificationSettings preferences={preferences} />
+          ) : section === "about" ? (
             <AboutSettings about={about} />
           ) : section === "appearance" ? (
             <AppearanceSettings preferences={preferences} />

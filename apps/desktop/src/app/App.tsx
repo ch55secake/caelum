@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useWorkspace } from "../application/workspace/useWorkspace.js";
 import { useSessionPullRequests } from "../application/github/useSessionPullRequests.js";
 import { useSettings } from "../application/useSettings.js";
+import { useNotifications } from "../application/useNotifications.js";
 import { questionKey } from "../domain/sessions/questionState.js";
 import { sessionTitle } from "../domain/sessions/workspaceState.js";
 import { useSidebarView } from "../ui/sidebar/useSidebarView.js";
@@ -25,6 +26,7 @@ import { SessionSetup } from "../ui/sessions/SessionSetup.js";
 export default function App() {
   const preferences = useSettings();
   const app = useWorkspace(preferences.settings);
+  useNotifications(preferences.settings.notifications, app.activity.subscribe);
   const [sessionSetupOpen, setSessionSetupOpen] = useState(false);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
   const surfaces = useWorkspaceSurfaces(app.project?.path, sessionKey);

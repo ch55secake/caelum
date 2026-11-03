@@ -883,13 +883,29 @@ export function useWorkspace(settings: AppSettings) {
       ),
       subscribe<ApprovalPrompt[]>("approval-requests", (payload) => {
         approvalRevision++;
+        activity.observeAttention(
+          payload.filter(
+            (request) => !removedDirectories.current.has(request.projectPath),
+          ),
+          "approval",
+          true,
+        );
         setApprovals(
           payload.filter(
             (request) => !removedDirectories.current.has(request.projectPath),
           ),
         );
       }),
-      subscribe<QuestionPrompt[]>("question-requests", receiveQuestions),
+      subscribe<QuestionPrompt[]>("question-requests", (payload) => {
+        activity.observeAttention(
+          payload.filter(
+            (request) => !removedDirectories.current.has(request.projectPath),
+          ),
+          "question",
+          true,
+        );
+        receiveQuestions(payload);
+      }),
     ])
       .then(async () => {
         if (disposed) return;
@@ -901,6 +917,8 @@ export function useWorkspace(settings: AppSettings) {
           invoke<QuestionPrompt[]>("pending_questions"),
         ]);
         if (!disposed) {
+          activity.observeAttention(snapshot, "approval", false);
+          activity.observeAttention(pending, "question", false);
           if (revision === approvalRevision)
             setApprovals(
               snapshot.filter(

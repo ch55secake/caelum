@@ -7,17 +7,19 @@ import {
   readMarkers,
   savedMarkers,
   READ_MARKERS_KEY,
-  type PromptRun,
   type SessionActivity,
 } from "../../domain/sessions/activityState.js";
 import type {
   ProviderKind,
   SessionSummary,
 } from "../../domain/sessions/workspaceState.js";
+import { splitShellMessages } from "../../domain/conversation/shellMessages.js";
 
-export type CompletionEvent = {
+export type ActivityNotification = {
   key: string;
-  run: PromptRun;
+  id: string;
+  kind: "prompt" | "shell" | "attention";
+  outcome?: string | null;
   background: boolean;
 };
 
@@ -38,7 +40,9 @@ export function useSessionActivity() {
   const foreground = useRef(document.hasFocus() && !document.hidden);
   const timer = useRef<number | null>(null);
   const dirty = useRef(false);
-  const completions = useRef(new Set<(event: CompletionEvent) => void>());
+  const completions = useRef(new Set<(event: ActivityNotification) => void>());
+  const notified = useRef(new Set<string>());
+  const attentionReady = useRef(new Set<string>());
   const listeningSince = useRef(Date.now());
   function flush() {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -77,6 +81,22 @@ export function useSessionActivity() {
   }
   function isViewed(key: string) {
     return viewport.current === key && foreground.current && !document.hidden;
+  }
+  function notify(
+    key: string,
+    id: string,
+    kind: ActivityNotification["kind"],
+    outcome?: string | null,
+    quiet = false,
+  ) {
+    const identity = `${key}\0${kind}\0${id}`;
+    if (notified.current.has(identity)) return;
+    notified.current.add(identity);
+    if (notified.current.size > 2000)
+      notified.current.delete(notified.current.values().next().value!);
+    if (!quiet)
+      for (const listener of completions.current)
+        listener({ key, id, kind, outcome, background: !isViewed(key) });
   }
   useEffect(() => {
     const focus = () => {
@@ -131,6 +151,44 @@ export function useSessionActivity() {
     const event = activityEvent(provider, method, data, envelope);
     if (!event) return;
     const key = activityKey(path, provider, event.sessionId);
+    const historical = event.at != null && event.at < listeningSince.current;
+    if (provider === "opencode" && method === "session.shell.ended") {
+      const shell = data.shell as
+        | {
+            id?: string;
+            status?: string;
+            exit?: number;
+            metadata?: { background?: boolean };
+          }
+        | undefined;
+      if (shell?.id && shell.metadata?.background)
+        notify(
+          key,
+          shell.id,
+          "shell",
+          shell.status === "killed"
+            ? "interrupted"
+            : shell.status === "timeout" ||
+                (shell.exit != null && shell.exit !== 0)
+              ? "failed"
+              : "completed",
+          historical,
+        );
+    }
+    if (
+      provider === "opencode" &&
+      method === "session.synthetic" &&
+      typeof data.text === "string"
+    )
+      for (const part of splitShellMessages(data.text))
+        if (part.type === "shell" && part.state !== "running")
+          notify(
+            key,
+            part.id,
+            "shell",
+            part.state === "cancelled" ? "interrupted" : part.state,
+            historical || !envelope?.id,
+          );
     const viewed = isViewed(key);
     const result = applyActivity(
       records.current.get(key),
@@ -143,8 +201,7 @@ export function useSessionActivity() {
       result.completion &&
       (event.at == null || event.at >= listeningSince.current)
     )
-      for (const listener of completions.current)
-        listener({ key, run: result.completion, background: !viewed });
+      notify(key, result.completion.id, "prompt", result.completion.outcome);
   }
   function observeSessions(
     path: string,
@@ -172,6 +229,30 @@ export function useSessionActivity() {
     }
   }
   return {
+    observeAttention: (
+      requests: {
+        provider: string;
+        projectPath: string;
+        sessionId?: string | null;
+        requestId: string;
+      }[],
+      kind: "approval" | "question",
+      live: boolean,
+    ) => {
+      for (const request of requests)
+        notify(
+          activityKey(
+            request.projectPath,
+            request.provider,
+            request.sessionId ?? "",
+          ),
+          `${kind}:${request.requestId}`,
+          "attention",
+          undefined,
+          !live || !attentionReady.current.has(kind),
+        );
+      if (!live) attentionReady.current.add(kind);
+    },
     begin: (
       key: string,
       submissionId: string,
@@ -245,7 +326,7 @@ export function useSessionActivity() {
         if (isViewed(key)) markViewed(key);
       } else if (viewport.current === key) viewport.current = null;
     },
-    subscribe: (listener: (event: CompletionEvent) => void) => {
+    subscribe: (listener: (event: ActivityNotification) => void) => {
       completions.current.add(listener);
       return () => {
         completions.current.delete(listener);
