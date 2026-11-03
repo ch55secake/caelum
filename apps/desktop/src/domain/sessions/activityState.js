@@ -52,7 +52,8 @@ export function activityEvent(provider, method, data, envelope = {}) {
         quiet: data.reason === "shutdown",
       };
     if (
-      /^session\.(?:text|reasoning|tool|compaction)\./.test(method) ||
+      /^session\.(?:text|reasoning|tool|compaction|shell)\./.test(method) ||
+      method === "session.synthetic" ||
       data.message?.type
     )
       return { ...common, type: "content" };

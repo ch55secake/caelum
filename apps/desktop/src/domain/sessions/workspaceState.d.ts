@@ -53,6 +53,7 @@ export type ConversationEntry = {
   streamOutput?: string;
   name?: string;
   executionId?: string;
+  shell?: import("../conversation/shellActivity.js").ShellDetails;
   status?: "running" | "completed" | "failed" | "interrupted";
   input?: unknown;
   output?: unknown;
