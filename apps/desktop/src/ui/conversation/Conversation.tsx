@@ -27,6 +27,7 @@ import { useContextMenu, copyAction } from "../primitives/ContextMenu.js";
 import { FileContextChips } from "../files/FileNavigation.js";
 import { PullRequestContextChips } from "../pull-requests/PullRequestContextChips.js";
 import { ChatImages } from "./ChatImage.js";
+import { useLatestView } from "./useLatestView.js";
 
 function CompactionNotice({
   entry,
@@ -193,6 +194,7 @@ export function Conversation({
   resolving,
   resolve,
   addToDraft,
+  reportLatestView,
 }: {
   ref?: Ref<ConversationHandle>;
   session: SessionWorkspaceState;
@@ -203,6 +205,7 @@ export function Conversation({
   resolving: boolean;
   resolve: (request: ApprovalPrompt, decision: "allowOnce" | "deny") => void;
   addToDraft: (text: string) => void;
+  reportLatestView: (visible: boolean) => void;
 }) {
   const contextMenu = useContextMenu();
   const scroll = useRef<HTMLDivElement>(null);
@@ -335,6 +338,11 @@ export function Conversation({
     anchor.current = null;
     jump();
   }, [session.followRevision]);
+  useLatestView(
+    scroll,
+    session.historyLoaded && windowEnd === entries.length,
+    reportLatestView,
+  );
   function jump() {
     anchor.current = null;
     setTarget(null);
@@ -511,7 +519,9 @@ export function Conversation({
                         <FileContextChips files={entry.fileContext} />
                       )}
                       {entry.pullRequestContext && (
-                        <PullRequestContextChips pullRequests={entry.pullRequestContext} />
+                        <PullRequestContextChips
+                          pullRequests={entry.pullRequestContext}
+                        />
                       )}
                     </>
                   ) : (

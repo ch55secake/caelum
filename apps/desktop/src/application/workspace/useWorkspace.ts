@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { keyFor, useWorkspaceStore } from "./store.js";
 import { useSessionHistory } from "./useSessionHistory.js";
 import { useSessionMetadata } from "./useSessionMetadata.js";
+import { useSessionActivity } from "./useSessionActivity.js";
 import {
   addOpenProject,
   closeOpenProject,
@@ -180,6 +181,7 @@ export function useWorkspace(settings: AppSettings) {
   const worktreeVersions = useRef(new Map<string, number>());
   const worktreeOperations = useRef(new Set<string>());
   const store = useWorkspaceStore();
+  const activity = useSessionActivity();
   const {
     workspaces,
     state,
@@ -765,6 +767,19 @@ export function useWorkspace(settings: AppSettings) {
           if (removedDirectories.current.has(event.projectPath)) return;
           update((current) => applyCodexEvent(current, event));
           if (
+            !state.current[
+              event.projectPath
+            ]?.providers.codex.archivedSessionIds.includes(
+              String(event.params.threadId),
+            )
+          )
+            activity.receive(
+              event.projectPath,
+              "codex",
+              event.method,
+              event.params,
+            );
+          if (
             event.method === "item/completed" &&
             (event.params.item as { type?: string } | undefined)?.type ===
               "contextCompaction" &&
@@ -787,6 +802,20 @@ export function useWorkspace(settings: AppSettings) {
         (event) => {
           if (removedDirectories.current.has(event.projectPath)) return;
           update((current) => applyOpenCodeEvent(current, event));
+          if (
+            !state.current[
+              event.projectPath
+            ]?.providers.opencode.archivedSessionIds.includes(
+              String(event.data.sessionID),
+            )
+          )
+            activity.receive(
+              event.projectPath,
+              "opencode",
+              event.eventType,
+              event.data,
+              event,
+            );
           if (
             event.eventType === "session.inbox.delivered" &&
             typeof event.data.sessionID === "string"
@@ -1280,6 +1309,7 @@ export function useWorkspace(settings: AppSettings) {
         sessionsLoaded: true,
         sessionsError: null,
       }));
+      activity.observeSessions(target.path, kind, sessions);
       // Unopened checkouts are discovered without changing the persisted open
       // projects. Their provider-owned IDs are saved when a session is selected.
       if (openProjects.current.some((item) => item.path === target.path))
@@ -1682,14 +1712,6 @@ export function useWorkspace(settings: AppSettings) {
     restoring,
     checkoutUnavailable,
   ]);
-  useEffect(() => {
-    if (project && selectedId && selected?.unread)
-      mutateSession(project.path, provider, selectedId, (value) => ({
-        ...value,
-        unread: false,
-      }));
-  }, [project?.path, provider, selectedId, selected?.unread]);
-
   useEffect(() => {
     if (!project || !selectedId || !ready || checkoutUnavailable || !isTauri())
       return;
@@ -2590,6 +2612,7 @@ export function useWorkspace(settings: AppSettings) {
     void connectSession(target, kind, thread);
   }
   return {
+    activity,
     projects,
     projectGroups,
     projectRoots,

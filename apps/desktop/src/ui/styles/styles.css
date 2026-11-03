@@ -142,6 +142,10 @@ svg { flex-shrink: 0; }
 .project-details { display: flex; width: 100%; min-width: 0; flex-direction: column; gap: 7px; color: var(--muted); font-size: 11px; }.project-path { overflow-wrap: anywhere; color: var(--text); }.project-context { display: flex; min-width: 0; align-items: center; gap: 8px; min-height: 14px; margin-top: 6px; padding-left: 22px; color: var(--muted); font-size: 10px; }.project-disclosure + .project-item .project-context { padding-left: 0; }.project-branch { display: flex; flex: 1; min-width: 0; align-items: center; gap: 4px; }.project-branch > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.project-changes { flex-shrink: 0; font-variant-numeric: tabular-nums; }.project-changes.dirty { color: var(--warning); }
 .project-disclosure { position: relative; z-index: 1; align-self: flex-start; width: 24px; height: 28px; margin: 4px 0 0 2px; }.project-disclosure + .project-item { padding-left: 2px; }.project-disclosure[aria-expanded="false"] svg { transform: rotate(-90deg); }.sidebar-details-tooltip { position: fixed; z-index: 55; width: max-content; max-width: min(300px, calc(100vw - 16px)); padding: 10px 12px; border: 1px solid var(--popover-border); border-radius: 6px; background: var(--popover-bg); color: var(--text); box-shadow: 0 8px 24px #0003; pointer-events: none; font-size: 11px; }
 .project-item svg { color: var(--muted); }
+.project-item { flex-direction: column; align-items: stretch; }
+.project-activity { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
+.project-activity-badge { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 4px; min-height: 22px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.project-activity-badge.unread { color: var(--accent); }.project-activity-badge.attention, .project-activity-badge.attention svg { color: var(--warning); }
 .project-close { position: absolute; z-index: 1; top: 4px; right: 3px; opacity: 0; width: 22px; height: 24px; }
 .project-row:hover .project-close, .project-row:focus-within .project-close { opacity: 1; }
 .new-session { display: flex; flex: 1; min-width: 0; align-items: center; gap: 7px; padding: 7px 6px; font-size: 11px; white-space: nowrap; }
@@ -244,7 +248,7 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .session-archive { position: absolute; top: 3px; right: 3px; width: 22px; height: 24px; opacity: 0; }
 .session-row:hover .session-archive, .session-row:focus-within .session-archive { opacity: 1; }
 .session-row:hover .session-archive:disabled, .session-row:focus-within .session-archive:disabled { opacity: .45; }
-.session-status { display: grid; flex: 0 0 16px; height: 16px; place-items: center; }
+.session-status { display: inline-flex; flex: 0 0 auto; min-width: 16px; height: 16px; gap: 5px; align-items: center; justify-content: center; }
 .session-title { overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
 .empty-sessions { padding: 9px 8px; color: var(--muted); font-size: 12px; }
 .running-dot, .unread-dot, .disconnected-dot { width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto; background: var(--accent); }

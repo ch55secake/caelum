@@ -520,7 +520,9 @@ test("project rows show scoped live Git details and background activity, includi
   await expect(other).toHaveAttribute("aria-current", "page");
   const otherDetails = other.locator("..");
   await expect(otherDetails).toContainText("Checking Git…");
-  await expect(current.locator(".running-dot")).toBeVisible();
+  await expect(
+    currentDetails.locator(".project-activity .running-dot"),
+  ).toBeVisible();
   await current.click();
   await page.evaluate(() =>
     (window as any).fixture.release("git_repository_status:/work/other"),

@@ -109,7 +109,6 @@ export type SessionWorkspaceState = {
   isLoadingHistory: boolean;
   nextCursor: string | null;
   historyAnchor: string | null;
-  unread: boolean;
   expandedTools: Record<string, boolean>;
   scrollTop: number | null;
   windowEndId: string | null;

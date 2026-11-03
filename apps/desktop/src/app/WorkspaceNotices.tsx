@@ -23,6 +23,12 @@ export function WorkspaceNotices({ app }: { app: WorkspaceController }) {
           sidebar.
         </div>
       )}
+      {app.activity.storageError && (
+        <div className="error-banner" role="alert">
+          <span>{app.activity.storageError}</span>
+          <button onClick={app.activity.retrySave}>Retry</button>
+        </div>
+      )}
       {app.archivedSession && (
         <div
           className="archive-notice"

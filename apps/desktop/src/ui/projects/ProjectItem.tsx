@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { FolderGit2, GitBranch, ShieldAlert, X } from "lucide-react";
+import { FolderGit2, GitBranch, X } from "lucide-react";
 import {
   readGitStatus,
   subscribeGitStatus,
@@ -26,6 +26,7 @@ export function ProjectItem({
   close,
   worktreeActions,
   disclosure,
+  activity,
 }: {
   project: ProjectInfo;
   checkout: ProjectInfo;
@@ -37,6 +38,7 @@ export function ProjectItem({
   close: () => void;
   worktreeActions: ContextAction[];
   disclosure?: ReactNode;
+  activity: ReactNode;
 }) {
   const detailsId = useId();
   const metadataId = useId();
@@ -118,20 +120,6 @@ export function ProjectItem({
           <span className="project-heading">
             {!disclosure && <FolderGit2 size={14} aria-hidden="true" />}
             <span className="project-name">{project.name}</span>
-            {working && (
-              <span
-                className="running-dot"
-                title="Running session"
-                aria-label="Running session"
-              />
-            )}
-            {approval && (
-              <ShieldAlert
-                size={13}
-                className="approval-indicator"
-                aria-label="Approval required"
-              />
-            )}
           </span>
           <span className="project-session">{subtitle}</span>
           <span id={metadataId} className="project-context">
@@ -157,6 +145,7 @@ export function ProjectItem({
             )}
           </span>
         </button>
+        {activity}
       </SidebarDetails>
       <button
         className="icon-button project-close"

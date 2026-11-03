@@ -12,6 +12,8 @@ import {
   X,
 } from "lucide-react";
 import { ProjectItem } from "./ProjectItem.js";
+import { ProjectActivity } from "./ProjectActivity.js";
+import { projectActivity } from "../../domain/sessions/activityState.js";
 import { ChoicePicker } from "../primitives/ChoicePicker.js";
 import {
   projectHasActiveTurn,
@@ -291,6 +293,10 @@ export function ProjectWorktrees({
   const menu = useContextMenu();
   const member = (path: string) =>
     (app.projectRoots[path] ?? path) === project.path;
+  const activity = projectActivity(app.workspaces, member, app.activity.get, [
+    ...app.approvals,
+    ...app.questions,
+  ]);
   const active = member(app.project?.path ?? "");
   const checkout = app.groupWorktree(project)?.project ?? project;
   const workspace = app.workspaces[checkout.path];
@@ -381,11 +387,34 @@ export function ProjectWorktrees({
             </button>
           ) : undefined
         }
-        working={Object.entries(app.workspaces).some(
-          ([path, workspace]) =>
-            member(path) && projectHasActiveTurn(workspace),
-        )}
+        working={activity.working.length > 0}
         approval={app.approvals.some((request) => member(request.projectPath))}
+        activity={
+          <ProjectActivity
+            working={activity.working.length}
+            unread={activity.unread.length}
+            attention={activity.attention.length}
+            openUnread={() => {
+              const next = activity.unread[0];
+              if (!next) return;
+              showSession();
+              app.selectSession(
+                next.session,
+                next.provider,
+                app.projects.find((item) => item.path === next.path) ?? {
+                  name: project.name,
+                  path: next.path,
+                },
+              );
+            }}
+            openAttention={() => {
+              const next = activity.attention[0];
+              if (!next) return;
+              showSession();
+              app.viewApproval(next);
+            }}
+          />
+        }
         activate={() => {
           showSession();
           app.activateGroup(project);

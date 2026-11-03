@@ -78,7 +78,6 @@ export function createSessionWorkspace(session) {
     isLoadingHistory: false,
     nextCursor: null,
     historyAnchor: null,
-    unread: false,
     expandedTools: {},
     scrollTop: null,
     windowEndId: null,
@@ -264,7 +263,6 @@ function applyEvent(
                 ...next,
                 eventRevision:
                   (current.eventRevision ?? 0) + (changed ? 1 : 0),
-                unread: changed ? true : next.unread,
               },
             }
           : workspace.sessionsById,

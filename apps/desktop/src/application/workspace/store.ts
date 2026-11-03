@@ -5,9 +5,9 @@ import {
   type ProviderKind,
   type WorkspaceMap,
 } from "../../domain/sessions/workspaceState.js";
+import { activityKey } from "../../domain/sessions/activityState.js";
 
-export const keyFor = (path: string, provider: ProviderKind, id = "") =>
-  `${path}\0${provider}\0${id}`;
+export const keyFor = activityKey;
 
 // Shared scoped mutations and request lifetimes. Controllers receive this port,
 // never a UI component or another controller's entire return value.

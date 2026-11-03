@@ -109,6 +109,9 @@ export function SessionWorkspace({
           ref={focus.conversationRef}
           key={sessionKey}
           session={app.selected}
+          reportLatestView={(visible) =>
+            app.activity.setViewport(sessionKey, visible)
+          }
           saveView={(value) =>
             app.mutateSession(
               app.project!.path,

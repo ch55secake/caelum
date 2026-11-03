@@ -482,19 +482,22 @@ export function Sidebar({
                               className="approval-indicator"
                               aria-label="Approval required"
                             />
-                          ) : working ? (
+                          ) : null}
+                          {working && (
                             <span
                               className="running-dot"
                               aria-label="Running"
                               title="Running"
                             />
-                          ) : state?.unread ? (
+                          )}
+                          {app.activity.get(item.key)?.unread && (
                             <span
                               className="unread-dot"
                               aria-label="Unread"
                               title="Unread"
                             />
-                          ) : state?.connection === "disconnected" ? (
+                          )}
+                          {!working && state?.connection === "disconnected" ? (
                             <span
                               className="disconnected-dot"
                               aria-label="Disconnected"
