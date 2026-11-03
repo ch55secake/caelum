@@ -26,6 +26,7 @@ import type { ProjectSession, SessionDetails } from "../../domain/sessions/works
 import { sessionTitle } from "../../domain/sessions/workspaceState.js";
 import type { WorkspaceController } from "../../application/workspace/controller.js";
 import { ProjectWorktrees } from "../projects/Worktrees.js";
+import { SettingsTrigger } from "../settings/SettingsTrigger.js";
 import { PullRequestIndicator } from "../pull-requests/PullRequestIndicator.js";
 import { SessionPullRequests } from "../pull-requests/SessionPullRequests.js";
 import { useSessionPullRequests } from "../../application/github/useSessionPullRequests.js";
@@ -593,17 +594,12 @@ export function Sidebar({
           </div>
         </section>
       </div>
-      <button
+      <SettingsTrigger
         className="nav-item sidebar-settings"
-        aria-label="Settings"
-        onClick={(event) => {
-          event.currentTarget.focus({ preventScroll: true });
-          openSettings();
-        }}
-        title="Settings (⌘,)"
+        open={openSettings}
       >
         <Settings size={15} /> Settings <kbd>⌘,</kbd>
-      </button>
+      </SettingsTrigger>
       <div
         className="sidebar-resize"
         role="separator"

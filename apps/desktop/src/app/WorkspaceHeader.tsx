@@ -11,6 +11,7 @@ import type { WorkspaceController } from "../application/workspace/controller.js
 import type { ApprovalPrompt } from "../application/workspace/useWorkspace.js";
 import type { QuestionPrompt } from "../domain/sessions/questionState.js";
 import type { WorkspaceSurfaces } from "./useWorkspaceSurfaces.js";
+import { SettingsTrigger } from "../ui/settings/SettingsTrigger.js";
 
 export function WorkspaceHeader({
   app,
@@ -64,17 +65,12 @@ export function WorkspaceHeader({
       </div>
       <div className="topbar-actions">
         {collapsed && (
-          <button
+          <SettingsTrigger
             className="icon-button"
-            aria-label="Settings"
-            title="Settings (⌘,)"
-            onClick={(event) => {
-              event.currentTarget.focus({ preventScroll: true });
-              surfaces.setSettingsOpen(true);
-            }}
+            open={() => surfaces.setSettingsOpen(true)}
           >
             <Settings size={16} />
-          </button>
+          </SettingsTrigger>
         )}
         {app.selected && (
           <span className="connection-status">
