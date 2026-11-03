@@ -91,12 +91,7 @@ export function SessionWorkspace({
           resolve={(decision) => void app.resolveApproval(request, decision)}
         />
       ))}
-      {run && (
-        <PromptTiming
-          run={run}
-          waiting={activeApprovals.length > 0 || activeQuestions.length > 0}
-        />
-      )}
+      {run && <PromptTiming run={run} />}
       {!app.project ? (
         <div className="session-empty">
           {app.restoring ? (

@@ -24,8 +24,8 @@ for (const provider of ["codex", "opencode"] as const) {
       provider,
     );
     await expect(
-      page.getByLabel("Prompt timing", { exact: true }),
-    ).toContainText("Working");
+      page.getByRole("form", { name: "Message composer" }),
+    ).toHaveAttribute("data-working", "true");
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
     const delta = (text: string) =>
       emit(

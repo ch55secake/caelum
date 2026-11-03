@@ -3,7 +3,7 @@ import { desktop } from "./fixtures/desktop.js";
 import { choose, emit } from "./fixtures/helpers.js";
 
 for (const provider of ["codex", "opencode"] as const) {
-  test(`${provider} times the whole prompt across tools, navigation and completion`, async ({
+  test(`${provider} shows duration only after the whole prompt finishes across tools and navigation`, async ({
     page,
   }) => {
     await page.clock.install();
@@ -23,8 +23,10 @@ for (const provider of ["codex", "opencode"] as const) {
     );
     await input.fill("Measure all the work");
     await input.press("Enter");
+    const composer = page.getByRole("form", { name: "Message composer" });
+    await expect(composer).toHaveAttribute("data-working", "true");
     const timing = page.getByLabel("Prompt timing", { exact: true });
-    await expect(timing).toContainText("Working · 0s");
+    await expect(timing).toHaveCount(0);
     await page.clock.fastForward(5000);
     await page.evaluate(
       (provider) => (window as any).fixture.release(`${provider}_send_prompt`),
@@ -79,7 +81,7 @@ for (const provider of ["codex", "opencode"] as const) {
           },
       provider,
     );
-    await expect(timing).toContainText("Working · 25s");
+    await expect(timing).toHaveCount(0);
     await page
       .getByRole("button", { name: "New session", exact: true })
       .click();
@@ -93,7 +95,10 @@ for (const provider of ["codex", "opencode"] as const) {
         exact: true,
       })
       .click();
-    await expect(timing).toContainText("Working · 35s");
+    await expect(composer).toHaveAttribute("data-working", "true");
+    await expect(timing).toHaveCount(0);
+    if (provider === "opencode")
+      await page.evaluate(() => (window as any).fixture.setOpenWorking(false));
     await emit(
       page,
       provider === "codex" ? "turn/completed" : "session.execution.succeeded",
@@ -105,9 +110,14 @@ for (const provider of ["codex", "opencode"] as const) {
         : { sessionID: "ses-a" },
       provider,
     );
-    await expect(timing).toContainText("Completed · 35s");
+    await expect(timing).toHaveText("Worked for 35s");
+    await expect(composer).toHaveAttribute("data-working", "false");
     await page.clock.fastForward(10000);
-    await expect(timing).toContainText("Completed · 35s");
+    await expect(timing).toHaveText("Worked for 35s");
+    await input.fill("Start another prompt");
+    await input.press("Enter");
+    await expect(composer).toHaveAttribute("data-working", "true");
+    await expect(timing).toHaveCount(0);
   });
 }
 
@@ -133,7 +143,7 @@ test("queued waiting stays separate from execution and failed sends stop the pro
     turn: { id: "first", status: "completed" },
   });
   const timing = page.getByLabel("Prompt timing", { exact: true });
-  await expect(timing).toContainText("Working · 0s");
+  await expect(timing).toHaveCount(0);
   await expect(
     page.getByLabel("Prompt queue time", { exact: true }),
   ).toContainText("Queued for 10s");
