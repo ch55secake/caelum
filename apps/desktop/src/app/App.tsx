@@ -1,4 +1,5 @@
 import { isTauri } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { useWorkspace } from "../application/workspace/useWorkspace.js";
 import { useSessionPullRequests } from "../application/github/useSessionPullRequests.js";
 import { useSettings } from "../application/useSettings.js";
@@ -19,10 +20,12 @@ import { WorkspaceNotices } from "./WorkspaceNotices.js";
 import { WorkspaceInspector } from "./WorkspaceInspector.js";
 import { WorkspacePullRequest } from "./WorkspacePullRequest.js";
 import { SessionWorkspace } from "./SessionWorkspace.js";
+import { SessionSetup } from "../ui/sessions/SessionSetup.js";
 
 export default function App() {
   const preferences = useSettings();
   const app = useWorkspace(preferences.settings);
+  const [sessionSetupOpen, setSessionSetupOpen] = useState(false);
   const sessionKey = `${app.project?.path}\0${app.provider}\0${app.selectedId ?? "new"}`;
   const surfaces = useWorkspaceSurfaces(app.project?.path, sessionKey);
   const { activePullRequest, settingsOpen, collapsed, pane, expanded } =
@@ -61,7 +64,12 @@ export default function App() {
     Boolean(activePullRequest),
   );
   function newSession() {
-    surfaces.dismissPullRequest();
+    if (app.restoring || app.providerWorkspace?.isCreating) return;
+    if (!app.project) {
+      setSessionSetupOpen(true);
+      return;
+    }
+    surfaces.showSession();
     app.newSession();
     sidebarView.update({ search: "", searchOpen: false });
     focus.request("composer");
@@ -108,7 +116,7 @@ export default function App() {
         actions={[
           {
             text: "New session",
-            enabled: Boolean(app.project),
+            enabled: !app.restoring && !app.providerWorkspace?.isCreating,
             action: newSession,
           },
           {
@@ -135,6 +143,7 @@ export default function App() {
               searchRef={focus.searchRef}
               focusSearch={focusSearch}
               newSession={newSession}
+              setupSession={() => setSessionSetupOpen(true)}
               changesOpen={surfaces.changesOpen}
               filesOpen={!activePullRequest && pane === "files"}
               sessionVisible={!activePullRequest && (!expanded || !pane)}
@@ -154,6 +163,8 @@ export default function App() {
             activeQuestions={activeQuestions}
             showSession={showSession}
             focusSearch={focusSearch}
+            newSession={newSession}
+            setupSession={() => setSessionSetupOpen(true)}
           />
           <WorkspaceNotices app={app} />
           <WorkspacePullRequest
@@ -180,6 +191,7 @@ export default function App() {
               projectApprovals={projectApprovals}
               activeQuestions={activeQuestions}
               newSession={newSession}
+              setupSession={() => setSessionSetupOpen(true)}
             />
             <WorkspaceInspector app={app} surfaces={surfaces} focus={focus} />
           </div>
@@ -189,6 +201,19 @@ export default function App() {
             app={app}
             preferences={preferences}
             close={() => surfaces.setSettingsOpen(false)}
+          />
+        )}
+        {sessionSetupOpen && (
+          <SessionSetup
+            app={app}
+            defaultProvider={preferences.settings.defaultProvider}
+            close={() => setSessionSetupOpen(false)}
+            started={() => {
+              setSessionSetupOpen(false);
+              surfaces.showSession();
+              sidebarView.update({ search: "", searchOpen: false });
+              focus.request("composer");
+            }}
           />
         )}
       </ContextMenuProvider>

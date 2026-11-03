@@ -3,7 +3,6 @@ import {
   FileCode2,
   GitBranch,
   LoaderCircle,
-  MessageSquarePlus,
   Orbit,
   PanelLeftClose,
   Plus,
@@ -22,11 +21,15 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import type { ProjectSession, SessionDetails } from "../../domain/sessions/workspaceState.js";
+import type {
+  ProjectSession,
+  SessionDetails,
+} from "../../domain/sessions/workspaceState.js";
 import { sessionTitle } from "../../domain/sessions/workspaceState.js";
 import type { WorkspaceController } from "../../application/workspace/controller.js";
 import { ProjectWorktrees } from "../projects/Worktrees.js";
 import { SettingsTrigger } from "../settings/SettingsTrigger.js";
+import { NewSessionButton } from "../sessions/NewSessionButton.js";
 import { PullRequestIndicator } from "../pull-requests/PullRequestIndicator.js";
 import { SessionPullRequests } from "../pull-requests/SessionPullRequests.js";
 import { useSessionPullRequests } from "../../application/github/useSessionPullRequests.js";
@@ -110,6 +113,7 @@ export function Sidebar({
   searchRef,
   focusSearch,
   newSession,
+  setupSession,
   changesOpen,
   filesOpen,
   sessionVisible,
@@ -126,6 +130,7 @@ export function Sidebar({
   searchRef: RefObject<HTMLInputElement | null>;
   focusSearch: () => void;
   newSession: () => void;
+  setupSession: () => void;
   changesOpen: boolean;
   filesOpen: boolean;
   sessionVisible: boolean;
@@ -269,15 +274,11 @@ export function Sidebar({
         ))}
       </nav>
       <nav className="side-nav" aria-label="Workspace">
-        <button
-          className="new-session"
-          onClick={newSession}
-          disabled={!app.project}
-          title="New session (⌘N)"
-        >
-          <MessageSquarePlus size={15} />
-          <span>New session</span>
-        </button>
+        <NewSessionButton
+          start={newSession}
+          setup={setupSession}
+          disabled={app.restoring || Boolean(app.providerWorkspace?.isCreating)}
+        />
         <button
           className={`icon-button${filesOpen ? " active" : ""}`}
           aria-label="Files"
@@ -350,9 +351,7 @@ export function Sidebar({
               placeholder="Search sessions…"
               aria-label="Search sessions"
               value={search}
-              onChange={(event) =>
-                view.update({ search: event.target.value })
-              }
+              onChange={(event) => view.update({ search: event.target.value })}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
@@ -451,11 +450,7 @@ export function Sidebar({
                           approval
                         ),
                         action: () =>
-                          app.archiveSession(
-                            item,
-                            item.provider,
-                            item.project,
-                          ),
+                          app.archiveSession(item, item.provider, item.project),
                       },
                     ])
                   }
@@ -549,11 +544,7 @@ export function Sidebar({
                       approval
                     }
                     onClick={() =>
-                      void app.archiveSession(
-                        item,
-                        item.provider,
-                        item.project,
-                      )
+                      void app.archiveSession(item, item.provider, item.project)
                     }
                   >
                     {archiving ? (
@@ -628,9 +619,7 @@ export function Sidebar({
           drag.current = null;
         }}
         onKeyDown={(event) => {
-          if (
-            ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
-          ) {
+          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
             event.preventDefault();
             resize(
               event.key === "Home"

@@ -5,7 +5,10 @@ import { listen } from "@tauri-apps/api/event";
 import { keyFor, useWorkspaceStore } from "./store.js";
 import { useSessionHistory } from "./useSessionHistory.js";
 import { useSessionMetadata } from "./useSessionMetadata.js";
-import { addOpenProject, closeOpenProject } from "../../domain/projects/projectWorkspace.js";
+import {
+  addOpenProject,
+  closeOpenProject,
+} from "../../domain/projects/projectWorkspace.js";
 import {
   worktreeLabel,
   type GitWorktree,
@@ -159,9 +162,7 @@ export function useWorkspace(settings: AppSettings) {
   openProjects.current = projects;
   const activeProject = useRef(project);
   activeProject.current = project;
-  const [projectRoots, setProjectRoots] = useState<Record<string, string>>(
-    {},
-  );
+  const [projectRoots, setProjectRoots] = useState<Record<string, string>>({});
   const roots = useRef(projectRoots);
   roots.current = projectRoots;
   const [selectedWorktrees, setSelectedWorktrees] = useState<
@@ -172,12 +173,10 @@ export function useWorkspace(settings: AppSettings) {
   >({});
   const catalogs = useRef(worktreeCatalogs);
   catalogs.current = worktreeCatalogs;
-  const [worktreeErrors, setWorktreeErrors] = useState<
-    Record<string, string>
-  >({});
-  const [worktreeBusy, setWorktreeBusy] = useState<Record<string, boolean>>(
+  const [worktreeErrors, setWorktreeErrors] = useState<Record<string, string>>(
     {},
   );
+  const [worktreeBusy, setWorktreeBusy] = useState<Record<string, boolean>>({});
   const worktreeVersions = useRef(new Map<string, number>());
   const worktreeOperations = useRef(new Set<string>());
   const store = useWorkspaceStore();
@@ -247,8 +246,7 @@ export function useWorkspace(settings: AppSettings) {
   const rootProject =
     projects.find((item) => item.path === rootPath) ?? project;
   const projectGroups = projects.filter(
-    (item) =>
-      !projectRoots[item.path] || projectRoots[item.path] === item.path,
+    (item) => !projectRoots[item.path] || projectRoots[item.path] === item.path,
   );
   const currentWorktree = rootPath
     ? worktreeCatalogs[rootPath]?.worktrees.find(
@@ -285,14 +283,14 @@ export function useWorkspace(settings: AppSettings) {
   const projectSessions: ProjectSession[] = projectCheckouts
     .flatMap((checkout) =>
       (["codex", "opencode"] as const).flatMap((kind) =>
-        (
-          workspaces[checkout.project.path]?.providers[kind].sessions ?? []
-        ).map((session) => ({
-          ...session,
-          ...checkout,
-          provider: kind,
-          key: keyFor(checkout.project.path, kind, session.id),
-        })),
+        (workspaces[checkout.project.path]?.providers[kind].sessions ?? []).map(
+          (session) => ({
+            ...session,
+            ...checkout,
+            provider: kind,
+            key: keyFor(checkout.project.path, kind, session.id),
+          }),
+        ),
       ),
     )
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -424,6 +422,25 @@ export function useWorkspace(settings: AppSettings) {
     };
   }, [projects, projectRoots, restoring, settings.worktreeDirectory]);
 
+  async function prepareWorktree(root: ProjectInfo, entry: GitWorktree) {
+    if (!entry.available) throw new Error("This checkout is unavailable.");
+    if (worktreeOperations.current.has(root.path))
+      throw new Error("A worktree operation is already in progress.");
+    const pending = queue.current.then(() =>
+      invoke<ProjectInfo>("open_worktree", {
+        projectPath: worktreeSource(root).path,
+        worktreePath: entry.path,
+      }),
+    );
+    queue.current = pending.catch(() => {});
+    const target = await pending;
+    if (!openProjects.current.some((item) => item.path === root.path))
+      throw new Error("This project was closed. Open it again to continue.");
+    setProjects((current) => addOpenProject(current, target));
+    assignRoots({ [target.path]: root.path });
+    return target;
+  }
+
   async function openWorktree(
     root: ProjectInfo,
     entry: GitWorktree,
@@ -433,18 +450,7 @@ export function useWorkspace(settings: AppSettings) {
     if (!entry.available || worktreeOperations.current.has(root.path)) return;
     const version = ++navigation.current;
     try {
-      const pending = queue.current.then(() =>
-        invoke<ProjectInfo>("open_worktree", {
-          projectPath: worktreeSource(root).path,
-          worktreePath: entry.path,
-        }),
-      );
-      queue.current = pending.catch(() => {});
-      const target = await pending;
-      if (!openProjects.current.some((item) => item.path === root.path))
-        return;
-      setProjects((current) => addOpenProject(current, target));
-      assignRoots({ [target.path]: root.path });
+      const target = await prepareWorktree(root, entry);
       if (
         navigation.current !== version ||
         (selection &&
@@ -511,6 +517,7 @@ export function useWorkspace(settings: AppSettings) {
     root: ProjectInfo,
     branch: string,
     base: string,
+    activate = true,
   ) {
     if (worktreeOperations.current.has(root.path))
       throw new Error("A worktree operation is already in progress.");
@@ -547,10 +554,11 @@ export function useWorkspace(settings: AppSettings) {
             }
           : current;
       });
-      if (entry.available && navigation.current === version) {
+      if (activate && entry.available && navigation.current === version) {
         activateProject(entry.project);
         newSession(entry.project);
       }
+      return entry;
     } finally {
       worktreeOperations.current.delete(root.path);
       setWorktreeBusy((current) => ({ ...current, [root.path]: false }));
@@ -588,9 +596,7 @@ export function useWorkspace(settings: AppSettings) {
         );
         for (const kind of ["codex", "opencode"] as const) {
           invalidateSession(path, kind, "");
-          for (const id of Object.keys(
-            workspace.providers[kind].sessionsById,
-          ))
+          for (const id of Object.keys(workspace.providers[kind].sessionsById))
             invalidateSession(path, kind, id);
         }
       }
@@ -705,9 +711,7 @@ export function useWorkspace(settings: AppSettings) {
       });
       if (questionLifetimes.current.get(key) === lifetime)
         receiveQuestions(
-          pendingQuestions.current.filter(
-            (item) => questionKey(item) !== key,
-          ),
+          pendingQuestions.current.filter((item) => questionKey(item) !== key),
         );
     } catch (reason) {
       if (questionLifetimes.current.get(key) === lifetime)
@@ -766,11 +770,7 @@ export function useWorkspace(settings: AppSettings) {
               "contextCompaction" &&
             typeof event.params.threadId === "string"
           )
-            void loadHistory(
-              event.projectPath,
-              "codex",
-              event.params.threadId,
-            );
+            void loadHistory(event.projectPath, "codex", event.params.threadId);
           if (
             ["turn/started", "turn/completed"].includes(event.method) &&
             typeof event.params.threadId === "string"
@@ -921,8 +921,7 @@ export function useWorkspace(settings: AppSettings) {
           (entry) =>
             !restored.some(
               (item) => item.project.path === entry.project.path,
-            ) &&
-            restored.some((item) => item.rootPath === entry.project.path),
+            ) && restored.some((item) => item.rootPath === entry.project.path),
         );
         const nextProjects = [...restored, ...groupRoots].map(
           (entry) => entry.project,
@@ -1015,10 +1014,9 @@ export function useWorkspace(settings: AppSettings) {
       }));
     void persist("set_active_project", { projectPath: target?.path ?? null });
   }
-  async function chooseProject() {
+  async function pickProject() {
     if (!isTauri()) {
-      setError("Open the desktop app to choose a local project.");
-      return;
+      throw new Error("Open the desktop app to choose a local project.");
     }
     setSelecting(true);
     try {
@@ -1031,11 +1029,17 @@ export function useWorkspace(settings: AppSettings) {
       const opened = await invoke<ProjectInfo>("open_project", { path });
       void persist("remember_project", { project: opened });
       setProjects((current) => addOpenProject(current, opened));
-      activateProject(opened);
-    } catch (reason) {
-      setError(String(reason));
+      return opened;
     } finally {
       setSelecting(false);
+    }
+  }
+  async function chooseProject() {
+    try {
+      const opened = await pickProject();
+      if (opened) activateProject(opened);
+    } catch (reason) {
+      setError(String(reason));
     }
   }
   function closeProject(path: string) {
@@ -1067,34 +1071,36 @@ export function useWorkspace(settings: AppSettings) {
     if (members.some((item) => item.path === project?.path))
       activateProject(next.activeProject);
   }
-  function changeProvider(kind: ProviderKind, fresh = true) {
-    if (!project) return;
+  function changeProvider(kind: ProviderKind, fresh = true, target = project) {
+    if (!target) return;
     navigation.current++;
     update((current) =>
-      updateProjectWorkspace(current, project.path, (value) => ({
+      updateProjectWorkspace(current, target.path, (value) => ({
         ...value,
         provider: kind,
       })),
     );
     if (fresh) {
-      mutateProvider(project.path, kind, (value) => ({
+      mutateProvider(target.path, kind, (value) => ({
         ...value,
         selectedSessionId: null,
       }));
       void persist("select_project_session", {
-        projectPath: project.path,
+        projectPath: target.path,
         provider: kind,
         sessionId: null,
       });
     }
     void persist("set_project_provider", {
-      projectPath: project.path,
+      projectPath: target.path,
       provider: kind,
     });
   }
   function newSession(target = project) {
     if (!target) return;
-    const kind = state.current[target.path]?.provider ?? provider;
+    const kind =
+      state.current[target.path]?.provider ??
+      preferences.current.defaultProvider;
     navigation.current++;
     mutateProvider(target.path, kind, (value) => ({
       ...value,
@@ -1106,6 +1112,31 @@ export function useWorkspace(settings: AppSettings) {
       provider: kind,
       sessionId: null,
     });
+  }
+  async function startSessionDraft(
+    root: ProjectInfo,
+    checkoutPath: string,
+    kind: ProviderKind,
+  ) {
+    const version = ++navigation.current;
+    const catalog = catalogs.current[root.path];
+    const entry = catalog?.worktrees.find(
+      (item) => item.project.path === checkoutPath,
+    );
+    if (catalog && !entry)
+      throw new Error("This checkout is no longer available.");
+    const target = entry ? await prepareWorktree(root, entry) : root;
+    if (!openProjects.current.some((item) => item.path === root.path))
+      throw new Error("This project was closed. Open it again to continue.");
+    if (navigation.current !== version)
+      throw new Error(
+        "The active session changed. Select Start writing to continue here.",
+      );
+    // Commit the explicit checkout/provider together; asynchronous setup must
+    // never apply its provider to whichever project happens to be active later.
+    activateProject(target);
+    changeProvider(kind, false, target);
+    newSession(target);
   }
   async function loadChoices(target: ProjectInfo, kind: ProviderKind) {
     if (removedDirectories.current.has(target.path)) return;
@@ -1160,8 +1191,7 @@ export function useWorkspace(settings: AppSettings) {
             }
           : key === "agent"
             ? {
-                agent:
-                  !value || value === current.session.agent ? null : value,
+                agent: !value || value === current.session.agent ? null : value,
               }
             : { effort: value }),
       }));
@@ -1302,8 +1332,7 @@ export function useWorkspace(settings: AppSettings) {
     target = project,
   ) {
     if (!target || unavailable(target.path, kind, thread.id)) return;
-    const catalog =
-      catalogs.current[roots.current[target.path] ?? target.path];
+    const catalog = catalogs.current[roots.current[target.path] ?? target.path];
     if (
       catalog &&
       !catalog.worktrees.some(
@@ -1350,8 +1379,7 @@ export function useWorkspace(settings: AppSettings) {
       const notice: ArchivedSession = {
         project: target,
         provider: kind,
-        thread:
-          latest.sessions.find((item) => item.id === thread.id) ?? thread,
+        thread: latest.sessions.find((item) => item.id === thread.id) ?? thread,
         cached: latest.sessionsById[thread.id],
         details: latest.sessionDetails[thread.id],
         restoreNavigation,
@@ -1402,8 +1430,7 @@ export function useWorkspace(settings: AppSettings) {
         archived: false,
       });
       invalidateSession(target.path, kind, thread.id);
-      const restoreSelection =
-        notice.restoreNavigation === navigation.current;
+      const restoreSelection = notice.restoreNavigation === navigation.current;
       mutateProvider(target.path, kind, (value) => ({
         ...value,
         archivedSessionIds: value.archivedSessionIds.filter(
@@ -1664,13 +1691,7 @@ export function useWorkspace(settings: AppSettings) {
   }, [project?.path, provider, selectedId, selected?.unread]);
 
   useEffect(() => {
-    if (
-      !project ||
-      !selectedId ||
-      !ready ||
-      checkoutUnavailable ||
-      !isTauri()
-    )
+    if (!project || !selectedId || !ready || checkoutUnavailable || !isTauri())
       return;
     const path = project.path,
       kind = provider,
@@ -1744,8 +1765,12 @@ export function useWorkspace(settings: AppSettings) {
     } else mutateProvider(project.path, provider, updateDraft);
   }
   function addFileContext(file: FileContext, ask = false) {
-    if (!project || removedDirectories.current.has(project.path) ||
-      (selectedId && unavailable(project.path, provider, selectedId))) return false;
+    if (
+      !project ||
+      removedDirectories.current.has(project.path) ||
+      (selectedId && unavailable(project.path, provider, selectedId))
+    )
+      return false;
     const current = state.current[project.path]?.providers[provider];
     if (
       selectedId
@@ -1756,11 +1781,16 @@ export function useWorkspace(settings: AppSettings) {
     const files = selectedId
       ? current?.sessionsById[selectedId]?.fileContext
       : current?.fileContext;
-    const rest = files?.filter((item) =>
-      item.path !== file.path || item.startLine !== file.startLine || item.endLine !== file.endLine,
+    const rest = files?.filter(
+      (item) =>
+        item.path !== file.path ||
+        item.startLine !== file.startLine ||
+        item.endLine !== file.endLine,
     );
     if (!rest || rest.length >= MAX_FILE_CONTEXT) {
-      setError(`Attach up to ${MAX_FILE_CONTEXT} files or selections per message.`);
+      setError(
+        `Attach up to ${MAX_FILE_CONTEXT} files or selections per message.`,
+      );
       return false;
     }
     updateFileContext(() => [...rest, file], ask);
@@ -1791,8 +1821,7 @@ export function useWorkspace(settings: AppSettings) {
                   (!value.settledInboxIds.includes(item.id) &&
                     !value.conversation.some(
                       (entry) =>
-                        entry.id === `opencode-${item.id}` &&
-                        !entry.optimistic,
+                        entry.id === `opencode-${item.id}` && !entry.optimistic,
                     )),
               ),
             },
@@ -1810,7 +1839,8 @@ export function useWorkspace(settings: AppSettings) {
       !project ||
       !selectedId ||
       unavailable(project.path, provider, selectedId)
-    ) return;
+    )
+      return;
     mutateSession(project.path, provider, selectedId, (value) => ({
       ...value,
       pullRequestContext: change(value.pullRequestContext),
@@ -1821,11 +1851,14 @@ export function useWorkspace(settings: AppSettings) {
       !project ||
       !selectedId ||
       unavailable(project.path, provider, selectedId)
-    ) return false;
+    )
+      return false;
     const session =
       state.current[project.path]?.providers[provider].sessionsById[selectedId];
     if (!session || session.isSubmitting) return false;
-    const rest = session.pullRequestContext.filter((item) => item.url !== pr.url);
+    const rest = session.pullRequestContext.filter(
+      (item) => item.url !== pr.url,
+    );
     if (rest.length >= MAX_PULL_REQUEST_CONTEXT) return false;
     updatePullRequestContext(() => [...rest, pr]);
     return true;
@@ -1850,12 +1883,10 @@ export function useWorkspace(settings: AppSettings) {
       prompt,
       remote,
       pending: remote,
-      model:
-        session.model ?? previous?.model ?? session.session.model ?? null,
+      model: session.model ?? previous?.model ?? session.session.model ?? null,
       effort:
         session.effort ?? previous?.effort ?? session.session.effort ?? null,
-      agent:
-        session.agent ?? previous?.agent ?? session.session.agent ?? null,
+      agent: session.agent ?? previous?.agent ?? session.session.agent ?? null,
     };
     const key = `send:${keyFor(path, kind, id)}`;
     if (remote) locks.current.add(key);
@@ -1995,8 +2026,7 @@ export function useWorkspace(settings: AppSettings) {
   useEffect(() => {
     if (!ready || restoring) return;
     for (const [path, workspace] of Object.entries(workspaces)) {
-      if (worktreeOperations.current.has(roots.current[path] ?? path))
-        continue;
+      if (worktreeOperations.current.has(roots.current[path] ?? path)) continue;
       for (const kind of ["codex", "opencode"] as const) {
         for (const [id, session] of Object.entries(
           workspace.providers[kind].sessionsById,
@@ -2045,9 +2075,7 @@ export function useWorkspace(settings: AppSettings) {
         });
       mutateSession(path, kind, sessionId, (value) => ({
         ...value,
-        queuedMessages: value.queuedMessages.filter(
-          (entry) => entry.id !== id,
-        ),
+        queuedMessages: value.queuedMessages.filter((entry) => entry.id !== id),
         inboxRevision: value.inboxRevision + 1,
       }));
     } catch (reason) {
@@ -2348,10 +2376,7 @@ export function useWorkspace(settings: AppSettings) {
           ...options,
           command: {
             name: command.name,
-            text: promptWithPullRequests(
-              command.arguments,
-              pullRequestContext,
-            ),
+            text: promptWithPullRequests(command.arguments, pullRequestContext),
             files: commandFiles(fileContext),
           },
         });
@@ -2400,7 +2425,10 @@ export function useWorkspace(settings: AppSettings) {
             ? value.pullRequestContext
             : [
                 ...pullRequestContext.filter(
-                  (pr) => !value.pullRequestContext.some((item) => item.url === pr.url),
+                  (pr) =>
+                    !value.pullRequestContext.some(
+                      (item) => item.url === pr.url,
+                    ),
                 ),
                 ...value.pullRequestContext,
               ],
@@ -2475,15 +2503,11 @@ export function useWorkspace(settings: AppSettings) {
     }
   }
   function viewRequest(
-    request: Pick<
-      ApprovalPrompt,
-      "provider" | "projectPath" | "sessionId"
-    > & {
+    request: Pick<ApprovalPrompt, "provider" | "projectPath" | "sessionId"> & {
       title?: string;
     },
   ) {
-    if (request.provider !== "codex" && request.provider !== "opencode")
-      return;
+    if (request.provider !== "codex" && request.provider !== "opencode") return;
     const target = projects.find(
       (item) => item.path === request.projectPath,
     ) ?? {
@@ -2616,9 +2640,11 @@ export function useWorkspace(settings: AppSettings) {
     undoArchive,
     activateProject,
     chooseProject,
+    pickProject,
     closeProject,
     changeProvider,
     newSession,
+    startSessionDraft,
     selectSession,
     loadSessions,
     refreshSessions,

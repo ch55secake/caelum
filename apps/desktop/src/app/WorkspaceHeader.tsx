@@ -12,6 +12,7 @@ import type { ApprovalPrompt } from "../application/workspace/useWorkspace.js";
 import type { QuestionPrompt } from "../domain/sessions/questionState.js";
 import type { WorkspaceSurfaces } from "./useWorkspaceSurfaces.js";
 import { SettingsTrigger } from "../ui/settings/SettingsTrigger.js";
+import { NewSessionButton } from "../ui/sessions/NewSessionButton.js";
 
 export function WorkspaceHeader({
   app,
@@ -21,6 +22,8 @@ export function WorkspaceHeader({
   activeQuestions,
   showSession,
   focusSearch,
+  newSession,
+  setupSession,
 }: {
   app: WorkspaceController;
   title: string;
@@ -29,6 +32,8 @@ export function WorkspaceHeader({
   activeQuestions: QuestionPrompt[];
   showSession: () => void;
   focusSearch: () => void;
+  newSession: () => void;
+  setupSession: () => void;
 }) {
   const { activePullRequest, collapsed, changesOpen } = surfaces;
   return (
@@ -64,6 +69,16 @@ export function WorkspaceHeader({
         </strong>
       </div>
       <div className="topbar-actions">
+        {collapsed && (
+          <NewSessionButton
+            compact
+            start={newSession}
+            setup={setupSession}
+            disabled={
+              app.restoring || Boolean(app.providerWorkspace?.isCreating)
+            }
+          />
+        )}
         {collapsed && (
           <SettingsTrigger
             className="icon-button"

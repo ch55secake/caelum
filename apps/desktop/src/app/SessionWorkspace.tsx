@@ -10,6 +10,7 @@ import {
 import { ApprovalCard, Conversation } from "../ui/conversation/Conversation.js";
 import { MessageQueue } from "../ui/composer/MessageQueue.js";
 import { QuestionCard } from "../ui/sessions/QuestionCard.js";
+import { NewSessionWelcome } from "../ui/sessions/NewSessionWelcome.js";
 import { SessionComposer } from "./SessionComposer.js";
 import type { WorkspaceFocus } from "./useWorkspaceFocus.js";
 import type { WorkspaceSurfaces } from "./useWorkspaceSurfaces.js";
@@ -25,6 +26,7 @@ export function SessionWorkspace({
   projectApprovals,
   activeQuestions,
   newSession,
+  setupSession,
 }: {
   app: WorkspaceController;
   preferences: ReturnType<typeof useSettings>;
@@ -36,6 +38,7 @@ export function SessionWorkspace({
   projectApprovals: ApprovalPrompt[];
   activeQuestions: QuestionPrompt[];
   newSession: () => void;
+  setupSession: () => void;
 }) {
   const sessionError = app.selected
     ? app.selected.error
@@ -142,10 +145,7 @@ export function SessionWorkspace({
           }
         />
       ) : (
-        <div className="session-empty">
-          <h1>New session</h1>
-          <p>What would you like to work on?</p>
-        </div>
+        <NewSessionWelcome app={app} setup={setupSession} />
       )}
       {app.selected && (
         <MessageQueue
