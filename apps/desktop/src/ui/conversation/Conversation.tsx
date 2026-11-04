@@ -278,11 +278,12 @@ export function Conversation({
     const item = Array.from(
       container.querySelectorAll<HTMLElement>("[data-entry-id]"),
     ).find((node) => node.offsetTop >= container.scrollTop);
-    if (item)
-      anchor.current = {
-        id: item.dataset.entryId!,
-        offset: item.offsetTop - container.scrollTop,
-      };
+    anchor.current = item
+      ? {
+          id: item.dataset.entryId!,
+          offset: item.offsetTop - container.scrollTop,
+        }
+      : null;
   };
   useImperativeHandle(
     ref,
@@ -455,6 +456,12 @@ export function Conversation({
           const near =
             node.scrollHeight - node.scrollTop - node.clientHeight <= 1 &&
             windowEnd === entries.length;
+          // A pending history refresh must restore the reader's latest position,
+          // not the position captured before their wheel or keyboard scroll.
+          if (anchor.current) {
+            if (near) anchor.current = null;
+            else rememberAnchor();
+          }
           following.current = near;
           position.current = node.scrollTop;
           setAtBottom(near);

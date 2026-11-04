@@ -59,7 +59,7 @@ test("a small upward scroll pauses streaming follow and returning to the bottom 
   await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
 });
 
-test("scrolling inside a thinking trace keeps following, while keyboard scrolling pauses the conversation", async ({
+test("nested scrolling keeps following and history refreshes respect keyboard reading positions", async ({
   page,
 }) => {
   await desktop(page);
@@ -85,15 +85,45 @@ test("scrolling inside a thinking trace keeps following, while keyboard scrollin
   await expect(transcript).toContainText("Following after nested scrolling");
   await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
 
+  // A refresh can start after Home pauses following but before the browser's
+  // native keyboard scroll has moved away from the bottom.
+  await page.evaluate(() => {
+    (window as any).fixture.holdHistory();
+    document.addEventListener(
+      "keydown",
+      () => window.dispatchEvent(new Event("focus")),
+      { once: true },
+    );
+  });
   await transcript.focus();
   await page.keyboard.press("Home");
   await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0);
   await expect(jump).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Loading…", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(() => (window as any).fixture.releaseHistory());
+  const history = page.getByRole("button", {
+    name: "Load earlier messages",
+    exact: true,
+  });
+  await expect(history).toBeEnabled();
+  await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0);
   await stream(page, "Output while reading earlier messages");
   await expect(transcript).toContainText("Output while reading earlier messages");
   await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0);
+  await page.evaluate(() => {
+    (window as any).fixture.holdHistory();
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(
+    page.getByRole("button", { name: "Loading…", exact: true }),
+  ).toBeDisabled();
   await page.keyboard.press("End");
   await expect(jump).toHaveCount(0);
+  await page.evaluate(() => (window as any).fixture.releaseHistory());
+  await expect(history).toBeEnabled();
+  await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
   await stream(page, "\n\nFollowing after keyboard scrolling\n\n".repeat(10));
   await expect(transcript).toContainText("Following after keyboard scrolling");
   await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
