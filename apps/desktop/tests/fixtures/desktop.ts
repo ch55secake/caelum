@@ -302,6 +302,9 @@ export async function desktop(
       const inbox = new Map<string, any[]>(
         JSON.parse(sessionStorage.getItem("inbox") ?? "[]"),
       );
+      const backgroundShells = new Map<string, unknown[]>(
+        JSON.parse(sessionStorage.getItem("background-shells") ?? "[]"),
+      );
       const saveInbox = () =>
         sessionStorage.setItem("inbox", JSON.stringify([...inbox]));
       let release: () => void = () => {};
@@ -325,6 +328,16 @@ export async function desktop(
             saveWorktrees();
           },
           emit,
+          setBackgroundShells: (
+            shells: unknown[],
+            path = project.path,
+            id = "ses-a",
+          ) => {
+            backgroundShells.set(sessionKey(path, "opencode", id), shells);
+            sessionStorage.setItem(
+              "background-shells", JSON.stringify([...backgroundShells]),
+            );
+          },
           deliverQueued: (path = project.path, id = "ses-a") => {
             const key = sessionKey(path, "opencode", id);
             const [item, ...rest] = inbox.get(key) ?? [];
@@ -1132,6 +1145,18 @@ export async function desktop(
               }
               saveInbox();
               return;
+            }
+            if (command === "opencode_background_shells") {
+              const scope = `${command}:${args.projectPath}:${args.sessionId}`;
+              const snapshot = structuredClone(
+                backgroundShells.get(
+                  sessionKey(args.projectPath, "opencode", args.sessionId),
+                ) ?? [],
+              );
+              const error = commandErrors.get(scope) ?? commandErrors.get(command);
+              await (gates.get(scope) ?? gates.get(command))?.promise;
+              if (error) throw new Error(error);
+              return snapshot;
             }
             if (command === "opencode_session_history") {
               const snapshot = {

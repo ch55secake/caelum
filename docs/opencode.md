@@ -2,6 +2,8 @@
 
 Caelum integrates with the local OpenCode v2 server API and `/api/event` SSE stream. It attaches to a healthy registered background service so sessions running in other OpenCode clients update live. If no healthy service is available, it starts an owned `opencode serve` process per project, bound to `127.0.0.1` on an available local port.
 
+Background command visibility uses the session-scoped `/api/experimental/job` list independently of prompt execution and conversation history. The selected session refreshes on shell/tool/execution events, focus and every five seconds while visible. Only running shell jobs owned by that session are shown; child-session jobs are excluded.
+
 ## Setup
 
 1. Install OpenCode and make `opencode` available on `PATH`. Caelum also checks common Homebrew and user-local install paths.

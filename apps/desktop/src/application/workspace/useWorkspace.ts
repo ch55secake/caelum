@@ -6,6 +6,7 @@ import { keyFor, useWorkspaceStore } from "./store.js";
 import { useSessionHistory } from "./useSessionHistory.js";
 import { useSessionMetadata } from "./useSessionMetadata.js";
 import { useSessionActivity } from "./useSessionActivity.js";
+import { useBackgroundShells } from "./useBackgroundShells.js";
 import { deferredOutput } from "./publication.js";
 import {
   addOpenProject,
@@ -262,6 +263,14 @@ export function useWorkspace(settings: AppSettings) {
     : undefined;
   const checkoutUnavailable = Boolean(
     rootPath && worktreeCatalogs[rootPath] && !currentWorktree?.available,
+  );
+  const backgroundShells = useBackgroundShells(
+    project?.path,
+    selectedId,
+    ready &&
+      !checkoutUnavailable &&
+      provider === "opencode" &&
+      selected?.connection === "connected",
   );
   const checkoutProjects = new Map<string, ProjectInfo>();
   if (rootProject) {
@@ -809,6 +818,7 @@ export function useWorkspace(settings: AppSettings) {
         "opencode-event",
         (event) => {
           if (removedDirectories.current.has(event.projectPath)) return;
+          backgroundShells.receive(event);
           if (
             event.eventType === "session.inbox.delivered" &&
             typeof event.data.sessionID === "string"
@@ -2678,6 +2688,7 @@ export function useWorkspace(settings: AppSettings) {
   }
   return {
     activity,
+    backgroundShells,
     projects,
     projectGroups,
     projectRoots,

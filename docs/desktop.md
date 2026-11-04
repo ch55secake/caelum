@@ -14,6 +14,8 @@ Hover or focus a session row to **Archive** it. Archiving keeps provider-owned c
 
 Responses, thinking and tool activity stream live. Expand a row for the complete trace, input or output. Patch previews show compact changed-code snippets; execute previews show their JavaScript. Long-running tools show elapsed time, and quiet gaps do not imply that execution has finished. Activity animations respect reduced motion.
 
+OpenCode background commands appear above the composer with their command lines and elapsed times. When the model is idle, **Waiting for background command** makes the ongoing work visible, even after the prompt finishes or you reopen the session. The indicator clears when the commands finish; unavailable status is shown explicitly while refreshes retry.
+
 Provider-owned history loads in pages; choose **Load earlier messages** to read further back. Compaction appears as a checkpoint, including running, completed, failed and interrupted states. Earlier messages remain available. OpenCode checkpoints can include a summary. **Turn cancelled** clears when work resumes; a resumable shutdown appears as **Execution paused**.
 
 Draft or queue another message while a response runs. **Stop** or **Escape twice within 750ms** interrupts the active session's turn and pauses its queue. Menus, dialogs and side-question dismissal take priority over cancellation. Failed submissions preserve text and attachments for retry; disconnected sessions offer **Reconnect**. Approvals appear in the requesting conversation, with indicators for background sessions.

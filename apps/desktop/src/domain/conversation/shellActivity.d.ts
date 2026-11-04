@@ -1,4 +1,9 @@
 import type { ConversationEntry } from "../sessions/workspaceState.js";
+export type BackgroundShell = {
+  id: string;
+  command: string;
+  startedAt: number;
+};
 export type ShellDetails = {
   command: string;
   cwd?: string;

@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 mod generate;
+mod jobs;
 mod server;
 mod stats;
 mod transport;
@@ -1698,6 +1699,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
         elif path == "/api/session/active":
             self.send_json({"data": {"ses_fake": {"type": "running"}} if os.path.exists(os.path.join(PROJECT, "busy")) else {}})
+        elif path == "/api/experimental/job":
+            assert parse_qs(urlsplit(self.path).query) == {"sessionID": ["ses_fake"], "kind": ["shell"], "status": ["running"], "descendants": ["false"]}
+            with open(os.path.join(PROJECT, "background-jobs.json")) as jobs:
+                self.send_json(json.load(jobs))
         elif path == "/api/session/ses_fake":
             session = dict(SESSION)
             self.send_json({"data": session})
@@ -2069,6 +2074,41 @@ server.serve_forever()
             .inbox(&project_path, "ses_fake")
             .unwrap()
             .is_empty());
+        let jobs = project_path.join("background-jobs.json");
+        fs::write(&jobs, serde_json::to_vec(&json!({ "data": [
+            { "kind": "shell", "sessionID": "ses_fake", "status": "running", "shellID": "sh_live", "command": "cargo test", "time": { "started": 1234 } },
+            { "kind": "shell", "sessionID": "ses_foreign", "status": "running" },
+            { "kind": "subagent", "sessionID": "ses_fake", "status": "running" },
+            { "kind": "shell", "sessionID": "ses_fake", "status": "completed" },
+            { "kind": "shell", "sessionID": "ses_fake", "status": "error" },
+            { "kind": "shell", "sessionID": "ses_fake", "status": "cancelled" }
+        ] })).unwrap()).unwrap();
+        let shells = provider
+            .background_shells(&project_path, "ses_fake")
+            .unwrap();
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].id, "sh_live");
+        assert_eq!(shells[0].command, "cargo test");
+        assert_eq!(shells[0].started_at, 1234);
+        assert!(matches!(
+            provider.background_shells(&project_path, "ses_foreign"),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        fs::write(&jobs, r#"{"data":[]}"#).unwrap();
+        assert!(provider
+            .background_shells(&project_path, "ses_fake")
+            .unwrap()
+            .is_empty());
+        for invalid in [
+            json!({ "unexpected": [] }),
+            json!({ "data": [{ "kind": "shell", "sessionID": "ses_fake", "status": "running" }] }),
+        ] {
+            fs::write(&jobs, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(matches!(
+                provider.background_shells(&project_path, "ses_fake"),
+                Err(OpenCodeError::Protocol(_))
+            ));
+        }
         let history = provider
             .session_history(&project_path, "ses_fake", None)
             .unwrap();

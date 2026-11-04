@@ -481,6 +481,15 @@ pub struct OpenCodeSessionList {
     pub sessions: Vec<OpenCodeSession>,
 }
 
+/// A running background command owned by an OpenCode session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeBackgroundShell {
+    pub id: String,
+    pub command: String,
+    pub started_at: u64,
+}
+
 /// One chronological page of provider-owned history, retaining native tool details.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

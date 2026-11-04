@@ -60,6 +60,7 @@ pub(crate) fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
         providers::opencode::sessions::opencode_start_session,
         providers::opencode::sessions::opencode_resume_session,
         providers::opencode::sessions::opencode_session_history,
+        providers::opencode::sessions::opencode_background_shells,
         providers::opencode::conversation::opencode_generate,
         providers::opencode::conversation::opencode_send_prompt,
         providers::opencode::conversation::opencode_enqueue_prompt,
