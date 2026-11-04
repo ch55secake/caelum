@@ -27,7 +27,7 @@ test("opening tool details keeps following new messages until the user scrolls u
   ).toHaveCount(0);
 });
 
-test("a small upward scroll pauses streaming follow and returning to the bottom resumes it", async ({
+test("even a one-pixel upward scroll pauses following and returning to the bottom resumes it", async ({
   page,
 }) => {
   await desktop(page);
@@ -38,13 +38,15 @@ test("a small upward scroll pauses streaming follow and returning to the bottom 
   const position = () => transcript.evaluate((node) => node.scrollTop);
   const bottom = await position();
   await transcript.hover();
-  await page.mouse.wheel(0, -24);
-  await expect.poll(position).toBeLessThan(bottom - 10);
+  await page.mouse.wheel(0, -1);
+  await expect.poll(position).toBeCloseTo(bottom - 1, 0);
   const jump = page.getByRole("button", {
     name: "Jump to latest",
     exact: true,
   });
   await expect(jump).toBeVisible();
+  await page.mouse.wheel(0, -23);
+  await expect.poll(position).toBeCloseTo(bottom - 24, 0);
   const reading = await position();
   await stream(page, "More output\n\n".repeat(10));
   await expect(transcript).toContainText("More output");
@@ -86,11 +88,6 @@ test("nested scrolling keeps following and history refreshes respect keyboard re
   await expect(transcript).toContainText("Following after nested scrolling");
   await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
 
-  // Give WebKit a native keyboard-scroll target in the outer transcript after
-  // interacting with the nested trace, rather than only changing DOM focus.
-  await transcript.click({ position: { x: 8, y: 8 } });
-  await expect(transcript).toBeFocused();
-
   // A refresh can start after Home pauses following but before the browser's
   // native keyboard scroll has moved away from the bottom.
   await page.evaluate(() => {
@@ -101,6 +98,8 @@ test("nested scrolling keeps following and history refreshes respect keyboard re
       { once: true },
     );
   });
+  await transcript.focus();
+  await expect(transcript).toBeFocused();
   await page.keyboard.press("Home");
   await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0);
   await expect(jump).toBeVisible();

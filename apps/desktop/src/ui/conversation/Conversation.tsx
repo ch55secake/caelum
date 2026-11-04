@@ -453,7 +453,13 @@ export function Conversation({
             position.current = node.scrollTop;
             return;
           }
+          // Smooth upward scrolling can begin just one pixel from the bottom.
+          // Resume paused following only when moving back toward the latest.
+          const approachingBottom =
+            following.current ||
+            node.scrollTop > (position.current ?? node.scrollTop);
           const near =
+            approachingBottom &&
             node.scrollHeight - node.scrollTop - node.clientHeight <= 1 &&
             windowEnd === entries.length;
           // A pending history refresh must restore the reader's latest position,
