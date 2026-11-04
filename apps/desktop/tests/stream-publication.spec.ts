@@ -1,12 +1,18 @@
 import { expect, test } from "@playwright/test";
 import { desktop } from "./fixtures/desktop.js";
-import { choose, emit, question, setQuestions } from "./fixtures/helpers.js";
+import {
+  choose,
+  emit,
+  installPausedClock,
+  question,
+  setQuestions,
+} from "./fixtures/helpers.js";
 
 for (const provider of ["codex", "opencode"] as const) {
   test(`${provider} publishes pending output with input requests and terminal events while timers are paused`, async ({
     page,
   }) => {
-    await page.clock.install();
+    await installPausedClock(page);
     await desktop(page, provider === "codex" ? "thread-a" : null);
     const id = provider === "codex" ? "thread-a" : "ses-a";
     if (provider === "opencode") {
@@ -26,7 +32,6 @@ for (const provider of ["codex", "opencode"] as const) {
     await expect(
       page.getByRole("form", { name: "Message composer" }),
     ).toHaveAttribute("data-working", "true");
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
     const delta = (text: string) =>
       emit(
         page,
@@ -66,7 +71,7 @@ for (const provider of ["codex", "opencode"] as const) {
 test("pending background output stays ordered across navigation and stale history", async ({
   page,
 }) => {
-  await page.clock.install();
+  await installPausedClock(page);
   await desktop(page);
   await page
     .getByRole("button", { name: "Review the provider adapters", exact: true })
@@ -81,7 +86,6 @@ test("pending background output stays ordered across navigation and stale histor
     page.getByText("A focused workspace", { exact: true }),
   ).toBeVisible();
   await page.evaluate(() => (window as any).fixture.holdHistory());
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   await page.evaluate(() => {
     const fixture = (window as any).fixture;
     window.dispatchEvent(new Event("focus"));

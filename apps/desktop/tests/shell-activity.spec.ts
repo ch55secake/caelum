@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { desktop } from "./fixtures/desktop.js";
-import { choose, emit } from "./fixtures/helpers.js";
+import { choose, emit, installPausedClock } from "./fixtures/helpers.js";
 
 const composer = (page: Page) => page.getByRole("form", { name: "Message composer" });
 const waiting = (page: Page, project = "caelum") => page.locator(".project-group")
@@ -16,9 +16,8 @@ async function openOpenCode(page: Page) {
 }
 
 test("idle shell work uses the waiting badge and a slower composer pulse without changing submission", async ({ page }, info) => {
-  await page.clock.install();
+  await installPausedClock(page);
   await desktop(page, null);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   await openOpenCode(page);
   const startedAt = await page.evaluate(() => Date.now());
   const first = { id: "sh_first", command: "cargo test --workspace", startedAt };

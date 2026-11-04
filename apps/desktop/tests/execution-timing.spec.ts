@@ -1,14 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { desktop } from "./fixtures/desktop.js";
-import { choose, emit } from "./fixtures/helpers.js";
+import { choose, emit, installPausedClock } from "./fixtures/helpers.js";
 
 for (const provider of ["codex", "opencode"] as const) {
   test(`${provider} shows duration only after the whole prompt finishes across tools and navigation`, async ({
     page,
   }) => {
-    await page.clock.install();
+    await installPausedClock(page);
     await desktop(page, provider === "codex" ? "thread-a" : null);
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
     if (provider === "opencode") {
       await choose(page, "Provider", "OpenCode");
       await page
@@ -124,9 +123,8 @@ for (const provider of ["codex", "opencode"] as const) {
 test("queued waiting stays separate from execution and failed sends stop the prompt clock", async ({
   page,
 }) => {
-  await page.clock.install();
+  await installPausedClock(page);
   await desktop(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   await emit(page, "turn/started", {
     threadId: "thread-a",
     turn: { id: "first" },
