@@ -2,7 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { desktop } from "./fixtures/desktop.js";
 import { choose, emit } from "./fixtures/helpers.js";
 
-const commands = (page: Page) => page.getByRole("region", { name: "Background commands" });
+const composer = (page: Page) => page.getByRole("form", { name: "Message composer" });
+const waiting = (page: Page, project = "caelum") => page.locator(".project-group")
+  .filter({ has: page.getByRole("button", { name: project, exact: true }) })
+  .locator(".project-waiting");
 const backgroundCommand = "opencode_background_shells";
 const backgroundScope = `${backgroundCommand}:/work/caelum:ses-a`;
 
@@ -12,7 +15,7 @@ async function openOpenCode(page: Page) {
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeEnabled();
 }
 
-test("background jobs stay visible after tool and prompt completion with independent timers", async ({ page }, info) => {
+test("idle shell work uses the waiting badge and a slower composer pulse without changing submission", async ({ page }, info) => {
   await page.clock.install();
   await desktop(page, null);
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
@@ -31,34 +34,72 @@ test("background jobs stay visible after tool and prompt completion with indepen
     sessionID: "ses-a", id: "tool-bg",
     content: [{ type: "text", text: "Running in background" }],
   }, "opencode");
-  await expect(commands(page)).toContainText("1 background command running");
-  await expect(commands(page)).toContainText(first.command);
+  await expect(composer(page)).toHaveAttribute("data-working", "true");
+  await expect(waiting(page)).toHaveCount(0);
   await page.clock.fastForward(5000);
   await page.evaluate(() => (window as any).fixture.setOpenWorking(false));
   await emit(page, "session.execution.succeeded", { sessionID: "ses-a" }, "opencode");
-  await expect(commands(page).getByRole("status")).toHaveText("Waiting for background command");
-  await expect(page.getByRole("form", { name: "Message composer" })).toHaveAttribute("data-working", "false");
+  await expect(waiting(page)).toHaveText("1waiting");
+  await expect(page.locator('.session-row[data-session-id="ses-a"] .waiting-dot')).toBeVisible();
+  await expect(composer(page)).toHaveAttribute("data-working", "false");
+  await expect(composer(page)).toHaveAttribute("data-waiting", "true");
+  expect(await composer(page).evaluate((node) => getComputedStyle(node, "::before").animationName)).toBe("waiting-pulse");
+  expect(await composer(page).evaluate((node) => getComputedStyle(node, "::before").animationDuration)).toBe("4.5s");
+  await expect(page.getByLabel("Agent activity", { exact: true })).toHaveText("Waiting for background commands");
   await expect(page.getByLabel("Prompt timing", { exact: true })).toHaveText("Worked for 5s");
   await page.clock.fastForward(5000);
-  await expect(commands(page).getByLabel("Command elapsed time")).toHaveText("10s");
+  await expect(waiting(page)).toBeVisible();
   await expect(page.getByLabel("Prompt timing", { exact: true })).toHaveText("Worked for 5s");
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("My next prompt");
   await page.evaluate((shells) => (window as any).fixture.setBackgroundShells(shells), [first, second]);
   await emit(page, "shell.created", { info: { id: second.id } }, "opencode");
-  await expect(commands(page).getByRole("status")).toHaveText("Waiting for 2 background commands");
-  await expect(commands(page).getByLabel("Command elapsed time")).toHaveText(["10s", "0s"]);
+  await expect(waiting(page)).toHaveText("1waiting");
+  await expect(page.getByRole("region", { name: "Background commands" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(await composer(page).evaluate((node) => getComputedStyle(node, "::before").animationName)).toBe("none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.setViewportSize({ width: 800, height: 620 });
-  await expect(commands(page)).toBeInViewport({ ratio: 1 });
+  await expect(waiting(page).getByText("waiting", { exact: true })).toBeVisible();
+  await expect(composer(page)).toBeInViewport({ ratio: 1 });
   await page.screenshot({ path: info.outputPath("background-waiting.png") });
   await page.evaluate((shell) => (window as any).fixture.setBackgroundShells([shell]), second);
   await emit(page, "shell.exited", { id: first.id, status: "exited", exit: 1 }, "opencode");
-  await expect(commands(page).getByRole("listitem")).toHaveCount(1);
-  await expect(commands(page)).toContainText(second.command);
+  await expect(composer(page)).toHaveAttribute("data-waiting", "true");
   // A missed terminal event is reconciled even while the model is idle.
   await page.evaluate(() => (window as any).fixture.setBackgroundShells([]));
   await page.clock.fastForward(5000);
-  await expect(commands(page)).toHaveCount(0);
+  await expect(waiting(page)).toHaveCount(0);
+  await expect(composer(page)).toHaveAttribute("data-waiting", "false");
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("My next prompt");
+});
+
+test("waiting stays visible beside working and unread while another session is selected", async ({ page }) => {
+  await page.clock.install();
+  await desktop(page, null);
+  await page.evaluate(() => (window as any).fixture.setBackgroundShells([
+    { id: "sh_background", command: "background work", startedAt: Date.now() },
+  ]));
+  await openOpenCode(page);
+  await expect(waiting(page)).toBeVisible();
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Keep this draft");
+  await page.getByRole("button", { name: "Refine the session workspace", exact: true }).click();
+  await emit(page, "turn/started", { threadId: "thread-a", turn: { id: "active" } });
+  await emit(page, "session.synthetic", {
+    sessionID: "ses-a", text: "An update from the background session",
+  }, "opencode", { id: "evt_background_update" });
+  await expect(waiting(page)).toHaveText("1waiting");
+  await expect(page.locator(".project-working:not(.project-waiting)")).toHaveText("1working");
+  await expect(page.getByRole("button", { name: "1 unread session. Open next unread" })).toBeVisible();
+  await expect(composer(page)).toHaveAttribute("data-waiting", "false");
+  // Polling continues for a known running shell even after leaving its session.
+  await page.evaluate(() => (window as any).fixture.setBackgroundShells([]));
+  await page.clock.fastForward(5000);
+  await expect(waiting(page)).toHaveCount(0);
+  await expect(page.locator(".project-working")).toHaveText("1working");
+  await page.getByRole("button", { name: "OpenCode session", exact: true }).click();
+  await expect(composer(page)).toHaveAttribute("data-waiting", "false");
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Keep this draft");
 });
 
 test("background snapshots cannot resurrect a shell after a terminal event", async ({ page }) => {
@@ -67,7 +108,7 @@ test("background snapshots cannot resurrect a shell after a terminal event", asy
     { id: "sh_done", command: "already completed command", startedAt: Date.now() },
   ]));
   await openOpenCode(page);
-  await expect(commands(page)).toContainText("already completed command");
+  await expect(waiting(page)).toBeVisible();
   const before = await page.evaluate((command) => {
     const fixture = (window as any).fixture;
     fixture.hold(command);
@@ -82,7 +123,7 @@ test("background snapshots cannot resurrect a shell after a terminal event", asy
   await emit(page, "session.shell.ended", {
     sessionID: "ses-a", shell: { id: "sh_done", command: "already completed command", status: "killed" },
   }, "opencode");
-  await expect(commands(page)).toHaveCount(0);
+  await expect(waiting(page)).toHaveCount(0);
   await page.evaluate((command) => {
     const fixture = (window as any).fixture;
     fixture.release(command);
@@ -93,11 +134,12 @@ test("background snapshots cannot resurrect a shell after a terminal event", asy
   await expect.poll(() => page.evaluate(() => (window as any).fixture.calls.filter(
     (call: any) => call.command === "opencode_background_shells",
   ).length)).toBeGreaterThan(before + 1);
-  await expect(commands(page)).toHaveCount(0);
+  await expect(waiting(page)).toHaveCount(0);
+  await expect(composer(page)).toHaveAttribute("data-waiting", "false");
   await page.evaluate((command) => (window as any).fixture.release(command), backgroundScope);
 });
 
-test("background jobs restore on reload and stay scoped across projects and stale reads", async ({ page }) => {
+test("waiting restores on reload and stays scoped across projects and stale reads", async ({ page }) => {
   await desktop(page, null, { worktrees: true });
   await page.evaluate((scope) => {
     const fixture = (window as any).fixture;
@@ -105,7 +147,7 @@ test("background jobs restore on reload and stay scoped across projects and stal
       fixture.setCheckoutSessions(path, "opencode", [
         { id: "ses-a", title: "OpenCode session", updatedAt: 123 },
       ]);
-    fixture.setBackgroundShells([{ id: "sh_old", command: "stale original command", startedAt: Date.now() }]);
+    fixture.setBackgroundShells([]);
     fixture.setBackgroundShells([{ id: "sh_other", command: "other project command", startedAt: Date.now() }], "/work/other");
     fixture.hold(scope);
   }, backgroundScope);
@@ -116,15 +158,18 @@ test("background jobs restore on reload and stay scoped across projects and stal
   ))).toBe(true);
   await page.getByRole("button", { name: "Open project", exact: true }).click();
   await openOpenCode(page);
-  await expect(commands(page)).toContainText("other project command");
+  await expect(waiting(page, "other")).toBeVisible();
+  await expect(composer(page)).toHaveAttribute("data-waiting", "true");
   await page.evaluate((scope) => (window as any).fixture.release(scope), backgroundScope);
-  await expect(commands(page)).not.toContainText("stale original command");
+  await expect(waiting(page)).toHaveCount(0);
+  await expect(composer(page)).toHaveAttribute("data-waiting", "true");
   await page.reload();
-  await expect(commands(page)).toContainText("other project command");
+  await expect(waiting(page, "other")).toBeVisible();
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  await expect(commands(page)).toHaveCount(0);
+  await expect(composer(page)).toHaveAttribute("data-waiting", "false");
+  await expect(waiting(page, "other")).toBeVisible();
   await page.getByRole("button", { name: "OpenCode session", exact: true }).click();
-  await expect(commands(page)).toContainText("other project command");
+  await expect(composer(page)).toHaveAttribute("data-waiting", "true");
 });
 
 test("disconnects invalidate pending background reads and reconnect restores live jobs", async ({ page }) => {
@@ -133,7 +178,7 @@ test("disconnects invalidate pending background reads and reconnect restores liv
     { id: "sh_old", command: "before disconnect", startedAt: Date.now() },
   ]));
   await openOpenCode(page);
-  await expect(commands(page)).toContainText("before disconnect");
+  await expect(waiting(page)).toBeVisible();
   await page.evaluate((scope) => {
     (window as any).fixture.hold(scope);
     window.dispatchEvent(new Event("focus"));
@@ -141,29 +186,31 @@ test("disconnects invalidate pending background reads and reconnect restores liv
   await emit(page, "server.disconnected", {}, "opencode");
   await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeVisible();
   await page.evaluate((scope) => (window as any).fixture.release(scope), backgroundScope);
-  await expect(commands(page)).toHaveCount(0);
+  await expect(waiting(page)).toHaveCount(0);
   await page.evaluate(() => (window as any).fixture.setBackgroundShells([
     { id: "sh_new", command: "after reconnect", startedAt: Date.now() },
   ]));
   await page.getByRole("button", { name: "Reconnect", exact: true }).click();
-  await expect(commands(page)).toContainText("after reconnect");
-  await expect(commands(page)).not.toContainText("before disconnect");
+  await expect(waiting(page)).toBeVisible();
+  await expect(composer(page)).toHaveAttribute("data-waiting", "true");
 });
 
-test("unavailable background status is explicit and recovers on refresh", async ({ page }) => {
+test("failed shell refreshes stay quiet and recover without inventing waiting", async ({ page }) => {
   await page.clock.install();
   await desktop(page, null);
   await page.evaluate((command) => (window as any).fixture.setCommandError(command, "Jobs unavailable"), backgroundCommand);
   await openOpenCode(page);
-  await expect(commands(page).getByRole("status")).toHaveText("Background command status unavailable");
+  await expect(waiting(page)).toHaveCount(0);
+  await expect(composer(page)).toHaveAttribute("data-waiting", "false");
+  await expect(page.getByText("Background command status unavailable", { exact: true })).toHaveCount(0);
   await page.evaluate((command) => {
     const fixture = (window as any).fixture;
     fixture.setCommandError(command, null);
     fixture.setBackgroundShells([{ id: "sh_live", command: "restored command", startedAt: Date.now() }]);
   }, backgroundCommand);
   await page.clock.fastForward(5000);
-  await expect(commands(page)).toContainText("restored command");
-  await expect(commands(page).getByRole("status")).toHaveText("Waiting for background command");
+  await expect(waiting(page)).toBeVisible();
+  await expect(composer(page)).toHaveAttribute("data-waiting", "true");
 });
 
 for (const following of [true, false]) {
@@ -194,14 +241,15 @@ for (const following of [true, false]) {
       })));
       window.dispatchEvent(new Event("focus"));
     });
-    await expect(commands(page)).toContainText("Waiting for 12 background commands");
-    await expect(commands(page)).toBeInViewport({ ratio: 1 });
+    await expect(waiting(page)).toHaveText("1waiting");
+    await expect(composer(page)).toHaveAttribute("data-waiting", "true");
+    await expect(composer(page)).toBeInViewport({ ratio: 1 });
     await checkPosition();
     await page.evaluate(() => {
       (window as any).fixture.setBackgroundShells([]);
       window.dispatchEvent(new Event("focus"));
     });
-    await expect(commands(page)).toHaveCount(0);
+    await expect(waiting(page)).toHaveCount(0);
     await checkPosition();
     await expect(page.locator(".conversation-entry")).toHaveCount(100);
   });

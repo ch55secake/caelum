@@ -388,6 +388,7 @@ export function ProjectWorktrees({
           ) : undefined
         }
         workingCount={activity.working.length}
+        waitingCount={activity.waiting.length}
         unreadCount={activity.unread.length}
         openUnread={() => {
           const next = activity.unread[0];

@@ -481,7 +481,7 @@ pub struct OpenCodeSessionList {
     pub sessions: Vec<OpenCodeSession>,
 }
 
-/// A running background command owned by an OpenCode session.
+/// A running command owned by an OpenCode session, which can outlive its model turn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenCodeBackgroundShell {

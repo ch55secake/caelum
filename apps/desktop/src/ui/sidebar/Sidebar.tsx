@@ -25,7 +25,7 @@ import type {
   ProjectSession,
   SessionDetails,
 } from "../../domain/sessions/workspaceState.js";
-import { sessionTitle } from "../../domain/sessions/workspaceState.js";
+import { sessionTitle, sessionWaiting } from "../../domain/sessions/workspaceState.js";
 import type { WorkspaceController } from "../../application/workspace/controller.js";
 import { ProjectWorktrees } from "../projects/Worktrees.js";
 import { SettingsTrigger } from "../settings/SettingsTrigger.js";
@@ -488,6 +488,13 @@ export function Sidebar({
                               className="running-dot"
                               aria-label="Running"
                               title="Running"
+                            />
+                          )}
+                          {!approval && sessionWaiting(state) && (
+                            <span
+                              className="waiting-dot"
+                              aria-label="Waiting for background commands"
+                              title="Waiting for background commands"
                             />
                           )}
                           {app.activity.get(item.key)?.unread && (

@@ -94,6 +94,8 @@ export type SessionWorkspaceState = {
   /** Pending agent for the next prompt; null keeps the native session agent. */
   agent: string | null;
   conversation: ConversationEntry[];
+  backgroundShells: import("../conversation/shellActivity.js").BackgroundShell[];
+  shellRevision: number;
   queuedMessages: import("../composer/messageQueueState.js").QueuedMessage[];
   queuePaused: boolean;
   inboxRevision: number;
@@ -200,6 +202,7 @@ export function updateSessionWorkspace(
   update: (session: SessionWorkspaceState) => SessionWorkspaceState,
 ): WorkspaceMap;
 export function projectHasActiveTurn(workspace: ProjectWorkspaceState): boolean;
+export function sessionWaiting(session: SessionWorkspaceState | undefined | null): boolean;
 export function applyCodexEvent(
   workspaces: WorkspaceMap,
   event: {

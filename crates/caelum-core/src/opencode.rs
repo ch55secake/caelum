@@ -23,8 +23,8 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 mod generate;
-mod jobs;
 mod server;
+mod shells;
 mod stats;
 mod transport;
 use server::service_file;
@@ -1699,10 +1699,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
         elif path == "/api/session/active":
             self.send_json({"data": {"ses_fake": {"type": "running"}} if os.path.exists(os.path.join(PROJECT, "busy")) else {}})
-        elif path == "/api/experimental/job":
-            assert parse_qs(urlsplit(self.path).query) == {"sessionID": ["ses_fake"], "kind": ["shell"], "status": ["running"], "descendants": ["false"]}
-            with open(os.path.join(PROJECT, "background-jobs.json")) as jobs:
-                self.send_json(json.load(jobs))
+        elif path == "/api/shell":
+            assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
+            with open(os.path.join(PROJECT, "background-shells.json")) as shells:
+                self.send_json(json.load(shells))
         elif path == "/api/session/ses_fake":
             session = dict(SESSION)
             self.send_json({"data": session})
@@ -2074,14 +2074,14 @@ server.serve_forever()
             .inbox(&project_path, "ses_fake")
             .unwrap()
             .is_empty());
-        let jobs = project_path.join("background-jobs.json");
+        let jobs = project_path.join("background-shells.json");
         fs::write(&jobs, serde_json::to_vec(&json!({ "data": [
-            { "kind": "shell", "sessionID": "ses_fake", "status": "running", "shellID": "sh_live", "command": "cargo test", "time": { "started": 1234 } },
-            { "kind": "shell", "sessionID": "ses_foreign", "status": "running" },
-            { "kind": "subagent", "sessionID": "ses_fake", "status": "running" },
-            { "kind": "shell", "sessionID": "ses_fake", "status": "completed" },
-            { "kind": "shell", "sessionID": "ses_fake", "status": "error" },
-            { "kind": "shell", "sessionID": "ses_fake", "status": "cancelled" }
+            { "id": "sh_live", "metadata": { "sessionID": "ses_fake" }, "status": "running", "command": "cargo test", "time": { "started": 1234 } },
+            { "metadata": { "sessionID": "ses_foreign" }, "status": "running" },
+            { "metadata": {}, "status": "running" },
+            { "metadata": { "sessionID": "ses_fake" }, "status": "exited" },
+            { "metadata": { "sessionID": "ses_fake" }, "status": "timeout" },
+            { "metadata": { "sessionID": "ses_fake" }, "status": "killed" }
         ] })).unwrap()).unwrap();
         let shells = provider
             .background_shells(&project_path, "ses_fake")
@@ -2101,7 +2101,7 @@ server.serve_forever()
             .is_empty());
         for invalid in [
             json!({ "unexpected": [] }),
-            json!({ "data": [{ "kind": "shell", "sessionID": "ses_fake", "status": "running" }] }),
+            json!({ "data": [{ "metadata": { "sessionID": "ses_fake" }, "status": "running" }] }),
         ] {
             fs::write(&jobs, serde_json::to_vec(&invalid).unwrap()).unwrap();
             assert!(matches!(

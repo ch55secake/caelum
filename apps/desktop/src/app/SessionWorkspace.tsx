@@ -9,7 +9,6 @@ import {
 } from "../domain/sessions/questionState.js";
 import { ApprovalCard, Conversation } from "../ui/conversation/Conversation.js";
 import { MessageQueue } from "../ui/composer/MessageQueue.js";
-import { BackgroundCommands } from "../ui/conversation/BackgroundCommands.js";
 import { QuestionCard } from "../ui/sessions/QuestionCard.js";
 import { NewSessionWelcome } from "../ui/sessions/NewSessionWelcome.js";
 import { SessionComposer } from "./SessionComposer.js";
@@ -157,16 +156,6 @@ export function SessionWorkspace({
       ) : (
         <NewSessionWelcome app={app} setup={setupSession} />
       )}
-      <BackgroundCommands
-        shells={app.backgroundShells.shells}
-        unavailable={app.backgroundShells.unavailable}
-        busy={Boolean(
-          app.selected?.isWorking ||
-          app.selected?.isSubmitting ||
-          activeApprovals.length ||
-          activeQuestions.length,
-        )}
-      />
       {run?.queuedMs != null && <PromptQueueWait queuedMs={run.queuedMs} />}
       {app.selected && (
         <MessageQueue

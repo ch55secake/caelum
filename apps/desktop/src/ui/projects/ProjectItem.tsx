@@ -21,6 +21,7 @@ export function ProjectItem({
   subtitle,
   selected,
   workingCount,
+  waitingCount,
   unreadCount,
   openUnread,
   approval,
@@ -35,6 +36,7 @@ export function ProjectItem({
   subtitle: string;
   selected: boolean;
   workingCount: number;
+  waitingCount: number;
   unreadCount: number;
   openUnread: () => void;
   approval: boolean;
@@ -112,6 +114,7 @@ export function ProjectItem({
             <span className="project-path">{checkout.path}</span>
             <span className="project-session-detail">{subtitle}</span>
             {working && <span>Running session</span>}
+            {waitingCount > 0 && <span>Waiting for background commands</span>}
             {approval && <span>Approval required</span>}
           </span>
         }
@@ -136,6 +139,17 @@ export function ProjectItem({
               <span className="running-dot" aria-hidden="true" />
               {workingCount}
               <span className="project-working-label">working</span>
+            </span>
+          )}
+          {waitingCount > 0 && (
+            <span
+              className="project-working project-waiting"
+              title="Waiting for background commands"
+              aria-label={`${waitingCount} waiting ${waitingCount === 1 ? "session" : "sessions"}`}
+            >
+              <span className="waiting-dot" aria-hidden="true" />
+              {waitingCount}
+              <span>waiting</span>
             </span>
           )}
           {unreadCount > 0 && (

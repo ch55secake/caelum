@@ -265,6 +265,7 @@ export function useWorkspace(settings: AppSettings) {
     rootPath && worktreeCatalogs[rootPath] && !currentWorktree?.available,
   );
   const backgroundShells = useBackgroundShells(
+    store,
     project?.path,
     selectedId,
     ready &&
@@ -1607,6 +1608,8 @@ export function useWorkspace(settings: AppSettings) {
               thread,
             })),
           connection: "connecting",
+          backgroundShells: [],
+          shellRevision: (value.sessionsById[thread.id]?.shellRevision ?? 0) + 1,
           error: null,
         },
       },
@@ -2688,7 +2691,6 @@ export function useWorkspace(settings: AppSettings) {
   }
   return {
     activity,
-    backgroundShells,
     projects,
     projectGroups,
     projectRoots,

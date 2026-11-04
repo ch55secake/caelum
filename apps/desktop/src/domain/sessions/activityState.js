@@ -1,3 +1,5 @@
+import { sessionWaiting } from "./workspaceState.js";
+
 export const activityKey = (path, provider, id = "") =>
   `${path}\0${provider}\0${id}`;
 export const READ_MARKERS_KEY = "caelum.session-read.v1";
@@ -176,6 +178,7 @@ export function savedMarkers(records) {
 
 export function projectActivity(workspaces, member, lookup, requests) {
   const working = [],
+    waiting = [],
     unread = [];
   for (const [path, workspace] of Object.entries(workspaces)) {
     if (!member(path)) continue;
@@ -197,6 +200,13 @@ export function projectActivity(workspaces, member, lookup, requests) {
         const live = value.sessionsById[id];
         if (live?.isSubmitting || (live?.isWorking ?? session.isWorking))
           working.push(target);
+        else if (
+          sessionWaiting(live) &&
+          !requests.some((request) =>
+            request.projectPath === path && request.provider === provider &&
+            request.sessionId === id,
+          )
+        ) waiting.push(target);
         if (lookup(key)?.unread) unread.push(target);
       }
     }
@@ -218,5 +228,5 @@ export function projectActivity(workspaces, member, lookup, requests) {
         ]),
     ).values(),
   ];
-  return { working, unread, attention };
+  return { working, waiting, unread, attention };
 }

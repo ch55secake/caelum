@@ -71,6 +71,7 @@ export function projectActivity(
   requests: AttentionRequest[],
 ): {
   working: ActivityTarget[];
+  waiting: ActivityTarget[];
   unread: ActivityTarget[];
   attention: AttentionRequest[];
 };

@@ -2,6 +2,7 @@ import type { WorkspaceController } from "../application/workspace/controller.js
 import type { useSettings } from "../application/useSettings.js";
 import type { useSessionPullRequests } from "../application/github/useSessionPullRequests.js";
 import { lastUserMessage } from "../domain/conversation/shellMessages.js";
+import { sessionWaiting } from "../domain/sessions/workspaceState.js";
 import { Composer } from "../ui/composer/Composer.js";
 import { SessionWorktree } from "../ui/projects/Worktrees.js";
 import type { WorkspaceFocus } from "./useWorkspaceFocus.js";
@@ -64,6 +65,7 @@ export function SessionComposer({
       changeProvider={app.changeProvider}
       isNew={!app.selectedId}
       working={app.selected?.isWorking ?? false}
+      waiting={sessionWaiting(app.selected) && !awaitingApproval}
       activity={app.selected?.activity?.label}
       awaitingApproval={awaitingApproval}
       submitting={
