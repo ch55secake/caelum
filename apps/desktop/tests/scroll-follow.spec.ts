@@ -32,8 +32,9 @@ test("a small upward scroll pauses streaming follow and returning to the bottom 
 }) => {
   await desktop(page);
   await stream(page, "Streaming response\n\n".repeat(25));
-  await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
   const transcript = page.locator(".transcript");
+  await expect(transcript).toContainText("Streaming response");
+  await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
   const position = () => transcript.evaluate((node) => node.scrollTop);
   const bottom = await position();
   await transcript.hover();
