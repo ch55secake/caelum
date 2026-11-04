@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { FolderGit2, GitBranch, ShieldAlert, X } from "lucide-react";
+import { FolderGit2, GitBranch, X } from "lucide-react";
 import {
   readGitStatus,
   subscribeGitStatus,
@@ -20,23 +20,31 @@ export function ProjectItem({
   checkout,
   subtitle,
   selected,
-  working,
+  workingCount,
+  waitingCount,
+  unreadCount,
+  openUnread,
   approval,
   activate,
   close,
   worktreeActions,
   disclosure,
+  activity,
 }: {
   project: ProjectInfo;
   checkout: ProjectInfo;
   subtitle: string;
   selected: boolean;
-  working: boolean;
+  workingCount: number;
+  waitingCount: number;
+  unreadCount: number;
+  openUnread: () => void;
   approval: boolean;
   activate: () => void;
   close: () => void;
   worktreeActions: ContextAction[];
   disclosure?: ReactNode;
+  activity: ReactNode;
 }) {
   const detailsId = useId();
   const metadataId = useId();
@@ -44,6 +52,8 @@ export function ProjectItem({
   const row = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const working = workingCount > 0;
+  const workingLabel = `${workingCount} working ${workingCount === 1 ? "session" : "sessions"}`;
   useEffect(() => {
     if (!isTauri()) return;
     const unsubscribe = subscribeGitStatus(checkout.path, (result) => {
@@ -104,59 +114,80 @@ export function ProjectItem({
             <span className="project-path">{checkout.path}</span>
             <span className="project-session-detail">{subtitle}</span>
             {working && <span>Running session</span>}
+            {waitingCount > 0 && <span>Waiting for background commands</span>}
             {approval && <span>Approval required</span>}
           </span>
         }
       >
-        <button
-          className="sidebar-row-select"
-          aria-label={project.name}
-          aria-describedby={`${detailsId} ${metadataId}`}
-          aria-current={selected ? "page" : undefined}
-          onClick={activate}
-        >
-          <span className="project-heading">
+        <div className="project-heading">
+          <button
+            className="sidebar-row-select project-select"
+            aria-label={project.name}
+            aria-describedby={`${detailsId} ${metadataId}`}
+            aria-current={selected ? "page" : undefined}
+            onClick={activate}
+          >
             {!disclosure && <FolderGit2 size={14} aria-hidden="true" />}
             <span className="project-name">{project.name}</span>
-            {working && (
+          </button>
+          {working && (
+            <span
+              className="project-working"
+              title={workingLabel}
+              aria-label={workingLabel}
+            >
+              <span className="running-dot" aria-hidden="true" />
+              {workingCount}
+              <span className="project-working-label">working</span>
+            </span>
+          )}
+          {waitingCount > 0 && (
+            <span
+              className="project-working project-waiting"
+              title="Waiting for background commands"
+              aria-label={`${waitingCount} waiting ${waitingCount === 1 ? "session" : "sessions"}`}
+            >
+              <span className="waiting-dot" aria-hidden="true" />
+              {waitingCount}
+              <span>waiting</span>
+            </span>
+          )}
+          {unreadCount > 0 && (
+            <button
+              className="project-activity-badge unread project-unread"
+              aria-label={`${unreadCount} unread ${unreadCount === 1 ? "session" : "sessions"}. Open next unread`}
+              title="Open next unread session"
+              onClick={openUnread}
+            >
+              <span className="unread-dot" aria-hidden="true" />
+              {unreadCount}
+            </button>
+          )}
+        </div>
+        <span className="project-session">{subtitle}</span>
+        <span id={metadataId} className="project-context">
+          {error ? (
+            <span title={error}>Git unavailable</span>
+          ) : !status ? (
+            <span>{isTauri() ? "Checking Git…" : "Local folder"}</span>
+          ) : !status.repositoryRoot ? (
+            <span>Not a Git repository</span>
+          ) : (
+            <>
               <span
-                className="running-dot"
-                title="Running session"
-                aria-label="Running session"
-              />
-            )}
-            {approval && (
-              <ShieldAlert
-                size={13}
-                className="approval-indicator"
-                aria-label="Approval required"
-              />
-            )}
-          </span>
-          <span className="project-session">{subtitle}</span>
-          <span id={metadataId} className="project-context">
-            {error ? (
-              <span title={error}>Git unavailable</span>
-            ) : !status ? (
-              <span>{isTauri() ? "Checking Git…" : "Local folder"}</span>
-            ) : !status.repositoryRoot ? (
-              <span>Not a Git repository</span>
-            ) : (
-              <>
-                <span
-                  className="project-branch"
-                  title={`Current branch: ${branch}`}
-                >
-                  <GitBranch size={11} aria-hidden="true" />
-                  <span>{branch}</span>
-                </span>
-                <span className={`project-changes${count ? " dirty" : ""}`}>
-                  {count ? `${count} changed` : "Clean"}
-                </span>
-              </>
-            )}
-          </span>
-        </button>
+                className="project-branch"
+                title={`Current branch: ${branch}`}
+              >
+                <GitBranch size={11} aria-hidden="true" />
+                <span>{branch}</span>
+              </span>
+              <span className={`project-changes${count ? " dirty" : ""}`}>
+                {count ? `${count} changed` : "Clean"}
+              </span>
+            </>
+          )}
+        </span>
+        {activity}
       </SidebarDetails>
       <button
         className="icon-button project-close"

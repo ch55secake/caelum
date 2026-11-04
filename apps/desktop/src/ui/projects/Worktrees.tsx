@@ -12,6 +12,8 @@ import {
   X,
 } from "lucide-react";
 import { ProjectItem } from "./ProjectItem.js";
+import { ProjectActivity } from "./ProjectActivity.js";
+import { projectActivity } from "../../domain/sessions/activityState.js";
 import { ChoicePicker } from "../primitives/ChoicePicker.js";
 import {
   projectHasActiveTurn,
@@ -19,18 +21,27 @@ import {
   type ProjectInfo,
 } from "../../domain/sessions/workspaceState.js";
 import type { WorkspaceController } from "../../application/workspace/controller.js";
-import { worktreeLabel, type GitWorktree } from "../../domain/projects/worktreeState.js";
-import { copyAction, revealAction, useContextMenu } from "../primitives/ContextMenu.js";
+import {
+  worktreeLabel,
+  type GitWorktree,
+} from "../../domain/projects/worktreeState.js";
+import {
+  copyAction,
+  revealAction,
+  useContextMenu,
+} from "../primitives/ContextMenu.js";
 
-function WorktreeDialog({
+export function WorktreeDialog({
   app,
   project,
   removing,
+  created,
   close,
 }: {
   app: WorkspaceController;
   project: ProjectInfo;
   removing?: GitWorktree;
+  created?: (entry: GitWorktree) => void;
   close: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -90,6 +101,7 @@ function WorktreeDialog({
       aria-describedby={removing ? undefined : `${id}-description`}
       onCancel={(event) => {
         event.preventDefault();
+        event.stopPropagation();
         if (!busy) close();
       }}
     >
@@ -102,7 +114,15 @@ function WorktreeDialog({
           setError("");
           try {
             if (removing) await app.removeWorktree(project, removing);
-            else await app.createWorktree(project, branch, base);
+            else {
+              const entry = await app.createWorktree(
+                project,
+                branch,
+                base,
+                !created,
+              );
+              created?.(entry);
+            }
             close();
           } catch (reason) {
             setError(String(reason));
@@ -273,6 +293,10 @@ export function ProjectWorktrees({
   const menu = useContextMenu();
   const member = (path: string) =>
     (app.projectRoots[path] ?? path) === project.path;
+  const activity = projectActivity(app.workspaces, member, app.activity.get, [
+    ...app.approvals,
+    ...app.questions,
+  ]);
   const active = member(app.project?.path ?? "");
   const checkout = app.groupWorktree(project)?.project ?? project;
   const workspace = app.workspaces[checkout.path];
@@ -363,13 +387,34 @@ export function ProjectWorktrees({
             </button>
           ) : undefined
         }
-        working={Object.entries(app.workspaces).some(
-          ([path, workspace]) =>
-            member(path) && projectHasActiveTurn(workspace),
-        )}
-        approval={app.approvals.some((request) =>
-          member(request.projectPath),
-        )}
+        workingCount={activity.working.length}
+        waitingCount={activity.waiting.length}
+        unreadCount={activity.unread.length}
+        openUnread={() => {
+          const next = activity.unread[0];
+          if (!next) return;
+          showSession();
+          app.selectSession(
+            next.session,
+            next.provider,
+            app.projects.find((item) => item.path === next.path) ?? {
+              name: project.name,
+              path: next.path,
+            },
+          );
+        }}
+        approval={app.approvals.some((request) => member(request.projectPath))}
+        activity={
+          <ProjectActivity
+            attention={activity.attention.length}
+            openAttention={() => {
+              const next = activity.attention[0];
+              if (!next) return;
+              showSession();
+              app.viewApproval(next);
+            }}
+          />
+        }
         activate={() => {
           showSession();
           app.activateGroup(project);
@@ -433,9 +478,7 @@ export function ProjectWorktrees({
                 className={`worktree-item${app.project?.path === entry.project.path ? " selected" : ""}`}
                 aria-label={`Switch to worktree ${worktreeLabel(entry)}`}
                 aria-current={
-                  app.project?.path === entry.project.path
-                    ? "page"
-                    : undefined
+                  app.project?.path === entry.project.path ? "page" : undefined
                 }
                 disabled={!entry.available || busy}
                 title={`${entry.branch ?? "Detached HEAD"}\n${entry.project.path}${entry.locked != null ? `\nLocked: ${entry.locked}` : ""}`}
@@ -531,9 +574,7 @@ export function SessionWorktree({ app }: { app: WorkspaceController }) {
         }
         searchable
         onChange={(path) => {
-          const entry = worktrees.find(
-            (entry) => entry.project.path === path,
-          );
+          const entry = worktrees.find((entry) => entry.project.path === path);
           if (entry) void app.openWorktree(root, entry, true);
         }}
         choices={worktrees.map((entry) => ({

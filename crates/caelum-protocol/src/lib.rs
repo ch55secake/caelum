@@ -7,9 +7,34 @@ pub use stats::*;
 
 /// Stable, serializable application metadata shared across Caelum interfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub name: String,
     pub version: String,
+    pub platform: String,
+    pub architecture: String,
+    pub repository_url: String,
+    pub releases_url: String,
+    pub license: String,
+    pub license_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateStatus {
+    Available,
+    UpToDate,
+    Ahead,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheck {
+    pub current_version: String,
+    pub latest_version: String,
+    pub status: UpdateStatus,
+    pub release_url: String,
+    pub download_url: Option<String>,
 }
 
 /// A project path approved and normalized by the Rust core.
@@ -454,6 +479,15 @@ pub struct OpenCodeSessionInfo {
 pub struct OpenCodeSessionList {
     pub project: ProjectInfo,
     pub sessions: Vec<OpenCodeSession>,
+}
+
+/// A running command owned by an OpenCode session, which can outlive its model turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeBackgroundShell {
+    pub id: String,
+    pub command: String,
+    pub started_at: u64,
 }
 
 /// One chronological page of provider-owned history, retaining native tool details.

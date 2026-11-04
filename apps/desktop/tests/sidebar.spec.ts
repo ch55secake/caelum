@@ -265,10 +265,12 @@ test("project subtitles restore selected sessions across providers without resum
   const projects = page.getByRole("navigation", { name: "Open projects" });
   const first = projects.getByRole("button", { name: "caelum", exact: true });
   const second = projects.getByRole("button", { name: "other", exact: true });
-  await expect(first.locator(".project-session")).toHaveText(
+  const firstDetails = first.locator("../..");
+  const secondDetails = second.locator("../..");
+  await expect(firstDetails.locator(".project-session")).toHaveText(
     "Review the provider adapters",
   );
-  await expect(second.locator(".project-session")).toHaveText(
+  await expect(secondDetails.locator(".project-session")).toHaveText(
     "OpenCode session",
   );
   await expect(second).toHaveAttribute("aria-current", "page");
@@ -299,10 +301,10 @@ test("project subtitles restore selected sessions across providers without resum
       data: { sessionID: "ses-a", title: "Improve the release workflow" },
     });
   });
-  await expect(first.locator(".project-session")).toHaveText(
+  await expect(firstDetails.locator(".project-session")).toHaveText(
     "Review deployment adapters",
   );
-  await expect(second.locator(".project-session")).toHaveText(
+  await expect(secondDetails.locator(".project-session")).toHaveText(
     "Improve the release workflow",
   );
   await page
@@ -323,10 +325,10 @@ test("project subtitles restore selected sessions across providers without resum
     threadName: "Background session renamed again",
   });
   await second.click();
-  await expect(first.locator(".project-session")).toHaveText(
+  await expect(firstDetails.locator(".project-session")).toHaveText(
     "Refine the session workspace",
   );
-  await expect(second.locator(".project-session")).toHaveText(
+  await expect(secondDetails.locator(".project-session")).toHaveText(
     "Improve the release workflow",
   );
   await page.mouse.move(700, 50);
@@ -495,7 +497,7 @@ test("project rows show scoped live Git details and background activity, includi
     name: "caelum",
     exact: true,
   });
-  const currentDetails = current.locator("..");
+  const currentDetails = current.locator("../..");
   await expect(currentDetails.locator(".project-path")).toHaveText(
     "/work/caelum",
   );
@@ -518,9 +520,11 @@ test("project rows show scoped live Git details and background activity, includi
   await page.getByRole("button", { name: "Open project", exact: true }).click();
   const other = projects.getByRole("button", { name: "other", exact: true });
   await expect(other).toHaveAttribute("aria-current", "page");
-  const otherDetails = other.locator("..");
+  const otherDetails = other.locator("../..");
   await expect(otherDetails).toContainText("Checking Git…");
-  await expect(current.locator(".running-dot")).toBeVisible();
+  await expect(
+    currentDetails.locator(".project-heading .running-dot"),
+  ).toBeVisible();
   await current.click();
   await page.evaluate(() =>
     (window as any).fixture.release("git_repository_status:/work/other"),

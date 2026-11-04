@@ -2,6 +2,13 @@ import { expect, type Page } from "@playwright/test";
 import type { QuestionPrompt } from "../../src/domain/sessions/questionState.js";
 import { desktop } from "./desktop.js";
 
+export async function installPausedClock(page: Page) {
+  const time = new Date("2030-01-01T12:00:00Z");
+  // Pause before loading the app, with enough headroom for slow CI calls.
+  await page.clock.install({ time: time.getTime() - 60_000 });
+  await page.clock.pauseAt(time);
+}
+
 export async function emit(
   page: Page,
   method: string,
