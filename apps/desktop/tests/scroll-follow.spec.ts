@@ -85,6 +85,11 @@ test("nested scrolling keeps following and history refreshes respect keyboard re
   await expect(transcript).toContainText("Following after nested scrolling");
   await expect.poll(() => gap(page)).toBeLessThanOrEqual(1);
 
+  // Give WebKit a native keyboard-scroll target in the outer transcript after
+  // interacting with the nested trace, rather than only changing DOM focus.
+  await transcript.click({ position: { x: 8, y: 8 } });
+  await expect(transcript).toBeFocused();
+
   // A refresh can start after Home pauses following but before the browser's
   // native keyboard scroll has moved away from the bottom.
   await page.evaluate(() => {
@@ -95,7 +100,6 @@ test("nested scrolling keeps following and history refreshes respect keyboard re
       { once: true },
     );
   });
-  await transcript.focus();
   await page.keyboard.press("Home");
   await expect.poll(() => transcript.evaluate((node) => node.scrollTop)).toBe(0);
   await expect(jump).toBeVisible();
