@@ -108,8 +108,16 @@ jobs:
       - run: pnpm --filter @caelum/desktop build
       - run: pnpm --filter @caelum/desktop test
       - run: python3 -m unittest discover -s scripts/profile -p 'test_*.py'
-      - run: pnpm --filter @caelum/desktop exec playwright install --with-deps chromium webkit
-      - run: pnpm --filter @caelum/desktop test:ui
+      - name: Run browser tests with preinstalled browsers
+        run: |
+          playwright_version=$(pnpm --filter @caelum/desktop exec node -p "require('@playwright/test/package.json').version")
+          package_manager=$(node -p "require('./package.json').packageManager")
+          docker run --rm --init --ipc=host \
+            --env CI=true \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE" \
+            "mcr.microsoft.com/playwright:v${playwright_version}-noble" \
+            npx --yes "$package_manager" --filter @caelum/desktop test:ui
 
   release-package:
     name: release-package
