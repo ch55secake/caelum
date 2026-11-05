@@ -21,12 +21,10 @@ export function useSessionPullRequests(
   sessions: PullRequestSession[],
 ) {
   const path = app.rootProject?.path ?? "";
+  // Membership drives discovery. Execution boundaries, Git events and explicit
+  // refreshes already refresh metadata; token timestamps must not restart it.
   const sessionKey = JSON.stringify(
-    sessions.map(({ key, updatedAt, available }) => [
-      key,
-      updatedAt,
-      available,
-    ]),
+    sessions.map(({ key, available }) => [key, available]).sort(),
   );
   const load = useRef(app.loadSessionDetails);
   load.current = app.loadSessionDetails;

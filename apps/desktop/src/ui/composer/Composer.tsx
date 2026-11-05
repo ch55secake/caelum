@@ -52,6 +52,7 @@ export function Composer({
   changeProvider,
   isNew,
   working,
+  waiting,
   activity,
   submitting,
   disabled,
@@ -95,6 +96,7 @@ export function Composer({
   changeProvider: (kind: ProviderKind) => void;
   isNew: boolean;
   working: boolean;
+  waiting: boolean;
   activity?: string;
   submitting: boolean;
   disabled: boolean;
@@ -335,11 +337,13 @@ export function Composer({
           close={closeSideQuestion}
         />
       )}
-      {busy && (
+      {(busy || waiting) && (
         <span className="sr-only" role="status" aria-label="Agent activity">
           {awaitingApproval
             ? "Approval required"
-            : (activity ?? "Agent working")}
+            : waiting
+              ? "Waiting for background commands"
+              : (activity ?? "Agent working")}
         </span>
       )}
       {awaitingApproval && !sideQuestion && (
@@ -350,6 +354,7 @@ export function Composer({
           className="composer"
           aria-label="Message composer"
           data-working={busy}
+          data-waiting={waiting}
           onSubmit={(event) => {
             event.preventDefault();
             send();

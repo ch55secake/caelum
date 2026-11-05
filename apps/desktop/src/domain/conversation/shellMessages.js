@@ -102,7 +102,7 @@ export function splitShellMessages(text) {
 }
 
 export function conversationPresentation(entries) {
-  return entries.flatMap((entry) => {
+  const presented = entries.flatMap((entry) => {
     if (entry.sourceType === "system") return [];
     if (["user", "assistant", "status"].includes(entry.kind)) {
       entry = { ...entry, text: visibleMessageText(entry.text) };
@@ -135,6 +135,11 @@ export function conversationPresentation(entries) {
               text: "",
               name: "Run",
               executionId: part.id,
+              shell: {
+                command: part.command,
+                independent: true,
+                background: true,
+              },
               input: part.command,
               output: part.output,
               status: part.state === "cancelled" ? "interrupted" : part.state,
@@ -145,6 +150,26 @@ export function conversationPresentation(entries) {
           : [],
     );
   });
+  const shells = new Map();
+  return presented.reduce((result, entry) => {
+    if (entry.executionId) {
+      const index = shells.get(entry.executionId);
+      if (index !== undefined) {
+        const previous = result[index];
+        if (entry.status !== "running" || previous.status === "running")
+          result[index] = {
+            ...previous,
+            ...entry,
+            id: previous.id,
+            shell: { ...previous.shell, ...entry.shell },
+          };
+        return result;
+      }
+      shells.set(entry.executionId, result.length);
+    }
+    result.push(entry);
+    return result;
+  }, []);
 }
 
 export function lastUserMessage(entries) {

@@ -62,6 +62,8 @@ export function createSessionWorkspace(session) {
     effort: null,
     agent: null,
     conversation: [],
+    backgroundShells: [],
+    shellRevision: 0,
     queuedMessages: [],
     queuePaused: false,
     inboxRevision: 0,
@@ -78,7 +80,6 @@ export function createSessionWorkspace(session) {
     isLoadingHistory: false,
     nextCursor: null,
     historyAnchor: null,
-    unread: false,
     expandedTools: {},
     scrollTop: null,
     windowEndId: null,
@@ -90,6 +91,14 @@ export function createSessionWorkspace(session) {
     contextResetAt: null,
     contextStep: null,
   };
+}
+export function sessionWaiting(session) {
+  return Boolean(
+    session?.connection === "connected" &&
+      !session.isWorking &&
+      !session.isSubmitting &&
+      session.backgroundShells.length,
+  );
 }
 export function restoreProjectWorkspace(persisted) {
   const workspace = createProjectWorkspace();
@@ -196,6 +205,8 @@ function applyEvent(
                 isWorking: false,
                 isSubmitting: false,
                 activity: null,
+                backgroundShells: [],
+                shellRevision: session.shellRevision + 1,
                 eventRevision: session.eventRevision + 1,
                 conversation: session.conversation.map((entry) =>
                   entry.kind === "tool" && entry.status === "running"
@@ -264,7 +275,6 @@ function applyEvent(
                 ...next,
                 eventRevision:
                   (current.eventRevision ?? 0) + (changed ? 1 : 0),
-                unread: changed ? true : next.unread,
               },
             }
           : workspace.sessionsById,

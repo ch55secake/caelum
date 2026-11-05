@@ -2,14 +2,22 @@ import { Check, ChevronRight, CircleAlert, Wrench } from "lucide-react";
 import { displayValue } from "../../domain/conversation/conversationState.js";
 import type { ConversationEntry } from "../../domain/sessions/workspaceState.js";
 import { CopyButton } from "./MessageContent.js";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { elapsedTime, useClock } from "../../application/useClock.js";
 import { splitShellMessages } from "../../domain/conversation/shellMessages.js";
-import { toolSummary, toolFilePaths } from "../../domain/conversation/toolSummary.js";
+import {
+  toolSummary,
+  toolFilePaths,
+} from "../../domain/conversation/toolSummary.js";
 import { ToolPatchPreview } from "./ToolPatchPreview.js";
 import { useFileNavigation } from "../files/FileNavigation.js";
 import { fileReference } from "../../domain/files/fileContext.js";
 import { useContextMenu, copyAction } from "../primitives/ContextMenu.js";
 import { ChatImages } from "./ChatImage.js";
+import {
+  recentShellOutput,
+  shellDetails,
+} from "../../domain/conversation/shellActivity.js";
 
 function ShellIdentity({ id }: { id: string }) {
   return (
@@ -116,23 +124,16 @@ export function ToolActivity({
   );
   const running = entry.status === "running";
   const [observedStart] = useState(Date.now);
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!running) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  const seconds = Math.max(
-    0,
-    Math.floor((now - (entry.startedAt ?? observedStart)) / 1000),
-  );
-  const elapsed =
-    seconds >= 60
-      ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
-      : `${seconds}s`;
-  const summary = toolSummary(entry.input);
+  const now = useClock(running);
+  const elapsed = elapsedTime(now - (entry.startedAt ?? observedStart));
+  const shell = entry.shell?.command
+    ? entry.shell
+    : shellDetails(entry.name, entry.input);
+  const recent = shell && recentShellOutput(entry.output);
+  const summary = shell?.command ?? toolSummary(entry.input);
   const failed = entry.status === "failed" || Boolean(entry.error);
+  const duration =
+    entry.durationMs == null ? "" : `${(entry.durationMs / 1000).toFixed(1)}s`;
   const Icon = failed
     ? CircleAlert
     : entry.status === "completed"
@@ -173,17 +174,34 @@ export function ToolActivity({
           {summary}
         </span>
         <span className="tool-status">
-          {failed
-            ? "Failed"
-            : entry.status === "running"
-              ? `Running · ${elapsed}`
-              : entry.durationMs != null
-                ? `${(entry.durationMs / 1000).toFixed(1)}s`
-                : entry.status === "interrupted"
-                  ? "Interrupted"
-                  : ""}
+          {shell?.timedOut
+            ? `Timed out${duration ? ` · ${duration}` : ""}`
+            : failed
+              ? `Failed${shell && duration ? ` · ${duration}` : ""}`
+              : entry.status === "running"
+                ? `Running · ${elapsed}`
+                : entry.durationMs != null
+                  ? `${(entry.durationMs / 1000).toFixed(1)}s`
+                  : entry.status === "interrupted"
+                    ? "Interrupted"
+                    : ""}
         </span>
       </button>
+      {shell && (
+        <div className="shell-context">
+          {shell.cwd && <span title={shell.cwd}>{shell.cwd}</span>}
+          {shell.background && <span className="shell-badge">Background</span>}
+          {shell.exit != null && (
+            <span className="shell-badge">Exit {shell.exit}</span>
+          )}
+          {shell.signal && <span className="shell-badge">{shell.signal}</span>}
+        </div>
+      )}
+      {running && recent && !expanded && (
+        <pre className="shell-recent" aria-label="Recent shell output">
+          {recent}
+        </pre>
+      )}
       <ToolPatchPreview
         input={entry.input}
         expanded={expanded}
@@ -206,7 +224,13 @@ export function ToolActivity({
             </div>
           )}
           {entry.executionId && <ShellIdentity id={entry.executionId} />}
+          {shell?.cwd && <ToolValue label="Directory" value={shell.cwd} />}
           <ToolValue label="Input" value={entry.input} />
+          {shell?.outputTruncated && (
+            <p className="shell-truncated">
+              The provider returned partial output.
+            </p>
+          )}
           <ToolValue label="Output" value={entry.output} />
           <ToolValue label="Error" value={entry.error} />
         </div>

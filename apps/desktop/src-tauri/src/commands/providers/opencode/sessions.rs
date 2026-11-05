@@ -1,6 +1,7 @@
 use caelum_core::opencode::{OpenCodeError, OpenCodeProvider};
 use caelum_protocol::{
-    OpenCodeSessionInfo, OpenCodeSessionList, SessionHistoryPage, SessionListError,
+    OpenCodeBackgroundShell, OpenCodeSessionInfo, OpenCodeSessionList, SessionHistoryPage,
+    SessionListError,
 };
 use tauri::State;
 
@@ -66,6 +67,22 @@ pub(crate) async fn opencode_session_history(
     tauri::async_runtime::spawn_blocking(move || {
         opencode
             .session_history(project_path, &session_id, cursor.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn opencode_background_shells(
+    opencode: State<'_, OpenCodeProvider>,
+    project_path: String,
+    session_id: String,
+) -> Result<Vec<OpenCodeBackgroundShell>, String> {
+    let opencode = opencode.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        opencode
+            .background_shells(project_path, &session_id)
             .map_err(|error| error.to_string())
     })
     .await

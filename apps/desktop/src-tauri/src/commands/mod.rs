@@ -1,3 +1,4 @@
+mod about;
 mod files;
 mod git;
 mod github;
@@ -10,7 +11,8 @@ mod worktrees;
 // The only command registry. Wire names remain independent of Rust module paths.
 pub(crate) fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder.invoke_handler(tauri::generate_handler![
-        projects::app_info,
+        about::app_info,
+        about::check_for_updates,
         projects::startup_project,
         projects::open_project,
         worktrees::git_worktrees,
@@ -58,6 +60,7 @@ pub(crate) fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
         providers::opencode::sessions::opencode_start_session,
         providers::opencode::sessions::opencode_resume_session,
         providers::opencode::sessions::opencode_session_history,
+        providers::opencode::sessions::opencode_background_shells,
         providers::opencode::conversation::opencode_generate,
         providers::opencode::conversation::opencode_send_prompt,
         providers::opencode::conversation::opencode_enqueue_prompt,
