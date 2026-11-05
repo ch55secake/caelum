@@ -21,7 +21,12 @@ export function inboxMessages(items) {
 export function reconcileInbox(current, snapshot) {
   const ids = new Set(snapshot.map((item) => item.id));
   return [
-    ...snapshot,
+    ...snapshot.map((item) => ({
+      ...item,
+      queuedAt:
+        current.find((entry) => entry.id === item.id)?.queuedAt ??
+        item.queuedAt,
+    })),
     ...current.filter(
       (item) =>
         !ids.has(item.id) && (!item.remote || item.pending || item.error),
@@ -29,7 +34,7 @@ export function reconcileInbox(current, snapshot) {
   ];
 }
 
-export function queueEvent(session, method, data) {
+export function queueEvent(session, method, data, at = Date.now()) {
   const messages = session.queuedMessages ?? [];
   if (!method.startsWith("session.inbox.")) return session;
   let next = messages;
@@ -37,6 +42,7 @@ export function queueEvent(session, method, data) {
     const [item] = inboxMessages([{ ...data.item, id: data.inboxID }]);
     if (item && !(session.settledInboxIds ?? []).includes(item.id)) {
       const previous = messages.find((entry) => entry.id === item.id);
+      item.queuedAt = previous?.queuedAt ?? at;
       next = previous
         ? messages.map((entry) => (entry.id === item.id ? item : entry))
         : [...messages, item];

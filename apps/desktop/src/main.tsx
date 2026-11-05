@@ -7,8 +7,20 @@ import { initializeAppearance } from "./application/useSettings.js";
 
 initializeAppearance();
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+const root = ReactDOM.createRoot(document.getElementById("root")!);
+if (import.meta.env.MODE === "profile") {
+  void import("./platform/profiling.js").then(({ startProfiling }) => {
+    const onRender = startProfiling();
+    root.render(
+      <React.Profiler id="app" onRender={onRender}>
+        <App />
+      </React.Profiler>,
+    );
+  });
+} else {
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}

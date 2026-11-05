@@ -432,8 +432,10 @@ test("OpenCode keeps the composer active through thinking, retries and tools, wi
   await expect(trace.locator("summary")).toContainText(
     "Recovered the complete thinking trace",
   );
-  await page.getByRole("button", { name: "Jump to latest" }).click();
-  await expect(page.getByText("Recovered final response")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Jump to latest" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Recovered final response")).toBeInViewport();
   await expect(activity).toHaveAttribute("data-working", "false");
 });
 

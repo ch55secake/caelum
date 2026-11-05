@@ -4,6 +4,7 @@ import { splitPromptContext } from "../../domain/composer/promptContext.js";
 import { visibleMessageText } from "../../domain/conversation/shellMessages.js";
 import { FileContextChips } from "../files/FileNavigation.js";
 import { PullRequestContextChips } from "../pull-requests/PullRequestContextChips.js";
+import { elapsedTime, useClock } from "../../application/useClock.js";
 
 export function MessageQueue({
   messages,
@@ -20,6 +21,7 @@ export function MessageQueue({
   remove: (id: string) => void;
   resume: () => void;
 }) {
+  const now = useClock(messages.some((item) => item.queuedAt != null));
   if (!messages.length) return null;
   return (
     <section
@@ -53,6 +55,11 @@ export function MessageQueue({
                 <FileContextChips files={files} />
                 <PullRequestContextChips pullRequests={pullRequests} />
                 {item.pending && <small>Sending…</small>}
+                {item.queuedAt != null && (
+                  <small className="queue-wait">
+                    Waiting {elapsedTime(now - item.queuedAt)}
+                  </small>
+                )}
                 {item.error && (
                   <small className="queue-error" role="alert">
                     {item.error}
