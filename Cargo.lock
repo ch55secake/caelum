@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "caelum-cli"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "caelum-core",
  "caelum-protocol",
@@ -460,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "caelum-core"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "base64 0.22.1",
  "caelum-protocol",
@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "caelum-desktop"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "caelum-core",
  "caelum-protocol",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "caelum-protocol"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "serde",
  "serde_json",
