@@ -459,8 +459,10 @@ test("session PR indicators share lookups, distinguish drafts and preserve match
   await choose(page, "Provider", "OpenCode");
   const project = page
     .getByRole("navigation", { name: "Open projects" })
-    .getByRole("button", { name: "caelum", exact: true })
-    .locator("..");
+    .locator(".project-row")
+    .filter({
+      has: page.getByRole("button", { name: "caelum", exact: true }),
+    });
   const session = sessionRow(page, "Refine the session workspace");
   const openCode = sessionRow(page, "OpenCode session");
   await expect(session.locator(".session-branch")).toHaveText(

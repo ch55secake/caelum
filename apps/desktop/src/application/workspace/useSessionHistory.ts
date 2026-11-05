@@ -27,6 +27,7 @@ export function useSessionHistory(
     kind: ProviderKind,
     id: string,
   ) => Promise<void>,
+  reconcileActivity: (key: string, working: boolean) => void,
 ) {
   const refreshes = useRef(new Set<string>());
   async function loadHistory(
@@ -82,6 +83,8 @@ export function useSessionHistory(
         const isWorking = fresh
           ? (page.isWorking ?? value.isWorking)
           : value.isWorking;
+        if (fresh && page.isWorking != null)
+          reconcileActivity(scope, isWorking);
         const conversation = mergeHistory(
           value.conversation,
           entries,

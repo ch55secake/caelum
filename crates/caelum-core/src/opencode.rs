@@ -1,17 +1,16 @@
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
-    io::{self, BufRead, BufReader},
+    io::{self, BufReader},
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
         Arc, Mutex, MutexGuard,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use caelum_protocol::{
@@ -19,12 +18,17 @@ use caelum_protocol::{
     OpenCodeSession, OpenCodeSessionInfo, OpenCodeSessionList, PermissionRequest, ProviderChoice,
     ProviderChoices, ProviderModelChoice, QuestionPrompt, SessionDetails, SessionHistoryPage,
 };
-use reqwest::{blocking::Client, Method, StatusCode, Url};
+use reqwest::{blocking::Client, Method};
 use serde_json::{json, Value};
 use thiserror::Error;
 
 mod generate;
+mod server;
+mod shells;
 mod stats;
+mod transport;
+use server::service_file;
+use transport::{api_url, parse_event, read_sse_frames};
 
 use crate::{
     approvals::ApprovalBroker,
@@ -34,10 +38,7 @@ use crate::{
 };
 
 const PROVIDER_NAME: &str = "opencode";
-const SERVER_PASSWORD_ENV: &str = "OPENCODE_SERVER_PASSWORD";
 const SERVER_START_TIMEOUT: Duration = Duration::from_secs(12);
-const SERVER_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const SESSION_LIMIT: &str = "100";
 
@@ -747,151 +748,6 @@ impl OpenCodeProvider {
         server.remember_session(&session.id);
         Ok(session)
     }
-
-    fn server(&self, project: &Project) -> Result<Arc<OpenCodeServer>, OpenCodeError> {
-        if self.inner.closed.load(Ordering::Acquire) {
-            return Err(OpenCodeError::Closed);
-        }
-
-        let mut servers = self.inner.lock_servers();
-        if let Some(server) = servers.get(project.path()) {
-            if server.alive.load(Ordering::Acquire) {
-                return Ok(Arc::clone(server));
-            }
-            let dead = servers
-                .remove(project.path())
-                .expect("entry was just found");
-            dead.close(&self.inner.processes);
-        }
-
-        if let Some(server) = self
-            .inner
-            .service_file
-            .as_deref()
-            .and_then(discover_service)
-        {
-            self.listen(&server, project)?;
-            servers.insert(project.path().to_path_buf(), Arc::clone(&server));
-            return Ok(server);
-        }
-
-        let executable = match self.inner.executable.as_deref() {
-            Some(path) if is_executable_file(path) => path.to_path_buf(),
-            Some(path) => return Err(OpenCodeError::ExecutableNotFound(path.to_path_buf())),
-            None => find_opencode_executable()?,
-        };
-        let port = reserve_local_port()?;
-        let startup_deadline = Instant::now() + SERVER_START_TIMEOUT;
-        let port_string = port.to_string();
-        let configured_password = env::var(SERVER_PASSWORD_ENV)
-            .ok()
-            .filter(|password| !password.is_empty());
-        let mut command = Command::new(&executable);
-        command
-            .args(["serve", "--hostname", "127.0.0.1", "--port", &port_string])
-            .current_dir(project.path())
-            .stdin(Stdio::null())
-            .stdout(if configured_password.is_some() {
-                Stdio::null()
-            } else {
-                Stdio::piped()
-            })
-            .stderr(Stdio::null());
-        let mut child = command
-            .spawn()
-            .map_err(|source| OpenCodeError::StartServer {
-                executable: executable.clone(),
-                source,
-            })?;
-        let password_receiver = if configured_password.is_none() {
-            child.stdout.take().map(capture_server_password)
-        } else {
-            None
-        };
-        let process_id = self.inner.processes.register(child)?;
-        let password = match configured_password {
-            Some(password) => password,
-            None => {
-                let Some(receiver) = password_receiver else {
-                    let _ = self.inner.processes.terminate(process_id);
-                    return Err(OpenCodeError::ServerPasswordUnavailable(
-                        "OpenCode stdout was not available".to_owned(),
-                    ));
-                };
-                let timeout = startup_deadline.saturating_duration_since(Instant::now());
-                match receiver.recv_timeout(timeout) {
-                    Ok(Ok(password)) => password,
-                    Ok(Err(message)) => {
-                        let _ = self.inner.processes.terminate(process_id);
-                        return Err(OpenCodeError::ServerPasswordUnavailable(message));
-                    }
-                    Err(error) => {
-                        let _ = self.inner.processes.terminate(process_id);
-                        return Err(OpenCodeError::ServerPasswordUnavailable(error.to_string()));
-                    }
-                }
-            }
-        };
-        let server = Arc::new(
-            OpenCodeServer::new(
-                Some(process_id),
-                format!("http://127.0.0.1:{port}"),
-                Some(password),
-            )
-            .inspect_err(|_| {
-                let _ = self.inner.processes.terminate(process_id);
-            })?,
-        );
-
-        let query = [("directory", project.path().to_string_lossy().into_owned())];
-        loop {
-            let readiness = match server.request_json(Method::GET, "/api/session", &query, None) {
-                Ok(response) if response.get("data").and_then(Value::as_array).is_some() => Ok(()),
-                Ok(_) => Err(OpenCodeError::Protocol(
-                    "session list response has no data array".to_owned(),
-                )),
-                Err(error) => Err(error),
-            };
-            match readiness {
-                Ok(()) => break,
-                Err(OpenCodeError::AuthenticationRequired) => {
-                    let _ = self.inner.processes.terminate(process_id);
-                    return Err(OpenCodeError::AuthenticationRequired);
-                }
-                Err(error) if Instant::now() >= startup_deadline => {
-                    let _ = self.inner.processes.terminate(process_id);
-                    return Err(OpenCodeError::ServerNotReady(error.to_string()));
-                }
-                Err(_) => thread::sleep(SERVER_POLL_INTERVAL),
-            }
-        }
-
-        self.listen(&server, project)?;
-        servers.insert(project.path().to_path_buf(), Arc::clone(&server));
-        Ok(server)
-    }
-
-    fn listen(&self, server: &Arc<OpenCodeServer>, project: &Project) -> Result<(), OpenCodeError> {
-        let result = if self.inner.closed.load(Ordering::Acquire) {
-            Err(OpenCodeError::Closed)
-        } else {
-            spawn_event_listener(
-                Arc::clone(server),
-                project.path().to_path_buf(),
-                self.inner.approvals.clone(),
-                self.inner.questions.clone(),
-                Arc::clone(&self.inner.subscribers),
-            )
-        };
-        if result.is_err() {
-            server.close(&self.inner.processes);
-        } else {
-            // The stream is live-only. Recover forms that predate this connection.
-            // A missing form API must not prevent older servers from connecting.
-            let _ = sync_questions(server, &self.inner.questions, project.path());
-        }
-        result
-    }
 }
 
 fn select_model(
@@ -937,99 +793,6 @@ fn select_model(
         )?;
     }
     Ok(())
-}
-
-impl OpenCodeServer {
-    fn new(
-        process_id: Option<ProcessId>,
-        base_url: String,
-        password: Option<String>,
-    ) -> Result<Self, OpenCodeError> {
-        let builder = || {
-            Client::builder()
-                .connect_timeout(Duration::from_secs(1))
-                .redirect(reqwest::redirect::Policy::none())
-        };
-        Ok(Self {
-            process_id,
-            base_url,
-            client: builder()
-                .timeout(REQUEST_TIMEOUT)
-                .build()
-                .map_err(|error| OpenCodeError::Request(error.to_string()))?,
-            event_client: builder()
-                .build()
-                .map_err(|error| OpenCodeError::Request(error.to_string()))?,
-            password,
-            alive: Arc::new(AtomicBool::new(true)),
-            session_ids: Mutex::new(HashSet::new()),
-            pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
-        })
-    }
-
-    fn authenticate(
-        &self,
-        request: reqwest::blocking::RequestBuilder,
-    ) -> reqwest::blocking::RequestBuilder {
-        match &self.password {
-            Some(password) => request.basic_auth("opencode", Some(password)),
-            None => request,
-        }
-    }
-
-    fn close(&self, processes: &ProcessRegistry) {
-        self.alive.store(false, Ordering::Release);
-        if let Some(id) = self.process_id {
-            let _ = processes.terminate(id);
-        }
-    }
-
-    fn request_json(
-        &self,
-        method: Method,
-        path: &str,
-        query: &[(&str, String)],
-        body: Option<Value>,
-    ) -> Result<Value, OpenCodeError> {
-        let url = api_url(&self.base_url, path, query)?;
-        let mut request = self.authenticate(self.client.request(method, url));
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
-        let response = request
-            .send()
-            .map_err(|error| OpenCodeError::Request(error.to_string()))?;
-        let status = response.status();
-        let bytes = response
-            .bytes()
-            .map_err(|error| OpenCodeError::Request(error.to_string()))?;
-        decode_json_response(status, &bytes)
-    }
-
-    fn remember_session(&self, session_id: &str) {
-        self.session_ids
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(session_id.to_owned());
-    }
-
-    fn active_sessions(&self) -> Result<HashSet<String>, OpenCodeError> {
-        // Activity belongs to the runtime drain, not persisted busy/idle times.
-        // A running session can have no busy timestamp (or a previous idle time).
-        let response = self.request_json(Method::GET, "/api/session/active", &[], None)?;
-        let active = response
-            .get("data")
-            .and_then(Value::as_object)
-            .ok_or_else(|| OpenCodeError::Protocol("active sessions has no data map".into()))?;
-        Ok(active.keys().cloned().collect())
-    }
-
-    fn owns_session(&self, session_id: &str) -> bool {
-        self.session_ids
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .contains(session_id)
-    }
 }
 
 fn question_request(
@@ -1228,60 +991,6 @@ fn spawn_event_listener(
     receiver
         .recv_timeout(SERVER_START_TIMEOUT)
         .map_err(|error| OpenCodeError::ServerNotReady(format!("event subscription: {error}")))
-}
-
-fn service_file() -> Option<PathBuf> {
-    env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .map(|state| state.join("opencode/service.json"))
-}
-
-fn discover_service(file: &Path) -> Option<Arc<OpenCodeServer>> {
-    let registration: Value = serde_json::from_slice(&fs::read(file).ok()?).ok()?;
-    let url = Url::parse(registration.get("url")?.as_str()?).ok()?;
-    let host = url.host_str()?;
-    let local = host == "localhost"
-        || host
-            .trim_matches(['[', ']'])
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback());
-    if !local || !matches!(url.scheme(), "http" | "https") {
-        return None;
-    }
-    let server = OpenCodeServer::new(
-        None,
-        url.to_string(),
-        registration
-            .get("password")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    )
-    .ok()?;
-    let response = server
-        .authenticate(
-            server
-                .client
-                .get(api_url(&server.base_url, "/api/info", &[]).ok()?),
-        )
-        .timeout(Duration::from_secs(2))
-        .send()
-        .ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let info: Value = response.json().ok()?;
-    let version = info.get("version")?.as_str()?;
-    if info.get("pid")?.as_u64()? != registration.get("pid")?.as_u64()?
-        || !version.starts_with("2.")
-        || registration
-            .get("version")
-            .and_then(Value::as_str)
-            .is_some_and(|registered| registered != version)
-    {
-        return None;
-    }
-    Some(Arc::new(server))
 }
 
 fn request_permission(
@@ -1486,136 +1195,6 @@ fn deny_pending_approvals(
             ApprovalDecision::Deny,
         );
     }
-}
-
-fn read_sse_frames<R, F>(
-    reader: &mut R,
-    mut active: impl FnMut() -> bool,
-    mut on_data: F,
-) -> io::Result<()>
-where
-    R: BufRead,
-    F: FnMut(String),
-{
-    let mut data = Vec::new();
-    while active() {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
-            if !data.is_empty() {
-                on_data(data.join("\n"));
-            }
-            return Ok(());
-        }
-        let line = line.trim_end_matches(['\r', '\n']);
-        if line.is_empty() {
-            if !data.is_empty() {
-                on_data(data.join("\n"));
-                data.clear();
-            }
-            continue;
-        }
-        if line.starts_with(':') {
-            continue;
-        }
-        let (field, value) = line.split_once(':').unwrap_or((line, ""));
-        if field == "data" {
-            data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
-        }
-    }
-    Ok(())
-}
-
-fn capture_server_password(stdout: ChildStdout) -> Receiver<Result<String, String>> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let mut sent_password = false;
-        for line in BufReader::new(stdout).lines() {
-            match line {
-                Ok(line) => {
-                    if !sent_password {
-                        if let Some(password) = line.strip_prefix("server password ") {
-                            sent_password = true;
-                            if sender.send(Ok(password.to_owned())).is_err() {
-                                return;
-                            }
-                        }
-                    }
-                }
-                Err(error) => {
-                    if !sent_password {
-                        let _ = sender.send(Err(error.to_string()));
-                    }
-                    return;
-                }
-            }
-        }
-        if !sent_password {
-            let _ = sender.send(Err(
-                "OpenCode exited without printing its generated server password".to_owned(),
-            ));
-        }
-    });
-    receiver
-}
-
-fn api_url(base_url: &str, path: &str, query: &[(&str, String)]) -> Result<Url, OpenCodeError> {
-    let mut url = Url::parse(base_url)
-        .map_err(|error| OpenCodeError::Protocol(format!("invalid server URL: {error}")))?;
-    url.set_path(path);
-    if !query.is_empty() {
-        let mut pairs = url.query_pairs_mut();
-        for (name, value) in query {
-            pairs.append_pair(name, value);
-        }
-    }
-    Ok(url)
-}
-
-fn decode_json_response(status: StatusCode, body: &[u8]) -> Result<Value, OpenCodeError> {
-    if status == StatusCode::UNAUTHORIZED {
-        return Err(OpenCodeError::AuthenticationRequired);
-    }
-    if !status.is_success() {
-        let message = serde_json::from_slice::<Value>(body)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("message")
-                    .or_else(|| value.get("error"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| String::from_utf8_lossy(body).trim().to_owned())
-            .chars()
-            .take(600)
-            .collect();
-        return Err(OpenCodeError::HttpStatus {
-            status: status.as_u16(),
-            message,
-        });
-    }
-    if body.is_empty() {
-        return Ok(Value::Null);
-    }
-    serde_json::from_slice(body)
-        .map_err(|error| OpenCodeError::Protocol(format!("invalid JSON response: {error}")))
-}
-
-fn parse_event(payload: &str, project_path: &Path) -> Result<OpenCodeEvent, OpenCodeError> {
-    let value = serde_json::from_str::<Value>(payload)
-        .map_err(|error| OpenCodeError::Protocol(format!("invalid SSE event JSON: {error}")))?;
-    let event_type = value
-        .get("type")
-        .and_then(Value::as_str)
-        .ok_or_else(|| OpenCodeError::Protocol("SSE event has no type".to_owned()))?;
-    Ok(OpenCodeEvent {
-        project_path: project_path.to_string_lossy().into_owned(),
-        event_type: event_type.to_owned(),
-        id: value.get("id").and_then(Value::as_str).map(str::to_owned),
-        created: value.get("created").and_then(Value::as_u64),
-        data: value.get("data").cloned().unwrap_or(Value::Null),
-        location: value.get("location").cloned(),
-    })
 }
 
 fn model_ref(model: &str, effort: Option<&str>) -> Result<Value, OpenCodeError> {
@@ -1836,9 +1415,16 @@ pub enum OpenCodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{
+        server::{discover_service, SERVER_PASSWORD_ENV},
+        transport::decode_json_response,
+    };
+    use reqwest::StatusCode;
     use std::{
-        process::Command,
+        io::BufRead,
+        process::{Command, Stdio},
         sync::atomic::{AtomicU64, Ordering},
+        time::Instant,
     };
 
     static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -2113,6 +1699,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
         elif path == "/api/session/active":
             self.send_json({"data": {"ses_fake": {"type": "running"}} if os.path.exists(os.path.join(PROJECT, "busy")) else {}})
+        elif path == "/api/shell":
+            assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
+            with open(os.path.join(PROJECT, "background-shells.json")) as shells:
+                self.send_json(json.load(shells))
         elif path == "/api/session/ses_fake":
             session = dict(SESSION)
             self.send_json({"data": session})
@@ -2484,6 +2074,41 @@ server.serve_forever()
             .inbox(&project_path, "ses_fake")
             .unwrap()
             .is_empty());
+        let jobs = project_path.join("background-shells.json");
+        fs::write(&jobs, serde_json::to_vec(&json!({ "data": [
+            { "id": "sh_live", "metadata": { "sessionID": "ses_fake" }, "status": "running", "command": "cargo test", "time": { "started": 1234 } },
+            { "metadata": { "sessionID": "ses_foreign" }, "status": "running" },
+            { "metadata": {}, "status": "running" },
+            { "metadata": { "sessionID": "ses_fake" }, "status": "exited" },
+            { "metadata": { "sessionID": "ses_fake" }, "status": "timeout" },
+            { "metadata": { "sessionID": "ses_fake" }, "status": "killed" }
+        ] })).unwrap()).unwrap();
+        let shells = provider
+            .background_shells(&project_path, "ses_fake")
+            .unwrap();
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].id, "sh_live");
+        assert_eq!(shells[0].command, "cargo test");
+        assert_eq!(shells[0].started_at, 1234);
+        assert!(matches!(
+            provider.background_shells(&project_path, "ses_foreign"),
+            Err(OpenCodeError::SessionNotInProject)
+        ));
+        fs::write(&jobs, r#"{"data":[]}"#).unwrap();
+        assert!(provider
+            .background_shells(&project_path, "ses_fake")
+            .unwrap()
+            .is_empty());
+        for invalid in [
+            json!({ "unexpected": [] }),
+            json!({ "data": [{ "metadata": { "sessionID": "ses_fake" }, "status": "running" }] }),
+        ] {
+            fs::write(&jobs, serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(matches!(
+                provider.background_shells(&project_path, "ses_fake"),
+                Err(OpenCodeError::Protocol(_))
+            ));
+        }
         let history = provider
             .session_history(&project_path, "ses_fake", None)
             .unwrap();

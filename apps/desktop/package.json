@@ -1,13 +1,15 @@
 {
   "name": "@caelum/desktop",
   "private": true,
-  "version": "0.1.12",
+  "version": "0.1.13",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "node scripts/check-boundaries.mjs && tsc --noEmit && vite build",
     "test": "node scripts/check-boundaries.mjs && node scripts/test.mjs",
     "test:ui": "playwright test",
+    "profile:build": "node scripts/check-boundaries.mjs && tsc --noEmit && vite build --mode profile",
+    "profile:ui": "playwright test --config playwright.profile.config.ts",
     "tauri": "tauri"
   },
   "dependencies": {

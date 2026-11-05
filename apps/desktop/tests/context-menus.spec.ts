@@ -5,6 +5,7 @@ import {
   contextMenu,
   pickMenu,
   copiedText,
+  openSettings,
 } from "./fixtures/helpers.js";
 
 test("context menus support keyboard navigation, viewport edges, themes and dismissal", async ({
@@ -36,9 +37,12 @@ test("context menus support keyboard navigation, viewport edges, themes and dism
   await expect(project).toBeFocused();
   await project.press("ContextMenu");
   await page.screenshot({ path: testInfo.outputPath("context-menu-dark.png") });
-  await page.evaluate(() => {
-    document.documentElement.dataset.theme = "light";
-  });
+  await page.keyboard.press("Escape");
+  const settings = await openSettings(page);
+  await settings.getByRole("radio", { name: "Light", exact: true }).click();
+  await settings.getByRole("button", { name: "Done", exact: true }).click();
+  await project.focus();
+  await project.press("ContextMenu");
   await expect(menu).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await page.screenshot({
     path: testInfo.outputPath("context-menu-light.png"),

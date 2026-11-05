@@ -6,6 +6,7 @@ import {
 } from "../usage/contextUsage.js";
 import { imageAttachments, toolImages } from "./chatMedia.js";
 import { queueEvent } from "../composer/messageQueueState.js";
+import { shellDetails, shellEntry } from "./shellActivity.js";
 
 const object = (value) => (value && typeof value === "object" ? value : {});
 export const displayValue = (value) =>
@@ -146,11 +147,18 @@ export function codexItem(item, completed = false) {
     kind: "tool",
     text: "",
     name: names[item.type] ?? item.type,
+    shell:
+      item.type === "commandExecution"
+        ? shellDetails(
+            "Run",
+            { command: item.command, cwd: item.cwd },
+            { exitCode: item.exitCode },
+          )
+        : undefined,
     status: item.exitCode
       ? "failed"
       : status(item.status ?? (completed ? "completed" : "running")),
-    input:
-      item.command ?? item.arguments ?? item.changes ?? item.query ?? item,
+    input: item.command ?? item.arguments ?? item.changes ?? item.query ?? item,
     output: item.aggregatedOutput ?? item.result ?? item.content,
     images:
       item.type === "imageView"
@@ -218,6 +226,7 @@ export function openCodeMessage(message) {
           name: part.name,
           status: status(state.status),
           input: state.input,
+          shell: shellDetails(part.name, state.input, state.metadata),
           output: textContent(state.content),
           images: imageAttachments(state.content),
           error: state.error
@@ -235,16 +244,18 @@ export function openCodeMessage(message) {
   }
   if (message.type === "shell")
     return [
-      {
-        id,
-        kind: "tool",
-        text: "",
-        name: "Run",
-        status: status(message.status),
-        input: message.command,
-        output: message.output?.output,
-      },
-    ];
+      shellEntry(
+        {
+          ...message,
+          id: message.shellID ?? message.id,
+          time: {
+            started: message.time?.created,
+            completed: message.time?.completed,
+          },
+        },
+        message.output,
+      ),
+    ].filter(Boolean);
   if (message.type === "idle" && message.outcome === "failed")
     return [
       {
@@ -292,10 +303,7 @@ export function historyEntries(provider, data) {
         const compacted =
           item.type === "contextCompaction" &&
           (item.completedAtMs != null || index < items.length - 1);
-        const entry = codexItem(
-          item,
-          compacted || turnStatus !== "inProgress",
-        );
+        const entry = codexItem(item, compacted || turnStatus !== "inProgress");
         if (
           entry?.kind === "compaction" &&
           !compacted &&
@@ -329,12 +337,7 @@ export function upsertEntry(entries, entry) {
   return next;
 }
 
-export function mergeHistory(
-  live,
-  history,
-  mode = "prepend",
-  beforeId = null,
-) {
+export function mergeHistory(live, history, mode = "prepend", beforeId = null) {
   const liveById = new Map(live.map((entry) => [entry.id, entry]));
   const adopted = new Set();
   const merged = history.map((entry) => {
@@ -442,7 +445,9 @@ export function applyConversationEvent(
   event = {},
 ) {
   let next =
-    provider === "opencode" ? queueEvent(session, method, data) : session;
+    provider === "opencode"
+      ? queueEvent(session, method, data, event.created)
+      : session;
   const put = (entry) => {
     if (entry)
       next = { ...next, conversation: upsertEntry(next.conversation, entry) };
@@ -483,7 +488,10 @@ export function applyConversationEvent(
               status: status(outcome),
               error: outcome === "failed" ? displayValue(error) : entry.error,
             }
-          : entry.kind === "tool" && entry.status === "running"
+          : entry.kind === "tool" &&
+              entry.status === "running" &&
+              !entry.shell?.independent &&
+              !entry.shell?.background
             ? { ...entry, status: status(outcome) }
             : isText(entry) && !entry.complete
               ? { ...entry, complete: true, status: status(outcome) }
@@ -503,9 +511,8 @@ export function applyConversationEvent(
     if (isText({ kind })) {
       const streamText =
         (existing?.streamText ??
-          (existing?.historyText === undefined
-            ? (existing?.text ?? "")
-            : "")) + text;
+          (existing?.historyText === undefined ? (existing?.text ?? "") : "")) +
+        text;
       put({
         ...existing,
         id,
@@ -567,17 +574,13 @@ export function applyConversationEvent(
     if (["item/started", "item/completed"].includes(method)) {
       const entry = codexItem(object(data.item), method === "item/completed");
       if (entry?.kind === "tool") {
-        const previous = next.conversation.find(
-          (item) => item.id === entry.id,
-        );
+        const previous = next.conversation.find((item) => item.id === entry.id);
         entry.startedAt = previous?.startedAt ?? Date.now();
         if (method === "item/completed")
           entry.durationMs ??= Date.now() - entry.startedAt;
       }
       if (entry?.kind === "compaction") {
-        const previous = next.conversation.find(
-          (item) => item.id === entry.id,
-        );
+        const previous = next.conversation.find((item) => item.id === entry.id);
         entry.startedAt ??= previous?.startedAt ?? Date.now();
       }
       if (entry && method === "item/started")
@@ -661,11 +664,40 @@ export function applyConversationEvent(
     if (method === "error")
       next = {
         ...next,
-        error: displayValue(
-          data.error?.message ?? data.message ?? data.error,
-        ),
+        error: displayValue(data.error?.message ?? data.message ?? data.error),
       };
   } else {
+    if (
+      method === "session.synthetic" &&
+      event.id &&
+      typeof data.text === "string"
+    )
+      put({
+        id: `opencode-${event.id.replace(/^evt_/, "msg_")}`,
+        kind: "status",
+        text: data.text,
+        sourceType: "synthetic",
+      });
+    if (["session.shell.started", "session.shell.ended"].includes(method)) {
+      const entry = shellEntry(data.shell, data.output);
+      const previous =
+        entry && next.conversation.find((item) => item.id === entry.id);
+      if (
+        entry &&
+        !(
+          entry.status === "running" &&
+          previous &&
+          previous.status !== "running"
+        )
+      )
+        put({
+          ...previous,
+          ...entry,
+          shell: { ...previous?.shell, ...entry.shell },
+        });
+      // Session shells have their own lifecycle and can outlive prompt execution.
+      return next;
+    }
     if (method === "session.inbox.delivered") {
       const queued = session.queuedMessages?.find(
         (item) => item.id === data.inboxID,
@@ -784,8 +816,7 @@ export function applyConversationEvent(
         });
         if (next.isWorking) working();
       } else if (!previous?.complete) {
-        if (!previous)
-          put({ id, messageId, kind, text: "", complete: false });
+        if (!previous) put({ id, messageId, kind, text: "", complete: false });
         if (phase === "delta") delta(id, kind, data.delta ?? data.text);
         working(kind === "reasoning" ? "Thinking…" : "Responding…");
       }
@@ -812,6 +843,14 @@ export function applyConversationEvent(
         text: "",
         name: data.name ?? data.tool ?? previous?.name ?? "Tool",
         input,
+        shell: {
+          ...previous?.shell,
+          ...shellDetails(
+            data.name ?? data.tool ?? previous?.name,
+            input,
+            data.metadata,
+          ),
+        },
         status: method.endsWith("success")
           ? "completed"
           : method.endsWith("failed")
@@ -819,7 +858,11 @@ export function applyConversationEvent(
             : "running",
         output: data.content
           ? textContent(data.content)
-          : (data.output ?? previous?.output),
+          : (data.output ??
+            (typeof data.metadata?.output === "string"
+              ? data.metadata.output
+              : undefined) ??
+            previous?.output),
         images: data.content
           ? imageAttachments(data.content)
           : previous?.images,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useClock } from "../../application/useClock.js";
 import {
   Check,
   CircleHelp,
@@ -47,22 +47,10 @@ export function PullRequestChecks({
   checks: StatusCheck[] | null;
   open: (url: string) => void;
 }) {
-  const [now, setNow] = useState(Date.now);
+  const now = useClock(
+    (checks ?? []).some((check) => checkTiming(check, Date.now())?.running),
+  );
   const timings = (checks ?? []).map((check) => checkTiming(check, now));
-  const running = timings.some((timing) => timing?.running);
-  useEffect(() => {
-    if (!running) return;
-    const tick = () => {
-      if (!document.hidden) setNow(Date.now());
-    };
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    document.addEventListener("visibilitychange", tick);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
-    };
-  }, [running]);
   const summary = checkSummary(checks);
   return (
     <section className="pr-checks" aria-label="Pull request checks">

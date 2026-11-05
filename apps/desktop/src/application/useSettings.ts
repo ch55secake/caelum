@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { accentColors } from "../domain/settings/accentColors.js";
+import { themes } from "../domain/settings/themes.js";
 import type { ProviderKind } from "../domain/sessions/workspaceState.js";
 import {
   defaultSettings,
@@ -37,13 +38,26 @@ const resolveTheme = (theme: Theme) =>
 function applyAppearance(settings: AppSettings) {
   const root = document.documentElement;
   const theme = resolveTheme(settings.theme);
-  const palette = accentColors[settings.accentColor];
+  const family = themes[settings.themeFamily];
+  const palette = family[theme];
+  const accent =
+    settings.accentColor === "theme"
+      ? {
+          dark: family.dark.accent,
+          light: family.light.accent,
+          solid: palette.solid,
+          hover: palette.hover,
+        }
+      : accentColors[settings.accentColor];
   root.dataset.theme = theme;
+  root.dataset.themeFamily = settings.themeFamily;
   root.dataset.accent = settings.accentColor;
-  root.style.setProperty("--accent-dark", palette.dark);
-  root.style.setProperty("--accent-light", palette.light);
-  root.style.setProperty("--accent-solid", palette.solid);
-  root.style.setProperty("--accent-solid-hover", palette.hover);
+  for (const [name, color] of Object.entries(palette.tokens))
+    root.style.setProperty(`--${name}`, color);
+  root.style.setProperty("--accent-dark", accent.dark);
+  root.style.setProperty("--accent-light", accent.light);
+  root.style.setProperty("--accent-solid", accent.solid);
+  root.style.setProperty("--accent-solid-hover", accent.hover);
   return theme;
 }
 
@@ -97,7 +111,7 @@ export function useSettings() {
     });
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       setResolvedTheme(applyAppearance(settings));
@@ -105,7 +119,7 @@ export function useSettings() {
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [settings.theme, settings.accentColor]);
+  }, [settings.theme, settings.themeFamily, settings.accentColor]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -119,7 +133,7 @@ export function useSettings() {
         );
         if (disposed) return;
         await window.setBackgroundColor(
-          resolvedTheme === "dark" ? "#0b0c0e" : "#fafafc",
+          themes[settings.themeFamily][resolvedTheme].tokens.bg,
         );
         if (!disposed) setThemeError(null);
       } catch (reason) {
@@ -132,7 +146,7 @@ export function useSettings() {
     return () => {
       disposed = true;
     };
-  }, [settings.theme, resolvedTheme]);
+  }, [settings.theme, settings.themeFamily, resolvedTheme]);
 
   return {
     settings,
@@ -144,3 +158,5 @@ export function useSettings() {
     retrySave: () => save(current.current),
   };
 }
+
+export type Preferences = ReturnType<typeof useSettings>;

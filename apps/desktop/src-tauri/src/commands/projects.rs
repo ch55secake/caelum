@@ -1,16 +1,8 @@
 use crate::runtime::persistence::StartupProject;
 use caelum_core::projects::Project;
-use caelum_protocol::{AppInfo, ProjectInfo};
+use caelum_protocol::ProjectInfo;
 use std::path::PathBuf;
 use tauri::State;
-
-#[tauri::command]
-pub(crate) fn app_info() -> AppInfo {
-    AppInfo {
-        name: "Caelum".to_owned(),
-        version: env!("CARGO_PKG_VERSION").to_owned(),
-    }
-}
 
 #[tauri::command]
 pub(crate) fn startup_project(project: State<'_, StartupProject>) -> Option<ProjectInfo> {
