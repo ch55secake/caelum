@@ -1,92 +1,90 @@
 # Desktop guide
 
-## Sessions and projects
+## Projects and sessions
 
-Open a project and send a message to create a session. Choose a provider, model and available agent before sending. Model and reasoning-effort selections in an existing session apply to its next message; changing models resets effort to that model's default. Each session retains its draft, reading position, attachments and expanded tools while the app is open.
+Open a project with **⌘O**, the sidebar's **+**, or `caelum /path/to/project`.
+The sidebar groups projects, sessions and related pull requests. **⌘K** searches
+sessions. Each session retains an independent draft and reading position.
+**Session actions** offers archive/undo, reconnect, model favourites and saved
+provider defaults.
 
-The sidebar shows each project's remembered session title, current branch and change count. Clicking the project returns to its remembered checkout and session. Project activity indicators include background work and pending approvals. Hover or focus a project to see its full title and path. Drag the sidebar divider to resize it, or focus it and use arrow keys, Home and End.
+Choose the provider, model, reasoning effort and available agent in the composer.
+Sending creates a provider session when needed. Later selection changes apply
+to the next message. Responses, reasoning, tools, compaction and shell activity
+appear in the transcript; expand rows for details. **Load earlier messages**
+pages provider history while the visible transcript stays bounded.
 
-**Sessions** combines both providers across the project's available checkouts, including unopened linked worktrees. Selecting a session switches to its checkout. Search by title, provider, branch or checkout path with **⌘K**; Escape clears and closes search. Session and pull-request lists scroll independently and retain their per-project positions.
+## Drafts, queues and requests
 
-Hover or focus a session row to **Archive** it. Archiving keeps provider-owned conversation history; **Undo** restores the most recently archived session and its in-app draft/settings. Stop an active turn before archiving. Refresh failures preserve known sessions, and an uninstalled optional provider does not produce a discovery warning. Genuine failures identify the provider and checkout in the warning's details.
+Enter sends or queues; Shift+Enter inserts a newline. Queue entries capture their
+own settings and attached text. You can edit, remove, pause or resume the queue.
+**Stop** or Escape interrupts the active turn and pauses its queue; open dialogs,
+session search and review navigation consume Escape first.
 
-## Conversation and composer
+Failed submissions stay separate from newer typing. Recovery retries once;
+**Refresh / reconnect session** explicitly retries again. Approvals and question
+forms belong to the requesting session, including when another session is selected.
+Permission choices are **Allow once** and **Deny**.
 
-Responses, thinking and tool activity stream live. Expand a row for the complete trace, input or output. Patch previews show compact changed-code snippets; execute previews show their JavaScript. Long-running tools show elapsed time, and quiet gaps do not imply that execution has finished. Activity animations respect reduced motion.
+Drafts and pending sends save atomically before dispatch. Restored queues pause.
+An unacknowledged submission returns to the front of the paused queue; inspect
+provider history before resuming because it may have been accepted before a crash.
 
-When OpenCode is idle with shell commands still running, the sidebar's activity indicator shows **waiting** and the prompt box gently pulses at a slower pace. Waiting stays visible across session navigation and clears when the commands finish. The pulse respects reduced motion, and you can keep drafting or send another message.
+## Composer context and commands
 
-Provider-owned history loads in pages; choose **Load earlier messages** to read further back. Compaction appears as a checkpoint, including running, completed, failed and interrupted states. Earlier messages remain available. OpenCode checkpoints can include a summary. **Turn cancelled** clears when work resumes; a resumable shutdown appears as **Execution paused**.
+Use **Attach**, project-file drag/drop, trailing `@query` suggestions, or the file
+inspector to attach immutable text snapshots. Each message supports 16 snapshots,
+each capped at 64 KiB; partial snapshots are marked. Selection context retains
+its file and line range. Navigation during a file read keeps the attachment with
+its originating draft.
 
-Draft or queue another message while a response runs. **Stop** or **Escape twice within 750ms** interrupts the active session's turn and pauses its queue. Menus, dialogs and side-question dismissal take priority over cancellation. Failed submissions preserve text and attachments for retry; disconnected sessions offer **Reconnect**. Approvals appear in the requesting conversation, with indicators for background sessions.
+Local commands are `/new`, `/files`, `/changes` and `/settings`. OpenCode's
+discovered project commands also appear. `/ask question` generates a transient
+answer from an existing OpenCode session without adding a conversation turn.
 
-OpenCode's **Build** and **Plan** controls choose the agent for your next message. **More** includes custom agents. **Shift+Tab** cycles available agents without moving the caret. A **Next message** badge identifies a pending switch alongside the current/running agent indicator, and a failed switch preserves the draft.
+## Files, changes and worktrees
 
-The **Context** meter shows the latest reported context usage and model limit, not cumulative usage. Codex reports its effective limit; OpenCode uses the latest assistant step and its model's limit, resetting after compaction. Missing information is shown as unavailable.
+**Files** and **Changes** share the resizable side inspector. **⌘P** opens file
+search; choose filename or content search. Directories and results are paged,
+previews are read-only with syntax highlighting and 200-line pages, and **Refresh**
+reloads the current file. Select lines to attach them to the prompt. Changes
+supports local staged/unstaged/untracked patches in unified or split mode.
 
-Click an image to open the centred viewer. Use **Fit**, **100%**, or the zoom controls; drag or scroll enlarged images to pan. Escape closes the viewer and restores thumbnail focus.
+The sidebar's **Worktrees** button opens checkout discovery, creation and removal.
+Choose a branch/base and parent directory; the default storage is under
+`~/.caelum/worktrees`. Each checkout keeps its own sessions and drafts. Removing
+a checkout preserves its branch and commits; active work and dirty/locked Git
+checkouts prevent removal.
 
-### Commands
+See [pull requests](pull-requests.md) for remote reviews, feedback and merging.
 
-Type **/** for local commands and OpenCode's discovered native/custom project commands. Use arrows to navigate, Tab or click to complete, Enter to run and Escape to dismiss.
+## Appearance and window lifecycle
 
-Type **@** at the caret to find files in the current checkout with fuzzy matching. Use arrows and Tab/Enter, or click a result, to insert its path and attach a text snapshot for either provider. Escape dismisses completion. Read failures preserve the draft and existing attachments; the same 16-snapshot and 64 KiB limits apply.
+**⌘,** opens Settings. Choose System/Light/Dark, Caelum/Catppuccin/Nord/Tokyo Night,
+and six accents or the theme default. Settings also includes notifications,
+worktree storage, legacy settings import and persistence-error retry.
 
-Type **#** to mention a PR associated with the active session, including its stack. Filter by number or title, then use Tab/Enter or click to insert the reference and attach its current branches, commit and check results. For example: `Fix the failing tests in #61`. Remove a context chip to omit its snapshot. PR mentions work with either provider and in OpenCode side questions; see [PR context](pull-requests.md#mentioning-pull-requests).
-
-- **/new** opens a new-session draft in the current checkout/provider. It also works during execution and keeps the original session's attachments/settings.
-- **/timeline** searches earlier user messages in the current Codex or OpenCode session. History loads in pages while the picker is open. Choose a message with arrows and Enter, or click it, to reveal and highlight it in the conversation. **Jump to latest** returns to live output. Escape closes the picker and focuses the composer, preserving the reading position and attachments.
-- **/goal objective**, **/goal pause**, **/goal resume**, **/goal clear** use OpenCode's native goal workflow, including during execution.
-- **/usage** opens OpenCode Go allowances, Console budgets and current-session context as separately labelled values. It is available only with OpenCode, works before creating a session and keeps attached context.
-- **/stats** shows all recorded OpenCode usage across the connected server, including projects outside Caelum. Search the project picker by name or path (including linked worktrees), or choose **All projects**. Summary totals lead into an activity chart and compact model table; expand **Token breakdown** or a model row for input, output, reasoning and cache details. Millions and billions use **M**/**B**, with exact counts on hover. Hover or focus a chart bar for its steps. Longer histories group calendar days without dropping usage. Missing pricing/subscription costs may be recorded as zero.
-- **/btw [question]** temporarily replaces the composer with a side question. A supplied question is asked immediately; `/btw` alone focuses the question field. Loading, answers, editing and retry stay in the prompt box while the main turn continues. **Back to message** or Escape restores your main draft and attachments. Side questions use the current OpenCode session context, have independent `@`/`#` attachments and never add a conversation turn. You can copy the answer or edit the question. Dismissal and session changes discard delayed replies. Existing OpenCode sessions are required.
-- Other native/custom commands appear when OpenCode reports them and execute with the selected settings and attached snapshots.
-
-## Files and changes
-
-**Files** and **Changes** share a resizable inspector beside the conversation. Expand it for more space without discarding the conversation. The file tree has its own keyboard-accessible divider and All, Changes and Recent views.
-
-- **⌘P** finds filenames with fuzzy matching; **⌘⇧F** searches file contents. Search respects ignore rules unless **Include ignored** is selected. Results are bounded and identify when a narrower query is needed.
-- Read-only tabs, expanded folders, recent files and reading positions restore per project. Previews are capped at 1 MiB and refresh as files change.
-- **⌘F** searches the active preview. Comparisons display HEAD beside the working tree with shared syntax colours.
-- **Add to prompt** captures a file snapshot. Select code to **Add selection to prompt** or **Ask about selection**; these actions also appear in context menus.
-- Each message supports 16 snapshots, each capped at 64 KiB of UTF-8 text. Partial snapshots are marked, and selections retain their path and line range. Both providers receive the captured text.
-- Sent context chips and local references open the current file. Right-click a chip to copy the original attached snapshot.
-
-**Changes** follows the latest edited file during agent work and highlights newly changed hunks, including repeated edits to already-dirty files. Unchanged refreshes preserve manual review positions. Staged, unstaged and untracked changes use syntax-aware diffs with addition/deletion markers.
-
-## Worktrees
-
-Right-click a project to **Create worktree**. Choose an editable generated branch name and a base branch. Existing checkouts are discovered automatically; **Refresh worktrees** updates the inventory. Expand a project's chevron to see its checkouts, or use the branch picker beside a new-session composer.
-
-Each checkout supports multiple provider sessions with independent drafts and file tabs. Files and Changes follow the selected checkout, and the preferred checkout restores after restarting. Projects opened below a repository root retain that relative scope in other checkouts.
-
-New checkouts default to `~/.caelum/worktrees/<project>-<repo-id>/<worktree>/`; choose a parent folder in **Settings → Worktrees**. Existing checkouts keep their locations, and separate clones get independent storage.
-
-Removing a checkout retains its branch and commits. Stop sessions and resolve pending requests first; Git refuses dirty or locked checkout removal. Closing a project only closes its sidebar group.
-
-## Settings and shortcuts
-
-Open Settings from the sidebar, collapsed header or **⌘,**. Preferences save automatically on this device.
-
-- **Appearance:** Dark, Light or System, with six theme-aware accent colours.
-- **Providers:** default provider and independent model/effort defaults, plus OpenCode agent defaults. Existing sessions keep their own settings. Refresh provider choices after setup changes or reset defaults to use native settings.
-- **Worktrees:** parent folder for new checkouts.
-- Star models to pin per-provider favourites. Search models by name, ID or supplying provider, including custom/routed services.
+Closing the window keeps sessions running. Clicking the Dock icon or opening
+a project through the CLI brings it back. **⌘Q** quits and saves the latest drafts.
 
 | Shortcut | Action |
 | --- | --- |
 | Enter / ⌘Enter | Send or queue |
 | Shift+Enter | Newline |
-| Escape twice | Stop the active turn and pause its queue |
-| ↑ in an empty composer | Recall the session's last message |
-| Shift+Tab in the composer | Cycle OpenCode agents |
-| ⌘N | New-session draft |
+| Escape | Dismiss the current surface, otherwise stop active work |
+| ⌘O / ⌘N | Open project / new session |
 | ⌘K | Search sessions |
-| ⌘\ | Toggle sidebar |
-| ⌘P / ⌘⇧F | Search filenames / content |
-| Shift+F10 | Context menu for the focused item |
+| ⌘L | Focus composer |
+| ⇧⌘B | Toggle sidebar |
+| ⌥⌘I | Toggle inspector |
+| ⌘P | Files/search |
+| ⌘, | Settings |
 
-Ctrl works in place of ⌘. Context menus support text editing, copying messages/code/tool output, attaching selections, file/path actions and session/project management. Navigate with arrows and Enter; Escape dismisses.
+## Saved data
 
-See [pull requests](pull-requests.md) for GitHub discovery, reviews, checks and merging.
+State lives in `~/.caelum/workspace-v1.json`, with branch attribution in the
+adjacent `branches.sqlite3`. First launch imports the native evaluation snapshot
+if present, otherwise the legacy desktop workspace database. Sources are retained;
+provider conversations remain with the provider. Exported `caelum.settings.v1`
+JSON can be imported from Settings. See [migration details](design/rune-migration.md)
+for source paths, overrides and the remaining workflow gaps.

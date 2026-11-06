@@ -1,42 +1,22 @@
 # Roadmap
 
-## 1. Foundation — current
+## Delivered foundation
 
-- [x] Cargo workspace with a desktop app, CLI, core, and protocol crate
-- [x] Tauri 2 + React/TypeScript desktop shell
-- [x] Native project picker with Rust-side path validation
-- [x] CLI scaffold sharing the core library
-- [x] CI checks and initial architecture documentation
-- [ ] Generate and check in the pnpm lockfile
-- [ ] Verify desktop and CLI builds in CI
+- Native Rune desktop, standalone CLI and shared Rust core/protocol workspace
+- Codex and OpenCode sessions, history, streaming, approvals/questions and cancellation
+- Durable drafts/queues, project/worktree navigation, files and local diffs
+- GitHub discovery, review feedback and head-pinned update/merge operations
+- Native macOS menus, URL opening, legacy-state migration and app/DMG packaging
+- Apple Silicon/Intel release assets, checksums and Homebrew automation
 
-## 2. Codex vertical slice
+## Follow-up
 
-- Verify the current official Codex app-server protocol and executable requirements
-- Add a provider adapter in `caelum-core`
-- Start/resume a thread, submit prompts, stream events, cancel work, and handle approvals
-- Present responses and tool activity in the desktop UI
-- Add focused protocol and lifecycle tests
+- Complete the [remaining native workflow/acceptance work](design/rune-migration.md)
+- Extend real-provider recovery, concurrent-session and accessibility evaluation
+- Improve measured input latency and long-workload behavior using reproducible native traces
+- Image workflows, richer completions and provider usage/goal/statistics surfaces
+- Optional Developer ID signing/notarization; releases currently use ad-hoc signing
+- Other desktop platforms after the macOS experience is stable
 
-## 3. OpenCode provider
-
-- [x] Verify the local v2 HTTP API, SSE events, and optional Basic authentication
-- [x] Manage the per-project server process and HTTP/SSE lifecycle
-- [x] Stream sessions, prompts, tool events, permissions, cancellation, and restoration
-
-## 4. Workspace MVP
-
-- Versioned SQLite migrations and session metadata
-- Git status and reviewable diffs
-- File browsing and editor integration
-- PTY-backed interactive terminal
-- Session restoration and multi-project UX
-
-## 5. Production readiness
-
-- Security review, crash recovery, and performance profiling
-- macOS Apple Silicon and Intel packaging, signing, and notarization
-- Release artifacts, checksums, and Homebrew formula/cask automation
-- Add Windows and Linux builds after the macOS experience is stable
-
-Items are not considered complete until their relevant automated checks or documented manual verification pass.
+Implementation and real-use acceptance are tracked separately in the migration
+and evaluation records.

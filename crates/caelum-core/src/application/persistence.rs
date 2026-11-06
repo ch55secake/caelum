@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod migration;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
@@ -142,12 +144,35 @@ pub struct Store(pub PathBuf);
 
 impl Store {
     pub fn default_path() -> PathBuf {
-        std::env::var_os("CAELUM_RUNE_STATE")
+        std::env::var_os("CAELUM_STATE")
+            .or_else(|| std::env::var_os("CAELUM_RUNE_STATE"))
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                    .join(".caelum/rune/workspace-v1.json")
+                    .join(".caelum/workspace-v1.json")
             })
+    }
+    /// Held by the desktop for its lifetime, including while its window is hidden.
+    pub fn lock(&self) -> Result<fs::File, String> {
+        let parent = self
+            .0
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(self.0.with_extension("lock"))
+            .map_err(|e| e.to_string())?;
+        file.try_lock()
+            .map_err(|e| format!("This workspace is already open, or cannot be locked: {e}"))?;
+        Ok(file)
     }
     pub fn load(&self) -> Result<Option<Snapshot>, String> {
         let bytes = match fs::read(&self.0) {
@@ -167,7 +192,11 @@ impl Store {
             .map_err(|e| format!("Could not save drafts: {e}"))
     }
     fn write(&self, state: &Snapshot) -> Result<(), Box<dyn std::error::Error>> {
-        let parent = self.0.parent().unwrap_or(Path::new("."));
+        let parent = self
+            .0
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         fs::create_dir_all(parent)?;
         let temporary = self.0.with_extension(format!("{}.tmp", std::process::id()));
         let mut options = fs::OpenOptions::new();

@@ -87,8 +87,9 @@ impl ProviderRuntime {
             }
             Command::Task(task) => return task.execute(self).map(Reply::Task),
             Command::Load(store) => {
+                store.migrate_default()?;
                 let snapshot = store.load()?;
-                if let Some(parent) = store.0.parent() {
+                if let Some(parent) = store.0.parent().filter(|p| !p.as_os_str().is_empty()) {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                     let database =
                         crate::database::WorkspaceDatabase::open(parent.join("branches.sqlite3"))

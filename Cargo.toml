@@ -1,24 +1,28 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
   "crates/caelum-core",
   "crates/caelum-protocol",
   "apps/cli",
-  "apps/desktop/src-tauri",
+  "apps/desktop",
 ]
 
 [workspace.package]
 version = "0.1.13"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.95"
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+[profile.dev]
+opt-level = 1
+debug = 0
 
 [profile.release]
 lto = "thin"

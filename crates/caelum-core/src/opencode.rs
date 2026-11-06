@@ -931,9 +931,7 @@ fn spawn_event_listener(
                         .location
                         .as_ref()
                         .and_then(|location| location["directory"].as_str())
-                        .map_or(true, |directory| {
-                            directory_matches(directory, &project_path)
-                        })
+                        .is_none_or(|directory| directory_matches(directory, &project_path))
                 {
                     if let (Some(session), Some(id)) =
                         (event.data["sessionID"].as_str(), event.data["id"].as_str())
@@ -1183,10 +1181,8 @@ fn deny_pending_approvals(
         if request.provider != PROVIDER_NAME {
             return false;
         }
-        project_path.map_or(true, |path| request.project_path == path)
-            && request_ids.map_or(true, |request_ids| {
-                request_ids.contains(&request.request_id)
-            })
+        project_path.is_none_or(|path| request.project_path == path)
+            && request_ids.is_none_or(|request_ids| request_ids.contains(&request.request_id))
     }) {
         let _ = approvals.resolve(
             PROVIDER_NAME,

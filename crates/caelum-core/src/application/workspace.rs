@@ -919,7 +919,7 @@ impl Workspace {
                                 && target.scope.provider.as_str() == provider
                                 && session
                                     .as_ref()
-                                    .map_or(true, |id| target.remote_id.as_ref() == Some(id))
+                                    .is_none_or(|id| target.remote_id.as_ref() == Some(id))
                         }) {
                             target.error = Some(error.clone());
                         }
@@ -1230,7 +1230,7 @@ impl Workspace {
             let session = &self.sessions[i];
             session.scope.project == project
                 && session.scope.provider.as_str() == provider
-                && id.map_or(true, |id| session.remote_id.as_deref() == Some(id))
+                && id.is_none_or(|id| session.remote_id.as_deref() == Some(id))
         })
     }
 

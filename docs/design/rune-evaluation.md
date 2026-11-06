@@ -1,4 +1,34 @@
-# Rune candidate evaluation record
+# Native desktop evaluation record
+
+## Production cutover — 6 November 2026
+
+The native client now lives in `apps/desktop` and shares the root Rust workspace,
+toolchain and lockfile. The Tauri/web build and application sources are removed.
+
+- Unified Rust suite: **171 passed** (143 core, 14 native, 6 protocol, 8 CLI).
+  Formatting and workspace Clippy pass with warnings denied.
+- Migration coverage includes candidate precedence, drafts/attachments/queues,
+  pending sends, legacy worktrees/session selections, branch history and committed
+  SQLite WAL data. Corrupt/future sources and existing destinations are preserved.
+  A parallel-fixture timestamp collision was reproduced and fixed with unique
+  directory allocation; 30 repeated parallel migration runs then passed.
+- Native lifecycle coverage checks cold URL ordering, running-app draft ownership,
+  shutdown's latest-editor flush and lifetime-lock release.
+- **19 Python checks passed** for version/release automation and profiling.
+  Actionlint, ShellCheck and native preview capture passed; dark/light, inspector,
+  compact and settings scenes were inspected.
+- Real OpenCode discovery/history: **passed**, three sessions discovered and
+  **197 history entries rendered** using isolated state. Read-only workspace/GitHub
+  checks passed against this checkout and PR #94, including 19 changed files and
+  discussion/review/thread feedback.
+- Apple Silicon app/DMG/CLI packaging checks signatures, architectures, versions,
+  bundle identity, URL registration and mounted-image equality. The packaged CLI
+  launch check exercises cold/warm delivery, hidden-app reopening, preserved drafts
+  and graceful quit in an isolated workspace with fake provider executables.
+
+Intel packaging and Linux checks are configured in CI; they were not run locally.
+Real Codex remains unavailable because its executable is not installed. The
+real-provider fault, accessibility and extended workflow limits below still apply.
 
 ## Design-parity follow-up — 6 November 2026
 
@@ -21,8 +51,8 @@ The earlier baseline remains below for comparison.
 
 Candidate branch: `feat/rune-evaluation-client`, based on the real-session
 foundation in PR #92. These observations cover the consolidated candidate's
-automated checks and a synthetic native workload. The real-use/cutover decision
-in [the migration plan](rune-migration.md) is still open.
+automated checks and a synthetic native workload. Cutover was subsequently
+approved; [the migration record](rune-migration.md) tracks remaining acceptance.
 
 Environment: Apple M5 Pro, 24 GiB RAM, Mac17,9, macOS 26.5.1 (25F80), arm64.
 Rune is pinned to `ddf14140253bd1b963993895e3fa025d1ec58537`; the candidate uses
@@ -90,28 +120,29 @@ are not native GPU presentation times. The native table is the useful baseline.
 
 ## Reproduce
 
-Run from the repository root. Choose a fresh directory for artifacts:
+Run from the repository root. These commands use the promoted desktop paths;
+the observations above were recorded before promotion. Choose a fresh output directory:
 
 ```sh
-nix develop -c cargo build --locked --release --manifest-path apps/rune-prototype/Cargo.toml
+nix develop -c cargo build --locked --release -p caelum-desktop
 
-/usr/bin/time -l apps/rune-prototype/target/release/caelum-rune-prototype \
+/usr/bin/time -l target/release/caelum-desktop \
   --evaluation-workload --native \
-  --script apps/rune-prototype/preview/evaluation.json \
+  --script apps/desktop/preview/evaluation.json \
   --fps 120 --frames 1200 --trace /path/to/output/native.jsonl
 
-apps/rune-prototype/target/release/caelum-rune-prototype \
-  --evaluation-workload --script apps/rune-prototype/preview/evaluation.json \
+target/release/caelum-desktop \
+  --evaluation-workload --script apps/desktop/preview/evaluation.json \
   --theme light --scale 1 --size 1280x1000 --at 1.3 \
   --snap /path/to/output/review.png --tree /path/to/output/review.json
 
-nix develop -c bash scripts/release/package_rune_candidate.sh /path/to/new/output
+nix develop -c bash scripts/release/package_macos_app.sh /path/to/output
 ```
 
-The package contains an ad-hoc-signed `.app` and architecture-specific ZIP;
-`codesign --verify --deep --strict` and `plutil -lint` run during packaging.
-The candidate CI uploads the ZIP. See the [candidate README](../../apps/rune-prototype/README.md)
-for deterministic and real-provider/service smoke commands.
+The production package is an ad-hoc-signed `.app`; release tooling creates DMGs
+and CLI archives. `codesign --verify --deep --strict` and `plutil -lint` run during
+packaging. See the [desktop README](../../apps/desktop/README.md) for deterministic
+and real-provider/service smoke commands.
 
 ## What this does not establish
 
@@ -120,4 +151,4 @@ latency, extended real concurrent-provider workload, real merge/update exercise,
 complete restart/fault-injection campaign, or full accessibility acceptance yet.
 Synthetic fixtures omit provider/network/storage costs. They establish a
 reproducible rendering baseline and bounded mounting, not 90% daily-use parity.
-Use the remaining-workflow list in the migration plan for the cutover evaluation.
+Use the remaining-workflow list in the migration record for further evaluation.

@@ -235,7 +235,7 @@ fn validate(prompt: &QuestionPrompt) -> Result<(), String> {
             field
                 .get("key")
                 .and_then(Value::as_str)
-                .map_or(true, |key| key.is_empty() || !keys.insert(key))
+                .is_none_or(|key| key.is_empty() || !keys.insert(key))
         })
     {
         return Err("Invalid agent question".into());

@@ -144,7 +144,7 @@ impl Conversation {
         for (index, entry) in live.drain(..).enumerate() {
             if ids.contains(entry.id.as_str()) {
                 existing.insert(entry.id.clone(), entry);
-            } else if optimistic.map_or(true, |(adopted, _)| adopted != index) {
+            } else if optimistic.is_none_or(|(adopted, _)| adopted != index) {
                 if index < insertion {
                     before.push(entry);
                 } else {
