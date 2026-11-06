@@ -2,7 +2,7 @@
 use crate::{
     Workspace,
     live::{live, live_mut},
-    theme,
+    quiet_button, theme, ui,
 };
 use caelum_core::application::{Attachment, Task, Workspace as Application};
 use caelum_protocol::{GitHubFeedbackKind, GitHubMergeMethod, ProjectEntryKind, ProjectSearchMode};
@@ -10,8 +10,9 @@ use rune::{
     El, FileDialogOptions, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, row, text, text_input,
 };
 use rune_kit::{
-    Button, ButtonVariant, Kit, Markdown,
+    Button, ButtonVariant, Dialog, Kit, Markdown,
     diff::{self, DiffMode, DiffState, DiffView},
+    glyphs,
 };
 use std::{
     collections::HashSet,
@@ -27,10 +28,14 @@ pub enum Screen {
     Worktrees,
     Review,
     Settings,
+    Session,
 }
 
 pub struct Panels {
     pub screen: Screen,
+    pub inspector: Screen,
+    pub overlay: Option<Screen>,
+    pub searching_sessions: bool,
     pub sessions: TextEdit,
     pub archived: bool,
     search: TextEdit,
@@ -41,6 +46,8 @@ pub struct Panels {
     change_file: Option<(String, String)>,
     diff: DiffState,
     diff_hash: u64,
+    change_diff: DiffState,
+    change_hash: u64,
     selection: Option<Selection>,
     preview_page: usize,
     branch: TextEdit,
@@ -60,6 +67,9 @@ impl Default for Panels {
     fn default() -> Self {
         Self {
             screen: Screen::Conversation,
+            inspector: Screen::Files,
+            overlay: None,
+            searching_sessions: false,
             sessions: TextEdit::new(""),
             archived: false,
             search: TextEdit::new(""),
@@ -70,6 +80,8 @@ impl Default for Panels {
             change_file: None,
             diff: DiffState::new(diff::parse("")),
             diff_hash: 0,
+            change_diff: DiffState::new(diff::parse("")),
+            change_hash: 0,
             selection: None,
             preview_page: 0,
             branch: TextEdit::new(""),
@@ -82,12 +94,15 @@ impl Default for Panels {
 
 impl Panels {
     pub fn sync(&mut self, app: &Application) {
-        let patch = if self.screen == Screen::Changes {
-            self.change_file
-                .as_ref()
-                .and_then(|(p, f)| app.services.checkouts.get(p)?.diffs.get(f))
-                .map(|d| format!("{}{}{}", d.staged, d.unstaged, d.untracked))
-        } else if self.screen == Screen::Review {
+        if let Some(patch) = self
+            .change_file
+            .as_ref()
+            .and_then(|(p, f)| app.services.checkouts.get(p)?.diffs.get(f))
+            .map(|d| format!("{}{}{}", d.staged, d.unstaged, d.untracked))
+        {
+            update_diff(&mut self.change_diff, &mut self.change_hash, &patch);
+        }
+        let patch = if self.screen == Screen::Review {
             self.review
                 .as_ref()
                 .and_then(|key| app.services.reviews.get(key))
@@ -108,17 +123,20 @@ impl Panels {
             None
         };
         if let Some(patch) = patch {
-            let mut hash = std::collections::hash_map::DefaultHasher::new();
-            patch.hash(&mut hash);
-            self.screen.hash(&mut hash);
-            let hash = hash.finish();
-            if self.diff_hash != hash {
-                let mode = self.diff.mode();
-                self.diff = DiffState::new(diff::parse(&patch));
-                self.diff.set_mode(mode);
-                self.diff_hash = hash;
-            }
+            update_diff(&mut self.diff, &mut self.diff_hash, &patch);
         }
+    }
+}
+
+fn update_diff(diff: &mut DiffState, revision: &mut u64, patch: &str) {
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    patch.hash(&mut hash);
+    let hash = hash.finish();
+    if *revision != hash {
+        let mode = diff.mode();
+        *diff = DiffState::new(diff::parse(patch));
+        diff.set_mode(mode);
+        *revision = hash;
     }
 }
 
@@ -143,9 +161,18 @@ fn scroll(content: El) -> El {
         .child(content)
 }
 
-fn show(s: &mut Workspace, screen: Screen) {
+pub fn show(s: &mut Workspace, screen: Screen) {
+    if matches!(screen, Screen::Files | Screen::Changes) {
+        s.inspector.set_open(true);
+    }
     let live = live_mut(s);
-    live.panels.screen = screen;
+    match screen {
+        Screen::Files | Screen::Changes => live.panels.inspector = screen,
+        Screen::Settings | Screen::Worktrees | Screen::Session => {
+            live.panels.overlay = Some(screen)
+        }
+        _ => live.panels.screen = screen,
+    }
     if screen == Screen::Settings && !live.panels.directory_loaded {
         live.panels.directory = TextEdit::new(&live.app.preferences.worktree_directory);
         live.panels.directory_loaded = true;
@@ -201,34 +228,17 @@ pub fn open_link(s: &mut Workspace, index: usize, url: &str, tx: &mut Tx) {
         live.app.select(index);
         live.app
             .open_file(project, path.to_string_lossy().into_owned());
-        live.panels.screen = Screen::Files;
+        live.panels.inspector = Screen::Files;
         live.panels.preview_page = line.unwrap_or(1).saturating_sub(1) / 200;
+        s.inspector.set_open(true);
     }
 }
 
 pub fn navigation(_: &Workspace, k: &Kit) -> El {
-    let mut tabs = col().w_full().gap(3.0);
-    for group in [
-        [("Files", Screen::Files), ("Changes", Screen::Changes)],
-        [
-            ("Worktrees", Screen::Worktrees),
-            ("Settings", Screen::Settings),
-        ],
-    ] {
-        let mut items = row().w_full().gap(3.0);
-        for (name, screen) in group {
-            items = items.child(
-                Button::new(name)
-                    .variant(ButtonVariant::GhostMuted)
-                    .on_press(move |s: &mut Workspace| show(s, screen))
-                    .build(k)
-                    .key(format!("nav-{}", name.to_lowercase()))
-                    .grow(1.0),
-            );
-        }
-        tabs = tabs.child(items);
-    }
-    tabs
+    quiet_button(&ui::BRANCH, "Worktrees")
+        .on_press(|s: &mut Workspace| show(s, Screen::Worktrees))
+        .build(k)
+        .key("nav-worktrees")
 }
 
 pub fn open_review(s: &mut Workspace, project: String, url: String) {
@@ -242,15 +252,19 @@ pub fn open_review(s: &mut Workspace, project: String, url: String) {
 pub fn on_key(s: &mut Workspace, ev: &KeyEvent, _: &mut Tx) -> bool {
     if ev.is_command('k') {
         s.sidebar.set_open(true);
+        live_mut(s).panels.searching_sessions = true;
         live_mut(s).panels.sessions.focused = true;
     } else if ev.is_command('p') {
         show(s, Screen::Files);
         live_mut(s).panels.search.focused = true;
     } else if ev.is_command(',') {
         show(s, Screen::Settings);
-    } else if ev.key == Key::Escape && !live(s).panels.sessions.text.is_empty() {
+    } else if ev.key == Key::Escape && live(s).panels.overlay.is_some() {
+        live_mut(s).panels.overlay = None;
+    } else if ev.key == Key::Escape && live(s).panels.searching_sessions {
         live_mut(s).panels.sessions.clear();
         live_mut(s).panels.sessions.focused = false;
+        live_mut(s).panels.searching_sessions = false;
     } else if ev.key == Key::Escape && live(s).panels.screen != Screen::Conversation {
         live_mut(s).panels.screen = Screen::Conversation;
     } else {
@@ -271,7 +285,7 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
                 .w_full()
                 .center_y()
                 .justify_between()
-                .child(label(format!("{:?}", live(s).panels.screen), k))
+                .child(ui::caption("Pull request", k))
                 .child(
                     Button::new("Back to session")
                         .variant(ButtonVariant::GhostMuted)
@@ -295,14 +309,91 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
     {
         surface = surface.child(label(error, k));
     }
-    surface.child(match live(s).panels.screen {
-        Screen::Files => files(s, k),
-        Screen::Changes => changes(s, k),
-        Screen::Worktrees => worktrees(s, k),
-        Screen::Review => review(s, k),
-        Screen::Settings => settings(s, k),
-        Screen::Conversation => col(),
+    surface.child(review(s, k))
+}
+
+pub fn inspector(s: &Workspace, k: &Kit) -> El {
+    let mut tabs = row().w_full().center_y().gap(4.0);
+    for (name, screen) in [("Files", Screen::Files), ("Changes", Screen::Changes)] {
+        tabs = tabs.child(
+            Button::new(name)
+                .variant(if live(s).panels.inspector == screen {
+                    ButtonVariant::Outline
+                } else {
+                    ButtonVariant::GhostMuted
+                })
+                .on_press(move |s: &mut Workspace| show(s, screen))
+                .build(k)
+                .key(format!("nav-{}", name.to_lowercase())),
+        );
+    }
+    let mut content = col()
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .gap(12.0)
+        .padding(12.0)
+        .child(
+            tabs.child(rune::el().grow(1.0)).child(
+                quiet_button(&glyphs::CLOSE, "Hide inspector")
+                    .on_press(|s: &mut Workspace| s.inspector.set_open(false))
+                    .build(k)
+                    .key("close-inspector"),
+            ),
+        );
+    if let Some(project) = &live(s).app.active_project {
+        content = content.child(ui::caption(project, k).truncate());
+        if let Some(error) = live(s)
+            .app
+            .services
+            .checkouts
+            .get(project)
+            .and_then(|c| c.error.as_ref())
+        {
+            content = content.child(ui::caption(error, k).color(k.c.danger.fg));
+        }
+    }
+    content.child(if live(s).panels.inspector == Screen::Changes {
+        changes(s, k)
+    } else {
+        files(s, k)
     })
+}
+
+pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
+    let Some(screen) = live(s).panels.overlay else {
+        return;
+    };
+    let (title, description, body) = match screen {
+        Screen::Settings => ("Settings", "Make Caelum feel like home.", settings(s, k)),
+        Screen::Worktrees => (
+            "Worktrees",
+            "Independent checkouts for parallel work.",
+            worktrees(s, k),
+        ),
+        Screen::Session => (
+            "Session actions",
+            "Manage this session and your provider defaults.",
+            scroll(crate::live::session_actions(s, k)),
+        ),
+        _ => return,
+    };
+    Dialog::new("workspace", title)
+        .description(description)
+        .open(true)
+        .width(640.0)
+        .fit()
+        .on_close(|s: &mut Workspace| live_mut(s).panels.overlay = None)
+        .child(
+            col()
+                .w_full()
+                .h(420.0)
+                .min_h(0.0)
+                .px(24.0)
+                .pb(24.0)
+                .child(body),
+        )
+        .build(k, layers);
 }
 
 fn run_search(s: &mut Workspace, _: &mut Tx) {
@@ -327,7 +418,7 @@ fn files(s: &Workspace, k: &Kit) -> El {
         return label("Open a project first", k);
     };
     let mut browser = col().w_full().gap(6.0).child(
-        row()
+        col()
             .gap(6.0)
             .w_full()
             .child(
@@ -336,7 +427,11 @@ fn files(s: &Workspace, k: &Kit) -> El {
                     .placeholder("Search, then press Enter", k.c.text_muted)
                     .color(k.c.text_base)
                     .key("file-search")
-                    .grow(1.0)
+                    .w_full()
+                    .min_h(30.0)
+                    .padding(6.0)
+                    .radius(6.0)
+                    .border(1.0, k.c.border_base)
                     .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.search)
                     .on_submit(run_search),
             )
@@ -453,7 +548,7 @@ fn files(s: &Workspace, k: &Kit) -> El {
         .selection
         .as_ref()
         .is_some_and(|selection| &selection.project == project && &selection.path == path);
-    let mut actions = row().gap(6.0).child(
+    let mut actions = col().w_full().gap(6.0).child(
         Button::new(if has_selection {
             "Attach selection"
         } else {
@@ -620,6 +715,7 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
                 },
                 entry.name
             ))
+            .icon(if dir { &ui::FOLDER } else { &ui::FILE })
             .variant(ButtonVariant::GhostMuted)
             .on_press(move |s: &mut Workspace| {
                 let live = live_mut(s);
@@ -660,20 +756,34 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
     tree
 }
 
-fn diff_view(s: &Workspace, k: &Kit) -> El {
+fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
     col()
         .w_full()
         .grow(1.0)
         .min_h(0.0)
         .child(
-            Button::new(if live(s).panels.diff.mode() == DiffMode::Unified {
-                "Split diff"
-            } else {
-                "Unified diff"
-            })
+            Button::new(
+                if (if review {
+                    &live(s).panels.diff
+                } else {
+                    &live(s).panels.change_diff
+                })
+                .mode()
+                    == DiffMode::Unified
+                {
+                    "Split diff"
+                } else {
+                    "Unified diff"
+                },
+            )
             .variant(ButtonVariant::GhostMuted)
-            .on_press(|s: &mut Workspace| {
-                let diff = &mut live_mut(s).panels.diff;
+            .on_press(move |s: &mut Workspace| {
+                let panels = &mut live_mut(s).panels;
+                let diff = if review {
+                    &mut panels.diff
+                } else {
+                    &mut panels.change_diff
+                };
                 diff.set_mode(if diff.mode() == DiffMode::Unified {
                     DiffMode::Split
                 } else {
@@ -685,8 +795,20 @@ fn diff_view(s: &Workspace, k: &Kit) -> El {
         )
         .child(
             DiffView::new(
-                |s: &Workspace| &live(s).panels.diff,
-                |s: &mut Workspace| &mut live_mut(s).panels.diff,
+                move |s: &Workspace| {
+                    if review {
+                        &live(s).panels.diff
+                    } else {
+                        &live(s).panels.change_diff
+                    }
+                },
+                move |s: &mut Workspace| {
+                    if review {
+                        &mut live_mut(s).panels.diff
+                    } else {
+                        &mut live_mut(s).panels.change_diff
+                    }
+                },
             )
             .build(s, k),
         )
@@ -733,18 +855,13 @@ fn changes(s: &Workspace, k: &Kit) -> El {
                 ))
                 .variant(ButtonVariant::GhostMuted)
                 .on_press(move |s: &mut Workspace| {
-                    let live = live_mut(s);
-                    live.panels.change_file = Some((project.clone(), path.clone()));
-                    live.diff_reset();
-                    live.app.task(Task::Diff {
-                        project: project.clone(),
-                        path: path.clone(),
-                    });
+                    select_change(s, project.clone(), path.clone());
                 })
                 .build(k),
             );
         }
-        content = content.child(scroll(files).max_h(160.0));
+        let height = (git.changes.len() as f32 * 28.0).clamp(28.0, 160.0);
+        content = content.child(scroll(files).min_h(height).max_h(height));
     }
     if live(s)
         .panels
@@ -752,9 +869,17 @@ fn changes(s: &Workspace, k: &Kit) -> El {
         .as_ref()
         .is_some_and(|(p, _)| p == project)
     {
-        content = content.child(diff_view(s, k));
+        content = content.child(diff_view(s, k, false));
     }
     content
+}
+
+pub fn select_change(s: &mut Workspace, project: String, path: String) {
+    let live = live_mut(s);
+    live.panels.change_file = Some((project.clone(), path.clone()));
+    live.panels.change_diff = DiffState::new(diff::parse(""));
+    live.panels.change_hash = 0;
+    live.app.task(Task::Diff { project, path });
 }
 
 impl crate::live::Live {
@@ -780,21 +905,27 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
         content = content.child(label(format!("Storage: {}", listing.storage_directory), k));
         for tree in &listing.worktrees {
             let path = tree.project.path.clone();
-            let mut line = row().w_full().gap(8.0).child(
-                Button::new(format!(
-                    "{} · {}",
-                    tree.branch.as_deref().unwrap_or("detached"),
-                    tree.project.path
-                ))
-                .variant(ButtonVariant::GhostMuted)
-                .disabled(!tree.available)
-                .on_press(move |s: &mut Workspace| {
-                    let live = live_mut(s);
-                    live.app.open_project(path.clone());
-                    live.panels.screen = Screen::Conversation;
-                })
-                .build(k),
-            );
+            let mut line = col()
+                .w_full()
+                .gap(8.0)
+                .padding(12.0)
+                .radius(8.0)
+                .border(1.0, k.c.border_base)
+                .child(
+                    Button::new(format!(
+                        "{} · {}",
+                        tree.branch.as_deref().unwrap_or("detached"),
+                        tree.project.path
+                    ))
+                    .variant(ButtonVariant::GhostMuted)
+                    .disabled(!tree.available)
+                    .on_press(move |s: &mut Workspace| {
+                        let live = live_mut(s);
+                        live.app.open_project(path.clone());
+                        live.panels.overlay = None;
+                    })
+                    .build(k),
+                );
             if !tree.main && tree.locked.is_none() {
                 line = line.child(action(
                     "Remove checkout",
@@ -857,37 +988,130 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
 }
 
 fn settings(s: &Workspace, k: &Kit) -> El {
-    let mut content = col().w_full().gap(12.0).child(label("Appearance", k));
-    content = content.child(
-        Button::new(if live(s).app.preferences.notifications {
-            "Notifications: on"
-        } else {
-            "Notifications: off"
-        })
-        .variant(ButtonVariant::Outline)
-        .on_press(|s: &mut Workspace| {
-            let preferences = &mut live_mut(s).app.preferences;
-            preferences.notifications = !preferences.notifications;
-        })
-        .build(k),
-    );
-    let mut themes = row().gap(8.0);
-    for theme in ["system", "dark", "light"] {
+    let preferences = &live(s).app.preferences;
+    let mut content = col().w_full().gap(16.0).child(ui::section(
+        "Appearance",
+        "Choose a theme and an accent for your workspace.",
+        k,
+    ));
+    let mut themes = row().w_full().gap(8.0);
+    for mode in ["system", "dark", "light"] {
         themes = themes.child(
-            Button::new(theme)
-                .variant(ButtonVariant::Outline)
-                .on_press(move |s: &mut Workspace| {
-                    live_mut(s).app.preferences.theme = theme.into();
-                    s.dark = match theme {
-                        "dark" => Some(true),
-                        "light" => Some(false),
-                        _ => None,
-                    };
+            Button::new(mode)
+                .variant(if preferences.theme == mode {
+                    ButtonVariant::Outline
+                } else {
+                    ButtonVariant::GhostMuted
                 })
-                .build(k),
+                .on_press(move |s: &mut Workspace| {
+                    live_mut(s).app.preferences.theme = mode.into();
+                    s.dark = None;
+                })
+                .build(k)
+                .key(format!("theme-{mode}"))
+                .grow(1.0),
         );
     }
-    content = content.child(themes).child(label("Worktree storage directory", k)).child(text_input(&live(s).panels.directory, k.ty.ui).label("Worktree storage directory").placeholder("~/.caelum/worktrees", k.c.text_muted).color(k.c.text_base).w_full().on_edit(|s: &mut Workspace| &mut live_mut(s).panels.directory))
+    content = content.child(themes);
+    let mut families = row().w_full().gap(8.0);
+    for (id, name) in theme::FAMILIES {
+        let palette = theme::appearance(true, id, "theme");
+        families = families.child(
+            k.interactive(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(8.0)
+                    .padding(10.0)
+                    .radius(8.0)
+                    .fill(k.c.bg_base)
+                    .border(
+                        1.0,
+                        if preferences.theme_family == id {
+                            k.c.border_focus
+                        } else {
+                            k.c.border_base
+                        },
+                    )
+                    .child(
+                        row()
+                            .w_full()
+                            .h(30.0)
+                            .radius(5.0)
+                            .fill(palette.c.bg_base)
+                            .child(rune::el().w(22.0).h_full().fill(palette.c.bg_deep))
+                            .child(
+                                rune::el()
+                                    .w(30.0)
+                                    .h(5.0)
+                                    .ml(8.0)
+                                    .mt(12.0)
+                                    .radius(2.0)
+                                    .fill(palette.c.text_accent),
+                            ),
+                    )
+                    .child(ui::caption(name, k)),
+            )
+            .role("button")
+            .label(name)
+            .focusable(true)
+            .focus_ring(1.0, 0.0, k.c.border_focus)
+            .on_press(move |s: &mut Workspace| live_mut(s).app.preferences.theme_family = id.into())
+            .key(format!("family-{id}")),
+        );
+    }
+    content = content
+        .child(families)
+        .child(ui::caption("Accent colour", k));
+    let mut accents = row().gap(8.0);
+    for accent in theme::ACCENTS {
+        let palette = theme::appearance(true, &preferences.theme_family, accent);
+        accents = accents.child(
+            k.interactive(
+                rune::el()
+                    .size(30.0, 30.0)
+                    .radius(15.0)
+                    .fill(palette.c.text_accent)
+                    .border(
+                        if preferences.accent_color == accent {
+                            3.0
+                        } else {
+                            1.0
+                        },
+                        k.c.text_base,
+                    ),
+            )
+            .role("button")
+            .label(format!("{accent} accent"))
+            .focusable(true)
+            .focus_ring(2.0, 2.0, k.c.border_focus)
+            .on_press(move |s: &mut Workspace| {
+                live_mut(s).app.preferences.accent_color = accent.into()
+            })
+            .key(format!("accent-{accent}")),
+        );
+    }
+    content = content
+        .child(accents)
+        .child(ui::section(
+            "Workspace",
+            "Defaults are saved on this Mac.",
+            k,
+        ))
+        .child(
+            Button::new(if live(s).app.preferences.notifications {
+                "Notifications: on"
+            } else {
+                "Notifications: off"
+            })
+            .variant(ButtonVariant::Outline)
+            .on_press(|s: &mut Workspace| {
+                let preferences = &mut live_mut(s).app.preferences;
+                preferences.notifications = !preferences.notifications;
+            })
+            .build(k),
+        );
+    content = content.child(label("Worktree storage directory", k)).child(text_input(&live(s).panels.directory, k.ty.ui).label("Worktree storage directory").placeholder("~/.caelum/worktrees", k.c.text_muted).color(k.c.text_base).w_full().padding(8.0).radius(6.0).border(1.0, k.c.border_base).on_edit(|s: &mut Workspace| &mut live_mut(s).panels.directory))
         .child(Button::new("Save directory").variant(ButtonVariant::Outline).on_press(|s: &mut Workspace| { let live = live_mut(s); live.app.preferences.worktree_directory = live.panels.directory.text.clone(); }).build(k))
         .child(Button::new("Import Tauri v1 settings JSON").variant(ButtonVariant::Outline).on_press_tx(|_: &mut Workspace, tx| { tx.open_file(FileDialogOptions { title: "Import exported caelum.settings.v1 JSON".into(), ..Default::default() }, |s: &mut Workspace, result, _| { match result { Ok(Some(path)) => live_mut(s).app.task(Task::ImportSettings { path: path.to_string_lossy().into_owned() }), Ok(None) => {}, Err(error) => live_mut(s).app.error = Some(error.to_string()) } }); }).build(k).key("import-settings"))
         .child(label("Export in Tauri’s Web Inspector: copy(localStorage.getItem('caelum.settings.v1')), save as JSON, then import here. Provider defaults and favourites can also be saved from Session options.", k));
@@ -938,8 +1162,8 @@ fn review(s: &Workspace, k: &Kit) -> El {
     let refresh_project = project.clone();
     let refresh_url = url.clone();
     content = content
-        .child(label(
-            format!(
+        .child(ui::section(
+            &format!(
                 "#{} {}{}",
                 details.pull_request.number,
                 details.pull_request.title,
@@ -949,10 +1173,7 @@ fn review(s: &Workspace, k: &Kit) -> El {
                     ""
                 }
             ),
-            k,
-        ))
-        .child(label(
-            format!(
+            &format!(
                 "{} → {} · {} · +{} −{} · {} files",
                 details.head_ref_name,
                 details.pull_request.base_ref_name,
@@ -1007,10 +1228,24 @@ fn review(s: &Workspace, k: &Kit) -> El {
                 (context, state)
             }
         };
-        content = content.child(label(format!("{name}: {status}"), k));
+        let color = match status.as_str() {
+            "SUCCESS" | "success" => k.c.success.fg,
+            "FAILURE" | "failure" | "ERROR" | "error" => k.c.danger.fg,
+            _ => k.c.text_muted,
+        };
+        content = content.child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .py(4.0)
+                .child(rune::el().size(6.0, 6.0).radius(3.0).fill(color))
+                .child(label(name, k).grow(1.0))
+                .child(ui::caption(status, k).color(color)),
+        );
     }
     if details.state == "OPEN" {
-        let mut mutations = row().gap(6.0).child(action(
+        let mut mutations = row().w_full().scroll_x().gap(6.0).child(action(
             "Update branch",
             Task::UpdateBranch {
                 project: project.clone(),
@@ -1041,7 +1276,11 @@ fn review(s: &Workspace, k: &Kit) -> El {
         }
         content = content.child(mutations);
     }
-    content = content.child(label("Changed files", k));
+    content = content.child(ui::section(
+        "Changed files",
+        "Select a file to review its patch and feedback.",
+        k,
+    ));
     let owner = (project.clone(), url.clone());
     let lookup = owner.clone();
     let kit = k.clone();
@@ -1094,7 +1333,7 @@ fn review(s: &Workspace, k: &Kit) -> El {
         if file.patch.is_none() {
             content = content.child(label("Patch unavailable (binary, truncated or too large). Open GitHub for the complete file.", k));
         } else {
-            content = content.child(diff_view(s, k).h(400.0).min_h(400.0));
+            content = content.child(diff_view(s, k, true).h(400.0).min_h(400.0));
         }
         for thread in review.threads.iter().filter(|t| t.path == file.path) {
             content = content.child(thread_view(s, k, project, url, thread));
@@ -1202,6 +1441,8 @@ fn comment_view(
         .w_full()
         .gap(6.0)
         .padding(10.0)
+        .radius(10.0)
+        .fill(k.c.layer_02)
         .border(1.0, k.c.border_base)
         .child(
             Button::new(format!(

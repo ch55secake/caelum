@@ -1,5 +1,22 @@
 # Rune candidate evaluation record
 
+## Design-parity follow-up — 6 November 2026
+
+The live layout now shares Caelum's message/composer surfaces and theme vocabulary,
+with composer pickers, a files/changes side inspector and focus-scoped dialogs.
+`--design-fixture` renders the reference data through the real live views; the
+light/dark, compact and settings captures are in `previews/`.
+
+The 153 core/protocol/CLI tests and 12 native interaction tests pass; Clippy passes
+with warnings denied. Compact coverage now checks inspector controls and modal
+background focus/draft isolation. Long histories and review files remain windowed.
+
+The same 1,200-frame native workload after the design changes reported presentation
+interval p50/p95 **8.33/16.67 ms**, maximum **33.33 ms**, with ten intervals over
+25 ms. Maximum RSS was **145,342,464 bytes** and peak footprint **279,954,296 bytes**.
+This run is a responsiveness check, not an end-to-end input-latency measurement.
+The earlier baseline remains below for comparison.
+
 ## Scope — 6 November 2026
 
 Candidate branch: `feat/rune-evaluation-client`, based on the real-session

@@ -13,12 +13,13 @@ nix develop -c cargo run --locked --manifest-path apps/rune-prototype/Cargo.toml
 
 Use **Open project** (⌘O), or append `-- --project /path/to/project`. Install and
 authenticate Codex/OpenCode for their sessions, and `gh` for GitHub workflows.
-**Session options** chooses the provider for a new session and model/effort/agent
-for the next message. Favourites appear first; defaults can be saved there.
+The composer chooses the provider for a new session and model/effort/agent
+for the next message. Favourites appear first; **Session actions** saves defaults.
 
 Development modes are isolated from providers and saved workspace data:
 
 - `-- --fixtures`: original polished workspace and simulated replies.
+- `-- --design-fixture`: reference conversation rendered by the live UI, offline.
 - `-- --evaluation-workload`: six streaming sessions with 2,000 history entries
   each, plus a 300-file synthetic PR accessible from the sidebar.
 
@@ -41,10 +42,11 @@ Development modes are isolated from providers and saved workspace data:
   feedback in the composer. Update and merge requests pin the expected head.
 - Local `/new`, `/files`, `/changes`, `/settings`; discovered OpenCode commands;
   `/ask question` generates a transient answer in an existing OpenCode session.
-- **Settings** / ⌘,: System/Light/Dark, notifications, worktree directory and
+- **Settings** / ⌘,: System/Light/Dark, Caelum/Catppuccin/Nord/Tokyo Night,
+  six accents or the theme's own accent, notifications, worktree directory and
   explicit Tauri v1 JSON import. Export `caelum.settings.v1` from localStorage in
   Tauri's Web Inspector, save as JSON, then choose **Import Tauri v1 settings JSON**.
-  Imported fields are appearance mode, provider defaults, favourites, worktree
+  Imported fields are appearance mode/family/accent, provider defaults, favourites, worktree
   directory and notification enablement.
 
 ## Persistence and recovery

@@ -67,3 +67,53 @@ pub fn tick(app: &mut caelum_core::application::Workspace) {
         app.apply(Event::Codex(caelum_protocol::CodexEvent { project_path: "/evaluation".into(), method: "item/agentMessage/delta".into(), params: json!({"threadId":format!("thread-{i}"),"itemId":"active-answer","delta":"Streaming another small update. "}), request_id: None }));
     }
 }
+
+/// The polished reference content through the actual live view, with no workers or disk writes.
+pub fn design() -> Workspace {
+    let mut state = Workspace::live(None);
+    let live = state.live.as_mut().unwrap();
+    live.fixture = true;
+    let project = "/projects/caelum";
+    let sample = &state.sample;
+    live.app.projects.push(caelum_protocol::ProjectInfo {
+        name: "caelum".into(),
+        path: project.into(),
+    });
+    let scope = Scope {
+        project: project.into(),
+        provider: Provider::Codex,
+    };
+    for title in [&sample.title, "OpenCode session", &sample.secondary_title] {
+        let i = live.app.new_session(scope.clone());
+        live.app.sessions[i].title = title.into();
+    }
+    let session = &mut live.app.sessions[0];
+    session.loaded = true;
+    session.options.model = Some("Test model".into());
+    session.options.effort = Some("Medium".into());
+    session.draft = sample.draft.clone();
+    session.conversation.history(Provider::Codex, &[json!({"status":"completed", "items":[
+        {"id":"prompt", "type":"userMessage", "content":[{"text":sample.prompt}]},
+        {"id":"tool", "type":"commandExecution", "command":sample.command, "aggregatedOutput":sample.output, "status":"completed"},
+        {"id":"answer", "type":"agentMessage", "text":sample.response}
+    ]})], false);
+    live.app.choices.insert(scope, serde_json::from_value(json!({"models":[{"id":"Test model","name":"Test model","efforts":[{"id":"Medium","name":"Medium"}],"defaultEffort":"Medium"}],"agents":[],"defaultModel":"Test model"})).unwrap());
+    let checkout = live
+        .app
+        .services
+        .checkouts
+        .entry(project.into())
+        .or_default();
+    checkout.git = Some(serde_json::from_value(json!({"projectPath":project,"repositoryRoot":project,"branch":"main","changes":[{"path":"workspace.css","indexStatus":" ","worktreeStatus":"M"}]})).unwrap());
+    checkout.diffs.insert(
+        "workspace.css".into(),
+        serde_json::from_value(
+            json!({"path":"workspace.css","staged":"","unstaged":sample.patch,"untracked":""}),
+        )
+        .unwrap(),
+    );
+    live.app.select(0);
+    crate::panels::select_change(&mut state, project.into(), "workspace.css".into());
+    state.live.as_mut().unwrap().panels.inspector = crate::panels::Screen::Changes;
+    state
+}

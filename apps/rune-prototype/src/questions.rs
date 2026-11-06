@@ -160,6 +160,7 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
             .gap(12.0)
             .padding(16.0)
             .radius(10.0)
+            .fill(k.c.layer_02)
             .border(1.0, k.c.border_focus)
             .child(
                 text(&prompt.title)
@@ -241,7 +242,22 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                             }
                         })
                         .build(k)
-                        .key(element_key),
+                        .key(element_key)
+                        .w_full()
+                        .radius(8.0)
+                        .fill(if selected {
+                            k.alpha(k.c.text_accent, 0.10)
+                        } else {
+                            k.c.bg_base
+                        })
+                        .border(
+                            1.0,
+                            if selected {
+                                k.c.border_focus
+                            } else {
+                                k.c.border_base
+                            },
+                        ),
                 );
             }
             form = form.child(choices);
@@ -282,6 +298,9 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                         .color(k.c.text_base)
                         .w_full()
                         .min_h(32.0)
+                        .padding(8.0)
+                        .radius(6.0)
+                        .border(1.0, k.c.border_base)
                         .on_edit(move |s: &mut Workspace| {
                             live_mut(s)
                                 .forms

@@ -2,11 +2,11 @@
 
 The Tauri workspace uses a flush main surface, softer sidebar selection, roomier message typography and a rounded composer. Shared radius and motion tokens keep the controls consistent; colour transitions respect reduced motion.
 
-The [Rune candidate](../../apps/rune-prototype/) uses native text editing, animated split panes and Rune's Markdown and diff components. Its default mode connects to real providers through `caelum-core`; `--fixtures` retains the deterministic comparison. Both fixture previews load the conversation, command output, draft and patch from [`workspace.json`](workspace.json). The [migration plan](rune-migration.md) tracks the path to a 90% workflow evaluation.
+The [Rune candidate](../../apps/rune-prototype/) uses native text editing, animated split panes and Rune's Markdown and diff components. Its default mode connects to real providers through `caelum-core`; `--design-fixture` feeds the reference conversation, command output, draft and patch from [`workspace.json`](workspace.json) through those same live views. `--fixtures` retains the original simulated interaction playground.
 
 ## Visual comparison
 
-Captured on macOS at 1280 × 1000, with one output pixel per point. Rune uses bundled Inter and its own text/code rendering; the React preview uses WebKit and the desktop's font stack.
+Captured on macOS at 1280 × 1000, with one output pixel per point. Rune uses the system UI and monospace families with its native text/code rendering; the React reference uses WebKit.
 
 | | Polished Tauri / React | Rune prototype |
 | --- | --- | --- |
@@ -14,6 +14,12 @@ Captured on macOS at 1280 × 1000, with one output pixel per point. Rune uses bu
 | Light changes inspector | ![React light changes inspector](previews/react-light-inspector.png) | ![Rune light changes inspector](previews/rune-light-inspector.png) |
 
 Both renderers use a flush conversation surface and quieter controls. Rune's toolbar is more compact, its inspector sits beside the conversation, and its diff view has interactive line selection and unified/split modes. Use the running apps to judge typing, scrolling and pane motion.
+
+The live sidebar restores project/session hierarchy and grouped pull requests. Provider, model, reasoning and agent choices live in the rounded composer; files and changes stay beside the transcript. Settings, session actions and worktrees use focus-scoped dialogs. Four theme families and six accent colours (plus the theme default) apply throughout the workspace.
+
+| Compact workspace | Settings |
+| --- | --- |
+| ![Native compact](previews/rune-dark-compact.png) | ![Native settings](previews/rune-dark-settings.png) |
 
 ## Motion in Tauri
 
@@ -73,7 +79,7 @@ Install the desktop dependencies and Playwright WebKit as described in [contribu
 
 ```sh
 pnpm --filter @caelum/desktop preview:workspace
-node apps/rune-prototype/preview/capture.mjs
+python3 apps/rune-prototype/preview/capture.py
 ```
 
 Both commands write into the ignored `apps/desktop/preview-results/` directory: light/dark workspaces, inspectors and 800 × 620 compact layouts. The React command also records `react-pane-motion.webm`, a WebKit replay of pane toggles and expansion in both themes with macOS titlebar spacing. Rune also writes element-tree JSON. Its compact scene starts with the sidebar collapsed; the React compact capture keeps all three panes visible. Set `CAELUM_PREVIEW_DIR` for the React command (relative to `apps/desktop`), or pass an output directory to the Rune capture script (relative to the current directory).

@@ -592,8 +592,6 @@ fn live_provider_and_model_controls_apply_to_first_send() {
             },
         );
     });
-    click(&mut rt, "inspector-toggle");
-    advance(&mut rt, 0.5);
     click(&mut rt, "provider-trigger");
     click(&mut rt, "option1");
     assert_eq!(
@@ -633,13 +631,20 @@ fn live_provider_and_model_controls_apply_to_first_send() {
 }
 
 #[test]
-fn compact_live_panels_preserve_the_composer_and_return_navigation() {
+fn compact_live_inspector_and_modals_preserve_the_composer_and_focus() {
     let mut rt = live_runtime_size((800.0, 620.0));
     click(&mut rt, "live-draft-0");
     rt.paste("Keep this compact draft");
-    for screen in ["nav-files", "nav-changes", "nav-worktrees", "nav-settings"] {
+    click(&mut rt, "inspector-toggle");
+    advance(&mut rt, 0.5);
+    for screen in ["nav-files", "nav-changes"] {
         click(&mut rt, screen);
-        for key in ["live-draft-0", "send", "back-to-session"] {
+        for key in [
+            "live-draft-0",
+            "send",
+            "close-inspector",
+            "provider-trigger",
+        ] {
             let e = element(&rt, key);
             assert!(e.rect[2] > 0.0 && e.rect[3] > 0.0);
             assert!(
@@ -647,10 +652,33 @@ fn compact_live_panels_preserve_the_composer_and_return_navigation() {
                     .into_iter()
                     .zip(e.visible)
                     .all(|(a, b)| (a - b).abs() < 1.0),
-                "{screen}: {key} is clipped"
+                "{screen}: {key} is clipped: {:?} vs {:?}",
+                e.rect,
+                e.visible
             );
         }
-        click(&mut rt, "back-to-session");
+    }
+    click(&mut rt, "close-inspector");
+    advance(&mut rt, 0.5);
+    for screen in ["nav-worktrees", "nav-settings", "session-options"] {
+        click(&mut rt, screen);
+        let dialog = element(&rt, "workspace-dialog");
+        assert!(
+            dialog
+                .rect
+                .into_iter()
+                .zip(dialog.visible)
+                .all(|(a, b)| (a - b).abs() < 1.0)
+        );
+        click(&mut rt, "live-draft-0");
+        rt.paste("must not enter the background composer");
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().drafts[0].text,
+            "Keep this compact draft"
+        );
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.4);
+        assert!(rt.state.live.as_ref().unwrap().panels.overlay.is_none());
     }
     assert_eq!(
         rt.state.live.as_ref().unwrap().drafts[0].text,
@@ -727,7 +755,8 @@ fn native_question_forms_send_scoped_values_and_keep_invalid_answers_editable() 
 fn native_file_preview_attaches_an_immutable_snapshot_to_the_originating_draft() {
     use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
     let mut rt = live_runtime();
-    click(&mut rt, "nav-files");
+    click(&mut rt, "inspector-toggle");
+    advance(&mut rt, 0.5);
     let (directory, command) = rt
         .state
         .live
@@ -784,7 +813,7 @@ fn native_file_preview_attaches_an_immutable_snapshot_to_the_originating_draft()
     });
     advance(&mut rt, 0.3);
     click(&mut rt, "attach-preview");
-    click(&mut rt, "back-to-session");
+    click(&mut rt, "close-inspector");
     click(&mut rt, "live-session-1");
     let live = rt.state.live.as_ref().unwrap();
     assert_eq!(live.app.sessions[0].attachments[0].content, "fn main() {}");

@@ -8,13 +8,13 @@ use caelum_core::application::{
 };
 use caelum_protocol::ApprovalDecision;
 use rune::{
-    El, FileDialogOptions, ScrollPos, ScrollSpec, TextEdit, TextStyle, Tx, Waker, col, row, text,
-    text_input,
+    El, FileDialogOptions, ScrollPos, ScrollSpec, TextEdit, TextStyle, Tx, Waker, col, icon, row,
+    text, text_input,
 };
 use rune_kit::shell::{RowStatus, Sidebar, SidebarHeader, SidebarRow};
-use rune_kit::{Button, ButtonVariant, Kit, Markdown, Select, SelectAppearance, glyphs};
+use rune_kit::{Button, ButtonVariant, Kit, Markdown, Placement, Select, glyphs};
 
-use crate::{PLUS, SEND, STOP, Workspace, on_key, quiet_button, theme};
+use crate::{PLUS, SEND, STOP, Workspace, on_key, quiet_button, theme, ui};
 
 pub struct Live {
     pub app: Application,
@@ -22,6 +22,7 @@ pub struct Live {
     pub panels: crate::panels::Panels,
     pub forms: crate::questions::Forms,
     pub evaluation: bool,
+    pub fixture: bool,
     evaluation_ticks: usize,
     runtime: Option<Runtime>,
     expanded: HashSet<(usize, String)>,
@@ -45,6 +46,7 @@ impl Live {
             panels: Default::default(),
             forms: Default::default(),
             evaluation: false,
+            fixture: false,
             evaluation_ticks: 0,
             runtime: None,
             expanded: HashSet::new(),
@@ -115,39 +117,10 @@ impl Live {
             }
             return;
         }
-        match draft.as_str() {
-            "/new" => {
-                self.drafts[index].clear();
-                self.new_session();
-                return;
-            }
-            "/files" => {
-                self.panels.screen = crate::panels::Screen::Files;
-                if let Some(project) = self.app.active_project.clone() {
-                    self.app.task(caelum_core::application::Task::Directory {
-                        project,
-                        path: String::new(),
-                        offset: 0,
-                    });
-                }
-                self.drafts[index].clear();
-                return;
-            }
-            "/changes" => {
-                self.panels.screen = crate::panels::Screen::Changes;
-                self.drafts[index].clear();
-                if let Some(project) = self.app.active_project.clone() {
-                    self.app
-                        .task(caelum_core::application::Task::Git { project });
-                }
-                return;
-            }
-            "/settings" => {
-                self.panels.screen = crate::panels::Screen::Settings;
-                self.drafts[index].clear();
-                return;
-            }
-            _ => {}
+        if draft == "/new" {
+            self.drafts[index].clear();
+            self.new_session();
+            return;
         }
         if let Some(command) = draft.strip_prefix('/') {
             let name = command.split_whitespace().next().unwrap_or_default();
@@ -266,7 +239,7 @@ impl Drop for Live {
 
 pub fn setup(s: &mut Workspace, wake: Waker) {
     if let Some(live) = &mut s.live {
-        if live.evaluation {
+        if live.evaluation || live.fixture {
             return;
         }
         live.app
@@ -303,27 +276,25 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
     let mut sidebar = Sidebar::new()
         .label("Projects and sessions")
         .inset(0.0)
-        .row_gap(5.0)
+        .row_gap(3.0)
         .header_gap(8.0)
+        .header(ui::brand(k))
         .header(
-            text("caelum")
-                .font(k.ty.body_medium)
-                .color(k.c.text_base)
-                .padding(8.0),
-        )
-        .header(
-            Button::new(if app.opening {
+            SidebarHeader::new(if app.opening {
                 "Opening project…"
             } else {
-                "Open project"
+                "Projects"
             })
-            .icon(&PLUS)
-            .variant(ButtonVariant::Outline)
-            .on_press_tx(open_project)
+            .action(
+                quiet_button(&PLUS, "Open project")
+                    .on_press_tx(open_project)
+                    .build(k)
+                    .key("open-project"),
+            )
             .build(k)
-            .key("open-project")
-            .w_full(),
+            .key("projects-heading"),
         );
+    let mut projects = col().w_full().gap(4.0);
     for (index, project) in app
         .projects
         .iter()
@@ -334,85 +305,207 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         let activity = app
             .sessions
             .iter()
-            .filter(|session| session.scope.project == path && session.working())
+            .filter(|session| app.group_path(&session.scope.project) == path && session.working())
             .count();
         let requests = app
             .approvals
             .iter()
-            .filter(|p| p.project_path == path)
+            .filter(|p| app.group_path(&p.project_path) == path)
             .count()
             + app
                 .questions
                 .iter()
-                .filter(|p| p.project_path == path)
+                .filter(|p| app.group_path(&p.project_path) == path)
                 .count();
-        sidebar = sidebar.header(
-            SidebarRow::new(project.name.clone())
-                .subtitle(if requests > 0 {
-                    format!("{requests} pending request(s)")
-                } else if activity > 0 {
-                    format!("{activity} active session(s)")
-                } else {
-                    path.clone()
-                })
-                .selected(
-                    app.active_project
-                        .as_ref()
-                        .is_some_and(|active| app.group_path(active) == path),
-                )
-                .on_select(move |s: &mut Workspace, _| {
-                    let live = live_mut(s);
-                    live.app.select_project(&path);
-                    live.sync_editors();
-                    live.menu = None;
-                })
-                .build(k)
-                .key(format!("project-{index}")),
+        let selected = app
+            .active_project
+            .as_ref()
+            .is_some_and(|active| app.group_path(active) == path);
+        let active = app
+            .selected
+            .map(|i| &app.sessions[i])
+            .filter(|s| app.group_path(&s.scope.project) == path)
+            .or_else(|| {
+                app.sessions
+                    .iter()
+                    .find(|s| app.group_path(&s.scope.project) == path && !s.archived)
+            });
+        let checkout = active.map(|s| &s.scope.project).unwrap_or(&path);
+        let git = app
+            .services
+            .checkouts
+            .get(checkout)
+            .and_then(|c| c.git.as_ref());
+        let branch = git.and_then(|g| g.branch.as_deref()).unwrap_or("No branch");
+        let detail = if requests > 0 {
+            format!("{requests} need attention")
+        } else if activity > 0 {
+            format!("{activity} working")
+        } else {
+            git.map(|g| format!("{} changed", g.changes.len()))
+                .unwrap_or_default()
+        };
+        projects = projects.child(
+            k.interactive(
+                col()
+                    .w_full()
+                    .gap(5.0)
+                    .padding(9.0)
+                    .radius(10.0)
+                    .fill(if selected {
+                        k.c.layer_01
+                    } else {
+                        rune::Color::TRANSPARENT
+                    })
+                    .border(
+                        1.0,
+                        if selected {
+                            k.c.border_muted
+                        } else {
+                            rune::Color::TRANSPARENT
+                        },
+                    )
+                    .child(
+                        row()
+                            .gap(7.0)
+                            .center_y()
+                            .child(icon(&ui::FOLDER, 14.0).color(k.c.icon_muted))
+                            .child(
+                                text(&project.name)
+                                    .font(k.ty.ui_medium)
+                                    .color(k.c.text_base)
+                                    .truncate()
+                                    .grow(1.0),
+                            ),
+                    )
+                    .child(
+                        text(
+                            active
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("Choose a session"),
+                        )
+                        .font(k.ty.small)
+                        .color(k.c.text_muted)
+                        .truncate()
+                        .pl(21.0),
+                    )
+                    .child(
+                        row()
+                            .gap(5.0)
+                            .center_y()
+                            .pl(21.0)
+                            .child(icon(&ui::BRANCH, 11.0).color(k.c.icon_muted))
+                            .child(
+                                text(branch)
+                                    .font(k.ty.small)
+                                    .color(k.c.text_muted)
+                                    .truncate()
+                                    .grow(1.0),
+                            )
+                            .child(text(detail).font(rune::TextStyle::new(10.0, 400.0)).color(
+                                if requests > 0 {
+                                    k.c.warning.icon
+                                } else {
+                                    k.c.text_muted
+                                },
+                            )),
+                    ),
+            )
+            .role("button")
+            .label(&project.name)
+            .description(&path)
+            .focusable(true)
+            .focus_ring(1.0, 0.0, k.c.border_focus)
+            .on_press(move |s: &mut Workspace| {
+                let live = live_mut(s);
+                live.app.select_project(&path);
+                live.sync_editors();
+                live.menu = None;
+                live.panels.screen = crate::panels::Screen::Conversation;
+            })
+            .key(format!("project-{index}")),
         );
     }
     sidebar = sidebar
         .header(
-            Button::new("New session")
-                .icon(&PLUS)
-                .variant(ButtonVariant::Outline)
-                .disabled(app.active_project.is_none())
-                .on_press(|s: &mut Workspace| s.new_session())
-                .build(k)
-                .key("new-session")
-                .w_full(),
+            col()
+                .w_full()
+                .max_h(190.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(projects),
         )
         .header(
-            Button::new("Refresh sessions")
-                .variant(ButtonVariant::GhostMuted)
-                .disabled(app.active_project.is_none())
-                .on_press(|s: &mut Workspace| live_mut(s).app.refresh_project())
-                .build(k)
-                .key("refresh-sessions"),
+            row()
+                .w_full()
+                .gap(4.0)
+                .child(
+                    Button::new("New session")
+                        .icon(&PLUS)
+                        .variant(ButtonVariant::Outline)
+                        .disabled(app.active_project.is_none())
+                        .on_press(|s: &mut Workspace| s.new_session())
+                        .build(k)
+                        .key("new-session")
+                        .grow(1.0),
+                )
+                .child(crate::panels::navigation(s, k)),
         )
-        .header(SidebarHeader::new("Sessions").build(k));
-    sidebar = sidebar.header(crate::panels::navigation(s, k));
-    sidebar = sidebar.header(
-        Button::new(if live(s).panels.archived {
-            "Show active sessions"
-        } else {
-            "Show archived sessions"
-        })
-        .variant(ButtonVariant::GhostMuted)
-        .on_press(|s: &mut Workspace| {
-            let panels = &mut live_mut(s).panels;
-            panels.archived = !panels.archived;
-        })
-        .build(k),
-    );
-    sidebar = sidebar.header(
-        text_input(&live(s).panels.sessions, k.ty.ui)
-            .key("session-search")
-            .label("Search sessions")
-            .placeholder("Search sessions · ⌘K", k.c.text_muted)
-            .color(k.c.text_base)
-            .w_full()
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.sessions),
-    );
+        .header(
+            SidebarHeader::new(if live(s).panels.archived {
+                "Archived sessions"
+            } else {
+                "Sessions"
+            })
+            .count(
+                app.sessions
+                    .iter()
+                    .filter(|session| {
+                        session.archived == live(s).panels.archived
+                            && app.active_project.as_ref().is_some_and(|p| {
+                                app.group_path(&session.scope.project) == app.group_path(p)
+                            })
+                    })
+                    .count(),
+            )
+            .action(
+                row()
+                    .gap(1.0)
+                    .child(
+                        quiet_button(&glyphs::SEARCH, "Search sessions")
+                            .on_press(|s: &mut Workspace| {
+                                let panels = &mut live_mut(s).panels;
+                                panels.searching_sessions = !panels.searching_sessions;
+                                panels.sessions.focused = panels.searching_sessions;
+                            })
+                            .build(k)
+                            .key("search-sessions"),
+                    )
+                    .child(
+                        quiet_button(&ui::REFRESH, "Refresh sessions")
+                            .disabled(app.active_project.is_none())
+                            .on_press(|s: &mut Workspace| live_mut(s).app.refresh_project())
+                            .build(k)
+                            .key("refresh-sessions"),
+                    ),
+            )
+            .build(k),
+        );
+    if live(s).panels.searching_sessions {
+        sidebar = sidebar.header(
+            text_input(&live(s).panels.sessions, k.ty.ui)
+                .key("session-search")
+                .label("Search sessions")
+                .placeholder("Search sessions · ⌘K", k.c.text_muted)
+                .color(k.c.text_base)
+                .w_full()
+                .padding(6.0)
+                .radius(6.0)
+                .border(1.0, k.c.border_base)
+                .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.sessions),
+        );
+    }
     for (index, session) in
         app.sessions.iter().enumerate().filter(|(_, session)| {
             session.archived == live(s).panels.archived
@@ -438,44 +531,51 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 && p.provider == session.scope.provider.as_str()
                 && Some(&p.session_id) == session.remote_id.as_ref()
         });
-        let mut item = SidebarRow::new(session.title.clone())
-            .height(52.0)
-            .subtitle(format!(
-                "{} · {}",
-                session.scope.provider.as_str(),
-                if pending {
-                    "Needs an answer"
-                } else if session.stopping {
-                    "Stopping…"
-                } else if session.working() {
-                    "Working…"
-                } else if session.loading {
-                    "Loading history…"
-                } else {
-                    "Ready"
-                }
-            ))
-            .selected(app.selected == Some(index))
+        let branch = session
+            .details
+            .as_ref()
+            .and_then(|d| d.branch.as_deref())
+            .unwrap_or(session.scope.provider.as_str());
+        let detail = format!(
+            "⑂ {} · {}",
+            branch,
+            if pending {
+                "Needs an answer"
+            } else if session.stopping {
+                "Stopping…"
+            } else if session.working() {
+                "Working…"
+            } else if session.loading {
+                "Loading history…"
+            } else {
+                session.scope.project.rsplit('/').next().unwrap_or_default()
+            }
+        );
+        let mut item = ui::session_row(&session.title, &detail, app.selected == Some(index), k)
             .on_select(move |s: &mut Workspace, _| {
                 let live = live_mut(s);
                 live.app.select(index);
                 live.panels.screen = crate::panels::Screen::Conversation;
                 live.menu = None;
             });
-        if session.working() {
+        if pending {
+            item = item.status(RowStatus::Attention);
+        } else if session.working() {
             item = item.status(RowStatus::Busy);
         }
-        sidebar = sidebar.child(
-            item.build(k)
-                .key(format!("live-session-{index}"))
-                .radius(10.0),
-        );
+        if !session.working() && !session.archiving && session.queue.is_empty() {
+            item = item.on_close(move |s: &mut Workspace, _| {
+                let app = &mut live_mut(s).app;
+                app.archive(index, !app.sessions[index].archived);
+            });
+        }
+        sidebar = sidebar.child(ui::selected_row(
+            item.build(k).key(format!("live-session-{index}")),
+            app.selected == Some(index),
+            k,
+        ));
     }
-    let mut footer = col().gap(6.0).padding(8.0).child(
-        text("Rune · real sessions")
-            .font(k.ty.small_medium)
-            .color(k.c.text_accent),
-    );
+    let mut footer = col().w_full().gap(6.0);
     for provider in Provider::ALL {
         if let Some(path) = &app.active_project
             && let Some(error) = app.notices.get(&Scope {
@@ -501,17 +601,29 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         );
     }
     let mut seen = HashSet::new();
+    let mut requests = col().w_full().gap(2.0);
     for (project, checkout) in &app.services.checkouts {
+        if app
+            .active_project
+            .as_ref()
+            .is_none_or(|p| app.group_path(project) != app.group_path(p))
+        {
+            continue;
+        }
         for pr in &checkout.pull_requests {
             if !seen.insert(&pr.url) {
                 continue;
             }
             let project = project.clone();
             let url = pr.url.clone();
-            footer = footer.child(
-                Button::new(format!("#{} {}", pr.number, pr.title))
-                    .variant(ButtonVariant::GhostMuted)
-                    .on_press(move |s: &mut Workspace| {
+            requests = requests.child(
+                SidebarRow::new(&pr.title)
+                    .icon(&ui::BRANCH)
+                    .subtitle(format!("#{} · into {}", pr.number, pr.base_ref_name))
+                    .height(48.0)
+                    .title_style(k.ty.ui)
+                    .subtitle_style(k.ty.small)
+                    .on_select(move |s: &mut Workspace, _| {
                         crate::panels::open_review(s, project.clone(), url.clone())
                     })
                     .build(k)
@@ -519,6 +631,50 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             );
         }
     }
+    footer = footer
+        .child(rune::el().w_full().h(1.0).fill(k.c.border_base))
+        .child(
+            SidebarHeader::new("Pull requests")
+                .count(seen.len())
+                .build(k),
+        )
+        .child(
+            col()
+                .w_full()
+                .max_h(150.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(if seen.is_empty() {
+                    ui::caption("No pull requests for open sessions", k).padding(8.0)
+                } else {
+                    requests
+                }),
+        )
+        .child(
+            row()
+                .w_full()
+                .center_y()
+                .child(
+                    Button::new("Settings")
+                        .icon(&ui::SETTINGS)
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press(|s: &mut Workspace| {
+                            crate::panels::show(s, crate::panels::Screen::Settings)
+                        })
+                        .build(k)
+                        .key("nav-settings")
+                        .grow(1.0),
+                )
+                .child(
+                    quiet_button(&ui::MORE, "Session actions")
+                        .on_press(|s: &mut Workspace| {
+                            crate::panels::show(s, crate::panels::Screen::Session)
+                        })
+                        .build(k)
+                        .key("session-options"),
+                ),
+        );
     sidebar
         .footer(footer.max_h(240.0).scroll(ScrollSpec {
             stick_bottom: false,
@@ -527,7 +683,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
 }
 
 pub fn transcript(s: &Workspace, k: &Kit, reduced: bool, padding: f32) -> El {
-    if live(s).panels.screen != crate::panels::Screen::Conversation {
+    if live(s).panels.screen == crate::panels::Screen::Review {
         return crate::panels::view(s, k);
     }
     let live = live(s);
@@ -546,17 +702,11 @@ pub fn transcript(s: &Workspace, k: &Kit, reduced: bool, padding: f32) -> El {
     }
     let Some(index) = live.app.selected else {
         return content
-            .child(
-                text("Open a project to continue")
-                    .font(TextStyle::new(24.0, 550.0))
-                    .color(k.c.text_base),
-            )
-            .child(
-                text("Connect to your installed Codex and OpenCode providers.")
-                    .font(k.ty.ui)
-                    .color(k.c.text_muted)
-                    .wrap(),
-            )
+            .child(ui::empty(
+                "A little room to think",
+                "Open a project to work with Codex or OpenCode.",
+                k,
+            ))
             .child(
                 Button::new("Open project")
                     .variant(ButtonVariant::Outline)
@@ -640,19 +790,11 @@ fn timeline_row(
             );
         }
         if session.conversation.entries.is_empty() && !session.loading {
-            content = content
-                .child(
-                    text("A little room to think")
-                        .font(TextStyle::new(22.0, 550.0))
-                        .color(k.c.text_base)
-                        .wrap(),
-                )
-                .child(
-                    text("Choose your provider in Session options, then send a message.")
-                        .font(k.ty.ui)
-                        .color(k.c.text_muted)
-                        .wrap(),
-                );
+            content = content.child(ui::empty(
+                "A little room to think",
+                "Ask a question, describe a change, or @mention a file.",
+                k,
+            ));
         }
         return content;
     }
@@ -664,18 +806,7 @@ fn timeline_row(
         match entry.kind {
             EntryKind::User => {
                 let (message, files) = caelum_core::application::split_context(&entry.text);
-                item = item
-                    .padding(16.0)
-                    .radius(10.0)
-                    .fill(k.c.layer_01)
-                    .border(1.0, k.c.border_base)
-                    .child(
-                        text(message)
-                            .font(TextStyle::new(14.0, 500.0).lh(23.0))
-                            .color(k.c.text_base)
-                            .wrap()
-                            .selectable(true),
-                    );
+                item = item.child(ui::user_message(message, k));
                 for file in files {
                     item = item.child(
                         text(format!(
@@ -742,7 +873,28 @@ fn timeline_row(
                     } else if entry.name.is_empty() {
                         "Tool".into()
                     } else {
-                        format!("{} · {}", entry.name, entry.status)
+                        let name = match entry.name.as_str() {
+                            "commandExecution" | "bash" | "shell" => "Run",
+                            "fileChange" | "apply_patch" | "edit" => "Edit files",
+                            "read" | "read_file" => "Read",
+                            "webSearch" | "websearch" => "Search",
+                            other => other,
+                        };
+                        if name == "Run" {
+                            format!(
+                                "Run {}",
+                                entry
+                                    .input
+                                    .lines()
+                                    .next()
+                                    .unwrap_or_default()
+                                    .chars()
+                                    .take(100)
+                                    .collect::<String>()
+                            )
+                        } else {
+                            format!("{name} · {}", entry.status)
+                        }
                     })
                     .icon(if expanded {
                         &glyphs::CHEVRON_DOWN
@@ -917,7 +1069,7 @@ fn timeline_row(
     content
 }
 
-pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool) -> El {
+pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<El>) -> El {
     let live = live(s);
     let Some(index) = live.app.selected else {
         return col();
@@ -979,30 +1131,12 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool) -> El {
         .center_y()
         .gap(8.0)
         .child(
-            Button::new(format!(
-                "{} · {}",
-                session.scope.provider.as_str(),
-                if session.stopping {
-                    "Stopping…"
-                } else if session.working() {
-                    "Working…"
-                } else {
-                    "Session options"
-                }
-            ))
-            .variant(ButtonVariant::GhostMuted)
-            .on_press(|s: &mut Workspace| s.inspector.set_open(true))
-            .build(k)
-            .key("session-options"),
+            quiet_button(&ui::ATTACH, "Attach a file")
+                .on_press_tx(crate::panels::attach_dialog)
+                .build(k)
+                .key("attach-file"),
         )
         .child(rune::el().grow(1.0));
-    controls = controls.child(
-        Button::new("Attach")
-            .variant(ButtonVariant::GhostMuted)
-            .on_press_tx(crate::panels::attach_dialog)
-            .build(k)
-            .key("attach-file"),
-    );
     if session.working() && !draft.text.trim().is_empty() {
         controls = controls.child(
             Button::new("Queue")
@@ -1019,104 +1153,72 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool) -> El {
                 .color(k.c.text_muted),
         );
     }
-    col()
-        .w_full()
-        .max_w(840.0)
-        .px(padding)
-        .pb(24.0)
-        .child(crate::panels::composer_context(s, k, index))
-        .child(
-            col()
-                .w_full()
-                .gap(8.0)
-                .padding(14.0)
-                .radius(14.0)
-                .fill(k.c.layer_02)
-                .border(
-                    1.0,
-                    if draft.focused {
-                        k.c.border_focus
-                    } else {
-                        k.c.border_base
-                    },
-                )
-                .child(input)
-                .child(controls.child(submit)),
-        )
-}
-
-pub fn inspector(s: &Workspace, k: &Kit) -> El {
-    let live = live(s);
-    let mut content = col().w_full().gap(16.0).padding(16.0).child(
+    let pickers = pickers(s, k, layers).h(24.0).min_w(0.0).scroll_x();
+    let controls = if wide {
         row()
             .w_full()
+            .gap(4.0)
             .center_y()
-            .justify_between()
-            .child(
-                text("Session options")
-                    .font(k.ty.ui_medium)
-                    .color(k.c.text_base),
-            )
-            .child(
-                quiet_button(&glyphs::CLOSE, "Hide session options")
-                    .on_press(|s: &mut Workspace| s.inspector.set_open(false))
-                    .build(k)
-                    .key("close-inspector"),
-            ),
-    );
+            .child(pickers.grow(1.0))
+            .child(controls.child(submit).w(220.0))
+    } else {
+        col()
+            .w_full()
+            .gap(2.0)
+            .child(pickers.w_full())
+            .child(controls.child(submit))
+    };
+    ui::composer(
+        input,
+        controls,
+        crate::panels::composer_context(s, k, index),
+        draft.focused,
+        padding,
+        k,
+    )
+}
+
+fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
+    let live = live(s);
+    let mut content = row().gap(2.0).center_y();
     let Some(index) = live.app.selected else {
         return content;
     };
     let session = &live.app.sessions[index];
     content = content.child(
-        text(session.scope.project.clone())
-            .font(k.ty.small)
-            .color(k.c.text_muted)
-            .wrap()
-            .selectable(true),
+        Select::new("provider", &["codex", "opencode"])
+            .current(Some(session.scope.provider.as_str()))
+            .label("Provider")
+            .placement(Placement::TopStart)
+            .open(live.menu == Some("provider"))
+            .disabled(session.remote_id.is_some() || !session.can_send())
+            .on_toggle(|s: &mut Workspace| toggle_menu(s, "provider"))
+            .on_close(|s: &mut Workspace| live_mut(s).menu = None)
+            .on_choose(move |s: &mut Workspace, value, _| {
+                let live = live_mut(s);
+                let session = &mut live.app.sessions[index];
+                session.scope.provider = if value == "codex" {
+                    Provider::Codex
+                } else {
+                    Provider::OpenCode
+                };
+                session.options = live
+                    .app
+                    .preferences
+                    .providers
+                    .get(session.scope.provider.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(choices) = live.app.choices.get(&session.scope)
+                    && session.options.model.is_none()
+                {
+                    session.options.model = choices.default_model.clone();
+                }
+                live.app.options_changed(index);
+                live.menu = None;
+            })
+            .build(k, layers),
     );
-    let mut layers = Vec::new();
-    content = content
-        .child(
-            text("Provider")
-                .font(k.ty.small_medium)
-                .color(k.c.text_muted),
-        )
-        .child(
-            Select::new("provider", &["codex", "opencode"])
-                .current(Some(session.scope.provider.as_str()))
-                .label("Provider")
-                .appearance(SelectAppearance::Field)
-                .width(240.0)
-                .open(live.menu == Some("provider"))
-                .disabled(session.remote_id.is_some() || !session.can_send())
-                .on_toggle(|s: &mut Workspace| toggle_menu(s, "provider"))
-                .on_close(|s: &mut Workspace| live_mut(s).menu = None)
-                .on_choose(move |s: &mut Workspace, value, _| {
-                    let live = live_mut(s);
-                    let session = &mut live.app.sessions[index];
-                    session.scope.provider = if value == "codex" {
-                        Provider::Codex
-                    } else {
-                        Provider::OpenCode
-                    };
-                    session.options = live
-                        .app
-                        .preferences
-                        .providers
-                        .get(session.scope.provider.as_str())
-                        .cloned()
-                        .unwrap_or_default();
-                    if let Some(choices) = live.app.choices.get(&session.scope)
-                        && session.options.model.is_none()
-                    {
-                        session.options.model = choices.default_model.clone();
-                    }
-                    live.app.options_changed(index);
-                    live.menu = None;
-                })
-                .build(k, &mut layers),
-        );
     if let Some(choices) = live.app.choices.get(&session.scope) {
         let mut models: Vec<_> = choices
             .models
@@ -1131,34 +1233,31 @@ pub fn inspector(s: &Workspace, k: &Kit) -> El {
         {
             models.sort_by_key(|model| !favorites.iter().any(|favorite| favorite == model));
         }
-        content = content
-            .child(text("Model").font(k.ty.small_medium).color(k.c.text_muted))
-            .child(
-                Select::new("model", &models)
-                    .current(session.options.model.as_deref())
-                    .placeholder("Provider default")
-                    .label("Model")
-                    .appearance(SelectAppearance::Field)
-                    .width(240.0)
-                    .open(live.menu == Some("model"))
-                    .disabled(session.archived || session.archiving)
-                    .on_toggle(|s: &mut Workspace| toggle_menu(s, "model"))
-                    .on_close(|s: &mut Workspace| live_mut(s).menu = None)
-                    .on_choose(move |s: &mut Workspace, value, _| {
-                        let live = live_mut(s);
-                        let session = &mut live.app.sessions[index];
-                        session.options.model = Some(value.into());
-                        session.options.effort = live
-                            .app
-                            .choices
-                            .get(&session.scope)
-                            .and_then(|c| c.models.iter().find(|model| model.id == value))
-                            .and_then(|model| model.default_effort.clone());
-                        live.app.options_changed(index);
-                        live.menu = None;
-                    })
-                    .build(k, &mut layers),
-            );
+        content = content.child(
+            Select::new("model", &models)
+                .current(session.options.model.as_deref())
+                .placeholder("Provider default")
+                .label("Model")
+                .placement(Placement::TopStart)
+                .open(live.menu == Some("model"))
+                .disabled(session.archived || session.archiving)
+                .on_toggle(|s: &mut Workspace| toggle_menu(s, "model"))
+                .on_close(|s: &mut Workspace| live_mut(s).menu = None)
+                .on_choose(move |s: &mut Workspace, value, _| {
+                    let live = live_mut(s);
+                    let session = &mut live.app.sessions[index];
+                    session.options.model = Some(value.into());
+                    session.options.effort = live
+                        .app
+                        .choices
+                        .get(&session.scope)
+                        .and_then(|c| c.models.iter().find(|model| model.id == value))
+                        .and_then(|model| model.default_effort.clone());
+                    live.app.options_changed(index);
+                    live.menu = None;
+                })
+                .build(k, layers),
+        );
         if let Some(model) = choices
             .models
             .iter()
@@ -1170,36 +1269,29 @@ pub fn inspector(s: &Workspace, k: &Kit) -> El {
                 .map(|effort| effort.id.as_str())
                 .collect();
             if !efforts.is_empty() {
-                content = content
-                    .child(
-                        text("Reasoning effort")
-                            .font(k.ty.small_medium)
-                            .color(k.c.text_muted),
-                    )
-                    .child(
-                        Select::new("effort", &efforts)
-                            .current(
-                                session
-                                    .options
-                                    .effort
-                                    .as_deref()
-                                    .or(model.default_effort.as_deref()),
-                            )
-                            .label("Reasoning effort")
-                            .appearance(SelectAppearance::Field)
-                            .width(240.0)
-                            .open(live.menu == Some("effort"))
-                            .disabled(session.archived || session.archiving)
-                            .on_toggle(|s: &mut Workspace| toggle_menu(s, "effort"))
-                            .on_close(|s: &mut Workspace| live_mut(s).menu = None)
-                            .on_choose(move |s: &mut Workspace, value, _| {
-                                let live = live_mut(s);
-                                live.app.sessions[index].options.effort = Some(value.into());
-                                live.app.options_changed(index);
-                                live.menu = None;
-                            })
-                            .build(k, &mut layers),
-                    );
+                content = content.child(
+                    Select::new("effort", &efforts)
+                        .current(
+                            session
+                                .options
+                                .effort
+                                .as_deref()
+                                .or(model.default_effort.as_deref()),
+                        )
+                        .label("Reasoning effort")
+                        .placement(Placement::TopStart)
+                        .open(live.menu == Some("effort"))
+                        .disabled(session.archived || session.archiving)
+                        .on_toggle(|s: &mut Workspace| toggle_menu(s, "effort"))
+                        .on_close(|s: &mut Workspace| live_mut(s).menu = None)
+                        .on_choose(move |s: &mut Workspace, value, _| {
+                            let live = live_mut(s);
+                            live.app.sessions[index].options.effort = Some(value.into());
+                            live.app.options_changed(index);
+                            live.menu = None;
+                        })
+                        .build(k, layers),
+                );
             }
         }
         let agents: Vec<_> = choices
@@ -1208,37 +1300,60 @@ pub fn inspector(s: &Workspace, k: &Kit) -> El {
             .map(|agent| agent.id.as_str())
             .collect();
         if !agents.is_empty() {
-            content = content
-                .child(text("Agent").font(k.ty.small_medium).color(k.c.text_muted))
-                .child(
-                    Select::new("agent", &agents)
-                        .current(session.options.agent.as_deref())
-                        .placeholder("Provider default")
-                        .label("Agent")
-                        .appearance(SelectAppearance::Field)
-                        .width(240.0)
-                        .open(live.menu == Some("agent"))
-                        .disabled(session.archived || session.archiving)
-                        .on_toggle(|s: &mut Workspace| toggle_menu(s, "agent"))
-                        .on_close(|s: &mut Workspace| live_mut(s).menu = None)
-                        .on_choose(move |s: &mut Workspace, value, _| {
-                            let live = live_mut(s);
-                            live.app.sessions[index].options.agent = Some(value.into());
-                            live.app.options_changed(index);
-                            live.menu = None;
-                        })
-                        .build(k, &mut layers),
-                );
+            content = content.child(
+                Select::new("agent", &agents)
+                    .current(session.options.agent.as_deref())
+                    .placeholder("Provider default")
+                    .label("Agent")
+                    .placement(Placement::TopStart)
+                    .open(live.menu == Some("agent"))
+                    .disabled(session.archived || session.archiving)
+                    .on_toggle(|s: &mut Workspace| toggle_menu(s, "agent"))
+                    .on_close(|s: &mut Workspace| live_mut(s).menu = None)
+                    .on_choose(move |s: &mut Workspace, value, _| {
+                        let live = live_mut(s);
+                        live.app.sessions[index].options.agent = Some(value.into());
+                        live.app.options_changed(index);
+                        live.menu = None;
+                    })
+                    .build(k, layers),
+            );
         }
     }
-    content = content.child(
-        Button::new("Refresh / reconnect session")
-            .variant(ButtonVariant::Outline)
-            .disabled(session.remote_id.is_none() || session.loading || session.submitting)
-            .on_press(move |s: &mut Workspace| live_mut(s).app.refresh(index))
-            .build(k)
-            .key("refresh-history"),
+    content
+}
+
+pub fn session_actions(s: &Workspace, k: &Kit) -> El {
+    let live = live(s);
+    let mut content = col().w_full().gap(12.0).child(
+        Button::new(if live.panels.archived {
+            "Show active sessions"
+        } else {
+            "Show archived sessions"
+        })
+        .variant(ButtonVariant::GhostMuted)
+        .on_press(|s: &mut Workspace| {
+            let panels = &mut live_mut(s).panels;
+            panels.archived = !panels.archived;
+            panels.overlay = None;
+        })
+        .build(k)
+        .key("toggle-archived"),
     );
+    let Some(index) = live.app.selected else {
+        return content;
+    };
+    let session = &live.app.sessions[index];
+    content = content
+        .child(ui::section(&session.title, &session.scope.project, k))
+        .child(
+            Button::new("Refresh / reconnect session")
+                .variant(ButtonVariant::Outline)
+                .disabled(session.remote_id.is_none() || session.loading || session.submitting)
+                .on_press(move |s: &mut Workspace| live_mut(s).app.refresh(index))
+                .build(k)
+                .key("refresh-history"),
+        );
     content = content.child(
         Button::new(if session.archived {
             "Restore session"
@@ -1300,15 +1415,7 @@ pub fn inspector(s: &Workspace, k: &Kit) -> El {
             .build(k),
         );
     }
-    col()
-        .w_full()
-        .h_full()
-        .min_h(0.0)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(content)
-        .children(layers)
+    content
 }
 
 fn toggle_menu(s: &mut Workspace, name: &'static str) {

@@ -4,6 +4,7 @@ mod panels;
 mod questions;
 mod state;
 mod theme;
+mod ui;
 
 #[cfg(test)]
 mod tests;
@@ -14,8 +15,7 @@ use rune::{
 };
 use rune_kit::diff::{DiffMode, DiffView};
 use rune_kit::shell::{
-    self, PaneMotion, RowStatus, Sidebar, SidebarHeader, SidebarRow, SidebarToggle, SplitView,
-    Toolbar,
+    self, PaneMotion, RowStatus, Sidebar, SidebarHeader, SidebarToggle, SplitView, Toolbar,
 };
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Kit, Markdown, glyphs,
@@ -52,7 +52,7 @@ fn quiet_button(glyph: &'static Icon, label: &str) -> IconButton {
     IconButton::new(glyph)
         .variant(IconButtonVariant::GhostMuted)
         .label(label)
-        .control_size(ControlSize::Large)
+        .control_size(ControlSize::Regular)
 }
 
 fn sidebar(s: &Workspace, k: &Kit) -> El {
@@ -65,15 +65,7 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
         .row_gap(5.0)
         .header_gap(12.0)
         .header_padding(12.0, 12.0)
-        .header(
-            row()
-                .gap(10.0)
-                .center_y()
-                .px(8.0)
-                .pb(12.0)
-                .child(icon(&ORBIT, 20.0).color(k.c.text_accent))
-                .child(text("caelum").font(k.ty.body_medium).color(k.c.text_base)),
-        )
+        .header(ui::brand(k))
         .header(
             text("Projects")
                 .font(k.ty.small_medium)
@@ -127,24 +119,25 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
                 ),
         );
     for (i, session) in s.sessions.iter().enumerate() {
-        let mut item = SidebarRow::new(session.title.clone())
-            .height(52.0)
-            .subtitle(if session.working() {
+        let mut item = ui::session_row(
+            &session.title,
+            if session.working() {
                 "Generating sample reply…"
             } else {
                 "caelum  /  main"
-            })
-            .selected(s.selected == i)
-            .on_select(move |s: &mut Workspace, _| s.selected = i);
+            },
+            s.selected == i,
+            k,
+        )
+        .on_select(move |s: &mut Workspace, _| s.selected = i);
         if session.working() {
             item = item.status(RowStatus::Busy);
         }
-        let mut item = item.build(k).key(format!("session-{i}")).radius(10.0);
-        if s.selected == i {
-            item = item
-                .fill(k.alpha(k.c.text_accent, 0.08))
-                .border(1.0, k.alpha(k.c.text_accent, 0.18));
-        }
+        let item = ui::selected_row(
+            item.build(k).key(format!("session-{i}")),
+            s.selected == i,
+            k,
+        );
         sidebar = sidebar.child(item);
     }
     sidebar.build(k)
@@ -178,19 +171,7 @@ fn transcript(s: &Workspace, k: &Kit, reduced_motion: bool, padding: f32) -> El 
         );
     }
     for (i, turn) in s.active().turns.iter().enumerate() {
-        let user = col()
-            .w_full()
-            .padding(16.0)
-            .radius(10.0)
-            .fill(k.c.layer_01)
-            .border(1.0, k.c.border_base)
-            .child(
-                text(turn.prompt.clone())
-                    .font(TextStyle::new(14.0, 500.0).lh(23.0))
-                    .color(k.c.text_base)
-                    .wrap()
-                    .selectable(true),
-            );
+        let user = ui::user_message(&turn.prompt, k);
         let mut entry = col()
             .key(format!("turn-{i}"))
             .w_full()
@@ -277,9 +258,9 @@ fn transcript(s: &Workspace, k: &Kit, reduced_motion: bool, padding: f32) -> El 
         .child(content)
 }
 
-fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool) -> El {
+fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<El>) -> El {
     if s.live.is_some() {
-        return live::composer(s, k, padding, wide);
+        return live::composer(s, k, padding, wide, layers);
     }
     let session = s.active();
     let input = text_input(&session.draft, TextStyle::new(14.0, 400.0).lh(23.0))
@@ -327,33 +308,19 @@ fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool) -> El {
                 .color(k.c.text_muted),
         );
     }
-    let surface = col()
-        .w_full()
-        .gap(8.0)
-        .padding(14.0)
-        .radius(14.0)
-        .fill(k.c.layer_02)
-        .border(
-            1.0,
-            if session.draft.focused {
-                k.c.border_focus
-            } else {
-                k.c.border_base
-            },
-        )
-        .child(input)
-        .child(controls.child(submit));
-    col()
-        .w_full()
-        .max_w(840.0)
-        .px(padding)
-        .pb(24.0)
-        .child(surface)
+    ui::composer(
+        input,
+        controls.child(submit),
+        rune::el(),
+        session.draft.focused,
+        padding,
+        k,
+    )
 }
 
 fn inspector(s: &Workspace, k: &Kit) -> El {
     if s.live.is_some() {
-        return live::inspector(s, k);
+        return panels::inspector(s, k);
     }
     col()
         .w_full()
@@ -413,7 +380,17 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         })
         .or(s.dark)
         .unwrap_or(cx.system_dark());
-    let k = theme::kit(dark);
+    let k = s.live.as_ref().map_or_else(
+        || theme::kit(dark),
+        |live| {
+            theme::appearance(
+                dark,
+                &live.app.preferences.theme_family,
+                &live.app.preferences.accent_color,
+            )
+        },
+    );
+    let mut layers = Vec::new();
     let width = cx.layout("main-pane").map_or(840.0, |r| r[2]);
     let padding = if width < 540.0 { 16.0 } else { 32.0 };
     let main = col()
@@ -422,13 +399,33 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .min_h(0.0)
         .items_center()
         .child(transcript(s, &k, cx.is_reduced_motion(), padding))
-        .child(composer(s, &k, padding, width > 560.0));
+        .child(composer(s, &k, padding, width > 560.0, &mut layers));
     let toolbar = Toolbar::new()
         .leading(
-            text(s.title().to_owned())
-                .font(k.ty.ui_medium)
-                .color(k.c.text_base)
-                .truncate(),
+            row()
+                .gap(10.0)
+                .min_w(0.0)
+                .center_y()
+                .child(
+                    text(
+                        s.live
+                            .as_ref()
+                            .and_then(|live| live.app.active_project.as_ref())
+                            .and_then(|path| std::path::Path::new(path).file_name())
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("caelum"),
+                    )
+                    .font(k.ty.ui)
+                    .color(k.c.text_muted),
+                )
+                .child(text("/").font(k.ty.ui).color(k.c.text_faint))
+                .child(
+                    text(s.title().to_owned())
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_base)
+                        .truncate()
+                        .shrink(),
+                ),
         )
         .trailing(
             quiet_button(
@@ -452,7 +449,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
             quiet_button(
                 &shell::INSPECTOR,
                 if s.live.is_some() {
-                    "Session options"
+                    "Files and changes"
                 } else if s.inspector.is_open() {
                     "Hide changes"
                 } else {
@@ -460,7 +457,13 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
                 },
             )
             .expanded(s.inspector.is_open())
-            .on_press(|s: &mut Workspace| s.inspector.toggle())
+            .on_press(|s: &mut Workspace| {
+                if s.live.is_some() && !s.inspector.is_open() {
+                    panels::show(s, panels::Screen::Files);
+                } else {
+                    s.inspector.toggle();
+                }
+            })
             .build(&k)
             .key("inspector-toggle"),
         );
@@ -469,7 +472,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     let mut shell_kit = k.clone();
     shell_kit.radius.lg = 0.0;
     shell_kit.c.border_muted = k.c.bg_base;
-    SplitView::new(main)
+    let shell = SplitView::new(main)
         .sidebar(
             &s.sidebar,
             |s: &mut Workspace| &mut s.sidebar,
@@ -488,7 +491,11 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .sidebar_toggle(SidebarToggle::new().in_header())
         .pane_motion(PaneMotion::new().spring(Spring::new(0.22, 0.0)))
         .reduced_motion(cx.is_reduced_motion())
-        .build(&shell_kit)
+        .build(&shell_kit);
+    if s.live.is_some() {
+        panels::overlays(s, &k, &mut layers);
+    }
+    col().w_full().h_full().child(shell).children(layers)
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
@@ -515,7 +522,7 @@ fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
 fn spec() -> AppSpec<Workspace> {
     AppSpec {
         min_size: Some((800.0, 620.0)),
-        families: ("Inter", "ui-monospace"),
+        families: ("system-ui", "ui-monospace"),
         poll: Some(state::poll),
         setup: Some(live::setup),
         on_key: Some(on_key),
@@ -526,6 +533,11 @@ fn spec() -> AppSpec<Workspace> {
                 s.inspector.set_open(true);
                 s.inspector.set_width(300.0);
             }),
+            ("settings", |s| {
+                if s.live.is_some() {
+                    panels::show(s, panels::Screen::Settings);
+                }
+            }),
         ],
         ..AppSpec::new("Caelum · Rune", (1280.0, 1000.0), Workspace::new, view)
     }
@@ -534,6 +546,7 @@ fn spec() -> AppSpec<Workspace> {
 fn main() {
     let mut fixtures = false;
     let mut evaluation = false;
+    let mut design = false;
     let mut project = None;
     let mut args = Vec::new();
     let mut input = std::env::args().skip(1);
@@ -541,6 +554,7 @@ fn main() {
         match arg.as_str() {
             "--fixtures" => fixtures = true,
             "--evaluation-workload" => evaluation = true,
+            "--design-fixture" => design = true,
             "--project" => {
                 let Some(path) = input.next() else {
                     eprintln!("--project requires a directory");
@@ -553,7 +567,9 @@ fn main() {
     }
     rune::App::new(spec())
         .init(move || {
-            if evaluation {
+            if design {
+                evaluation::design()
+            } else if evaluation {
                 evaluation::workspace()
             } else if fixtures {
                 Workspace::new()

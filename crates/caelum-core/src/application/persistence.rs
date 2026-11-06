@@ -12,6 +12,8 @@ use std::{
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
     pub theme: String,
+    pub theme_family: String,
+    pub accent_color: String,
     pub default_provider: Provider,
     pub worktree_directory: String,
     pub providers: BTreeMap<String, Options>,
@@ -23,6 +25,8 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             theme: "system".into(),
+            theme_family: "caelum".into(),
+            accent_color: "violet".into(),
             default_provider: Provider::Codex,
             worktree_directory: String::new(),
             providers: BTreeMap::new(),
@@ -52,6 +56,16 @@ impl Preferences {
         let mut settings = Self::default();
         if let Some(theme @ ("light" | "dark" | "system")) = value["theme"].as_str() {
             settings.theme = theme.into();
+        }
+        if let Some(family @ ("caelum" | "catppuccin" | "nord" | "tokyo-night")) =
+            value["themeFamily"].as_str()
+        {
+            settings.theme_family = family.into();
+        }
+        if let Some(accent @ ("theme" | "violet" | "blue" | "teal" | "green" | "amber" | "rose")) =
+            value["accentColor"].as_str()
+        {
+            settings.accent_color = accent.into();
         }
         if value["defaultProvider"] == "opencode" {
             settings.default_provider = Provider::OpenCode;
