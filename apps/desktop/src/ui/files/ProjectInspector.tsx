@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Maximize2, Minimize2, X } from "lucide-react";
 import { FilesPanel } from "./FilesPanel.js";
 import { GitReviewPanel } from "../git/GitReviewPanel.js";
 import type { ProjectInfo } from "../../domain/sessions/workspaceState.js";
 import type { FileContext, FileLocation } from "../../domain/files/fileContext.js";
 import type { FileSearchRequest } from "./FileSearch.js";
+import { usePaneMotion } from "../primitives/usePaneMotion.js";
 
 export type InspectorRequest = {
   project: string;
@@ -15,7 +16,7 @@ export type InspectorRequest = {
 
 export function ProjectInspector({
   project,
-  mode,
+  mode: requestedMode,
   changeMode,
   expanded,
   setExpanded,
@@ -26,7 +27,7 @@ export function ProjectInspector({
   canAttach,
 }: {
   project: ProjectInfo;
-  mode: "files" | "changes";
+  mode: "files" | "changes" | null;
   changeMode: (mode: "files" | "changes") => void;
   expanded: boolean;
   setExpanded: (value: boolean) => void;
@@ -49,10 +50,18 @@ export function ProjectInspector({
       return 460;
     }
   });
-  const pane = useRef<HTMLElement>(null);
+  const open = requestedMode !== null;
+  const [lastMode, setLastMode] = useState(requestedMode ?? "changes");
+  if (requestedMode && requestedMode !== lastMode) setLastMode(requestedMode);
+  const mode = requestedMode ?? lastMode;
+  const motion = usePaneMotion(
+    open,
+    expanded ? "100%" : `max(260px, min(${width}px, calc(100% - 300px)))`,
+    String(expanded),
+  );
   const [maximum, setMaximum] = useState(1000);
   useEffect(() => {
-    const container = pane.current?.parentElement;
+    const container = motion.ref.current?.parentElement;
     if (!container) return;
     const observer = new ResizeObserver(() =>
       setMaximum(Math.min(1000, Math.max(280, container.clientWidth - 300))),
@@ -70,13 +79,11 @@ export function ProjectInspector({
       /* Resizing still works for this window. */
     }
   };
-  return (
+  const content = (
     <aside
-      ref={pane}
       id="changes-pane"
       className={`changes-pane project-inspector${expanded ? " expanded" : ""}`}
       aria-label={mode === "files" ? "Project files" : "Project changes"}
-      style={{ "--inspector-width": `${width}px` } as CSSProperties}
     >
       {!expanded && (
         <div
@@ -92,7 +99,7 @@ export function ProjectInspector({
             if (event.button !== 0) return;
             drag.current = {
               x: event.clientX,
-              width: pane.current!.getBoundingClientRect().width,
+              width: motion.ref.current!.getBoundingClientRect().width,
             };
             event.currentTarget.setPointerCapture(event.pointerId);
             event.preventDefault();
@@ -204,5 +211,16 @@ export function ProjectInspector({
         />
       )}
     </aside>
+  );
+  return (
+    <div
+      ref={motion.ref}
+      className="pane-slot inspector-slot"
+      hidden={!motion.present}
+      inert={!open}
+      aria-hidden={!open}
+    >
+      {motion.present && content}
+    </div>
   );
 }

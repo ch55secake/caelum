@@ -91,6 +91,11 @@ export default function App() {
     surfaces,
     newSession,
     focusSearch,
+    toggleSidebar: () => {
+      surfaces.setCollapsed(!collapsed);
+      if (!collapsed && document.activeElement?.closest(".sidebar"))
+        focus.request("sidebar-toggle");
+    },
   });
   useEscapeCancellation({
     scope: sessionKey,
@@ -113,7 +118,7 @@ export default function App() {
     <FileNavigation.Provider value={surfaces.fileNavigation}>
       <ContextMenuProvider
         className={`app-shell${mac ? " macos-titlebar-overlay" : ""}${collapsed ? " sidebar-collapsed" : ""}`}
-        scope={`${sessionKey}\0${pane}\0${expanded}\0${settingsOpen}\0${activePullRequest?.pr.url}`}
+        scope={`${sessionKey}\0${pane}\0${expanded}\0${settingsOpen}\0${activePullRequest?.pr.url}\0${collapsed}`}
         reportError={app.setError}
         actions={[
           {
@@ -130,32 +135,34 @@ export default function App() {
           { text: "Settings…", action: () => surfaces.setSettingsOpen(true) },
         ]}
       >
-        {!collapsed && (
-          <PullRequestPreviewProvider
-            scope={`${sessionKey}\0${settingsOpen}\0${pane}\0${expanded}\0${activePullRequest?.pr.url}`}
-            activeUrl={activePullRequest?.pr.url ?? null}
-            onOpen={surfaces.openPullRequest}
-          >
-            <Sidebar
-              app={app}
-              preferredWidth={surfaces.sidebarWidth}
-              setPreferredWidth={surfaces.setSidebarWidth}
-              collapse={() => surfaces.setCollapsed(true)}
-              view={sidebarView}
-              searchRef={focus.searchRef}
-              focusSearch={focusSearch}
-              newSession={newSession}
-              setupSession={() => setSessionSetupOpen(true)}
-              changesOpen={surfaces.changesOpen}
-              filesOpen={!activePullRequest && pane === "files"}
-              sessionVisible={!activePullRequest && (!expanded || !pane)}
-              openFiles={() => surfaces.openFiles()}
-              showSession={showSession}
-              toggleChanges={surfaces.toggleChanges}
-              openSettings={() => surfaces.setSettingsOpen(true)}
-            />
-          </PullRequestPreviewProvider>
-        )}
+        <PullRequestPreviewProvider
+          scope={`${sessionKey}\0${settingsOpen}\0${pane}\0${expanded}\0${activePullRequest?.pr.url}\0${collapsed}`}
+          activeUrl={activePullRequest?.pr.url ?? null}
+          onOpen={surfaces.openPullRequest}
+        >
+          <Sidebar
+            app={app}
+            open={!collapsed}
+            preferredWidth={surfaces.sidebarWidth}
+            setPreferredWidth={surfaces.setSidebarWidth}
+            collapse={() => {
+              surfaces.setCollapsed(true);
+              focus.request("sidebar-toggle");
+            }}
+            view={sidebarView}
+            searchRef={focus.searchRef}
+            focusSearch={focusSearch}
+            newSession={newSession}
+            setupSession={() => setSessionSetupOpen(true)}
+            changesOpen={surfaces.changesOpen}
+            filesOpen={!activePullRequest && pane === "files"}
+            sessionVisible={!activePullRequest && (!expanded || !pane)}
+            openFiles={() => surfaces.openFiles()}
+            showSession={showSession}
+            toggleChanges={surfaces.toggleChanges}
+            openSettings={() => surfaces.setSettingsOpen(true)}
+          />
+        </PullRequestPreviewProvider>
         <section className="main-panel">
           <WorkspaceHeader
             app={app}
@@ -182,19 +189,25 @@ export default function App() {
             className={`session-layout${pane && app.project ? " with-changes" : ""}`}
             hidden={Boolean(activePullRequest)}
           >
-            <SessionWorkspace
-              app={app}
-              preferences={preferences}
-              pullRequests={sessionPullRequests}
-              sessionKey={sessionKey}
-              surfaces={surfaces}
-              focus={focus}
-              activeApprovals={activeApprovals}
-              projectApprovals={projectApprovals}
-              activeQuestions={activeQuestions}
-              newSession={newSession}
-              setupSession={() => setSessionSetupOpen(true)}
-            />
+            <div
+              className="session-slot"
+              inert={expanded && Boolean(pane)}
+              aria-hidden={expanded && Boolean(pane)}
+            >
+              <SessionWorkspace
+                app={app}
+                preferences={preferences}
+                pullRequests={sessionPullRequests}
+                sessionKey={sessionKey}
+                surfaces={surfaces}
+                focus={focus}
+                activeApprovals={activeApprovals}
+                projectApprovals={projectApprovals}
+                activeQuestions={activeQuestions}
+                newSession={newSession}
+                setupSession={() => setSessionSetupOpen(true)}
+              />
+            </div>
             <WorkspaceInspector app={app} surfaces={surfaces} focus={focus} />
           </div>
         </section>

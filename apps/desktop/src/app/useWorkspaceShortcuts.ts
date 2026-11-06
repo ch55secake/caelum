@@ -6,6 +6,7 @@ export function useWorkspaceShortcuts(actions: {
   surfaces: WorkspaceSurfaces;
   newSession: () => void;
   focusSearch: () => void;
+  toggleSidebar: () => void;
 }) {
   const latest = useRef(actions);
   latest.current = actions;
@@ -35,7 +36,7 @@ export function useWorkspaceShortcuts(actions: {
       }
       if (event.key === "\\") {
         event.preventDefault();
-        surfaces.setCollapsed((value) => !value);
+        latest.current.toggleSidebar();
       }
     };
     window.addEventListener("keydown", handler);

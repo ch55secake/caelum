@@ -49,10 +49,7 @@ export function SessionWorkspace({
     : app.providerWorkspace?.error;
   const run = app.activity.get(sessionKey)?.run;
   return (
-    <div
-      className="session-workspace"
-      hidden={surfaces.expanded && Boolean(surfaces.pane)}
-    >
+    <div className="session-workspace">
       {sessionError && (
         <div className="error-banner" role="alert">
           <span>{sessionError}</span>

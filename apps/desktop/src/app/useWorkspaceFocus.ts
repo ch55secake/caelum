@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ConversationHandle } from "../ui/conversation/Conversation.js";
 
+type FocusTarget = "search" | "composer" | "sidebar-toggle";
+
 export function useWorkspaceFocus(
   sessionKey: string,
   activeQuestionKey: string | null,
@@ -11,14 +13,20 @@ export function useWorkspaceFocus(
   const conversationRef = useRef<ConversationHandle>(null);
   const questionDockRef = useRef<HTMLDivElement>(null);
   const [request, setRequest] = useState<{
-    target: "search" | "composer";
+    target: FocusTarget;
   } | null>(null);
   useLayoutEffect(() => {
     if (!request) return;
     const target =
-      request.target === "search" ? searchRef.current : textareaRef.current;
-    target?.focus();
-    if (request.target === "search") target?.select();
+      request.target === "search"
+        ? searchRef.current
+        : request.target === "sidebar-toggle"
+          ? document.querySelector<HTMLButtonElement>(
+              '.topbar [aria-controls="workspace-sidebar"]',
+            )
+          : textareaRef.current;
+    target?.focus({ preventScroll: true });
+    if (request.target === "search") searchRef.current?.select();
   }, [request]);
   useEffect(() => {
     if (pullRequestOpen) return;
@@ -43,7 +51,7 @@ export function useWorkspaceFocus(
     textareaRef,
     conversationRef,
     questionDockRef,
-    request: (target: "search" | "composer") => setRequest({ target }),
+    request: (target: FocusTarget) => setRequest({ target }),
   };
 }
 

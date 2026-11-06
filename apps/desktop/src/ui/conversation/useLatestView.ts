@@ -17,7 +17,7 @@ export function useLatestView(
         latest.current.ready &&
           node &&
           node.clientHeight > 0 &&
-          !node.closest("[hidden]") &&
+          !node.closest("[hidden], [inert]") &&
           !document.querySelector("dialog[open]") &&
           node.scrollHeight - node.scrollTop - node.clientHeight < 64,
       ),
@@ -32,7 +32,7 @@ export function useLatestView(
     visibility.observe(document.body, {
       subtree: true,
       attributes: true,
-      attributeFilter: ["hidden", "open"],
+      attributeFilter: ["hidden", "inert", "open"],
       childList: true,
     });
     node.addEventListener("scroll", update);

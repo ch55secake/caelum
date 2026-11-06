@@ -225,7 +225,7 @@ export function Conversation({
   const following = useRef(session.scrollTop === null);
   const position = useRef(session.scrollTop);
   const touchY = useRef<number | null>(null);
-  const dimensions = useRef({ height: 0, content: 0 });
+  const dimensions = useRef({ width: 0, height: 0, content: 0 });
   const [atBottom, setAtBottom] = useState(following.current);
   // A sliding 100-entry window bounds Markdown and tool DOM, while keeping all records in memory.
   const [end, setEnd] = useState<string | null>(session.windowEndId);
@@ -237,11 +237,16 @@ export function Conversation({
   function followResize() {
     const container = scroll.current!;
     const next = {
+      width: container.clientWidth,
       height: container.clientHeight,
       content: container.scrollHeight,
     };
     const previous = dimensions.current;
-    if (next.height === previous.height && next.content === previous.content)
+    if (
+      next.width === previous.width &&
+      next.height === previous.height &&
+      next.content === previous.content
+    )
       return false;
     dimensions.current = next;
     if (following.current && endRef.current === null)

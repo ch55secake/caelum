@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: "workspace.preview.ts",
+  testMatch: "*.preview.ts",
   workers: 1,
   outputDir: "../preview-results/driver",
   use: {

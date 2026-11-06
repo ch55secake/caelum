@@ -43,6 +43,8 @@ export function WorkspaceHeader({
           <button
             className="icon-button"
             aria-label="Expand sidebar"
+            aria-controls="workspace-sidebar"
+            aria-expanded={false}
             onClick={() => surfaces.setCollapsed(false)}
           >
             <PanelLeftOpen size={16} />

@@ -21,6 +21,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
+import { usePaneMotion } from "../primitives/usePaneMotion.js";
 import type {
   ProjectSession,
   SessionDetails,
@@ -106,6 +107,7 @@ function SessionContext({
 
 export function Sidebar({
   app,
+  open,
   preferredWidth,
   setPreferredWidth,
   collapse,
@@ -123,6 +125,7 @@ export function Sidebar({
   openSettings,
 }: {
   app: WorkspaceController;
+  open: boolean;
   preferredWidth: number | null;
   setPreferredWidth: (width: number) => void;
   collapse: () => void;
@@ -145,7 +148,6 @@ export function Sidebar({
     showSession();
     app.selectSession(item, item.provider, item.project);
   };
-  const sidebar = useRef<HTMLElement>(null);
   const [layoutWidth, setLayoutWidth] = useState(window.innerWidth);
   const drag = useRef<{ x: number; width: number } | null>(null);
   const activityId = useId();
@@ -162,15 +164,6 @@ export function Sidebar({
     view.update({ search: "", searchOpen: false });
     searchButton.current?.focus();
   };
-  useLayoutEffect(() => {
-    const container = sidebar.current?.parentElement;
-    if (!container) return;
-    const measure = () => setLayoutWidth(container.clientWidth);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
   const minimumWorkspaceWidth =
     app.project && sessionVisible && (filesOpen || changesOpen) ? 580 : 320;
   const maximum = Math.min(
@@ -181,6 +174,20 @@ export function Sidebar({
     MIN_SIDEBAR_WIDTH,
     Math.min(maximum, preferredWidth ?? (layoutWidth <= 980 ? 214 : 238)),
   );
+  const motion = usePaneMotion(
+    open,
+    `${width}px`,
+    `${sessionVisible}\0${filesOpen || changesOpen}`,
+  );
+  useLayoutEffect(() => {
+    const container = motion.ref.current?.parentElement;
+    if (!container) return;
+    const measure = () => setLayoutWidth(container.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
   const resize = (value: number) =>
     setPreferredWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(maximum, value)));
   const allSessions = app.projectSessions;
@@ -197,6 +204,10 @@ export function Sidebar({
     })),
   );
   useLayoutEffect(() => {
+    if (!motion.present) {
+      restoration.current = null;
+      return;
+    }
     if (restoration.current?.path !== path) {
       restoration.current = {
         path,
@@ -225,15 +236,15 @@ export function Sidebar({
         restore.pending = false;
     }
   }, [
+    motion.present,
     path,
     sessions.length,
     pullRequests.entries.size,
     pullRequests.loading,
     app.isLoadingSessions,
   ]);
-  return (
+  const content = (
     <aside
-      ref={sidebar}
       id="workspace-sidebar"
       className="sidebar"
       aria-label="Projects and sessions"
@@ -642,5 +653,16 @@ export function Sidebar({
         }}
       />
     </aside>
+  );
+  return (
+    <div
+      ref={motion.ref}
+      className="pane-slot sidebar-slot"
+      hidden={!motion.present}
+      inert={!open}
+      aria-hidden={!open}
+    >
+      {motion.present && content}
+    </div>
   );
 }

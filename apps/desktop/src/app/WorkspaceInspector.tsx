@@ -13,7 +13,7 @@ export function WorkspaceInspector({
   surfaces: WorkspaceSurfaces;
   focus: WorkspaceFocus;
 }) {
-  if (!surfaces.pane || !app.project) return null;
+  if (!app.project) return null;
   return (
     <ProjectInspector
       key={app.project.path}
@@ -36,7 +36,10 @@ export function WorkspaceInspector({
         });
       }}
       working={Boolean(app.workspace && projectHasActiveTurn(app.workspace))}
-      close={surfaces.closeInspector}
+      close={() => {
+        surfaces.closeInspector();
+        focus.request("composer");
+      }}
     />
   );
 }

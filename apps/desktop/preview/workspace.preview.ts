@@ -11,6 +11,7 @@ import {
 const output = process.env.CAELUM_PREVIEW_DIR ?? "preview-results";
 
 async function capture(page: Page, name: string) {
+  await expect(page.locator(".pane-slot[data-motion]")).toHaveCount(0);
   await page.locator(".transcript").evaluate((node) => { node.scrollTop = 0; });
   await page.mouse.move(0, 0);
   await page.screenshot({ path: join(output, name), animations: "disabled" });
@@ -25,6 +26,7 @@ for (const theme of ["dark", "light"] as const) {
     );
     await desktop(page, null);
     await page.getByRole("button", { name: "Hide changes", exact: true }).click();
+    await expect(page.locator(".pane-slot[data-motion]")).toHaveCount(0);
     await page.evaluate((sample) => {
       const fixture = (window as any).fixture;
       fixture.setCodexHistory(

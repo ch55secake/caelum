@@ -15,6 +15,12 @@ Captured on macOS at 1280 × 1000, with one output pixel per point. Rune uses bu
 
 The framed conversation and quieter controls work in both renderers. Rune's toolbar is more compact, its inspector sits beside the framed conversation, and its diff view has interactive line selection and unified/split modes. Use the running apps to judge typing, scrolling and pane motion.
 
+## Motion in Tauri
+
+The production workspace now coordinates sidebar and inspector opening, closing and expansion with a 220 ms, non-overshooting settle and shorter content fades. The browser's Web Animations API drives the pane slots; interrupted toggles continue from the current width, and pointer/keyboard resizing remains immediate. No animation dependency is needed.
+
+Closing panes become inert immediately and stay mounted through their exit. The conversation remains mounted during inspector expansion, preserving drafts, reading positions and live-output following. Reduced motion snaps the layout, including when the preference changes during an animation. The macOS titlebar spacing follows the same timing.
+
 ## Run the prototype
 
 From the repository root, with Rust 1.95+ and the macOS development tools available:
@@ -58,7 +64,7 @@ pnpm --filter @caelum/desktop preview:workspace
 node apps/rune-prototype/preview/capture.mjs
 ```
 
-Both commands write into the ignored `apps/desktop/preview-results/` directory: light/dark workspaces, inspectors and 800 × 620 compact layouts. Rune also writes element-tree JSON. Its compact scene starts with the sidebar collapsed; the React compact capture keeps all three panes visible. Set `CAELUM_PREVIEW_DIR` for the React command (relative to `apps/desktop`), or pass an output directory to the Rune capture script (relative to the current directory).
+Both commands write into the ignored `apps/desktop/preview-results/` directory: light/dark workspaces, inspectors and 800 × 620 compact layouts. The React command also records `react-pane-motion.webm`, a WebKit replay of pane toggles and expansion in both themes with macOS titlebar spacing. Rune also writes element-tree JSON. Its compact scene starts with the sidebar collapsed; the React compact capture keeps all three panes visible. Set `CAELUM_PREVIEW_DIR` for the React command (relative to `apps/desktop`), or pass an output directory to the Rune capture script (relative to the current directory).
 
 Replay editing, session switching, background streaming, resizing and theme changes:
 
