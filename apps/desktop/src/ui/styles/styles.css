@@ -268,7 +268,7 @@ kbd { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monos
 .disconnected-dot { background: var(--danger); }
 .approval-indicator { color: var(--warning) !important; }
 .approval-shortcut { display: flex; align-items: center; gap: 5px; padding: 4px 7px; color: var(--warning); font-size: 11px; }
-.main-panel { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; margin: 8px 8px 8px 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--bg); }
+.main-panel { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; background: var(--bg); }
 .topbar { display: flex; flex: 0 0 auto; min-height: 52px; align-items: center; justify-content: space-between; gap: 20px; padding: 0 24px; border-bottom: 1px solid var(--border-subtle); }
 .breadcrumbs { display: flex; min-width: 0; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
 .breadcrumbs > span:first-of-type { max-width: 200px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex-shrink: 0; }

@@ -1,6 +1,6 @@
 # Workspace polish and Rune comparison
 
-The Tauri workspace now uses a framed main surface, softer sidebar selection, roomier message typography and a rounded composer. Shared radius and motion tokens keep the controls consistent; colour transitions respect reduced motion.
+The Tauri workspace uses a flush main surface, softer sidebar selection, roomier message typography and a rounded composer. Shared radius and motion tokens keep the controls consistent; colour transitions respect reduced motion.
 
 The [Rune prototype](../../apps/rune-prototype/) explores the same workspace with native text editing, animated split panes and Rune's Markdown and diff components. Both previews load the conversation, command output, draft and patch from [`workspace.json`](workspace.json).
 
@@ -13,7 +13,7 @@ Captured on macOS at 1280 × 1000, with one output pixel per point. Rune uses bu
 | Dark workspace | ![React dark workspace](previews/react-dark.png) | ![Rune dark workspace](previews/rune-dark.png) |
 | Light changes inspector | ![React light changes inspector](previews/react-light-inspector.png) | ![Rune light changes inspector](previews/rune-light-inspector.png) |
 
-The framed conversation and quieter controls work in both renderers. Rune's toolbar is more compact, its inspector sits beside the framed conversation, and its diff view has interactive line selection and unified/split modes. Use the running apps to judge typing, scrolling and pane motion.
+Both renderers use a flush conversation surface and quieter controls. Rune's toolbar is more compact, its inspector sits beside the conversation, and its diff view has interactive line selection and unified/split modes. Use the running apps to judge typing, scrolling and pane motion.
 
 ## Motion in Tauri
 

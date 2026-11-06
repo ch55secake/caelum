@@ -432,6 +432,11 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
             .build(&k)
             .key("inspector-toggle"),
         );
+    // SplitView's card styling is theme-driven. Keep the shell flush while
+    // retaining rounded controls and composer surfaces inside the panes.
+    let mut shell_kit = k.clone();
+    shell_kit.radius.lg = 0.0;
+    shell_kit.c.border_muted = k.c.bg_base;
     SplitView::new(main)
         .sidebar(
             &s.sidebar,
@@ -445,13 +450,13 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         )
         .toolbar(toolbar)
         .titlebar_inset(cx.titlebar_inset())
-        .frame_inset(8.0)
+        .frame_inset(0.0)
         .toolbar_in_panel()
         .sidebar_padding(12.0, 12.0)
         .sidebar_toggle(SidebarToggle::new().in_header())
         .pane_motion(PaneMotion::new().spring(Spring::new(0.22, 0.0)))
         .reduced_motion(cx.is_reduced_motion())
-        .build(&k)
+        .build(&shell_kit)
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, _: &mut Tx) -> bool {
@@ -498,7 +503,7 @@ fn main() {
     rune::App::new(spec())
         .chrome(Chrome {
             full_size_content: true,
-            traffic_lights: Some((16.0, 25.0)),
+            traffic_lights: Some((16.0, 17.0)),
             drag_regions: true,
         })
         .run();
