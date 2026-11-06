@@ -13,6 +13,7 @@ for (const theme of ["dark", "light"]) {
     const name = `rune-${theme}${scene ? `-${scene}` : ""}`;
     execFileSync("cargo", [
       "run", "--locked", "--manifest-path", manifest, "--",
+      "--fixtures",
       "--theme", theme, "--scale", "1", "--at", "1",
       "--size", scene === "compact" ? "800x620" : "1280x1000",
       ...(scene ? ["--scene", scene] : []),

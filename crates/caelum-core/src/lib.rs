@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod application;
 pub mod approvals;
 pub mod codex;
 pub mod database;

@@ -2,7 +2,7 @@
 
 The Tauri workspace uses a flush main surface, softer sidebar selection, roomier message typography and a rounded composer. Shared radius and motion tokens keep the controls consistent; colour transitions respect reduced motion.
 
-The [Rune prototype](../../apps/rune-prototype/) explores the same workspace with native text editing, animated split panes and Rune's Markdown and diff components. Both previews load the conversation, command output, draft and patch from [`workspace.json`](workspace.json).
+The [Rune candidate](../../apps/rune-prototype/) uses native text editing, animated split panes and Rune's Markdown and diff components. Its default mode connects to real providers through `caelum-core`; `--fixtures` retains the deterministic comparison. Both fixture previews load the conversation, command output, draft and patch from [`workspace.json`](workspace.json). The [migration plan](rune-migration.md) tracks the path to a 90% workflow evaluation.
 
 ## Visual comparison
 
@@ -21,7 +21,7 @@ The production workspace now coordinates sidebar and inspector opening, closing 
 
 Closing panes become inert immediately and stay mounted through their exit. The conversation remains mounted during inspector expansion, preserving drafts, reading positions and live-output following. Reduced motion snaps the layout, including when the preference changes during an animation. The macOS titlebar spacing follows the same timing.
 
-## Run the prototype
+## Run Rune
 
 From the repository root, with Rust 1.95+ and the macOS development tools available:
 
@@ -37,7 +37,15 @@ nix develop -c cargo run --locked --manifest-path apps/rune-prototype/Cargo.toml
 
 The first run builds Rune's rendering dependencies. The experiment has its own Cargo workspace and lockfile, with `rune` and `rune-kit` pinned to `ddf14140253bd1b963993895e3fa025d1ec58537`. It is opt-in; normal Caelum builds use the root workspace.
 
-### Try it
+Open a project with Cmd+O, or append `-- --project /path/to/project`. The live
+milestone supports session discovery/resumption, history, text prompts, streaming,
+cancellation and approvals for both providers. Session options contains the
+provider/model/effort/agent controls and refresh/reconnect. Drafts and UI state
+currently last for this run; the remaining workflows are tracked in the plan.
+
+### Try the fixture comparison
+
+Append `-- --fixtures` to either launch command above.
 
 - Edit the draft, paste text, select/copy a response, and use Shift+Enter for a newline. Enter sends a simulated reply; the stop button or Escape cancels it.
 - Switch sessions during a reply. Drafts and streaming belong to their session. New session creates another editable conversation.
@@ -53,7 +61,10 @@ The first run builds Rune's rendering dependencies. The experiment has its own C
 | Shift+Cmd+B | Toggle sidebar |
 | Option+Cmd+I | Toggle changes inspector |
 
-The prototype uses local fixtures and simulated replies. The patch is read-only, and sessions, drafts, appearance and pane sizes live only for the current run. Provider integration, saved history and the rest of Caelum's production features belong to the Tauri app. Native launch and rendering have been exercised on macOS; other platforms are unverified.
+Fixture mode uses local samples and simulated replies. Its patch is read-only,
+and sessions, drafts, appearance and pane sizes live only for the current run.
+The live candidate's missing features are listed in the migration plan. Native
+launch and rendering have been exercised on macOS; other platforms are unverified.
 
 ## Reproduce the previews
 
@@ -70,6 +81,7 @@ Replay editing, session switching, background streaming, resizing and theme chan
 
 ```sh
 cargo run --locked --manifest-path apps/rune-prototype/Cargo.toml -- \
+  --fixtures \
   --script apps/rune-prototype/preview/interaction.json \
   --theme dark --scale 1 --at 9 \
   --snap apps/desktop/preview-results/rune-stream.png
@@ -88,3 +100,19 @@ cargo test --locked --manifest-path apps/rune-prototype/Cargo.toml
 ```
 
 The interaction tests drive Rune's runtime through keyboard and pointer input, including draft isolation, background streaming, stopping, clipboard copy, pane resizing, compact controls and scroll-follow behaviour.
+
+The live UI tests exercise delayed creation, failed submissions, scoped approval
+actions, model controls and reading-position restoration using injected core
+events. Core application tests cover request ordering, history reconciliation and
+shutdown. To exercise discovery and history against an installed provider without
+sending a prompt:
+
+```sh
+CAELUM_RUNE_SMOKE_PROJECT=/path/to/project \
+CAELUM_RUNE_SMOKE_PROVIDER=opencode \
+cargo test --locked --manifest-path apps/rune-prototype/Cargo.toml \
+  real_provider_discovery_and_history_smoke -- --ignored --nocapture
+```
+
+Use `codex` for the other provider. This opt-in smoke check requires an existing
+session in that project and is separate from the deterministic suite.

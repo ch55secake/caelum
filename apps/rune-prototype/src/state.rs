@@ -64,6 +64,7 @@ impl Session {
 }
 
 pub struct Workspace {
+    pub live: Option<crate::live::Live>,
     pub sample: Sample,
     pub sessions: Vec<Session>,
     pub selected: usize,
@@ -90,6 +91,7 @@ impl Workspace {
         let second = Session::new(sample.secondary_title.clone());
         let diff = DiffState::new(diff::parse(&sample.patch));
         Self {
+            live: None,
             sample,
             sessions: vec![first, second],
             selected: 0,
@@ -97,6 +99,45 @@ impl Workspace {
             inspector: PaneState::new(380.0).range(280.0, 560.0).collapsed(),
             diff,
             dark: None,
+        }
+    }
+
+    pub fn live(project: Option<String>) -> Self {
+        let mut workspace = Self::new();
+        workspace.live = Some(crate::live::Live::new(project));
+        workspace
+    }
+
+    pub fn title(&self) -> &str {
+        if let Some(live) = &self.live {
+            live.app
+                .selected
+                .map(|i| live.app.sessions[i].title.as_str())
+                .unwrap_or("Caelum")
+        } else {
+            &self.active().title
+        }
+    }
+
+    pub fn working(&self) -> bool {
+        self.live
+            .as_ref()
+            .map_or_else(|| self.active().working(), |live| live.working())
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(live) = &mut self.live {
+            live.stop();
+        } else {
+            self.active_mut().stop();
+        }
+    }
+
+    pub fn focus(&mut self) {
+        if let Some(live) = &mut self.live {
+            live.focus();
+        } else {
+            self.active_mut().draft.focused = true;
         }
     }
 
@@ -109,6 +150,10 @@ impl Workspace {
     }
 
     pub fn new_session(&mut self) {
+        if let Some(live) = &mut self.live {
+            live.new_session();
+            return;
+        }
         self.selected = self.sessions.len();
         let mut session = Session::new("New session".into());
         session.draft.focused = true;
@@ -116,6 +161,10 @@ impl Workspace {
     }
 
     pub fn send(&mut self, tx: &mut Tx) {
+        if let Some(live) = &mut self.live {
+            live.send(tx);
+            return;
+        }
         let session = self.active_mut();
         let prompt = session.draft.text.trim().to_owned();
         if prompt.is_empty() || session.working() {
@@ -151,6 +200,9 @@ impl Workspace {
 // The frame clock is virtual in headless runs, so the same interaction is reproducible.
 // Advance every session, including those currently hidden behind another selection.
 pub fn poll(s: &mut Workspace, now: f64, tx: &mut Tx) -> bool {
+    if let Some(live) = &mut s.live {
+        return live.poll(tx);
+    }
     let mut changed = false;
     for session in &mut s.sessions {
         let Some(stream) = &mut session.stream else {

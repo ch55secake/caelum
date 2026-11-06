@@ -1,29 +1,19 @@
 use super::persistence::{PersistenceState, StartupProject};
 use caelum_core::{
-    approvals::ApprovalBroker, codex::CodexProvider, opencode::OpenCodeProvider,
-    processes::ProcessRegistry, projects::Project, questions::QuestionBroker,
-    session_branches::SessionBranches, worktrees::WorktreeClient,
+    application::ProviderRuntime, projects::Project, session_branches::SessionBranches,
+    worktrees::WorktreeClient,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use tauri::Manager;
 
 pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let approvals = ApprovalBroker::default();
-    let questions = QuestionBroker::default();
-    let processes = Arc::new(ProcessRegistry::default());
-    app.manage(CodexProvider::new(
-        processes.clone(),
-        approvals.clone(),
-        questions.clone(),
-    ));
-    app.manage(OpenCodeProvider::new(
-        processes.clone(),
-        approvals.clone(),
-        questions.clone(),
-    ));
-    app.manage(approvals);
-    app.manage(questions);
-    app.manage(processes);
+    let runtime = ProviderRuntime::default();
+    app.manage(runtime.codex.clone());
+    app.manage(runtime.opencode.clone());
+    app.manage(runtime.approvals.clone());
+    app.manage(runtime.questions.clone());
+    app.manage(runtime.processes.clone());
+    app.manage(runtime);
     app.manage(WorktreeClient::new(app.path().home_dir()?));
     app.manage(PersistenceState::open(app.path().app_data_dir()));
     app.manage(SessionBranches::new(
@@ -40,8 +30,5 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
 }
 
 pub(super) fn shutdown(handle: &tauri::AppHandle) {
-    handle.state::<ApprovalBroker>().shutdown();
-    handle.state::<CodexProvider>().shutdown();
-    handle.state::<OpenCodeProvider>().shutdown();
-    handle.state::<Arc<ProcessRegistry>>().shutdown();
+    handle.state::<ProviderRuntime>().shutdown();
 }

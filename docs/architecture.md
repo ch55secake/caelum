@@ -7,6 +7,17 @@
 - `apps/desktop/src-tauri` is the privileged desktop boundary. It provides typed Tauri commands for app metadata, opening a validated project, and resolving explicit approval prompts; folder selection uses Tauri's native dialog plugin.
 - `apps/desktop/src` is a React UI. It does not access the filesystem directly.
 - `apps/cli` is a separate clap binary and links the same core library.
+- `apps/rune-prototype` is the opt-in native replacement candidate. It uses
+  `caelum-core::application` for background requests, scoped session state and
+  history/live reconciliation; Rune retains editors and view-local state. Its
+  `--fixtures` mode remains deterministic. See the [migration plan](design/rune-migration.md).
+
+The shared `application::ProviderRuntime` constructs and shuts down providers,
+brokers and managed processes for both desktop adapters. Rune's bounded event
+inbox wakes the UI on arrival and drains in frame-sized batches. Request results
+carry stable local session owners; project selection is generation-guarded.
+Tauri still uses its existing TypeScript conversation coordinator while the
+remaining production workflows are ported to the shared Rust coordinator.
 
 ## Desktop source layout
 

@@ -1,3 +1,4 @@
+mod live;
 mod state;
 mod theme;
 
@@ -52,6 +53,9 @@ fn quiet_button(glyph: &'static Icon, label: &str) -> IconButton {
 }
 
 fn sidebar(s: &Workspace, k: &Kit) -> El {
+    if s.live.is_some() {
+        return live::sidebar(s, k);
+    }
     let mut sidebar = Sidebar::new()
         .label("Sessions")
         .inset(0.0)
@@ -144,6 +148,9 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
 }
 
 fn transcript(s: &Workspace, k: &Kit, reduced_motion: bool, padding: f32) -> El {
+    if s.live.is_some() {
+        return live::transcript(s, k, reduced_motion, padding);
+    }
     let mut content = col().w_full().max_w(840.0).px(padding).py(28.0).gap(28.0);
     if s.active().turns.is_empty() {
         content = content.child(
@@ -268,6 +275,9 @@ fn transcript(s: &Workspace, k: &Kit, reduced_motion: bool, padding: f32) -> El 
 }
 
 fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool) -> El {
+    if s.live.is_some() {
+        return live::composer(s, k, padding, wide);
+    }
     let session = s.active();
     let input = text_input(&session.draft, TextStyle::new(14.0, 400.0).lh(23.0))
         .key(format!("draft-{}", s.selected))
@@ -339,6 +349,9 @@ fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool) -> El {
 }
 
 fn inspector(s: &Workspace, k: &Kit) -> El {
+    if s.live.is_some() {
+        return live::inspector(s, k);
+    }
     col()
         .w_full()
         .h_full()
@@ -400,7 +413,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .child(composer(s, &k, padding, width > 560.0));
     let toolbar = Toolbar::new()
         .leading(
-            text(s.active().title.clone())
+            text(s.title().to_owned())
                 .font(k.ty.ui_medium)
                 .color(k.c.text_base)
                 .truncate(),
@@ -421,7 +434,9 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .trailing(
             quiet_button(
                 &shell::INSPECTOR,
-                if s.inspector.is_open() {
+                if s.live.is_some() {
+                    "Session options"
+                } else if s.inspector.is_open() {
                     "Hide changes"
                 } else {
                     "Show changes"
@@ -459,17 +474,19 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .build(&shell_kit)
 }
 
-fn on_key(s: &mut Workspace, ev: &KeyEvent, _: &mut Tx) -> bool {
+fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if shell::is_sidebar_toggle(ev) {
         s.sidebar.toggle();
     } else if ev.is_command('i') && ev.mods.alt {
         s.inspector.toggle();
     } else if ev.is_command('n') {
         s.new_session();
+    } else if ev.is_command('o') && s.live.is_some() {
+        live::open_project(s, tx);
     } else if ev.is_command('l') {
-        s.active_mut().draft.focused = true;
-    } else if ev.key == Key::Escape && s.active().working() {
-        s.active_mut().stop();
+        s.focus();
+    } else if ev.key == Key::Escape && s.working() {
+        s.stop();
     } else {
         return false;
     }
@@ -481,6 +498,7 @@ fn spec() -> AppSpec<Workspace> {
         min_size: Some((800.0, 620.0)),
         families: ("Inter", "ui-monospace"),
         poll: Some(state::poll),
+        setup: Some(live::setup),
         on_key: Some(on_key),
         scenes: &[
             ("inspector", |s| s.inspector.set_open(true)),
@@ -490,17 +508,37 @@ fn spec() -> AppSpec<Workspace> {
                 s.inspector.set_width(300.0);
             }),
         ],
-        ..AppSpec::new(
-            "Caelum · Rune prototype",
-            (1280.0, 1000.0),
-            Workspace::new,
-            view,
-        )
+        ..AppSpec::new("Caelum · Rune", (1280.0, 1000.0), Workspace::new, view)
     }
 }
 
 fn main() {
+    let mut fixtures = false;
+    let mut project = None;
+    let mut args = Vec::new();
+    let mut input = std::env::args().skip(1);
+    while let Some(arg) = input.next() {
+        match arg.as_str() {
+            "--fixtures" => fixtures = true,
+            "--project" => {
+                let Some(path) = input.next() else {
+                    eprintln!("--project requires a directory");
+                    std::process::exit(2);
+                };
+                project = Some(path);
+            }
+            _ => args.push(arg),
+        }
+    }
     rune::App::new(spec())
+        .init(move || {
+            if fixtures {
+                Workspace::new()
+            } else {
+                Workspace::live(project)
+            }
+        })
+        .args(args)
         .chrome(Chrome {
             full_size_content: true,
             traffic_lights: Some((16.0, 17.0)),
