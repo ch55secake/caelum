@@ -11,6 +11,10 @@ actions and worktrees use focus-scoped dialogs. PR review occupies the main scre
 The polished web-client captures remain the historical design reference. Native
 captures use the actual live views with offline data from [`workspace.json`](workspace.json).
 Screens are 1280 × 1000 at one pixel per point, except the 800 × 620 compact scene.
+The follow-up captures restore the original 18-point Lucide Orbit mark, keep the
+sidebar toggle beside the brand, and use browser-equivalent unsmoothed system text.
+The inspector sits below the shared toolbar; pane widths adapt to compact windows
+while retaining the user's preferred sizes. Composer controls share one quiet row.
 
 | | Historical polished reference | Native Caelum |
 | --- | --- | --- |
@@ -38,6 +42,11 @@ cargo run --locked -p caelum-desktop -- \
   --fixtures --script apps/desktop/preview/interaction.json \
   --theme dark --scale 1 --at 9 \
   --snap apps/desktop/preview-results/rune-stream.png
+
+# Close, type into the replacement, undo, switch back, and close again.
+cargo run --locked -p caelum-desktop -- \
+  --design-fixture --script apps/desktop/preview/archive.json \
+  --native --fps 120 --frames 780
 ```
 
 The capture script writes dark/light, inspector, compact and settings PNGs and

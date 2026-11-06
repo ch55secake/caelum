@@ -313,26 +313,27 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
 }
 
 pub fn inspector(s: &Workspace, k: &Kit) -> El {
-    let mut tabs = row().w_full().center_y().gap(4.0);
+    let mut tabs = row().w_full().h(44.0).px(8.0).center_y().gap(4.0);
     for (name, screen) in [("Files", Screen::Files), ("Changes", Screen::Changes)] {
-        tabs = tabs.child(
-            Button::new(name)
-                .variant(if live(s).panels.inspector == screen {
-                    ButtonVariant::Outline
-                } else {
-                    ButtonVariant::GhostMuted
-                })
-                .on_press(move |s: &mut Workspace| show(s, screen))
-                .build(k)
-                .key(format!("nav-{}", name.to_lowercase())),
-        );
+        let selected = live(s).panels.inspector == screen;
+        let tab = Button::new(name)
+            .variant(ButtonVariant::GhostMuted)
+            .on_press(move |s: &mut Workspace| show(s, screen))
+            .build(k)
+            .h(30.0)
+            .key(format!("nav-{}", name.to_lowercase()));
+        tabs = tabs.child(if selected {
+            tab.fill(k.alpha(k.c.text_accent, 0.09))
+        } else {
+            tab
+        });
     }
     let mut content = col()
         .w_full()
         .h_full()
         .min_h(0.0)
-        .gap(12.0)
-        .padding(12.0)
+        .fill(k.c.bg_base.mix(k.c.bg_deep, 0.55))
+        .border(1.0, k.c.border_base)
         .child(
             tabs.child(rune::el().grow(1.0)).child(
                 quiet_button(&glyphs::CLOSE, "Hide inspector")
@@ -340,23 +341,22 @@ pub fn inspector(s: &Workspace, k: &Kit) -> El {
                     .build(k)
                     .key("close-inspector"),
             ),
-        );
-    if let Some(project) = &live(s).app.active_project {
-        content = content.child(ui::caption(project, k).truncate());
-        if let Some(error) = live(s)
+        )
+        .child(rune::el().w_full().h(1.0).fill(k.c.border_base));
+    if let Some(project) = &live(s).app.active_project
+        && let Some(error) = live(s)
             .app
             .services
             .checkouts
             .get(project)
             .and_then(|c| c.error.as_ref())
-        {
-            content = content.child(ui::caption(error, k).color(k.c.danger.fg));
-        }
+    {
+        content = content.child(ui::caption(error, k).color(k.c.danger.fg).padding(12.0));
     }
     content.child(if live(s).panels.inspector == Screen::Changes {
         changes(s, k)
     } else {
-        files(s, k)
+        files(s, k).padding(12.0)
     })
 }
 
@@ -818,16 +818,35 @@ fn changes(s: &Workspace, k: &Kit) -> El {
     let Some(project) = &live(s).app.active_project else {
         return label("Open a project first", k);
     };
+    let task = Task::Git {
+        project: project.clone(),
+    };
+    let name = std::path::Path::new(project)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(project);
     let mut content = col().w_full().grow(1.0).min_h(0.0).gap(8.0).child(
-        action(
-            "Refresh Git",
-            Task::Git {
-                project: project.clone(),
-            },
-            s,
-            k,
-        )
-        .self_start(),
+        row()
+            .w_full()
+            .px(12.0)
+            .pt(8.0)
+            .center_y()
+            .gap(7.0)
+            .child(rune::icon(&ui::BRANCH, 16.0).color(k.c.icon_muted))
+            .child(
+                text(name)
+                    .font(k.ty.ui)
+                    .color(k.c.text_base)
+                    .grow(1.0)
+                    .truncate(),
+            )
+            .child(
+                quiet_button(&ui::REFRESH, "Refresh changes")
+                    .disabled(live(s).app.services.busy(&task))
+                    .on_press(move |s: &mut Workspace| live_mut(s).app.task(task.clone()))
+                    .build(k)
+                    .key("refresh-changes"),
+            ),
     );
     if let Some(git) = live(s)
         .app
@@ -836,28 +855,77 @@ fn changes(s: &Workspace, k: &Kit) -> El {
         .get(project)
         .and_then(|c| c.git.as_ref())
     {
-        content = content.child(label(
-            format!(
-                "{} · {} changed files",
-                git.branch.as_deref().unwrap_or("Detached / non-repository"),
-                git.changes.len()
-            ),
-            k,
-        ));
-        let mut files = col().w_full();
+        content = content.child(
+            row()
+                .w_full()
+                .px(14.0)
+                .center_y()
+                .gap(6.0)
+                .child(rune::icon(&ui::BRANCH, 12.0).color(k.c.icon_muted))
+                .child(
+                    ui::caption(
+                        git.branch.as_deref().unwrap_or("Detached / non-repository"),
+                        k,
+                    )
+                    .truncate()
+                    .grow(1.0),
+                )
+                .child(ui::caption(
+                    format!(
+                        "{} {}",
+                        git.changes.len(),
+                        if git.changes.len() == 1 {
+                            "file"
+                        } else {
+                            "files"
+                        }
+                    ),
+                    k,
+                )),
+        );
+        let mut files = col().w_full().px(8.0).gap(2.0);
         for change in &git.changes {
             let project = project.clone();
             let path = change.path.clone();
+            let selected =
+                live(s).panels.change_file.as_ref() == Some(&(project.clone(), path.clone()));
             files = files.child(
-                Button::new(format!(
-                    "{}{} {}",
-                    change.index_status, change.worktree_status, path
-                ))
-                .variant(ButtonVariant::GhostMuted)
+                k.interactive(
+                    row()
+                        .w_full()
+                        .h(28.0)
+                        .px(8.0)
+                        .gap(8.0)
+                        .center_y()
+                        .radius(6.0)
+                        .fill(if selected {
+                            k.c.hover
+                        } else {
+                            rune::Color::TRANSPARENT
+                        })
+                        .child(
+                            text(format!("{}{}", change.index_status, change.worktree_status))
+                                .font(k.ty.small)
+                                .color(k.c.warning.icon),
+                        )
+                        .child(
+                            text(&path)
+                                .font(rune::TextStyle {
+                                    size: 11.0,
+                                    ..k.ty.mono
+                                })
+                                .color(k.c.text_base)
+                                .truncate()
+                                .grow(1.0),
+                        ),
+                )
+                .role("button")
+                .label(&path)
+                .focusable(true)
+                .focus_ring(1.0, 0.0, k.c.border_focus)
                 .on_press(move |s: &mut Workspace| {
                     select_change(s, project.clone(), path.clone());
-                })
-                .build(k),
+                }),
             );
         }
         let height = (git.changes.len() as f32 * 28.0).clamp(28.0, 160.0);

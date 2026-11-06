@@ -363,6 +363,187 @@ fn live_runtime_size(size: (f32, f32)) -> Runtime<Workspace> {
     rt
 }
 
+fn close_session(rt: &mut Runtime<Workspace>, index: usize) {
+    let [x, y, width, height] = element(rt, &format!("live-session-{index}")).rect;
+    // The hover close control is the trailing 20-point slot of this row.
+    let (x, y) = (x + width - 18.0, y + height / 2.0);
+    rt.pointer_move(x, y);
+    rt.frame(1.0 / 60.0);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    advance(rt, 0.3);
+}
+
+#[test]
+fn closing_local_sessions_and_undo_keep_the_workspace_editable() {
+    for dialog in [false, true] {
+        let mut rt = live_runtime();
+        click(&mut rt, "live-draft-0");
+        rt.paste("Keep the archived draft café ☁️");
+        click(&mut rt, "live-session-1");
+        click(&mut rt, "live-draft-1");
+        rt.paste("Independent background draft");
+        click(&mut rt, "live-session-0");
+        if dialog {
+            click(&mut rt, "session-options");
+            click(&mut rt, "archive-session");
+            advance(&mut rt, 0.4);
+        } else {
+            close_session(&mut rt, 0);
+        }
+        let live = rt.state.live.as_ref().unwrap();
+        assert!(live.app.sessions[0].archived);
+        assert_eq!(live.app.selected, Some(2));
+        assert!(live.panels.overlay.is_none());
+        element(&rt, "live-draft-2");
+        rt.paste("Replacement draft");
+        rt.frame(1.0 / 60.0);
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().drafts[2].text,
+            "Replacement draft"
+        );
+        close_session(&mut rt, 1);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(2));
+        click(&mut rt, "undo-archive");
+        let live = rt.state.live.as_ref().unwrap();
+        assert_eq!(live.app.selected, Some(1));
+        assert!(!live.app.sessions[1].archived);
+        assert_eq!(live.drafts[1].text, "Independent background draft");
+        assert_eq!(live.drafts[0].text, "Keep the archived draft café ☁️");
+        assert_eq!(live.drafts[2].text, "Replacement draft");
+        rt.paste(" after undo");
+        rt.frame(1.0 / 60.0);
+        assert!(
+            rt.state.live.as_ref().unwrap().drafts[1]
+                .text
+                .ends_with(" after undo")
+        );
+
+        click(&mut rt, "session-options");
+        click(&mut rt, "toggle-archived");
+        advance(&mut rt, 0.4);
+        click(&mut rt, "live-session-0");
+        click(&mut rt, "session-options");
+        click(&mut rt, "archive-session");
+        let live = rt.state.live.as_ref().unwrap();
+        assert!(!live.panels.archived);
+        assert!(!live.app.sessions[0].archived);
+        assert_eq!(live.app.selected, Some(0));
+        assert_eq!(live.drafts[0].text, "Keep the archived draft café ☁️");
+    }
+}
+
+#[test]
+fn closing_provider_sessions_handles_completion_failure_and_selection_changes() {
+    use caelum_core::application::{Command, Event, Provider, Reply};
+    for provider in Provider::ALL {
+        let mut rt = live_runtime();
+        rt.update(|s, _| {
+            let session = &mut s.live.as_mut().unwrap().app.sessions[0];
+            session.scope.provider = provider;
+            session.remote_id = Some("remote-session".into());
+            session.loaded = true;
+        });
+        click(&mut rt, "live-draft-0");
+        rt.paste("Provider draft");
+        close_session(&mut rt, 0);
+        let live = rt.state.live.as_mut().unwrap();
+        assert!(live.app.sessions[0].archiving);
+        assert_eq!(live.app.selected, Some(0));
+        let (request, command) = live.app.commands().pop().unwrap();
+        assert!(matches!(command, Command::Archive(key, true)
+            if key.scope.provider == provider && key.id == "remote-session"));
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .apply(Event::Completed(request, Err("Offline".into())));
+        });
+        let session = &rt.state.live.as_ref().unwrap().app.sessions[0];
+        assert!(!session.archived && !session.archiving);
+        assert_eq!(session.error.as_deref(), Some("Offline"));
+        element(&rt, "live-draft-0");
+
+        // Completing a background archive must not replace the user's new selection.
+        close_session(&mut rt, 0);
+        let request = rt
+            .state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .pop()
+            .unwrap()
+            .0;
+        click(&mut rt, "live-session-1");
+        click(&mut rt, "live-draft-1");
+        rt.paste("Still writing here");
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .apply(Event::Completed(request, Ok(Reply::Done)));
+        });
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(1));
+        assert_eq!(rt.state.live.as_ref().unwrap().app.sessions.len(), 2);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.last_archived, Some(0));
+        advance(&mut rt, 0.4);
+        click(&mut rt, "undo-archive");
+        let (request, command) = rt
+            .state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .pop()
+            .unwrap();
+        assert!(matches!(command, Command::Archive(_, false)));
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .apply(Event::Completed(request, Ok(Reply::Done)));
+        });
+        advance(&mut rt, 0.4);
+        rt.paste(" after restore");
+        rt.frame(1.0 / 60.0);
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().drafts[0].text,
+            "Provider draft after restore"
+        );
+
+        // The selected provider session also creates a ready-to-type replacement.
+        click(&mut rt, "session-options");
+        click(&mut rt, "archive-session");
+        let request = rt
+            .state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .pop()
+            .unwrap()
+            .0;
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .apply(Event::Completed(request, Ok(Reply::Done)));
+        });
+        advance(&mut rt, 0.4);
+        element(&rt, "live-draft-2");
+        rt.paste("New provider draft");
+        rt.frame(1.0 / 60.0);
+        let live = rt.state.live.as_ref().unwrap();
+        assert_eq!(live.app.selected, Some(2));
+        assert_eq!(live.drafts[2].text, "New provider draft");
+        assert_eq!(live.drafts[1].text, "Still writing here");
+    }
+}
+
 #[test]
 fn live_creation_streaming_and_failed_submissions_preserve_independent_editors() {
     use caelum_core::application::{Command, Event, Options, Reply, SessionKey, Summary};

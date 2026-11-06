@@ -31,7 +31,8 @@ static PLUS: Icon = Icon {
 static ORBIT: Icon = Icon {
     name: "orbit",
     view: 24.0,
-    body: r#"<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><ellipse cx="12" cy="12" rx="10" ry="6" transform="rotate(-45 12 12)" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="18" cy="5" r="2" fill="currentColor"/>"#,
+    // Lucide's Orbit, as used by the original workspace. See THIRD_PARTY_NOTICES.md.
+    body: r#"<path d="M20.341 6.484A10 10 0 0 1 10.266 21.85M3.659 17.516A10 10 0 0 1 13.74 2.152" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="5" cy="19" r="2" fill="none" stroke="currentColor" stroke-width="2"/>"#,
 };
 static SEND: Icon = Icon {
     name: "send",
@@ -66,7 +67,7 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
         .row_gap(5.0)
         .header_gap(12.0)
         .header_padding(12.0, 12.0)
-        .header(ui::brand(k))
+        .header(ui::brand(s, k))
         .header(
             text("Projects")
                 .font(k.ty.small_medium)
@@ -392,6 +393,23 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         },
     );
     let mut layers = Vec::new();
+    let window_width = cx.layout("shell").map_or(1280.0, |r| r[2]);
+    // Keep both panes usable at the minimum window size without overwriting the
+    // user's preferred widths; they return as the window grows.
+    let mut sidebar_pane = s.sidebar;
+    let mut inspector_pane = s.inspector;
+    inspector_pane.set_width(
+        s.inspector
+            .width()
+            .min(window_width - s.sidebar.shown_width() - 280.0),
+    );
+    if inspector_pane.is_open() {
+        sidebar_pane.set_width(
+            s.sidebar
+                .width()
+                .min(window_width - inspector_pane.width() - 280.0),
+        );
+    }
     let width = cx.layout("main-pane").map_or(840.0, |r| r[2]);
     let padding = if width < 540.0 { 16.0 } else { 32.0 };
     let main = col()
@@ -399,6 +417,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .h_full()
         .min_h(0.0)
         .items_center()
+        .child(rune::el().w_full().h(1.0).fill(k.c.border_base))
         .child(transcript(s, &k, cx.is_reduced_motion(), padding))
         .child(composer(s, &k, padding, width > 560.0, &mut layers));
     let toolbar = Toolbar::new()
@@ -475,24 +494,28 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     shell_kit.c.border_muted = k.c.bg_base;
     let shell = SplitView::new(main)
         .sidebar(
-            &s.sidebar,
+            &sidebar_pane,
             |s: &mut Workspace| &mut s.sidebar,
             sidebar(s, &k),
         )
         .inspector(
-            &s.inspector,
+            &inspector_pane,
             |s: &mut Workspace| &mut s.inspector,
             inspector(s, &k),
         )
         .toolbar(toolbar)
         .titlebar_inset(cx.titlebar_inset())
         .frame_inset(0.0)
-        .toolbar_in_panel()
         .sidebar_padding(12.0, 12.0)
-        .sidebar_toggle(SidebarToggle::new().in_header())
+        .sidebar_toggle(SidebarToggle::new())
         .pane_motion(PaneMotion::new().spring(Spring::new(0.22, 0.0)))
-        .reduced_motion(cx.is_reduced_motion())
-        .build(&shell_kit);
+        .reduced_motion(cx.is_reduced_motion());
+    let shell = if s.sidebar.is_open() {
+        shell.hide_sidebar_toggle()
+    } else {
+        shell
+    }
+    .build(&shell_kit);
     if s.live.is_some() {
         panels::overlays(s, &k, &mut layers);
     }
@@ -573,7 +596,7 @@ fn main() {
             _ => args.push(arg),
         }
     }
-    let app = lifecycle::configure(rune::App::new(spec()));
+    let app = lifecycle::configure(rune::App::new(spec()).font_smoothing(rune::FontSmoothing::Off));
     let handle = app.handle();
     app.init(move || {
         let mut state = if design {

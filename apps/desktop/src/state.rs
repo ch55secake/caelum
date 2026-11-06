@@ -98,7 +98,7 @@ impl Workspace {
             sessions: vec![first, second],
             selected: 0,
             sidebar: PaneState::new(238.0).range(200.0, 360.0),
-            inspector: PaneState::new(380.0).range(280.0, 560.0).collapsed(),
+            inspector: PaneState::new(460.0).range(280.0, 560.0).collapsed(),
             diff,
             dark: None,
         }

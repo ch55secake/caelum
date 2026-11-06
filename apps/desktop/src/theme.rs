@@ -141,14 +141,15 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
 pub fn markdown(k: &Kit) -> MarkdownStyle {
     MarkdownStyle::from_kit(k)
         .body_font(k.ty.body)
+        .strong_weight(600.0)
         .heading_font(2, TextStyle::new(18.0, 600.0).lh(27.0))
         .heading_font(3, TextStyle::new(15.0, 600.0).lh(24.0))
         .code_block_font(TextStyle {
             size: 12.0,
-            line_height: 22.0,
+            line_height: 26.0,
             ..k.ty.mono
         })
-        .code_block_padding(16.0, 16.0)
+        .code_block_padding(16.0, 20.0)
         .code_block(k.c.bg_deep, k.c.border_base)
         .list(24.0, 4.0)
 }

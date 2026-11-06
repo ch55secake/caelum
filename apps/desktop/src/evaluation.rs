@@ -104,16 +104,16 @@ pub fn design() -> Workspace {
         .checkouts
         .entry(project.into())
         .or_default();
-    checkout.git = Some(serde_json::from_value(json!({"projectPath":project,"repositoryRoot":project,"branch":"main","changes":[{"path":"workspace.css","indexStatus":" ","worktreeStatus":"M"}]})).unwrap());
+    checkout.git = Some(serde_json::from_value(json!({"projectPath":project,"repositoryRoot":project,"branch":"main","changes":[{"path":"src/workspace.css","indexStatus":" ","worktreeStatus":"M"}]})).unwrap());
     checkout.diffs.insert(
-        "workspace.css".into(),
+        "src/workspace.css".into(),
         serde_json::from_value(
-            json!({"path":"workspace.css","staged":"","unstaged":sample.patch,"untracked":""}),
+            json!({"path":"src/workspace.css","staged":"","unstaged":sample.patch,"untracked":""}),
         )
         .unwrap(),
     );
     live.app.select(0);
-    crate::panels::select_change(&mut state, project.into(), "workspace.css".into());
+    crate::panels::select_change(&mut state, project.into(), "src/workspace.css".into());
     state.live.as_mut().unwrap().panels.inspector = crate::panels::Screen::Changes;
     state
 }

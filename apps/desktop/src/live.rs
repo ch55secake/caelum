@@ -108,6 +108,39 @@ impl Live {
         }
     }
 
+    fn archive(&mut self, index: usize, archived: bool) {
+        let selected = self.app.selected;
+        self.app.archive(index, archived);
+        // Local archive can create and select its replacement synchronously. Rune
+        // rebuilds after the press, before poll gets a chance to create its editor.
+        self.sync_editors();
+        self.menu = None;
+        self.panels.overlay = None;
+        if self.app.selected != selected || (!archived && !self.app.sessions[index].archived) {
+            self.panels.archived = false;
+            self.panels.screen = crate::panels::Screen::Conversation;
+            self.focus();
+        }
+    }
+
+    pub(crate) fn apply(&mut self, event: Event) {
+        let selected = self.app.selected;
+        let was_archived = selected.is_some_and(|i| self.app.sessions[i].archived);
+        self.app.apply(event);
+        self.sync_editors();
+        if self.app.selected != selected
+            || (was_archived
+                && self
+                    .app
+                    .selected
+                    .is_some_and(|i| !self.app.sessions[i].archived))
+        {
+            self.panels.archived = false;
+            self.panels.screen = crate::panels::Screen::Conversation;
+            self.focus();
+        }
+    }
+
     pub fn working(&self) -> bool {
         self.app
             .selected
@@ -189,15 +222,15 @@ impl Live {
                 }
             }
         }
-        if let Some(runtime) = &mut self.runtime {
-            let events = runtime.drain();
-            changed = !events.is_empty();
-            for event in events {
-                self.app.apply(event);
-            }
+        let events = self.runtime.as_ref().map_or_else(Vec::new, Runtime::drain);
+        changed |= !events.is_empty();
+        for event in events {
+            self.apply(event);
+        }
+        if self.runtime.is_some() {
             for (id, command) in self.app.commands() {
-                if let Err(error) = runtime.submit(id, command) {
-                    self.app.apply(Event::Completed(id, Err(error)));
+                if let Err(error) = self.runtime.as_mut().unwrap().submit(id, command) {
+                    self.apply(Event::Completed(id, Err(error)));
                     changed = true;
                 }
             }
@@ -293,7 +326,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         .inset(0.0)
         .row_gap(3.0)
         .header_gap(8.0)
-        .header(ui::brand(k))
+        .header(ui::brand(s, k))
         .header(
             SidebarHeader::new(if app.opening {
                 "Opening project…"
@@ -455,6 +488,9 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             row()
                 .w_full()
                 .gap(4.0)
+                .center_y()
+                .mt(4.0)
+                .mb(4.0)
                 .child(
                     Button::new("New session")
                         .icon(&PLUS)
@@ -463,6 +499,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                         .on_press(|s: &mut Workspace| s.new_session())
                         .build(k)
                         .key("new-session")
+                        .h(32.0)
                         .grow(1.0),
                 )
                 .child(crate::panels::navigation(s, k)),
@@ -550,6 +587,13 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             .details
             .as_ref()
             .and_then(|d| d.branch.as_deref())
+            .or_else(|| {
+                app.services
+                    .checkouts
+                    .get(&session.scope.project)
+                    .and_then(|c| c.git.as_ref())
+                    .and_then(|g| g.branch.as_deref())
+            })
             .unwrap_or(session.scope.provider.as_str());
         let detail = format!(
             "⑂ {} · {}",
@@ -580,8 +624,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         }
         if !session.working() && !session.archiving && session.queue.is_empty() {
             item = item.on_close(move |s: &mut Workspace, _| {
-                let app = &mut live_mut(s).app;
-                app.archive(index, !app.sessions[index].archived);
+                let live = live_mut(s);
+                live.archive(index, !live.app.sessions[index].archived);
             });
         }
         sidebar = sidebar.child(ui::selected_row(
@@ -610,7 +654,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         footer = footer.child(
             Button::new("Undo archive")
                 .variant(ButtonVariant::Outline)
-                .on_press(move |s: &mut Workspace| live_mut(s).app.archive(index, false))
+                .on_press(move |s: &mut Workspace| live_mut(s).archive(index, false))
                 .build(k)
                 .key("undo-archive"),
         );
@@ -671,15 +715,24 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 .w_full()
                 .center_y()
                 .child(
-                    Button::new("Settings")
-                        .icon(&ui::SETTINGS)
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(|s: &mut Workspace| {
-                            crate::panels::show(s, crate::panels::Screen::Settings)
-                        })
-                        .build(k)
-                        .key("nav-settings")
-                        .grow(1.0),
+                    k.interactive(
+                        row()
+                            .center_y()
+                            .gap(8.0)
+                            .h(32.0)
+                            .px(8.0)
+                            .child(icon(&ui::SETTINGS, 14.0).color(k.c.icon_muted))
+                            .child(text("Settings").font(k.ty.ui).color(k.c.text_muted)),
+                    )
+                    .role("button")
+                    .label("Settings")
+                    .focusable(true)
+                    .focus_ring(1.0, 0.0, k.c.border_focus)
+                    .on_press(|s: &mut Workspace| {
+                        crate::panels::show(s, crate::panels::Screen::Settings)
+                    })
+                    .key("nav-settings")
+                    .grow(1.0),
                 )
                 .child(
                     quiet_button(&ui::MORE, "Session actions")
@@ -843,13 +896,19 @@ fn timeline_row(
                             .center_y()
                             .justify_between()
                             .child(
-                                text(if entry.complete {
-                                    session.scope.provider.as_str()
-                                } else {
-                                    "Responding…"
-                                })
-                                .font(k.ty.small)
-                                .color(k.c.text_muted),
+                                row()
+                                    .center_y()
+                                    .gap(7.0)
+                                    .child(icon(&glyphs::SPARKLE, 13.0).color(k.c.icon_muted))
+                                    .child(
+                                        text(if entry.complete {
+                                            ui::provider_name(session.scope.provider)
+                                        } else {
+                                            "Responding…"
+                                        })
+                                        .font(k.ty.small)
+                                        .color(k.c.text_muted),
+                                    ),
                             )
                             .child(
                                 quiet_button(&glyphs::COPY, "Copy response")
@@ -1169,20 +1228,17 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         );
     }
     let pickers = pickers(s, k, layers).h(24.0).min_w(0.0).scroll_x();
-    let controls = if wide {
-        row()
-            .w_full()
-            .gap(4.0)
-            .center_y()
-            .child(pickers.grow(1.0))
-            .child(controls.child(submit).w(220.0))
-    } else {
-        col()
-            .w_full()
-            .gap(2.0)
-            .child(pickers.w_full())
-            .child(controls.child(submit))
-    };
+    let controls = row()
+        .w_full()
+        .gap(4.0)
+        .center_y()
+        .child(pickers.grow(1.0))
+        .child(controls.child(submit).w((if wide { 220.0 } else { 72.0 })
+            + if session.working() && !draft.text.trim().is_empty() {
+                60.0
+            } else {
+                0.0
+            }));
     ui::composer(
         input,
         controls,
@@ -1194,6 +1250,10 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
 }
 
 fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
+    let mut picker_kit = k.clone();
+    picker_kit.ty.ui_medium = k.ty.small;
+    picker_kit.c.text_base = k.c.text_muted;
+    let k = &picker_kit;
     let live = live(s);
     let mut content = row().gap(2.0).center_y();
     let Some(index) = live.app.selected else {
@@ -1201,8 +1261,8 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     };
     let session = &live.app.sessions[index];
     content = content.child(
-        Select::new("provider", &["codex", "opencode"])
-            .current(Some(session.scope.provider.as_str()))
+        Select::new("provider", &["Codex", "OpenCode"])
+            .current(Some(ui::provider_name(session.scope.provider)))
             .label("Provider")
             .placement(Placement::TopStart)
             .open(live.menu == Some("provider"))
@@ -1212,7 +1272,7 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .on_choose(move |s: &mut Workspace, value, _| {
                 let live = live_mut(s);
                 let session = &mut live.app.sessions[index];
-                session.scope.provider = if value == "codex" {
+                session.scope.provider = if value == "Codex" {
                     Provider::Codex
                 } else {
                     Provider::OpenCode
@@ -1379,7 +1439,7 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
         .disabled(session.working() || session.archiving || !session.queue.is_empty())
         .on_press(move |s: &mut Workspace| {
             let archived = crate::live::live(s).app.sessions[index].archived;
-            live_mut(s).app.archive(index, !archived);
+            live_mut(s).archive(index, !archived);
         })
         .build(k)
         .key("archive-session"),

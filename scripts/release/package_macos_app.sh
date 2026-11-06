@@ -21,6 +21,7 @@ cp "$root/target/$TARGET/release/caelum-desktop" "$binary"
 source "$root/scripts/release/macos_libraries.sh"
 system_libraries "$binary"
 cp "$root/apps/desktop/assets/icon.icns" "$app/Contents/Resources/icon.icns"
+cp "$root/apps/desktop/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
 python3 - "$root" "$app" <<'PY'
 import plistlib, subprocess, sys, tomllib
 from pathlib import Path

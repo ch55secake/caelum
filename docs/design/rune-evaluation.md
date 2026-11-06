@@ -1,5 +1,29 @@
 # Native desktop evaluation record
 
+## Session-close and visual follow-up — 6 November 2026
+
+The native pointer regression reproduced an out-of-bounds panic when closing the
+selected local session: core selected a replacement before the next poll had
+created its editor and reading-position state. Archive/restore callbacks now
+synchronize immediately; provider completions use the same native reconciliation
+path. Replacement and restored composers receive focus, and background archives
+preserve the user's current selection and independent drafts.
+
+- **173 Rust tests passed** (143 core, 16 native, 6 protocol, 8 CLI), plus **19
+  Python checks**. Formatting, workspace Clippy with warnings denied and ShellCheck
+  passed. The two opt-in external-service smoke tests were not rerun for this fix.
+- New native interaction coverage exercises sidebar close, Session actions,
+  local and both provider-owned sessions, failed remote archive, selection changes
+  while archiving, undo, archived-list restore and typing after replacement/restore.
+- Eight light/dark workspace, inspector, compact and settings captures were
+  regenerated; the four checked-in comparison images were inspected and updated.
+  The original Orbit mark, brand-row toggle and lighter text rendering are restored,
+  with quieter session rows, a compact composer and aligned inspector controls.
+- The Apple Silicon `.app` was rebuilt and passed signature/plist checks, including
+  the bundled icon attribution. Its native close/undo replay ran for 780 native
+  frames without an acquisition failure. The equivalent headless replay reached
+  `live-draft-4` containing “Closing another session still works.”
+
 ## Production cutover — 6 November 2026
 
 The native client now lives in `apps/desktop` and shares the root Rust workspace,

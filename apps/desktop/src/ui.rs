@@ -38,19 +38,39 @@ pub static ATTACH: Icon = Icon {
     body: r#"<path d="m5 9 5-5a2 2 0 0 1 3 3l-6 6a3.5 3.5 0 0 1-5-5l6-6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>"#,
 };
 
-pub fn brand(k: &Kit) -> El {
-    row()
+pub fn provider_name(provider: caelum_core::application::Provider) -> &'static str {
+    match provider {
+        caelum_core::application::Provider::Codex => "Codex",
+        caelum_core::application::Provider::OpenCode => "OpenCode",
+    }
+}
+
+pub fn brand(s: &crate::Workspace, k: &Kit) -> El {
+    let mut brand = row()
+        .key("brand")
         .w_full()
-        .h(36.0)
+        .h(28.0)
+        .mb(8.0)
         .gap(10.0)
         .center_y()
         .px(8.0)
-        .child(icon(&crate::ORBIT, 20.0).color(k.c.text_accent))
+        .child(icon(&crate::ORBIT, 18.0).color(k.c.text_accent))
         .child(
             text("caelum")
                 .font(TextStyle::new(15.0, 600.0))
-                .color(k.c.text_base),
-        )
+                .color(k.c.text_base)
+                .grow(1.0),
+        );
+    if s.sidebar.is_open() {
+        brand = brand.child(
+            crate::quiet_button(&rune_kit::shell::SIDEBAR, "Hide sidebar")
+                .on_press(|s: &mut crate::Workspace| s.sidebar.set_open(false))
+                .build(k)
+                .expanded(true)
+                .key("sidebar-toggle"),
+        );
+    }
+    brand
 }
 
 pub fn caption(value: impl Into<String>, k: &Kit) -> El {
@@ -75,10 +95,11 @@ pub fn section(title: &str, description: &str, k: &Kit) -> El {
 
 pub fn session_row(title: &str, subtitle: &str, selected: bool, k: &Kit) -> SidebarRow {
     SidebarRow::new(title)
-        .height(54.0)
-        .title_style(TextStyle::new(12.0, 500.0))
+        .height(56.0)
+        .avatar(rune::el())
+        .title_style(TextStyle::new(12.0, 400.0).lh(20.0))
         .subtitle(subtitle)
-        .subtitle_style(TextStyle::new(10.0, 400.0))
+        .subtitle_style(TextStyle::new(10.0, 400.0).lh(18.0))
         .subtitle_color(k.c.text_muted)
         .selected(selected)
 }
@@ -98,6 +119,7 @@ pub fn user_message(message: &str, k: &Kit) -> El {
     row()
         .w_full()
         .radius(10.0)
+        .clip_rounded(10.0)
         .fill(k.alpha(k.c.text_accent, 0.025))
         .border(1.0, k.c.border_muted)
         .child(rune::el().w(2.0).h_full().fill(k.c.text_accent).radius(2.0))
@@ -117,7 +139,6 @@ pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f3
     col().w_full().max_w(840.0).px(padding).pb(24.0).child(
         col()
             .w_full()
-            .gap(8.0)
             .padding(14.0)
             .radius(14.0)
             .fill(k.c.layer_02)
