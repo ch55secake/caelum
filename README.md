@@ -29,6 +29,7 @@ The repository also provides a `nix develop` shell. See [development setup](docs
 - [Architecture](docs/architecture.md) · [Security](docs/security.md)
 - [Development](docs/development.md) · [Contributing](docs/contributing.md)
 - [Releasing](docs/releasing.md) · [Roadmap](docs/roadmap.md)
+- [Workspace design](docs/design/README.md) — polish, Rune prototype and visual comparison
 
 ## Repository
 

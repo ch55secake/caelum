@@ -1,0 +1,21 @@
+[
+  { "t": 0.4, "type": "tap", "key": "tool-0" },
+  { "t": 1.0, "type": "tap", "key": "tool-0" },
+  { "t": 1.4, "type": "tap", "key": "inspector-toggle" },
+  { "t": 2.0, "type": "drag", "key": "inspector-grip", "dx": -50, "dur": 0.4 },
+  { "t": 2.7, "type": "tap", "key": "diff-mode" },
+  { "t": 3.2, "type": "tap", "key": "theme" },
+  { "t": 3.8, "type": "tap", "key": "close-inspector" },
+  { "t": 4.2, "type": "drag", "key": "sidebar-grip", "dx": 30, "dur": 0.4 },
+  { "t": 5.0, "type": "tap", "key": "draft-0" },
+  { "t": 5.2, "type": "key", "name": "a", "cmd": true },
+  { "t": 5.3, "type": "type", "text": "Let's review the spacing.", "every": 0.035 },
+  { "t": 6.4, "type": "key", "name": "Enter" },
+  { "t": 7.2, "type": "tap", "key": "session-1" },
+  { "t": 7.5, "type": "tap", "key": "draft-1" },
+  { "t": 7.7, "paste": "Keep this draft while the reply arrives." },
+  { "t": 8.2, "type": "tap", "key": "session-0" },
+  { "t": 10.2, "type": "tap", "key": "theme" },
+  { "t": 12.0, "type": "tap", "key": "inspector-toggle" },
+  { "t": 13.0, "type": "mark", "name": "end" }
+]
