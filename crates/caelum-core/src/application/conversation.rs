@@ -9,6 +9,7 @@ pub enum EntryKind {
     User,
     Assistant,
     Reasoning,
+    Compaction,
     Tool,
     Status,
 }
@@ -23,6 +24,9 @@ pub struct Entry {
     pub output: String,
     pub complete: bool,
     pub optimistic: bool,
+    pub status: String,
+    pub started_at: Option<u64>,
+    pub background: bool,
     history: String,
     stream: String,
     history_output: String,
@@ -41,6 +45,9 @@ impl Entry {
             input: String::new(),
             output: String::new(),
             optimistic: false,
+            status: if complete { "completed" } else { "running" }.into(),
+            started_at: None,
+            background: false,
             history: String::new(),
             stream: String::new(),
             history_output: String::new(),
@@ -54,6 +61,10 @@ impl Entry {
 pub struct Conversation {
     pub entries: Vec<Entry>,
     pub working: bool,
+    pub used_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    usage_at: u64,
+    step_started: Option<(String, u64)>,
 }
 
 impl Conversation {
@@ -69,6 +80,22 @@ impl Conversation {
     }
 
     pub fn history(&mut self, provider: Provider, data: &[Value], older: bool) {
+        if provider == Provider::OpenCode && !older {
+            for message in data.iter().rev() {
+                let at = message["time"]["created"].as_u64().unwrap_or(0);
+                if at < self.usage_at {
+                    continue;
+                }
+                if message["type"] == "compaction" && message["status"] == "completed" {
+                    self.used_tokens = None;
+                    self.usage_at = at;
+                    break;
+                }
+                if message["type"] == "assistant" && self.usage(&message["tokens"], at) {
+                    break;
+                }
+            }
+        }
         let entries = match provider {
             Provider::Codex => data
                 .iter()
@@ -170,7 +197,12 @@ impl Conversation {
     pub fn settle(&mut self) {
         self.working = false;
         for entry in &mut self.entries {
-            entry.complete = true;
+            if !entry.background {
+                entry.complete = true;
+                if entry.status == "running" {
+                    entry.status = "completed".into();
+                }
+            }
         }
     }
 
@@ -183,6 +215,10 @@ impl Conversation {
 
     fn codex(&mut self, method: &str, data: &Value) {
         match method {
+            "thread/tokenUsage/updated" => {
+                self.used_tokens = data["tokenUsage"]["last"]["totalTokens"].as_u64();
+                self.context_window = data["tokenUsage"]["modelContextWindow"].as_u64();
+            }
             "item/started" | "item/completed" => {
                 if let Some(entry) = codex_item(&data["item"], method == "item/completed") {
                     let already_complete =
@@ -272,6 +308,100 @@ impl Conversation {
     }
 
     fn opencode(&mut self, method: &str, data: &Value) {
+        if method.starts_with("session.compaction.") {
+            let at = data["_created"].as_u64().unwrap_or(0);
+            let latest = self
+                .entries
+                .iter()
+                .rposition(|e| e.kind == EntryKind::Compaction);
+            if latest.is_some_and(|i| at > 0 && at < self.entries[i].started_at.unwrap_or(0)) {
+                return;
+            }
+            if method == "session.compaction.started" {
+                let id = data["inputID"].as_str().map(str::to_owned).or_else(|| {
+                    data["_event_id"]
+                        .as_str()
+                        .map(|id| id.replacen("evt_", "msg_", 1))
+                });
+                if let Some(id) = id {
+                    let id = format!("opencode-{id}");
+                    if !self.entries.iter().any(|e| e.id == id && e.complete) {
+                        let mut entry = Entry::new(id, EntryKind::Compaction, String::new(), false);
+                        entry.started_at = Some(at);
+                        self.put(entry);
+                        self.working = true;
+                    }
+                }
+            } else if let Some(i) = latest.filter(|i| !self.entries[*i].complete) {
+                if method.ends_with("delta") {
+                    let id = self.entries[i].id.clone();
+                    self.delta(id, EntryKind::Compaction, string(&data["text"]), false);
+                } else if method.ends_with("ended") || method.ends_with("failed") {
+                    let entry = &mut self.entries[i];
+                    entry.complete = true;
+                    entry.status = if method.ends_with("failed") {
+                        "failed"
+                    } else {
+                        "completed"
+                    }
+                    .into();
+                    if let Some(text) = data["text"].as_str() {
+                        entry.text = text.into();
+                    }
+                    if !data["error"].is_null() {
+                        entry.output = display(&data["error"]);
+                    }
+                }
+            }
+            if method.ends_with("ended") && at >= self.usage_at {
+                self.used_tokens = None;
+                self.usage_at = at;
+            }
+            return;
+        }
+        if matches!(method, "session.shell.started" | "session.shell.ended") {
+            if let Some(entry) = shell_entry(&data["shell"], &data["output"]) {
+                if !self
+                    .entries
+                    .iter()
+                    .any(|old| old.id == entry.id && old.complete && !entry.complete)
+                {
+                    self.put(entry);
+                }
+            }
+            return;
+        }
+        if method == "session.synthetic" {
+            if let Some(id) = data["_event_id"].as_str() {
+                self.put(Entry::new(
+                    format!("opencode-{}", id.replacen("evt_", "msg_", 1)),
+                    EntryKind::Status,
+                    display(&data["text"]),
+                    true,
+                ));
+            }
+        }
+        if method == "session.step.started" {
+            self.step_started = data["assistantMessageID"].as_str().map(|id| {
+                (
+                    id.into(),
+                    data["started"]
+                        .as_u64()
+                        .or(data["_created"].as_u64())
+                        .unwrap_or(0),
+                )
+            });
+        }
+        if method == "session.step.ended" {
+            let at = self
+                .step_started
+                .as_ref()
+                .filter(|(id, _)| Some(id.as_str()) == data["assistantMessageID"].as_str())
+                .map(|(_, at)| *at)
+                .or(data["_created"].as_u64())
+                .unwrap_or(0);
+            self.usage(&data["tokens"], at);
+        }
         if let Some(rest) = method.strip_prefix("session.") {
             if let Some((kind, phase)) = rest.split_once('.') {
                 if matches!(kind, "text" | "reasoning") {
@@ -329,6 +459,14 @@ impl Conversation {
                     .cloned()
                     .unwrap_or_else(|| Entry::new(id, EntryKind::Tool, String::new(), false));
                 entry.complete = complete;
+                entry.status = if method.ends_with("failed") {
+                    "failed"
+                } else if complete {
+                    "completed"
+                } else {
+                    "running"
+                }
+                .into();
                 if let Some(name) = data["name"].as_str().or(data["tool"].as_str()) {
                     entry.name = name.into();
                 }
@@ -389,6 +527,28 @@ impl Conversation {
             _ => {}
         }
     }
+
+    fn usage(&mut self, tokens: &Value, at: u64) -> bool {
+        if at < self.usage_at {
+            return false;
+        }
+        let counts = [
+            tokens["input"].as_u64(),
+            tokens["output"].as_u64(),
+            tokens["cache"]["read"].as_u64(),
+            tokens["cache"]["write"].as_u64(),
+        ];
+        let total = counts
+            .into_iter()
+            .try_fold(0u64, |sum, count| sum.checked_add(count?));
+        if let Some(total) = total {
+            self.used_tokens = Some(total);
+            self.usage_at = at;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 fn snapshot_entry(mut entry: Entry) -> Entry {
@@ -433,7 +593,7 @@ fn codex_item(item: &Value, complete: bool) -> Option<Entry> {
         "userMessage" => EntryKind::User,
         "agentMessage" => EntryKind::Assistant,
         "reasoning" => EntryKind::Reasoning,
-        "contextCompaction" => EntryKind::Status,
+        "contextCompaction" => EntryKind::Compaction,
         _ => EntryKind::Tool,
     };
     let text = match kind {
@@ -446,10 +606,17 @@ fn codex_item(item: &Value, complete: bool) -> Option<Entry> {
                 summary
             }
         }
-        EntryKind::Status => "Compacting context…".into(),
+        EntryKind::Compaction => String::new(),
         _ => display(&item["text"]),
     };
     let mut entry = Entry::new(id, kind, text, complete || kind == EntryKind::User);
+    entry.status = item["status"]
+        .as_str()
+        .unwrap_or(if complete { "completed" } else { "running" })
+        .into();
+    if item["exitCode"].as_i64().is_some_and(|code| code != 0) {
+        entry.status = format!("failed (exit {})", item["exitCode"]);
+    }
     if kind == EntryKind::Tool {
         entry.name = item["tool"]
             .as_str()
@@ -532,7 +699,8 @@ fn opencode_message(message: &Value) -> Vec<Entry> {
                 })
                 .collect()
         }
-        "system" | "synthetic" => vec![Entry::new(
+        "shell" => shell_entry(&serde_json::json!({"id": message["shellID"].as_str().or(message["id"].as_str()), "command":message["command"], "status":message["status"], "exit":message["exit"], "metadata":message["metadata"]}), &message["output"]).into_iter().collect(),
+        "synthetic" => vec![Entry::new(
             format!("opencode-{id}"),
             EntryKind::Status,
             display(&message["text"]),
@@ -540,12 +708,37 @@ fn opencode_message(message: &Value) -> Vec<Entry> {
         )],
         "compaction" => vec![Entry::new(
             format!("opencode-{id}"),
-            EntryKind::Status,
-            format!("Context compaction\n{}", display(&message["summary"])),
+            EntryKind::Compaction,
+            display(&message["summary"]),
             message["status"] != "running",
         )],
         _ => Vec::new(),
     }
+}
+
+fn shell_entry(shell: &Value, output: &Value) -> Option<Entry> {
+    let id = shell["id"].as_str()?;
+    let complete = shell["status"] != "running";
+    let mut entry = Entry::new(
+        format!("opencode-shell-{id}"),
+        EntryKind::Tool,
+        String::new(),
+        complete,
+    );
+    entry.name = "Background shell".into();
+    entry.background = true;
+    entry.input = display(&shell["command"]);
+    entry.output = if output.is_object() {
+        display(&output["output"])
+    } else {
+        display(output)
+    };
+    entry.status = if shell["exit"].as_i64().is_some_and(|code| code != 0) {
+        format!("failed (exit {})", shell["exit"])
+    } else {
+        shell["status"].as_str().unwrap_or("completed").into()
+    };
+    Some(entry)
 }
 
 fn part_id(message: &str, kind: &str, ordinal: u64) -> String {

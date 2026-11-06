@@ -205,6 +205,10 @@ fn scrolling_up_during_a_reply_preserves_the_reading_position() {
 }
 
 fn live_runtime() -> Runtime<Workspace> {
+    live_runtime_size((1280.0, 1000.0))
+}
+
+fn live_runtime_size(size: (f32, f32)) -> Runtime<Workspace> {
     use caelum_core::application::{Provider, Scope};
     let mut state = Workspace::live(None);
     let live = state.live.as_mut().unwrap();
@@ -221,7 +225,7 @@ fn live_runtime() -> Runtime<Workspace> {
     live.app.select(0);
     live.poll(&mut rune::Tx::default());
     let app = spec();
-    let mut rt = Runtime::new(state, app.view, (1280.0, 1000.0), Env::new(true, 1.0));
+    let mut rt = Runtime::new(state, app.view, size, Env::new(true, 1.0));
     rt.poll = app.poll;
     rt.on_key = app.on_key;
     rt.set_font_families(app.families.0, app.families.1);
@@ -382,6 +386,8 @@ fn real_provider_discovery_and_history_smoke() {
     };
     let path = std::env::var("CAELUM_RUNE_SMOKE_PROJECT")
         .expect("set a project containing provider history");
+    std::env::var_os("CAELUM_RUNE_STATE")
+        .expect("set an isolated CAELUM_RUNE_STATE path for smoke checks");
     let provider = if std::env::var("CAELUM_RUNE_SMOKE_PROVIDER").as_deref() == Ok("codex") {
         Provider::Codex
     } else {
@@ -419,6 +425,10 @@ fn real_provider_discovery_and_history_smoke() {
                 session.error
             );
             if session.loaded && !session.loading {
+                assert!(
+                    !session.conversation.entries.is_empty(),
+                    "choose a project with nonempty history"
+                );
                 println!(
                     "{}: {} sessions discovered; {} history entries rendered",
                     provider.as_str(),
@@ -442,6 +452,109 @@ fn real_provider_discovery_and_history_smoke() {
         );
         std::thread::sleep(Duration::from_millis(16));
     }
+}
+
+#[test]
+#[ignore = "requires a real Git checkout, authenticated gh and CAELUM_RUNE_SMOKE_PR"]
+fn real_workspace_services_smoke() {
+    use caelum_core::application::{
+        Command, Event, Reply, Runtime as WorkerRuntime, Task, TaskReply,
+    };
+    use caelum_protocol::{GitHubFeedbackKind, ProjectSearchMode};
+    use std::time::{Duration, Instant};
+    let project = std::env::var("CAELUM_RUNE_SMOKE_PROJECT").expect("set a real checkout");
+    let url = std::env::var("CAELUM_RUNE_SMOKE_PR").expect("set a pull request URL");
+    let mut runtime = WorkerRuntime::new(|| {});
+    let mut id = 0;
+    let mut run = |task: Task| {
+        id += 1;
+        runtime.submit(id, Command::Task(task)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            for event in runtime.drain() {
+                if let Event::Completed(current, result) = event
+                    && current == id
+                {
+                    let Reply::Task(reply) = result.expect("workspace service failed") else {
+                        panic!("wrong reply")
+                    };
+                    return reply;
+                }
+            }
+            assert!(Instant::now() < deadline, "workspace service timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    assert!(
+        matches!(run(Task::Directory { project: project.clone(), path: String::new(), offset: 0 }), TaskReply::Directory(page) if !page.entries.is_empty())
+    );
+    assert!(
+        matches!(run(Task::File { project: project.clone(), path: "Cargo.toml".into() }), TaskReply::File(file) if !file.content.is_empty())
+    );
+    assert!(
+        matches!(run(Task::Search { project: project.clone(), query: "Cargo.toml".into(), mode: ProjectSearchMode::Files }), TaskReply::Search(page) if !page.matches.is_empty())
+    );
+    let TaskReply::Git(status, _) = run(Task::Git {
+        project: project.clone(),
+    }) else {
+        panic!("Git status")
+    };
+    assert!(
+        matches!(run(Task::Worktrees { project: project.clone(), directory: String::new() }), TaskReply::Worktrees(Some(list)) if !list.worktrees.is_empty())
+    );
+    if let Some(change) = status.changes.first() {
+        assert!(matches!(
+            run(Task::Diff {
+                project: project.clone(),
+                path: change.path.clone()
+            }),
+            TaskReply::Diff(_)
+        ));
+    }
+    let TaskReply::Details(details) = run(Task::Details {
+        project: project.clone(),
+        url: url.clone(),
+    }) else {
+        panic!("PR overview")
+    };
+    assert!(matches!(
+        run(Task::Discover {
+            project: project.clone(),
+            branch: details.head_ref_name.clone()
+        }),
+        TaskReply::Discovered(Some(_))
+    ));
+    let head = details.head_ref_oid;
+    let TaskReply::ReviewFiles(files) = run(Task::ReviewFiles {
+        project: project.clone(),
+        url: url.clone(),
+        head: head.clone(),
+        page: 1,
+    }) else {
+        panic!("PR files")
+    };
+    assert!(!files.files.is_empty());
+    for kind in [
+        GitHubFeedbackKind::Discussion,
+        GitHubFeedbackKind::Reviews,
+        GitHubFeedbackKind::Threads,
+    ] {
+        assert!(matches!(
+            run(Task::Feedback {
+                project: project.clone(),
+                url: url.clone(),
+                head: head.clone(),
+                kind,
+                cursor: None,
+                thread: None
+            }),
+            TaskReply::Feedback(_)
+        ));
+    }
+    println!(
+        "Real workspace: directory, file, search, Git/diff, worktrees, PR discovery/overview, {} changed files and all feedback categories loaded",
+        files.files.len()
+    );
 }
 
 #[test]
@@ -509,4 +622,218 @@ fn live_provider_and_model_controls_apply_to_first_send() {
         matches!(command, Command::Start(scope, options) if scope.provider == Provider::OpenCode
         && options.model.as_deref() == Some("second") && options.effort.as_deref() == Some("low") && options.agent.as_deref() == Some("build"))
     );
+    click(&mut rt, "model-trigger");
+    click(&mut rt, "option0");
+    click(&mut rt, "live-draft-0");
+    rt.paste("Queue with a different model");
+    key(&mut rt, Key::Enter, Mods::default());
+    let queued = &rt.state.live.as_ref().unwrap().app.sessions[0].queue;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].options.model.as_deref(), Some("first"));
+}
+
+#[test]
+fn compact_live_panels_preserve_the_composer_and_return_navigation() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    click(&mut rt, "live-draft-0");
+    rt.paste("Keep this compact draft");
+    for screen in ["nav-files", "nav-changes", "nav-worktrees", "nav-settings"] {
+        click(&mut rt, screen);
+        for key in ["live-draft-0", "send", "back-to-session"] {
+            let e = element(&rt, key);
+            assert!(e.rect[2] > 0.0 && e.rect[3] > 0.0);
+            assert!(
+                e.rect
+                    .into_iter()
+                    .zip(e.visible)
+                    .all(|(a, b)| (a - b).abs() < 1.0),
+                "{screen}: {key} is clipped"
+            );
+        }
+        click(&mut rt, "back-to-session");
+    }
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep this compact draft"
+    );
+}
+
+#[test]
+fn two_thousand_entries_and_six_streams_keep_the_native_tree_bounded() {
+    let app = spec();
+    let mut rt = Runtime::new(
+        crate::evaluation::workspace(),
+        app.view,
+        (1280.0, 1000.0),
+        Env::new(true, 1.0),
+    );
+    rt.poll = app.poll;
+    advance(&mut rt, 0.6);
+    let mut times = Vec::new();
+    for _ in 0..120 {
+        let start = std::time::Instant::now();
+        rt.frame(1.0 / 60.0);
+        times.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(f64::total_cmp);
+    let mounted = rt
+        .elements()
+        .iter()
+        .filter(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("live-entry-"))
+        })
+        .count();
+    assert!(
+        mounted < 120,
+        "history must be virtualized, mounted {mounted}"
+    );
+    let live = rt.state.live.as_ref().unwrap();
+    assert_eq!(live.app.sessions[0].conversation.entries.len(), 2001);
+    assert!(live.app.sessions.iter().all(|s| s.working()));
+    println!(
+        "2,000 entries × 6 sessions: {mounted} mounted entries; CPU frame p50 {:.2} ms, p95 {:.2} ms (headless, not GPU presentation)",
+        times[60], times[114]
+    );
+    click(&mut rt, "live-draft-0");
+    rt.paste("Draft remains editable while six sessions stream");
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Draft remains editable while six sessions stream"
+    );
+}
+
+#[test]
+fn native_question_forms_send_scoped_values_and_keep_invalid_answers_editable() {
+    use caelum_core::application::{Command, Event};
+    let mut rt = live_runtime();
+    rt.update(|s, _| {
+        let live = s.live.as_mut().unwrap(); live.app.sessions[0].remote_id = Some("thread".into());
+        live.app.apply(Event::Questions(vec![caelum_protocol::QuestionPrompt { provider: "codex".into(), project_path: "/project".into(), session_id: "thread".into(), request_id: "question".into(), title: "Choose a branch".into(), fields: vec![serde_json::json!({"key":"branch","type":"string","required":true,"options":[{"label":"Main","value":"main"},{"label":"Feature","value":"feature"}]})] }]));
+    });
+    advance(&mut rt, 0.3);
+    click(&mut rt, "question-submit-question");
+    assert!(rt.state.live.as_mut().unwrap().app.commands().is_empty());
+    click(&mut rt, "question-question-branch-1");
+    click(&mut rt, "question-submit-question");
+    assert!(
+        matches!(rt.state.live.as_mut().unwrap().app.commands().as_slice(), [(_, Command::Answer(prompt, Some(answer)))] if prompt.session_id == "thread" && answer["branch"] == "feature")
+    );
+}
+
+#[test]
+fn native_file_preview_attaches_an_immutable_snapshot_to_the_originating_draft() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let mut rt = live_runtime();
+    click(&mut rt, "nav-files");
+    let (directory, command) = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .pop()
+        .unwrap();
+    assert!(
+        matches!(command, Command::Task(Task::Directory { ref project, .. }) if project == "/project")
+    );
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.apply(Event::Completed(
+            directory,
+            Ok(Reply::Task(TaskReply::Directory(
+                caelum_protocol::ProjectDirectoryListing {
+                    path: "".into(),
+                    entries: vec![caelum_protocol::ProjectFileEntry {
+                        name: "main.rs".into(),
+                        path: "main.rs".into(),
+                        kind: caelum_protocol::ProjectEntryKind::File,
+                        size_bytes: Some(12),
+                    }],
+                    total: 1,
+                    next_offset: None,
+                },
+            ))),
+        ))
+    });
+    advance(&mut rt, 0.3);
+    click(&mut rt, "file-tree-main.rs");
+    let (file, _) = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .pop()
+        .unwrap();
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.apply(Event::Completed(
+            file,
+            Ok(Reply::Task(TaskReply::File(
+                caelum_protocol::ProjectFileContent {
+                    path: "main.rs".into(),
+                    content: "fn main() {}".into(),
+                    size_bytes: 12,
+                    truncated: false,
+                },
+            ))),
+        ))
+    });
+    advance(&mut rt, 0.3);
+    click(&mut rt, "attach-preview");
+    click(&mut rt, "back-to-session");
+    click(&mut rt, "live-session-1");
+    let live = rt.state.live.as_ref().unwrap();
+    assert_eq!(live.app.sessions[0].attachments[0].content, "fn main() {}");
+    assert!(live.app.sessions[1].attachments.is_empty());
+}
+
+#[test]
+fn large_review_files_are_windowed_while_streams_continue() {
+    let app = spec();
+    let mut state = crate::evaluation::workspace();
+    crate::panels::open_review(
+        &mut state,
+        "/evaluation".into(),
+        "https://github.com/example/evaluation/pull/1".into(),
+    );
+    let mut rt = Runtime::new(state, app.view, (1280.0, 1000.0), Env::new(true, 1.0));
+    rt.poll = app.poll;
+    advance(&mut rt, 0.5);
+    let count = rt
+        .elements()
+        .iter()
+        .filter(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|k| k.starts_with("review-file-src/"))
+        })
+        .count();
+    assert!(
+        count > 0 && count < 60,
+        "only nearby file rows should be mounted: {count}"
+    );
+    click(&mut rt, "review-file-src/file-0.rs");
+    advance(&mut rt, 0.3);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.path.ends_with("/diff/scroll") && e.rect[3] > 200.0),
+        "the selected patch must have a usable viewport"
+    );
+    assert!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .sessions
+            .iter()
+            .all(|s| s.working())
+    );
+    click(&mut rt, "back-to-session");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
 }

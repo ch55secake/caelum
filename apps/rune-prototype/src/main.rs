@@ -1,4 +1,7 @@
+mod evaluation;
 mod live;
+mod panels;
+mod questions;
 mod state;
 mod theme;
 
@@ -400,7 +403,16 @@ fn inspector(s: &Workspace, k: &Kit) -> El {
 }
 
 fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
-    let dark = s.dark.unwrap_or(cx.system_dark());
+    let dark = s
+        .live
+        .as_ref()
+        .map(|live| match live.app.preferences.theme.as_str() {
+            "dark" => true,
+            "light" => false,
+            _ => cx.system_dark(),
+        })
+        .or(s.dark)
+        .unwrap_or(cx.system_dark());
     let k = theme::kit(dark);
     let width = cx.layout("main-pane").map_or(840.0, |r| r[2]);
     let padding = if width < 540.0 { 16.0 } else { 32.0 };
@@ -427,7 +439,12 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
                     "Use dark theme"
                 },
             )
-            .on_press(move |s: &mut Workspace| s.dark = Some(!dark))
+            .on_press(move |s: &mut Workspace| {
+                s.dark = Some(!dark);
+                if let Some(live) = &mut s.live {
+                    live.app.preferences.theme = if dark { "light" } else { "dark" }.into();
+                }
+            })
             .build(&k)
             .key("theme"),
         )
@@ -475,7 +492,9 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
-    if shell::is_sidebar_toggle(ev) {
+    if s.live.is_some() && panels::on_key(s, ev, tx) {
+        return true;
+    } else if shell::is_sidebar_toggle(ev) {
         s.sidebar.toggle();
     } else if ev.is_command('i') && ev.mods.alt {
         s.inspector.toggle();
@@ -514,12 +533,14 @@ fn spec() -> AppSpec<Workspace> {
 
 fn main() {
     let mut fixtures = false;
+    let mut evaluation = false;
     let mut project = None;
     let mut args = Vec::new();
     let mut input = std::env::args().skip(1);
     while let Some(arg) = input.next() {
         match arg.as_str() {
             "--fixtures" => fixtures = true,
+            "--evaluation-workload" => evaluation = true,
             "--project" => {
                 let Some(path) = input.next() else {
                     eprintln!("--project requires a directory");
@@ -532,7 +553,9 @@ fn main() {
     }
     rune::App::new(spec())
         .init(move || {
-            if fixtures {
+            if evaluation {
+                evaluation::workspace()
+            } else if fixtures {
                 Workspace::new()
             } else {
                 Workspace::live(project)

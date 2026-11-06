@@ -1,0 +1,12 @@
+[
+  { "t": 0.4, "type": "tap", "key": "pull-request-1" },
+  { "t": 0.8, "type": "tap", "key": "review-file-src/file-0.rs" },
+  { "t": 1.6, "type": "tap", "key": "back-to-session" },
+  { "t": 2.0, "type": "tap", "key": "live-draft-0" },
+  { "t": 2.2, "type": "type", "text": "Keep typing while six sessions stream.", "every": 0.025 },
+  { "t": 3.3, "type": "tap", "key": "live-session-1" },
+  { "t": 3.6, "type": "tap", "key": "live-draft-1" },
+  { "t": 3.8, "paste": "Independent background draft." },
+  { "t": 4.2, "type": "tap", "key": "live-session-0" },
+  { "t": 4.8, "type": "mark", "name": "end" }
+]

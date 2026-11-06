@@ -2,7 +2,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
-        Arc,
+        Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -18,7 +18,7 @@ use crate::{
     processes::ProcessRegistry, projects::Project, questions::QuestionBroker,
 };
 
-use super::{Options, Provider, Scope, SessionKey, Summary};
+use super::{Options, Provider, Scope, SessionKey, Snapshot, Store, Summary, Task, TaskReply};
 
 /// Shared by desktop adapters; constructing this does not start a provider.
 #[derive(Clone)]
@@ -28,6 +28,8 @@ pub struct ProviderRuntime {
     pub approvals: ApprovalBroker,
     pub questions: QuestionBroker,
     pub processes: Arc<ProcessRegistry>,
+    pub worktrees: crate::worktrees::WorktreeClient,
+    pub branches: Arc<Mutex<crate::session_branches::SessionBranches>>,
 }
 
 impl Default for ProviderRuntime {
@@ -45,6 +47,12 @@ impl Default for ProviderRuntime {
             processes,
             approvals,
             questions,
+            worktrees: crate::worktrees::WorktreeClient::new(
+                std::env::var_os("HOME").unwrap_or_default().into(),
+            ),
+            branches: Arc::new(Mutex::new(crate::session_branches::SessionBranches::new(
+                None,
+            ))),
         }
     }
 }
@@ -61,6 +69,83 @@ impl ProviderRuntime {
 
     fn execute(&self, command: &Command) -> Result<Reply, String> {
         let result = match command {
+            Command::Generate(key, prompt) => {
+                return self
+                    .opencode
+                    .generate_from_context(&key.scope.project, &key.id, prompt)
+                    .map(Reply::Generated)
+                    .map_err(|e| e.to_string())
+            }
+            Command::Notify(title, body) => {
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = std::process::Command::new("/usr/bin/osascript").args(["-e", "on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run", title, body]).status();
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (title, body);
+                Ok(())
+            }
+            Command::Task(task) => return task.execute(self).map(Reply::Task),
+            Command::Load(store) => {
+                let snapshot = store.load()?;
+                if let Some(parent) = store.0.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    let database =
+                        crate::database::WorkspaceDatabase::open(parent.join("branches.sqlite3"))
+                            .map_err(|e| e.to_string())?;
+                    *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
+                        crate::session_branches::SessionBranches::new(Some(database));
+                }
+                return Ok(Reply::Snapshot(snapshot));
+            }
+            Command::Save(store, state) => return store.save(state).map(|()| Reply::Done),
+            Command::Commands(scope) => {
+                return self
+                    .opencode
+                    .commands(&scope.project)
+                    .map(Reply::Commands)
+                    .map_err(|e| e.to_string())
+            }
+            Command::Shells(key) => {
+                return self
+                    .opencode
+                    .background_shells(&key.scope.project, &key.id)
+                    .map(Reply::Shells)
+                    .map_err(|e| e.to_string())
+            }
+            Command::Archive(key, archived) => match key.scope.provider {
+                Provider::Codex => self
+                    .codex
+                    .set_session_archived(&key.scope.project, &key.id, *archived)
+                    .map_err(|e| e.to_string()),
+                Provider::OpenCode => self
+                    .opencode
+                    .set_session_archived(&key.scope.project, &key.id, *archived)
+                    .map_err(|e| e.to_string()),
+            },
+            Command::Details(key) => {
+                let details = match key.scope.provider {
+                    Provider::Codex => self
+                        .codex
+                        .session_details(&key.scope.project, &key.id)
+                        .map_err(|e| e.to_string())?,
+                    Provider::OpenCode => self
+                        .opencode
+                        .session_details(&key.scope.project, &key.id)
+                        .map_err(|e| e.to_string())?,
+                };
+                return Ok(Reply::Details(
+                    self.branches
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .details(
+                            &key.scope.project,
+                            key.scope.provider.as_str(),
+                            &key.id,
+                            details,
+                        ),
+                ));
+            }
             Command::Open(path) => {
                 return Project::open(path)
                     .map(|project| Reply::Project(project.info()))
@@ -226,6 +311,25 @@ impl ProviderRuntime {
                             .select_agent(&key.scope.project, &key.id, agent)
                             .map_err(|e| e.to_string())?;
                     }
+                    if let Some(input) = prompt.strip_prefix('/') {
+                        let (name, text) =
+                            input.split_once(char::is_whitespace).unwrap_or((input, ""));
+                        return self
+                            .opencode
+                            .run_command(
+                                &key.scope.project,
+                                &key.id,
+                                &caelum_protocol::OpenCodeCommandInput {
+                                    name: name.into(),
+                                    text: text.into(),
+                                    files: Vec::new(),
+                                },
+                                options.model.as_deref(),
+                                options.effort.as_deref(),
+                            )
+                            .map(|()| Reply::Done)
+                            .map_err(|e| e.to_string());
+                    }
                     self.opencode
                         .send_prompt_with_options(
                             &key.scope.project,
@@ -271,6 +375,15 @@ impl ProviderRuntime {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Generate(SessionKey, String),
+    Notify(String, String),
+    Task(Task),
+    Load(Store),
+    Save(Store, Snapshot),
+    Commands(Scope),
+    Shells(SessionKey),
+    Archive(SessionKey, bool),
+    Details(SessionKey),
     Open(String),
     List(Scope),
     Choices(Scope),
@@ -285,6 +398,12 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Reply {
+    Generated(String),
+    Task(TaskReply),
+    Snapshot(Option<Snapshot>),
+    Commands(Vec<caelum_protocol::OpenCodeCommandInfo>),
+    Shells(Vec<caelum_protocol::OpenCodeBackgroundShell>),
+    Details(caelum_protocol::SessionDetails),
     Project(ProjectInfo),
     Sessions(Vec<Summary>),
     Session(Summary),
@@ -300,6 +419,7 @@ pub enum Event {
     OpenCode(OpenCodeEvent),
     Approvals(Vec<ApprovalPrompt>),
     Questions(Vec<QuestionPrompt>),
+    Branch(caelum_protocol::SessionBranchUpdate),
 }
 
 type Execute = Arc<dyn Fn(&Command) -> Result<Reply, String> + Send + Sync>;
@@ -308,7 +428,8 @@ type Execute = Arc<dyn Fn(&Command) -> Result<Reply, String> + Send + Sync>;
 /// event arrival wakes it, so idle windows need no polling timer.
 pub struct Runtime {
     providers: Option<ProviderRuntime>,
-    execute: Execute,
+    requests: SyncSender<(u64, Command)>,
+    control: SyncSender<(u64, Command)>,
     inbox: Option<Receiver<Event>>,
     sender: SyncSender<Event>,
     wake: Arc<dyn Fn() + Send + Sync>,
@@ -331,29 +452,89 @@ impl Runtime {
             Arc::new(move |command| backend.execute(command)),
             Arc::new(wake),
         );
-        runtime.forward(providers.codex.subscribe(), Event::Codex);
-        runtime.forward(providers.opencode.subscribe(), Event::OpenCode);
-        runtime.forward(providers.approvals.subscribe(), Event::Approvals);
-        runtime.forward(providers.questions.subscribe(), Event::Questions);
+        let branches = providers.branches.clone();
+        runtime.forward(providers.codex.subscribe(), move |event| {
+            let update = branches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .codex_event(&event);
+            std::iter::once(Event::Codex(event))
+                .chain(update.map(Event::Branch))
+                .collect()
+        });
+        let branches = providers.branches.clone();
+        runtime.forward(providers.opencode.subscribe(), move |event| {
+            let update = branches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .opencode_event(&event);
+            std::iter::once(Event::OpenCode(event))
+                .chain(update.map(Event::Branch))
+                .collect()
+        });
+        runtime.forward(providers.approvals.subscribe(), |value| {
+            vec![Event::Approvals(value)]
+        });
+        runtime.forward(providers.questions.subscribe(), |value| {
+            vec![Event::Questions(value)]
+        });
         runtime.providers = Some(providers);
         runtime
     }
 
     pub(super) fn with_executor(execute: Execute, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         let (sender, inbox) = mpsc::sync_channel(1024);
+        let (requests, normal) = mpsc::sync_channel(1024);
+        let (control, urgent) = mpsc::sync_channel(128);
+        let closed = Arc::new(AtomicBool::new(false));
+        let mut workers = Vec::new();
+        for (receiver, count) in [(normal, 8), (urgent, 2)] {
+            let receiver = Arc::new(Mutex::new(receiver));
+            for _ in 0..count {
+                let receiver = receiver.clone();
+                let execute = execute.clone();
+                let sender = sender.clone();
+                let wake = wake.clone();
+                let closed = closed.clone();
+                workers.push(thread::spawn(move || {
+                    while !closed.load(Ordering::Acquire) {
+                        let request = receiver
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .recv_timeout(Duration::from_millis(50));
+                        match request {
+                            Ok((id, command)) => {
+                                let result = execute(&command);
+                                if sender.send(Event::Completed(id, result)).is_err() {
+                                    break;
+                                }
+                                wake();
+                            }
+                            Err(RecvTimeoutError::Timeout) => continue,
+                            Err(RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                }));
+            }
+        }
         Self {
             providers: None,
-            execute,
+            requests,
+            control,
             inbox: Some(inbox),
             sender,
             wake,
-            closed: Arc::new(AtomicBool::new(false)),
-            workers: Vec::new(),
+            closed,
+            workers,
             forwarders: Vec::new(),
         }
     }
 
-    fn forward<T: Send + 'static>(&mut self, receiver: Receiver<T>, event: fn(T) -> Event) {
+    fn forward<T: Send + 'static>(
+        &mut self,
+        receiver: Receiver<T>,
+        event: impl Fn(T) -> Vec<Event> + Send + 'static,
+    ) {
         let sender = self.sender.clone();
         let wake = self.wake.clone();
         let closed = self.closed.clone();
@@ -361,10 +542,12 @@ impl Runtime {
             while !closed.load(Ordering::Acquire) {
                 match receiver.recv_timeout(Duration::from_millis(100)) {
                     Ok(value) => {
-                        if sender.send(event(value)).is_err() {
-                            break;
+                        for event in event(value) {
+                            if sender.send(event).is_err() {
+                                return;
+                            }
+                            wake();
                         }
-                        wake();
                     }
                     Err(RecvTimeoutError::Timeout) => continue,
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -377,24 +560,21 @@ impl Runtime {
         if self.closed.load(Ordering::Acquire) {
             return Err("Application is shutting down".into());
         }
-        self.workers.retain(|worker| !worker.is_finished());
-        if self.workers.len() >= 64 {
-            return Err("Too many pending requests; try again shortly".into());
-        }
-        let execute = self.execute.clone();
-        let sender = self.sender.clone();
-        let wake = self.wake.clone();
-        let worker = thread::Builder::new()
-            .name(format!("caelum-request-{id}"))
-            .spawn(move || {
-                let result = execute(&command);
-                if sender.send(Event::Completed(id, result)).is_ok() {
-                    wake();
-                }
-            })
-            .map_err(|e| e.to_string())?;
-        self.workers.push(worker);
-        Ok(())
+        let queue = if matches!(
+            command,
+            Command::Cancel(_)
+                | Command::Approve(..)
+                | Command::Answer(..)
+                | Command::Save(..)
+                | Command::Load(_)
+        ) {
+            &self.control
+        } else {
+            &self.requests
+        };
+        queue
+            .try_send((id, command))
+            .map_err(|_| "Too many pending requests; try again shortly".into())
     }
 
     pub fn drain(&self) -> Vec<Event> {

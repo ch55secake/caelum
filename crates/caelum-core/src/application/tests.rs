@@ -6,11 +6,473 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn durable_submission_waits_for_its_snapshot_but_not_for_later_typing() {
+    let mut app = Workspace::default();
+    let index = app.new_session(scope(Provider::Codex, "/a"));
+    app.enable_store("/unused-in-reducer-test".into());
+    let (load, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(load, Ok(Reply::Snapshot(None))));
+    app.sessions[index].draft = "durable prompt".into();
+    assert!(app.send(index, "durable prompt".into()));
+    let (save, command) = app.commands().pop().unwrap();
+    let Command::Save(_, snapshot) = command else {
+        panic!("save must precede provider admission")
+    };
+    assert_eq!(
+        snapshot.sessions[index]
+            .pending_submission
+            .as_ref()
+            .map(|p| p.text.as_str()),
+        Some("durable prompt")
+    );
+    app.sessions[index].draft = "newer draft".into();
+    assert!(app.commands().is_empty());
+    app.apply(Event::Completed(save, Ok(Reply::Done)));
+    let commands = app.commands();
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|(_, c)| matches!(c, Command::Start(..)))
+            .count(),
+        1
+    );
+    assert!(commands.iter().any(
+        |(_, c)| matches!(c, Command::Save(_, s) if s.sessions[index].draft == "newer draft")
+    ));
+}
+
+#[test]
+fn failed_disk_write_blocks_admission_and_retry_keeps_the_original_prompt() {
+    let mut app = Workspace::default();
+    let index = app.new_session(scope(Provider::Codex, "/a"));
+    app.enable_store("/unused-in-reducer-test".into());
+    let (load, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(load, Ok(Reply::Snapshot(None))));
+    app.send(index, "keep through disk failure".into());
+    let (save, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(save, Err("disk full".into())));
+    assert!(app.commands().is_empty());
+    assert_eq!(
+        app.snapshot().sessions[index]
+            .pending_submission
+            .as_ref()
+            .map(|p| p.text.as_str()),
+        Some("keep through disk failure")
+    );
+    app.retry_save();
+    let (save, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(save, Ok(Reply::Done)));
+    assert!(matches!(
+        app.commands().as_slice(),
+        [(_, Command::Start(..))]
+    ));
+}
+
+#[test]
+fn queues_wait_for_reconciled_idle_and_stop_requires_explicit_resume() {
+    let mut app = Workspace::default();
+    let sc = scope(Provider::Codex, "/a");
+    let index = started(&mut app, sc.clone(), "thread");
+    app.send(index, "queued".into());
+    assert!(app.commands().is_empty());
+    assert_eq!(app.sessions[index].queue.len(), 1);
+    app.cancel(index);
+    let (cancel, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(cancel, Ok(Reply::Done)));
+    let (resume, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(
+        resume,
+        Ok(Reply::Session(summary(sc, "thread"))),
+    ));
+    let (history, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(history, Ok(page(vec![], false))));
+    assert!(app.commands().is_empty());
+    assert_eq!(app.sessions[index].queue.len(), 1);
+    app.resume_queue(index);
+    assert!(
+        matches!(app.commands().as_slice(), [(_, Command::Send(_, prompt, _))] if prompt == "queued")
+    );
+}
+
+#[test]
+fn question_conditions_types_and_custom_answers_are_validated_in_field_order() {
+    let prompt = caelum_protocol::QuestionPrompt {
+        provider: "codex".into(),
+        project_path: "/a".into(),
+        session_id: "s".into(),
+        request_id: "q".into(),
+        title: "Choose".into(),
+        fields: vec![
+            json!({"key":"enabled","type":"boolean","required":true}),
+            json!({"key":"count","type":"integer","minimum":1,"maximum":4,"required":true,"when":[{"key":"enabled","op":"eq","value":true}]}),
+            json!({"key":"names","type":"multiselect","custom":true,"required":true,"minItems":2}),
+        ],
+    };
+    let draft = json!({"enabled":false,"count":"invalid stale value","names":["A","B","A"]})
+        .as_object()
+        .unwrap()
+        .clone();
+    let answer = forms::validate(&prompt, &draft);
+    assert!(answer.errors.is_empty());
+    assert!(!answer.values.contains_key("count"));
+    assert_eq!(answer.values["names"], json!(["A", "B"]));
+    let answer = forms::validate(
+        &prompt,
+        json!({"enabled":true,"count":"2.3","names":[]})
+            .as_object()
+            .unwrap(),
+    );
+    assert!(answer.errors.contains_key("count") && answer.errors.contains_key("names"));
+}
+
+#[test]
+fn search_and_review_pages_reject_late_results_from_old_targets() {
+    let mut app = Workspace::default();
+    for query in ["old", "new"] {
+        app.task(Task::Search {
+            project: "/a".into(),
+            query: query.into(),
+            mode: caelum_protocol::ProjectSearchMode::Files,
+        });
+    }
+    let commands = app.commands();
+    let result = || {
+        Reply::Task(TaskReply::Search(caelum_protocol::ProjectSearchResults {
+            matches: vec![],
+            truncated: false,
+            skipped: 0,
+        }))
+    };
+    app.apply(Event::Completed(commands[1].0, Ok(result())));
+    app.apply(Event::Completed(commands[0].0, Ok(result())));
+    assert_eq!(app.services.checkouts["/a"].search_query, "new");
+    let key = ("/a".into(), "https://github.com/a/b/pull/1".into());
+    let details: caelum_protocol::GitHubPullRequestDetails = serde_json::from_value(json!({"number":1,"title":"PR","url":key.1,"isDraft":false,"body":"","state":"OPEN","author":null,"baseRefName":"main","headRefName":"feature","headRefOid":"new","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","additions":1,"deletions":0,"changedFiles":1,"reviewDecision":null,"statusCheckRollup":[]})).unwrap();
+    app.services.reviews.entry(key.clone()).or_default().details = Some(details);
+    app.task(Task::ReviewFiles {
+        project: key.0.clone(),
+        url: key.1.clone(),
+        head: "old".into(),
+        page: 1,
+    });
+    let (id, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(
+        id,
+        Ok(Reply::Task(TaskReply::ReviewFiles(
+            caelum_protocol::GitHubPullRequestFiles {
+                files: vec![],
+                base_oid: "base".into(),
+                next_page: Some(2),
+            },
+        ))),
+    ));
+    assert!(!app.services.reviews[&key].files_loaded);
+}
+
+#[test]
+fn attachment_completion_retains_the_original_session_after_navigation() {
+    let mut app = Workspace::default();
+    let first = app.new_session(scope(Provider::Codex, "/a"));
+    app.attach_file(first, "src/main.rs".into());
+    let (read, _) = app.commands().pop().unwrap();
+    let second = app.new_session(scope(Provider::OpenCode, "/b"));
+    app.apply(Event::Completed(
+        read,
+        Ok(Reply::Task(TaskReply::File(
+            caelum_protocol::ProjectFileContent {
+                path: "src/main.rs".into(),
+                content: "fn main() {}".into(),
+                size_bytes: 12,
+                truncated: false,
+            },
+        ))),
+    ));
+    assert_eq!(app.sessions[first].attachments.len(), 1);
+    assert!(app.sessions[second].attachments.is_empty());
+    assert_eq!(app.selected, Some(second));
+}
+
+#[test]
+fn native_compaction_and_shells_reconcile_without_resurrecting_execution() {
+    let mut conversation = Conversation::default();
+    conversation.apply(
+        Provider::OpenCode,
+        "session.compaction.started",
+        &json!({"_event_id":"evt_compact","_created":10}),
+    );
+    conversation.apply(
+        Provider::OpenCode,
+        "session.compaction.delta",
+        &json!({"text":"Summary", "_created":11}),
+    );
+    conversation.apply(
+        Provider::OpenCode,
+        "session.compaction.ended",
+        &json!({"text":"Summary", "_created":12}),
+    );
+    conversation.history(Provider::OpenCode, &[json!({"id":"msg_compact","type":"compaction","summary":"Summary","status":"completed","time":{"created":10}})], false);
+    assert_eq!(conversation.entries.len(), 1);
+    conversation.apply(
+        Provider::OpenCode,
+        "session.shell.started",
+        &json!({"shell":{"id":"background","status":"running","command":"test"}}),
+    );
+    conversation.settle();
+    assert!(!conversation.entries[1].complete);
+    conversation.apply(Provider::OpenCode, "session.shell.ended", &json!({"shell":{"id":"background","status":"exited","exit":1,"command":"test"},"output":{"output":"failure"}}));
+    assert!(!conversation.working);
+    assert!(conversation.entries[1].complete);
+    assert!(conversation.entries[1].status.contains("failed"));
+}
+
+#[test]
+fn workspace_roundtrip_keeps_drafts_and_unknown_versions_are_not_imported() {
+    let directory = std::env::temp_dir().join(format!(
+        "caelum-snapshot-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store = Store(directory.join("workspace.json"));
+    let mut app = Workspace::default();
+    let index = app.new_session(scope(Provider::OpenCode, "/project with spaces"));
+    app.sessions[index].draft = "café ☁️\nnext line".into();
+    app.attach(
+        index,
+        Attachment::new("a.rs".into(), "内容".into(), Some((2, 2)), false),
+    );
+    store.save(&app.snapshot()).unwrap();
+    assert_eq!(store.load().unwrap(), Some(app.snapshot()));
+    let mut future = app.snapshot();
+    future.version = 2;
+    store.save(&future).unwrap();
+    assert!(store.load().is_err());
+    assert_eq!(
+        serde_json::from_slice::<Snapshot>(&std::fs::read(&store.0).unwrap())
+            .unwrap()
+            .version,
+        2
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 fn scope(provider: Provider, project: &str) -> Scope {
     Scope {
         provider,
         project: project.into(),
     }
+}
+
+#[test]
+fn removing_the_active_linked_checkout_returns_to_the_surviving_project() {
+    let mut app = Workspace::default();
+    for path in ["/main", "/linked"] {
+        app.projects.push(ProjectInfo {
+            name: path.into(),
+            path: path.into(),
+        });
+    }
+    app.project_roots.insert("/linked".into(), "/main".into());
+    let index = app.new_session(scope(Provider::Codex, "/linked"));
+    app.task(Task::RemoveWorktree {
+        project: "/linked".into(),
+        path: "/linked".into(),
+    });
+    let (id, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(
+        id,
+        Ok(Reply::Task(TaskReply::Worktree(
+            caelum_protocol::GitWorktree {
+                path: "/linked".into(),
+                project: ProjectInfo {
+                    name: "Linked".into(),
+                    path: "/linked".into(),
+                },
+                branch: Some("feature".into()),
+                main: false,
+                locked: None,
+                prunable: None,
+                available: true,
+            },
+        ))),
+    ));
+    assert!(app.sessions[index].archived);
+    assert_eq!(app.active_project.as_deref(), Some("/main"));
+    assert_eq!(app.sessions[app.selected.unwrap()].scope.project, "/main");
+    assert!(!app.projects.iter().any(|p| p.path == "/linked"));
+    assert!(
+        matches!(app.commands().as_slice(), [(_, Command::Task(Task::Worktrees { project, .. }))] if project == "/main")
+    );
+}
+
+#[test]
+fn queued_settings_and_edits_during_creation_keep_their_own_options() {
+    let mut app = Workspace::default();
+    let sc = scope(Provider::Codex, "/a");
+    let index = app.new_session(sc.clone());
+    app.sessions[index].options.model = Some("first".into());
+    app.send(index, "first prompt".into());
+    let (start, _) = app.commands().pop().unwrap();
+    app.sessions[index].options.model = Some("second".into());
+    app.options_changed(index);
+    app.send(index, "queued prompt".into());
+    app.sessions[index].options.model = Some("third".into());
+    app.options_changed(index);
+    app.apply(Event::Completed(
+        start,
+        Ok(Reply::Session(summary(sc.clone(), "s"))),
+    ));
+    let (send, command) = app.commands().pop().unwrap();
+    assert!(
+        matches!(command, Command::Send(_, _, options) if options.model.as_deref() == Some("first"))
+    );
+    app.apply(Event::Completed(send, Ok(Reply::Done)));
+    app.apply(codex(
+        "/a",
+        "s",
+        "turn/completed",
+        json!({"turn":{"status":"completed"}}),
+    ));
+    let (resume, _) = app.commands().pop().unwrap();
+    let mut old = summary(sc, "s");
+    old.options.model = Some("first".into());
+    app.apply(Event::Completed(resume, Ok(Reply::Session(old))));
+    let (history, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(history, Ok(page(vec![], false))));
+    assert!(
+        matches!(app.commands().as_slice(), [(_, Command::Send(_, text, options))] if text == "queued prompt" && options.model.as_deref() == Some("second"))
+    );
+    assert_eq!(app.sessions[index].options.model.as_deref(), Some("third"));
+}
+
+#[test]
+fn restart_preserves_unsent_and_unacknowledged_prompts_and_pauses_all_queues() {
+    let mut original = Workspace::default();
+    let index = original.new_session(scope(Provider::Codex, "/a"));
+    original.sessions[index].failed_prompt = Some("previous failed prompt".into());
+    original.send(index, "pending admission".into());
+    original.send(index, "queued after admission".into());
+    original.sessions[index].draft = "newer draft".into();
+    let mut restored = Workspace::default();
+    restored.enable_store("/unused-in-reducer-test".into());
+    let (load, _) = restored.commands().pop().unwrap();
+    restored.apply(Event::Completed(
+        load,
+        Ok(Reply::Snapshot(Some(original.snapshot()))),
+    ));
+    assert_eq!(restored.sessions[index].draft, "newer draft");
+    assert_eq!(
+        restored.sessions[index].failed_prompt.as_deref(),
+        Some("previous failed prompt")
+    );
+    assert_eq!(
+        restored.sessions[index]
+            .queue
+            .iter()
+            .map(|p| p.text.as_str())
+            .collect::<Vec<_>>(),
+        ["pending admission", "queued after admission"]
+    );
+    assert!(restored.sessions[index].queue_paused);
+    assert!(!restored
+        .commands()
+        .iter()
+        .any(|(_, c)| matches!(c, Command::Start(..) | Command::Send(..))));
+}
+
+#[test]
+fn saving_errors_never_block_cancellation_or_permission_replies() {
+    let mut app = Workspace::default();
+    let index = started(&mut app, scope(Provider::Codex, "/a"), "s");
+    app.enable_store("/unused-in-reducer-test".into());
+    let (load, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(load, Ok(Reply::Snapshot(None))));
+    let (save, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(save, Err("disk full".into())));
+    app.cancel(index);
+    app.approve(
+        caelum_protocol::ApprovalPrompt {
+            provider: "codex".into(),
+            project_path: "/a".into(),
+            session_id: Some("s".into()),
+            request_id: "approval".into(),
+            summary: "Test".into(),
+            description: String::new(),
+        },
+        caelum_protocol::ApprovalDecision::Deny,
+    );
+    let commands = app.commands();
+    assert!(commands
+        .iter()
+        .any(|(_, c)| matches!(c, Command::Cancel(_))));
+    assert!(commands
+        .iter()
+        .any(|(_, c)| matches!(c, Command::Approve(..))));
+}
+
+#[test]
+fn same_head_refresh_rejects_old_pages_without_unlocking_an_active_mutation() {
+    let mut app = Workspace::default();
+    let key = ("/a".to_owned(), "https://github.com/a/b/pull/1".to_owned());
+    let details = serde_json::from_value(json!({"number":1,"title":"PR","url":key.1,"isDraft":false,"body":"","state":"OPEN","author":null,"baseRefName":"main","headRefName":"feature","headRefOid":"head","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","additions":1,"deletions":0,"changedFiles":1,"reviewDecision":null,"statusCheckRollup":[]})).unwrap();
+    app.services.reviews.entry(key.clone()).or_default().details = Some(details);
+    let files = Task::ReviewFiles {
+        project: key.0.clone(),
+        url: key.1.clone(),
+        head: "head".into(),
+        page: 1,
+    };
+    let mutation = Task::UpdateBranch {
+        project: key.0.clone(),
+        url: key.1.clone(),
+        head: "head".into(),
+    };
+    app.task(files.clone());
+    let (old, _) = app.commands().pop().unwrap();
+    app.task(mutation.clone());
+    let (update, _) = app.commands().pop().unwrap();
+    app.services.refresh_review(&key.0, &key.1);
+    assert!(app.services.busy(&mutation));
+    app.task(files.clone());
+    let (new, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(old, Err("stale failure".into())));
+    assert!(app.services.busy(&files));
+    assert!(app.services.reviews[&key].error.is_none());
+    app.apply(Event::Completed(
+        new,
+        Ok(Reply::Task(TaskReply::ReviewFiles(
+            caelum_protocol::GitHubPullRequestFiles {
+                files: vec![],
+                base_oid: "base".into(),
+                next_page: None,
+            },
+        ))),
+    ));
+    assert!(app.services.reviews[&key].files_loaded);
+    app.apply(Event::Completed(update, Ok(Reply::Task(TaskReply::Done))));
+    assert!(!app.services.busy(&mutation));
+    assert!(app.services.reviews[&key].notice.is_some());
+}
+
+#[test]
+fn disconnect_recovery_is_bounded_and_resuming_restored_queues_loads_history_first() {
+    let mut app = Workspace::default();
+    let index = started(&mut app, scope(Provider::Codex, "/a"), "s");
+    app.send(index, "queued".into());
+    app.apply(codex("/a", "s", "codex/processExited", json!({})));
+    let (resume, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(resume, Err("still offline".into())));
+    app.apply(codex("/a", "s", "codex/processExited", json!({})));
+    assert!(app.commands().is_empty());
+    app.resume_queue(index);
+    assert!(matches!(
+        app.commands().as_slice(),
+        [(_, Command::Resume(_))]
+    ));
+    assert_eq!(app.sessions[index].queue.len(), 1);
 }
 
 fn summary(scope: Scope, id: &str) -> Summary {

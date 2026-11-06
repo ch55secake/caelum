@@ -1,0 +1,31 @@
+name: Rune evaluation candidate
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/rune-prototype/**'
+      - 'crates/**'
+      - 'scripts/release/package_rune_candidate.sh'
+      - '.github/workflows/rune-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.95.0'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/rune-prototype
+      - run: cargo fmt --manifest-path apps/rune-prototype/Cargo.toml --check
+      - run: cargo clippy --locked --manifest-path apps/rune-prototype/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path apps/rune-prototype/Cargo.toml
+      - run: bash scripts/release/package_rune_candidate.sh "$RUNNER_TEMP/rune-candidate"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caelum-rune-evaluation-macos
+          path: ${{ runner.temp }}/rune-candidate/*.zip

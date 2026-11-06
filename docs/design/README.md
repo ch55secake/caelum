@@ -38,10 +38,11 @@ nix develop -c cargo run --locked --manifest-path apps/rune-prototype/Cargo.toml
 The first run builds Rune's rendering dependencies. The experiment has its own Cargo workspace and lockfile, with `rune` and `rune-kit` pinned to `ddf14140253bd1b963993895e3fa025d1ec58537`. It is opt-in; normal Caelum builds use the root workspace.
 
 Open a project with Cmd+O, or append `-- --project /path/to/project`. The live
-milestone supports session discovery/resumption, history, text prompts, streaming,
-cancellation and approvals for both providers. Session options contains the
-provider/model/effort/agent controls and refresh/reconnect. Drafts and UI state
-currently last for this run; the remaining workflows are tracked in the plan.
+candidate includes persistent drafts/queues/settings, question forms,
+files/worktrees and GitHub review alongside real sessions, streaming and approvals.
+See the [candidate guide](../../apps/rune-prototype/README.md) for workflows and
+recovery semantics, and the [evaluation record](rune-evaluation.md) for evidence.
+Append `-- --evaluation-workload` for isolated long-history/concurrent-stream/PR fixtures.
 
 ### Try the fixture comparison
 
@@ -110,6 +111,7 @@ sending a prompt:
 ```sh
 CAELUM_RUNE_SMOKE_PROJECT=/path/to/project \
 CAELUM_RUNE_SMOKE_PROVIDER=opencode \
+CAELUM_RUNE_STATE=/path/to/isolated/workspace.json \
 cargo test --locked --manifest-path apps/rune-prototype/Cargo.toml \
   real_provider_discovery_and_history_smoke -- --ignored --nocapture
 ```
