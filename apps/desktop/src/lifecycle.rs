@@ -64,12 +64,15 @@ pub fn configure(app: App<Workspace>) -> App<Workspace> {
 }
 
 pub fn open_url(s: &mut Workspace, url: &str, _: &mut Tx) {
-    let Some(live) = &mut s.live else {
+    let Some(state) = &s.live else {
         return;
     };
-    if live.evaluation || live.fixture {
+    if state.evaluation || state.fixture {
         return;
     }
+    // URL events can arrive while the app is idle. Use live_mut so the queued
+    // project-open command schedules a poll and is submitted to the runtime.
+    let live = live::live_mut(s);
     match caelum_core::desktop::project_from_url(url) {
         Ok(path) => {
             live.panels.screen = panels::Screen::Conversation;
