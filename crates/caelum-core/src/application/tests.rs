@@ -579,6 +579,179 @@ fn stale_opencode_archive_error_forgets_the_session_locally() {
 }
 
 #[test]
+fn managed_worktrees_exclude_external_checkouts_and_survive_storage_changes() {
+    let mut app = Workspace::default();
+    app.projects.push(ProjectInfo {
+        path: "/main".into(),
+        name: "Main".into(),
+    });
+    let selected = app.new_session(scope(Provider::Codex, "/main"));
+    app.sessions[selected].draft = "Keep the project draft".into();
+    let tree = |path: &str, main: bool| {
+        json!({
+            "path":path,"project":{"path":path,"name":"Main"},"branch":"same-branch",
+            "main":main,"locked":null,"prunable":null,"available":true
+        })
+    };
+    let listing = |storage: &str| {
+        serde_json::from_value(json!({
+            "project":{"path":"/main","name":"Main"},"storageDirectory":storage,
+            "branches":["main","unused-branch"],"defaultBase":"main",
+            "worktrees":[tree("/main", true), tree("/storage/repo/first", false),
+                tree("/custom/repo/second", false), tree("/scratch/external", false)]
+        }))
+        .unwrap()
+    };
+    let refresh = |app: &mut Workspace, storage: &str| {
+        app.task(Task::Worktrees {
+            project: "/main".into(),
+            directory: storage.into(),
+        });
+        let request = app
+            .commands()
+            .into_iter()
+            .find(|(_, c)| matches!(c, Command::Task(Task::Worktrees { .. })))
+            .unwrap()
+            .0;
+        app.apply(Event::Completed(
+            request,
+            Ok(Reply::Task(TaskReply::Worktrees(Some(listing(storage))))),
+        ));
+    };
+    refresh(&mut app, "/storage/repo");
+    assert_eq!(
+        app.managed_worktrees("/main")
+            .map(|t| t.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/storage/repo/first"]
+    );
+    assert_eq!(app.group_path("/storage/repo/first"), "/main");
+    assert!(!app
+        .projects
+        .iter()
+        .any(|p| p.path == "/scratch/external" || p.path == "/custom/repo/second"));
+    assert!(!app.commands().iter().any(|(_, command)| matches!(command, Command::List(scope) if scope.project == "/scratch/external")));
+    assert_eq!(
+        app.managed_worktrees("/storage/repo/first").count(),
+        0,
+        "only the parent owns the list"
+    );
+
+    app.task(Task::CreateWorktree {
+        project: "/main".into(),
+        branch: "work/second".into(),
+        base: "main".into(),
+        directory: "/custom".into(),
+    });
+    let create = app
+        .commands()
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Task(Task::CreateWorktree { .. })))
+        .unwrap()
+        .0;
+    app.apply(Event::Completed(
+        create,
+        Ok(Reply::Task(TaskReply::Worktree(
+            serde_json::from_value(tree("/custom/repo/second", false)).unwrap(),
+        ))),
+    ));
+    app.preferences.worktree_directory = "/new-location".into();
+    let snapshot = serde_json::from_value(serde_json::to_value(app.snapshot()).unwrap()).unwrap();
+    let mut restored = Workspace::default();
+    restored.enable_store("unused-managed-worktrees.json".into());
+    let load = restored.commands().pop().unwrap().0;
+    restored.apply(Event::Completed(
+        load,
+        Ok(Reply::Snapshot(Some(Box::new(snapshot)))),
+    ));
+    refresh(&mut restored, "/new-location/repo");
+    assert_eq!(
+        restored
+            .managed_worktrees("/main")
+            .map(|t| t.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/storage/repo/first", "/custom/repo/second"]
+    );
+    assert_eq!(restored.group_path("/custom/repo/second"), "/main");
+    assert_eq!(restored.selected, Some(selected));
+    assert_eq!(restored.sessions[selected].draft, "Keep the project draft");
+    assert!(!restored
+        .projects
+        .iter()
+        .any(|p| p.path == "/scratch/external"));
+    assert!(restored
+        .services
+        .worktrees("/main")
+        .unwrap()
+        .branches
+        .contains(&"unused-branch".into()));
+
+    // An explicitly opened checkout can own its own Caelum worktrees even when
+    // another open project shares the same Git repository and branch catalogue.
+    let drain = |app: &mut Workspace| {
+        let mut outgoing = Vec::new();
+        loop {
+            let commands = app.commands();
+            if commands.is_empty() {
+                break;
+            }
+            for (id, command) in commands {
+                if matches!(command, Command::Save(..)) {
+                    app.apply(Event::Completed(id, Ok(Reply::Done)));
+                } else {
+                    outgoing.push((id, command));
+                }
+            }
+        }
+        outgoing
+    };
+    restored.projects.push(ProjectInfo {
+        path: "/scratch/external".into(),
+        name: "External project".into(),
+    });
+    restored.task(Task::CreateWorktree {
+        project: "/scratch/external".into(),
+        branch: "work/third".into(),
+        base: "main".into(),
+        directory: "/custom".into(),
+    });
+    let create = drain(&mut restored)
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Task(Task::CreateWorktree { .. })))
+        .unwrap()
+        .0;
+    let third: caelum_protocol::GitWorktree =
+        serde_json::from_value(tree("/custom/repo/third", false)).unwrap();
+    restored.apply(Event::Completed(
+        create,
+        Ok(Reply::Task(TaskReply::Worktree(third.clone()))),
+    ));
+    let refresh = drain(&mut restored)
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Task(Task::Worktrees { .. })))
+        .unwrap()
+        .0;
+    let mut shared: caelum_protocol::GitWorktrees = listing("/custom/repo");
+    shared.worktrees.push(third);
+    restored.apply(Event::Completed(
+        refresh,
+        Ok(Reply::Task(TaskReply::Worktrees(Some(shared)))),
+    ));
+    assert_eq!(
+        restored.group_path("/custom/repo/third"),
+        "/scratch/external"
+    );
+    assert_eq!(
+        restored
+            .managed_worktrees("/scratch/external")
+            .map(|t| t.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/custom/repo/third"]
+    );
+    assert_eq!(restored.managed_worktrees("/main").count(), 2);
+}
+
+#[test]
 fn switching_worktrees_restores_each_checkout_session_without_redirecting_main() {
     let mut app = Workspace::default();
     for path in ["/main", "/linked"] {

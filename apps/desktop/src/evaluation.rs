@@ -73,11 +73,15 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         return false;
     };
     let project = "/projects/caelum";
-    if matches!(name, "sidebar-worktrees" | "sidebar-worktrees-many") {
+    if matches!(
+        name,
+        "sidebar-worktrees" | "sidebar-worktrees-many" | "sidebar-worktrees-projects"
+    ) {
         let mut trees = vec![
             json!({"path":project,"project":{"path":project,"name":"caelum"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true}),
             json!({"path":"/projects/caelum-native","project":{"path":"/projects/caelum-native","name":"caelum-native"},"branch":"feat/native-workspace","main":false,"locked":null,"prunable":null,"available":true}),
             json!({"path":"/projects/caelum-providers","project":{"path":"/projects/caelum-providers","name":"caelum-providers"},"branch":"fix/provider-reconnect","main":false,"locked":null,"prunable":null,"available":true}),
+            json!({"path":"/scratch/external-review","project":{"path":"/scratch/external-review","name":"external-review"},"branch":"tool/review","main":false,"locked":null,"prunable":null,"available":true}),
         ];
         if name == "sidebar-worktrees-many" {
             for i in 0..12 {
@@ -86,7 +90,7 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             }
         }
         seed_worktrees(l, serde_json::from_value(json!({
-            "project":{"path":project,"name":"caelum"},"storageDirectory":"/projects","branches":["main"],"defaultBase":"main","worktrees":trees,
+            "project":{"path":project,"name":"caelum"},"storageDirectory":"/projects","branches":["main","unused-branch"],"defaultBase":"main","worktrees":trees,
         })).unwrap());
         for (path, title, provider) in [
             (
@@ -117,6 +121,23 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
                 });
                 session.queue_paused = true;
             }
+        }
+        if name == "sidebar-worktrees-projects" {
+            l.app.projects.push(caelum_protocol::ProjectInfo {
+                path: "/projects/rune".into(),
+                name: "rune".into(),
+            });
+            seed_worktrees(l, serde_json::from_value(json!({
+                "project":{"path":"/projects/rune","name":"rune"},"storageDirectory":"/worktrees/rune","branches":["main","fix/key-navigation"],"defaultBase":"main",
+                "worktrees":[
+                    {"path":"/projects/rune","project":{"path":"/projects/rune","name":"rune"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
+                    {"path":"/worktrees/rune/key-navigation","project":{"path":"/worktrees/rune/key-navigation","name":"rune"},"branch":"fix/key-navigation","main":false,"locked":null,"prunable":null,"available":true}
+                ]
+            })).unwrap());
+            l.app
+                .preferences
+                .worktree_expanded
+                .insert("/projects/rune".into(), true);
         }
         l.app.select(0);
         finish_fixture_reads(l);
@@ -230,20 +251,28 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
     }
     if matches!(
         name,
-        "worktrees" | "worktrees-loading" | "worktrees-error" | "worktree-create"
+        "worktrees"
+            | "worktrees-loading"
+            | "worktrees-error"
+            | "worktrees-empty"
+            | "worktree-create"
     ) {
         crate::panels::show(state, crate::panels::Screen::Worktrees);
         let l = state.live.as_mut().unwrap();
         if name == "worktrees-loading" {
             return true;
         }
-        seed_worktrees(l, serde_json::from_value(json!({
-            "project":{"path":project,"name":"Caelum"},"storageDirectory":"/Users/oscar/.caelum/worktrees","branches":["main","feat/native"],"defaultBase":"main",
+        let mut listing: caelum_protocol::GitWorktrees = serde_json::from_value(json!({
+            "project":{"path":project,"name":"Caelum"},"storageDirectory":"/Users/oscar/.caelum/worktrees/caelum-7d0420ab","branches":["main","feat/native"],"defaultBase":"main",
             "worktrees":[
                 {"path":project,"project":{"path":project,"name":"Caelum"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
-                {"path":"/projects/caelum-native","project":{"path":"/projects/caelum-native","name":"Caelum native"},"branch":"feat/native","main":false,"locked":null,"prunable":null,"available":true}
+                {"path":"/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native","project":{"path":"/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native","name":"Caelum"},"branch":"feat/native","main":false,"locked":null,"prunable":null,"available":true}
             ]
-        })).unwrap());
+        })).unwrap();
+        if name == "worktrees-empty" {
+            listing.worktrees.retain(|tree| tree.main);
+        }
+        seed_worktrees(l, listing);
         finish_fixture_reads(l);
         if name == "worktrees-error" {
             l.app.services.checkouts.get_mut(project).unwrap().error = Some(

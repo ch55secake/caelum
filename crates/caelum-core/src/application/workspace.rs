@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use caelum_protocol::{
     ApprovalDecision, ApprovalPrompt, ProjectInfo, ProviderChoices, QuestionPrompt,
@@ -214,6 +214,7 @@ pub struct Workspace {
     launches: HashMap<u64, (Provider, u64)>,
     remembered: HashMap<String, usize>,
     remembered_checkouts: HashMap<String, usize>,
+    managed_worktrees: BTreeSet<String>,
     deferred_lists: HashMap<Scope, Vec<Summary>>,
     /// Closing only removes open navigation. Reject earlier discovery/open replies
     /// without invalidating the stable sessions or their in-flight work.
@@ -350,6 +351,7 @@ impl Workspace {
                 })
                 .collect(),
             project_roots: self.project_roots.clone(),
+            managed_worktrees: self.managed_worktrees.clone(),
             remembered_checkouts: self
                 .remembered_checkouts
                 .iter()
@@ -965,6 +967,23 @@ impl Workspace {
                 provider: self.preferences.default_provider,
             });
         }
+    }
+
+    /// Worktrees created by Caelum, scoped to their original project. Git's full
+    /// catalogue is still used for branch choices and checkout availability.
+    pub fn managed_worktrees<'a>(
+        &'a self,
+        project: &'a str,
+    ) -> impl Iterator<Item = &'a caelum_protocol::GitWorktree> {
+        self.services
+            .worktrees(project)
+            .into_iter()
+            .flat_map(|listing| &listing.worktrees)
+            .filter(move |tree| {
+                !tree.main
+                    && self.managed_worktrees.contains(&tree.path)
+                    && self.group_path(&tree.project.path) == project
+            })
     }
 
     /// Switch to this exact checkout, including the main checkout. A project
@@ -1689,6 +1708,7 @@ impl Workspace {
             }
             if let Ok(TaskReply::Worktree(worktree)) = &result {
                 if let Task::CreateWorktree { project, .. } = &task {
+                    self.managed_worktrees.insert(worktree.path.clone());
                     // Record ownership before opening: closing the group must also
                     // reject an in-flight Open for this newly created checkout.
                     let root = self.group_path(project).to_owned();
@@ -1701,6 +1721,7 @@ impl Workspace {
                     }
                 }
                 if matches!(task, Task::RemoveWorktree { .. }) {
+                    self.managed_worktrees.remove(&worktree.path);
                     let root = self.project_roots.get(&worktree.project.path).cloned();
                     self.projects.retain(|p| p.path != worktree.project.path);
                     for session in &mut self.sessions {
@@ -1726,18 +1747,32 @@ impl Workspace {
                 }
             }
             if let Ok(TaskReply::Worktrees(Some(listing))) = &result {
-                if !self.closed_since(&listing.project.path, request)
-                    && self.project_is_open(&listing.project.path)
-                {
-                    let root = listing
-                        .worktrees
-                        .iter()
-                        .find(|tree| tree.main)
-                        .map(|tree| tree.project.path.clone())
-                        .unwrap_or_else(|| listing.project.path.clone());
+                let root = self.group_path(task.project()).to_owned();
+                if !self.closed_since(&root, request) && self.project_is_open(&root) {
+                    // Older versions already created worktrees in this repository's
+                    // dedicated Caelum storage folder. Remember them across directory
+                    // preference changes, alongside explicitly recorded creations.
                     for worktree in &listing.worktrees {
-                        self.project_roots
-                            .insert(worktree.project.path.clone(), root.clone());
+                        if !worktree.main
+                            && std::path::Path::new(&worktree.path).parent()
+                                == Some(std::path::Path::new(&listing.storage_directory))
+                        {
+                            self.managed_worktrees.insert(worktree.path.clone());
+                        }
+                    }
+                    for worktree in &listing.worktrees {
+                        if worktree.project.path != root
+                            && (worktree.main || !self.managed_worktrees.contains(&worktree.path))
+                        {
+                            continue;
+                        }
+                        let owner = self
+                            .project_roots
+                            .entry(worktree.project.path.clone())
+                            .or_insert_with(|| root.clone());
+                        if *owner != root {
+                            continue;
+                        }
                         if worktree.available
                             && !self
                                 .projects
@@ -2012,6 +2047,7 @@ impl Workspace {
                 if let Some(snapshot) = snapshot {
                     let snapshot = *snapshot;
                     self.saved = Some(snapshot.clone());
+                    self.managed_worktrees = snapshot.managed_worktrees;
                     self.preferences = snapshot.preferences;
                     for (project, saved) in &self.preferences.files {
                         let c = self.services.checkouts.entry(project.clone()).or_default();

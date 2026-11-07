@@ -694,6 +694,12 @@ fn spec() -> AppSpec<Workspace> {
             ("sidebar-worktrees-many", |s| {
                 evaluation::scene(s, "sidebar-worktrees-many")
             }),
+            ("sidebar-worktrees-projects", |s| {
+                evaluation::scene(s, "sidebar-worktrees-projects")
+            }),
+            ("worktrees-empty", |s| {
+                evaluation::scene(s, "worktrees-empty")
+            }),
             ("worktrees-loading", |s| {
                 evaluation::scene(s, "worktrees-loading")
             }),

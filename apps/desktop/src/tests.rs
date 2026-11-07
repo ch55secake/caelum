@@ -447,12 +447,176 @@ fn design_runtime(scene: &str, size: (f32, f32)) -> Runtime<Workspace> {
 }
 
 #[test]
+fn managed_worktrees_keep_parent_groups_in_navigation_search_and_actions() {
+    use caelum_core::application::{Command, Task};
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("sidebar-worktrees-projects", size);
+        for (parent, child) in [
+            ("/projects/caelum", "/projects/caelum-native"),
+            ("/projects/rune", "/worktrees/rune/key-navigation"),
+        ] {
+            let group = element(&rt, &crate::code_view::source_key(parent, "project-group"));
+            let row = element(&rt, &crate::code_view::source_key(child, "checkout"));
+            assert!(row.path.starts_with(&group.path));
+            assert!(
+                row.rect[0]
+                    > element(&rt, &crate::code_view::source_key(parent, "project")).rect[0] + 10.0
+            );
+        }
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/scratch/external-review",
+                "checkout"
+            ))
+            .is_none()
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/projects/caelum",
+                "checkout"
+            ))
+            .is_none()
+        );
+        click(
+            &mut rt,
+            &crate::code_view::source_key("/projects/caelum", "manage-worktrees"),
+        );
+        let rows = element(&rt, "worktrees-scroll");
+        assert!(
+            element(
+                &rt,
+                &crate::code_view::source_key("/projects/caelum-native", "manage-checkout")
+            )
+            .path
+            .starts_with(&rows.path)
+        );
+        assert!(
+            !element(
+                &rt,
+                &crate::code_view::source_key("/projects/caelum", "manage-checkout")
+            )
+            .path
+            .starts_with(&rows.path)
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/worktrees/rune/key-navigation",
+                "manage-checkout"
+            ))
+            .is_none()
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/scratch/external-review",
+                "manage-checkout"
+            ))
+            .is_none()
+        );
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .app
+                .select_project("/projects/rune")
+        });
+        advance(&mut rt, 0.2);
+        click(&mut rt, "manager-new-worktree");
+        fill(&mut rt, "worktree-branch", "work/owned-by-caelum");
+        key(&mut rt, Key::Enter, Mods::default());
+        assert!(
+            rt.state
+                .live
+                .as_mut()
+                .unwrap()
+                .app
+                .commands()
+                .iter()
+                .any(|(_, c)| matches!(c,
+            Command::Task(Task::CreateWorktree { project, .. }) if project == "/projects/caelum"))
+        );
+
+        let mut rt = design_runtime("sidebar-worktrees-projects", size);
+        rt.update(|s, _| crate::panels::open_launcher(s));
+        advance(&mut rt, 0.3);
+        for (parent, child) in [
+            ("/projects/caelum", "/projects/caelum-native"),
+            ("/projects/rune", "/worktrees/rune/key-navigation"),
+        ] {
+            let group = element(&rt, &crate::code_view::source_key(parent, "launch-group"));
+            assert!(
+                element(&rt, &crate::code_view::source_key(child, "launch"))
+                    .path
+                    .starts_with(&group.path)
+            );
+        }
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/scratch/external-review",
+                "launch"
+            ))
+            .is_none()
+        );
+        fill(&mut rt, "launch-search", "key-navigation");
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/projects/rune",
+                "launch-group"
+            ))
+            .is_some()
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/projects/caelum",
+                "launch-group"
+            ))
+            .is_none()
+        );
+        click(
+            &mut rt,
+            &crate::code_view::source_key("/worktrees/rune/key-navigation", "launch"),
+        );
+        assert_eq!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .app
+                .active_project
+                .as_deref(),
+            Some("/worktrees/rune/key-navigation")
+        );
+    }
+    let rt = design_runtime("worktrees-empty", (800.0, 620.0));
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some("No Caelum worktrees yet"))
+    );
+    assert!(element(&rt, "manager-new-worktree").visible[3] >= 30.0);
+    assert!(rt.elements().iter().any(|e| e.text.as_deref()
+        == Some("Create a worktree to work on caelum in parallel.")
+        && e.visible[3] > 10.0));
+    let rt = design_runtime("worktrees-error", (800.0, 620.0));
+    assert!(
+        element(
+            &rt,
+            &crate::code_view::source_key(
+                "/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native",
+                "manage-checkout"
+            )
+        )
+        .visible[3]
+            >= 57.0
+    );
+}
+
+#[test]
 fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         let mut rt = design_runtime("sidebar-worktrees", size);
         let root = "/projects/caelum";
         let linked = "/projects/caelum-native";
-        let main_key = crate::code_view::source_key(root, "checkout");
+        let main_key = crate::code_view::source_key(root, "project");
         let linked_key = crate::code_view::source_key(linked, "checkout");
         let linked_path = element(&rt, &linked_key).path;
         assert!(rt.elements().iter().any(|e| e.path.starts_with(&linked_path)
@@ -496,8 +660,9 @@ fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
         key(&mut rt, Key::Enter, Mods::default());
         advance(&mut rt, 0.3);
         assert!(rt.find(&linked_key).is_some());
-        click(&mut rt, &main_key);
-        key(&mut rt, Key::Down, Mods::default());
+        let next_key = crate::code_view::source_key("/projects/caelum-providers", "checkout");
+        click(&mut rt, &next_key);
+        key(&mut rt, Key::Up, Mods::default());
         advance(&mut rt, 0.2);
         assert!(element(&rt, &linked_key).focused);
         key(&mut rt, Key::Enter, Mods::default());
@@ -513,14 +678,18 @@ fn worktree_management_keeps_its_project_and_missing_rows_cannot_navigate() {
     let missing = crate::code_view::source_key("/projects/caelum-task-11", "checkout");
     assert!(!element(&rt, &missing).focusable);
     let last = crate::code_view::source_key("/projects/caelum-task-10", "checkout");
-    click(&mut rt, &crate::code_view::source_key(root, "checkout"));
-    for _ in 0..13 {
+    click(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum-native", "checkout"),
+    );
+    let selected = rt.state.live.as_ref().unwrap().app.selected;
+    for _ in 0..12 {
         key(&mut rt, Key::Down, Mods::default());
     }
     advance(&mut rt, 0.3);
     let row = element(&rt, &last);
     assert!(row.focused && row.visible[3] >= 41.0, "{row:?}");
-    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, selected);
     rt.update(|s, tx| {
         crate::checkouts::manage(s, root.into());
         tx.scroll_to_y("projects-scroll", 0.0);

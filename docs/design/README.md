@@ -124,9 +124,13 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Custom session actions](previews/rune-dark-context-session.png) | ![Custom editing actions](previews/rune-light-context-editor-small.png) |
 
-| Active worktrees | Compact worktree navigation |
+| Caelum worktrees | Compact project navigation |
 | --- | --- |
-| ![Worktree branches and activity](previews/rune-dark-sidebar-worktrees.png) | ![Worktrees in a compact workspace](previews/rune-light-sidebar-worktrees-small.png) |
+| ![Caelum worktree folders and activity](previews/rune-dark-sidebar-worktrees.png) | ![Worktrees inside their parent project](previews/rune-light-sidebar-worktrees-small.png) |
+
+| Multiple project groups | Project-scoped worktree manager |
+| --- | --- |
+| ![Worktree ownership across projects](previews/rune-dark-sidebar-worktrees-projects.png) | ![Compact Caelum worktree manager](previews/rune-light-worktree-manager-small.png) |
 
 | Compact file tabs | Tool icons and details |
 | --- | --- |

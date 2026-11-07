@@ -2,7 +2,7 @@ use super::{Attachment, Options, Provider, QueuedPrompt, Scope};
 use caelum_protocol::ProjectInfo;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -181,6 +181,8 @@ pub struct Snapshot {
     pub remembered: BTreeMap<String, usize>,
     #[serde(default)]
     pub remembered_checkouts: BTreeMap<String, usize>,
+    #[serde(default)]
+    pub managed_worktrees: BTreeSet<String>,
     #[serde(default)]
     pub project_roots: BTreeMap<String, String>,
 }
