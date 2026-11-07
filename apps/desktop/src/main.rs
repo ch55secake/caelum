@@ -7,6 +7,7 @@ mod evaluation;
 mod lifecycle;
 mod live;
 mod media;
+mod merge;
 mod models;
 mod panels;
 mod questions;
@@ -615,6 +616,23 @@ fn spec() -> AppSpec<Workspace> {
         setup: Some(live::setup),
         on_key: Some(on_key),
         scenes: &[
+            ("composer-options", |s| {
+                evaluation::scene(s, "composer-options")
+            }),
+            ("files-tabs", |s| evaluation::scene(s, "files-tabs")),
+            ("tools-collapsed", |s| {
+                evaluation::scene(s, "tools-collapsed")
+            }),
+            ("merge-ready", |s| evaluation::scene(s, "merge-ready")),
+            ("merge-blocked", |s| evaluation::scene(s, "merge-blocked")),
+            ("merge-pending", |s| evaluation::scene(s, "merge-pending")),
+            ("merge-conflicts", |s| {
+                evaluation::scene(s, "merge-conflicts")
+            }),
+            ("merge-behind", |s| evaluation::scene(s, "merge-behind")),
+            ("merge-draft", |s| evaluation::scene(s, "merge-draft")),
+            ("merge-merged", |s| evaluation::scene(s, "merge-merged")),
+            ("merge-closed", |s| evaluation::scene(s, "merge-closed")),
             ("worktree-create", |s| {
                 evaluation::scene(s, "worktree-create")
             }),

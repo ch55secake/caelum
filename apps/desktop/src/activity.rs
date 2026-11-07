@@ -44,11 +44,12 @@ pub fn indicator(
         activity.kind,
         ActivityKind::Input | ActivityKind::Background
     );
+    let color = ui::activity_color(activity, k);
     let glyph = if waiting {
-        rune::el().size(7.0, 7.0).radius(4.0).fill(k.c.text_accent)
+        rune::el().size(7.0, 7.0).radius(4.0).fill(color)
     } else {
         icon(&RING, 14.0)
-            .color(k.c.text_accent)
+            .color(color)
             .looping(rune::LoopSpec::rotation(1.6))
     };
     row()
@@ -61,11 +62,7 @@ pub fn indicator(
         .gap(8.0)
         .center_y()
         .child(glyph)
-        .child(
-            text(&activity.label)
-                .font(k.ty.small_medium)
-                .color(k.c.text_accent),
-        )
+        .child(text(&activity.label).font(k.ty.small_medium).color(color))
         .child(
             ui::caption(agent.unwrap_or("Agent"), k)
                 .grow(1.0)
@@ -83,26 +80,28 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
     let expanded = live(s).expanded.contains(&(index, id.clone()));
     let patch = !presentation.patch.is_empty();
     let preview = patch && !live(s).collapsed_patches.contains(&(index, id.clone()));
+    let open = if patch { preview } else { expanded };
+    let glyph = match presentation.name.as_str() {
+        "Run" => &ui::TERMINAL,
+        "Read" => &ui::FILE,
+        "Search" => &glyphs::SEARCH,
+        "Patch" => &ui::EDIT,
+        "Thinking" | "Thought" | "Context compaction" => &crate::ORBIT,
+        _ => &ui::TOOL,
+    };
     let mut header = row()
         .w_full()
         .gap(7.0)
         .center_y()
         .child(
-            icon(
-                if if patch { preview } else { expanded } {
-                    &glyphs::CHEVRON_DOWN
-                } else {
-                    &glyphs::CARET_RIGHT
-                },
-                12.0,
-            )
-            .color(k.c.icon_muted),
+            icon(glyph, 15.0)
+                .color(k.c.icon_muted)
+                .key(format!("tool-icon-{index}-{}", entry.id)),
         )
-        .child(ui::outcome(presentation.outcome, k))
         .child(
             text(&presentation.name)
                 .font(k.ty.small_medium)
-                .color(k.c.text_muted),
+                .color(k.c.text_base),
         )
         .child(
             text(&presentation.summary)
@@ -122,15 +121,23 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
         Outcome::Interrupted => "Interrupted",
         _ => "",
     };
-    header = header.child(ui::caption(
-        format!("{state} {}", presentation.timing).trim(),
-        k,
-    ));
+    header = header
+        .child(ui::outcome(presentation.outcome, k))
+        .child(
+            ui::caption(format!("{state} {}", presentation.timing).trim(), k).color(
+                match presentation.outcome {
+                    Outcome::Failure => k.c.danger.fg,
+                    Outcome::Running | Outcome::Interrupted => k.c.warning.fg,
+                    _ => k.c.text_muted,
+                },
+            ),
+        )
+        .child(ui::caption(if open { "Hide" } else { "Details" }, k).pl(6.0));
     let mut content = col().w_full().gap(6.0).child(
         k.interactive(header.py(7.0).px(6.0).radius(7.0))
             .role("button")
             .label(format!("{} {}", presentation.name, presentation.summary))
-            .expanded(if patch { preview } else { expanded })
+            .expanded(open)
             .focusable(true)
             .focus_ring(1.5, 0.0, k.c.border_focus)
             .on_press(move |s: &mut Workspace| {

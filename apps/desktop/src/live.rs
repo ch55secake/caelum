@@ -1512,6 +1512,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .key(format!("live-draft-{index}"))
         .label("Message")
         .placeholder("Message your session…", k.c.text_muted)
+        .help("Enter to send · Shift+Enter for a new line")
         .color(k.c.text_base)
         .selection_color(k.selection())
         .w_full()
@@ -1564,12 +1565,13 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         } else {
             "Send message"
         })
+        .help(if session.working() {
+            "Stop generation · Escape"
+        } else {
+            "Send message · Enter\nShift+Enter for a new line"
+        })
         .size(32.0, 32.0);
-    let mut controls = row()
-        .w_full()
-        .center_y()
-        .gap(8.0)
-        .child(rune::el().grow(1.0));
+    let mut controls = row().center_y().gap(6.0);
     if session.working() && !draft.text.trim().is_empty() {
         controls = controls.child(
             Button::new("Queue")
@@ -1579,24 +1581,18 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
                 .key("queue-message"),
         );
     }
-    if wide {
-        controls = controls.child(
-            text("↵ Send · ⇧↵ Newline")
-                .font(k.ty.small)
-                .color(k.c.text_muted),
-        );
-    }
-    let pickers = pickers(s, k, layers).h(28.0).min_w(0.0).scroll_x();
+    let pickers = pickers(s, k, layers).min_w(0.0);
     let controls = row()
+        .key("composer-controls")
         .w_full()
-        .gap(4.0)
-        .center_y()
+        .gap(10.0)
+        .items_end()
         .child(pickers.grow(1.0))
         .child(
             controls
                 .child(crate::activity::context(s, k, index, wide))
                 .child(submit)
-                .w((if wide { 280.0 } else { 64.0 })
+                .w((if wide { 148.0 } else { 60.0 })
                     + if session.working() && !draft.text.trim().is_empty() {
                         60.0
                     } else {
@@ -1625,74 +1621,77 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
 }
 
 fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
-    let mut picker_kit = k.clone();
-    picker_kit.ty.ui_medium = k.ty.small;
-    picker_kit.c.text_base = k.c.text_muted;
-    let k = &picker_kit;
     let live = live(s);
-    let mut content = row().gap(2.0).center_y();
+    let maximum = rune::memo::window_layout("composer-options").map_or(220.0, |r| r[2].max(80.0));
+    let mut content = row()
+        .key("composer-options")
+        .flex_wrap()
+        .gap(6.0)
+        .center_y();
     let Some(index) = live.app.selected else {
         return content;
     };
     let session = &live.app.sessions[index];
-    content = content.child(
-        Select::new("provider", &["Codex", "OpenCode"])
-            .current(Some(ui::provider_name(session.scope.provider)))
-            .label("Provider")
-            .placement(Placement::TopStart)
-            .open(live.menu == Some("provider"))
-            .disabled(session.remote_id.is_some() || !session.can_send())
-            .on_toggle(|s: &mut Workspace| toggle_menu(s, "provider"))
-            .on_close(|s: &mut Workspace| live_mut(s).menu = None)
-            .on_choose(move |s: &mut Workspace, value, _| {
-                let live = live_mut(s);
-                let session = &mut live.app.sessions[index];
-                session.scope.provider = if value == "Codex" {
-                    Provider::Codex
-                } else {
-                    Provider::OpenCode
-                };
-                session.options = live
-                    .app
-                    .preferences
-                    .providers
-                    .get(session.scope.provider.as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                if let Some(choices) = live.app.choices.get(&session.scope)
-                    && session.options.model.is_none()
-                {
-                    session.options.model = choices.default_model.clone();
-                }
-                live.app.options_changed(index);
-                live.menu = None;
-                live.focus();
-            })
-            .build(k, layers),
-    );
+    let provider = Select::new("provider", &["Codex", "OpenCode"])
+        .current(Some(ui::provider_name(session.scope.provider)))
+        .label("Provider")
+        .placement(Placement::TopStart)
+        .open(live.menu == Some("provider"))
+        .disabled(session.remote_id.is_some() || !session.can_send())
+        .on_toggle(|s: &mut Workspace| toggle_menu(s, "provider"))
+        .on_close(|s: &mut Workspace| live_mut(s).menu = None)
+        .on_choose(move |s: &mut Workspace, value, _| {
+            let live = live_mut(s);
+            let session = &mut live.app.sessions[index];
+            session.scope.provider = if value == "Codex" {
+                Provider::Codex
+            } else {
+                Provider::OpenCode
+            };
+            session.options = live
+                .app
+                .preferences
+                .providers
+                .get(session.scope.provider.as_str())
+                .cloned()
+                .unwrap_or_default();
+            if let Some(choices) = live.app.choices.get(&session.scope)
+                && session.options.model.is_none()
+            {
+                session.options.model = choices.default_model.clone();
+            }
+            live.app.options_changed(index);
+            live.menu = None;
+            live.focus();
+        })
+        .build(k, layers)
+        .max_w(maximum);
     let choices = live.app.choices.get(&session.scope);
-    content = content.child(
-        Select::new::<&str>("model", &[])
-            .current(
-                choices
-                    .and_then(|c| {
-                        c.models
-                            .iter()
-                            .find(|m| Some(&m.id) == session.options.model.as_ref())
-                    })
-                    .map(|m| m.name.as_str())
-                    .or(session.options.model.as_deref()),
-            )
-            .placeholder("Provider default")
-            .label("Model")
-            .placement(Placement::TopStart)
-            .open(live.models.is_open())
-            .disabled(session.archived || session.archiving)
-            .on_toggle(|s: &mut Workspace| crate::models::open(s, None))
-            .trigger(k)
-            .max_w(200.0)
-            .min_w(0.0),
-    );
+    content = content
+        .child(
+            Select::new::<&str>("model", &[])
+                .current(
+                    choices
+                        .and_then(|c| {
+                            c.models
+                                .iter()
+                                .find(|m| Some(&m.id) == session.options.model.as_ref())
+                        })
+                        .map(|m| m.name.as_str())
+                        .or(session.options.model.as_deref()),
+                )
+                .placeholder("Provider default")
+                .label("Model")
+                .prominent()
+                .placement(Placement::TopStart)
+                .open(live.models.is_open())
+                .disabled(session.archived || session.archiving)
+                .on_toggle(|s: &mut Workspace| crate::models::open(s, None))
+                .trigger(k)
+                .max_w(maximum.min(220.0))
+                .min_w(0.0),
+        )
+        .child(provider);
     if let Some(choices) = choices {
         if let Some(model) = choices
             .models
@@ -1727,7 +1726,8 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                             live.menu = None;
                             live.focus();
                         })
-                        .build(k, layers),
+                        .build(k, layers)
+                        .max_w(maximum),
                 );
             }
         }
@@ -1754,7 +1754,8 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                         live.menu = None;
                         live.focus();
                     })
-                    .build(k, layers),
+                    .build(k, layers)
+                    .max_w(maximum),
             );
         }
     }

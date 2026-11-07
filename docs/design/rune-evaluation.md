@@ -1,5 +1,49 @@
 # Native desktop evaluation record
 
+## Composer, merge and Files refinement — 7 November 2026
+
+This approved follow-up continues in #95 above #94. The previous pass at `6e56970`
+supplies the matching before captures in the [comparison](previews/rune-refinement-comparison.png).
+
+- **220 Rust tests passed**: 166 core, 40 native, 6 protocol and 8 CLI.
+  `nix develop -c make check` passed formatting, warnings-denied workspace Clippy
+  and **17 release + 2 profile Python checks**.
+- The composer uses a 46–180-point editor, clearer contrast, model-first settings
+  that wrap in narrow panes, aligned Send/Stop/Queue and shortcut tooltips. A native
+  regression keeps all four settings and actions reachable with the inspector open,
+  including while work runs; nested Escape returns focus without cancelling it.
+- The Files inspector uses filename tabs with underlines, integrated hover/focus
+  close controls and **Add to prompt / Add selection** actions. Native coverage
+  roves horizontally to offscreen tabs, closes by keyboard, recovers focus after the
+  final tab and keeps attachments with the originating draft.
+- GitHub review has separate approval, check-summary and branch-readiness rows,
+  expandable aligned checks and a joined green merge action/dropdown. Shared core
+  presentation distinguishes skipped/unknown results, pending readiness, conflicts,
+  blocked, behind, draft and terminal states. Native regressions verify compact
+  action bounds, disabled/absent merge actions, check disclosure, method navigation,
+  duplicate-mutation locking and captured project/URL/head after review/session changes.
+- Default surfaces are neutral. Colour appears in selection markers, tab underlines,
+  focus borders, links, semantic status icons and solid primary actions. Tool rows
+  replace leading disclosure arrows with tool-specific icons and trailing Details/Hide.
+- Generated and checked **332 captures**: 66 scenes plus 17 interaction states in
+  light/dark and normal/compact layouts. Representative images were visually reviewed;
+  all trees have no warnings, and logs have no missing targets or zero-height viewport
+  diagnostics. Merge menus, expanded checks and narrow control bounds were inspected.
+  **40 native reference screens plus one before/after comparison** are checked in.
+- Archive, interaction and six-session evaluation headless replays completed with
+  no tree warnings and retained the expected replacement draft, submitted prompt and
+  concurrent-session draft text. Runtime regressions retain the existing ownership,
+  cancellation, queue, virtualized history/diff and exact reading-position coverage.
+- The final Apple Silicon app/DMG/CLI passed architecture, signing, system-library,
+  disk-image and mounted-bundle checks. The packaged smoke passed cold/warm project
+  URLs, hidden-app reopening, draft restoration and graceful quit.
+
+Both PRs remain open and unmerged. Real Codex remains unavailable because its
+executable is absent. Intel packaging, native OS-context-menu visual acceptance,
+complete authenticated provider workflows and manual accessibility acceptance
+remain open as recorded below. Current artifacts are under
+`/private/var/folders/sd/8zxnlg513mlfz8nkx928l6s00000gn/T/opencode/caelum-refinement-v3/`.
+
 ## Overview, controls and message polish — 7 November 2026
 
 This pass updates #95 above #94 against the historical `82ca39d` reference.

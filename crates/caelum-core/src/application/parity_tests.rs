@@ -28,6 +28,41 @@ fn opencode(method: &str, data: serde_json::Value) -> Event {
 }
 
 #[test]
+fn review_summaries_distinguish_unknown_checks_and_unmergeable_states() {
+    use super::presentation::{CheckSummary, MergeReadiness, Outcome};
+    let checks: Vec<caelum_protocol::GitHubStatusCheck> = serde_json::from_value(json!([
+        {"__typename":"StatusContext", "context":"CI", "state":"SUCCESS"},
+        {"__typename":"CheckRun", "name":"Optional", "status":"COMPLETED", "conclusion":"SKIPPED"}
+    ]))
+    .unwrap();
+    assert_eq!(CheckSummary::new(None).outcome, Outcome::Running);
+    assert_eq!(CheckSummary::new(Some(&[])).outcome, Outcome::Neutral);
+    assert_eq!(
+        CheckSummary::new(Some(&checks[..1])).outcome,
+        Outcome::Success
+    );
+    assert_ne!(CheckSummary::new(Some(&checks)).outcome, Outcome::Success);
+    let mut details: caelum_protocol::GitHubPullRequestDetails = serde_json::from_value(json!({"number":1,"title":"Review","url":"https://github.com/example/repo/pull/1","isDraft":false,"body":"","state":"OPEN","author":null,"baseRefName":"main","headRefName":"feature","headRefOid":"head","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","additions":1,"deletions":0,"changedFiles":1,"reviewDecision":null,"statusCheckRollup":[]})).unwrap();
+    assert!(MergeReadiness::new(&details).can_merge);
+    for state in ["BLOCKED", "DIRTY", "UNKNOWN", "FUTURE_STATE"] {
+        details.merge_state_status = state.into();
+        assert!(!MergeReadiness::new(&details).can_merge, "{state}");
+    }
+    details.merge_state_status = "BEHIND".into();
+    assert!(MergeReadiness::new(&details).behind);
+    details.state = "MERGED".into();
+    assert!(!MergeReadiness::new(&details).behind);
+    assert!(!MergeReadiness::new(&details).can_merge);
+    details.state = "OPEN".into();
+    details.merge_state_status = "CLEAN".into();
+    details.mergeable = "UNKNOWN".into();
+    assert!(!MergeReadiness::new(&details).can_merge);
+    details.mergeable = "MERGEABLE".into();
+    details.pull_request.is_draft = true;
+    assert!(!MergeReadiness::new(&details).can_merge);
+}
+
+#[test]
 fn archive_notice_expires_only_after_unengaged_time_and_recovers_after_undo_failure() {
     let mut app = workspace();
     app.archive(0, true);

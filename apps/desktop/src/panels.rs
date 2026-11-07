@@ -6,7 +6,7 @@ use crate::{
     quiet_button, theme, ui,
 };
 use caelum_core::application::{Attachment, Task, Workspace as Application};
-use caelum_protocol::{GitHubFeedbackKind, GitHubMergeMethod, ProjectEntryKind, ProjectSearchMode};
+use caelum_protocol::{GitHubFeedbackKind, ProjectEntryKind, ProjectSearchMode};
 use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, row, text};
 use rune_kit::{
     ButtonVariant, Dialog, Kit, Markdown, ScrollBar,
@@ -56,8 +56,9 @@ pub struct Panels {
     pub review_tab: usize,
     review_nav: Option<bool>,
     review_search: TextEdit,
-    merge_method: usize,
-    merge_menu: bool,
+    pub(crate) merge_method: usize,
+    pub(crate) merge_menu: bool,
+    pub(crate) expanded_checks: HashSet<Target>,
     expanded_threads: HashSet<String>,
     search: TextEdit,
     find: TextEdit,
@@ -114,6 +115,7 @@ impl Default for Panels {
             review_search: TextEdit::new(""),
             merge_method: 0,
             merge_menu: false,
+            expanded_checks: Default::default(),
             expanded_threads: Default::default(),
             search: TextEdit::new(""),
             find: TextEdit::new(""),
@@ -751,11 +753,7 @@ pub fn inspector(s: &Workspace, k: &Kit) -> El {
             .on_press(move |s: &mut Workspace| show(s, screen))
             .h(30.0)
             .key(format!("nav-{}", name.to_lowercase()));
-        tabs = tabs.child(if selected {
-            tab.fill(k.alpha(k.c.text_accent, 0.09))
-        } else {
-            tab
-        });
+        tabs = tabs.child(tab);
     }
     let mut content = col()
         .w_full()
@@ -897,9 +895,10 @@ fn files(s: &Workspace, k: &Kit) -> El {
     let Some(project) = &live.app.active_project else {
         return label("Open a project first", k);
     };
-    let mut browser = col().w_full().gap(8.0).child(
+    let mut browser = col().w_full().gap(4.0).child(
         row()
             .gap(4.0)
+            .center_y()
             .w_full()
             .child(
                 ui::field(
@@ -919,6 +918,11 @@ fn files(s: &Workspace, k: &Kit) -> El {
                     .on_press_tx(run_search)
                     .build(k)
                     .key("find-files"),
+            )
+            .child(
+                quiet_button(&ui::REFRESH, "Refresh files")
+                    .on_press(|s: &mut Workspace| live_mut(s).app.refresh_files())
+                    .build(k),
             ),
     );
     browser = browser.child(
@@ -927,18 +931,15 @@ fn files(s: &Workspace, k: &Kit) -> El {
             .gap(4.0)
             .child(
                 ui::tab("Paths", !live.panels.content_search, k)
+                    .h(26.0)
                     .on_press(|s: &mut Workspace| live_mut(s).panels.content_search = false),
             )
             .child(
                 ui::tab("Content", live.panels.content_search, k)
+                    .h(26.0)
                     .on_press(|s: &mut Workspace| live_mut(s).panels.content_search = true),
             )
-            .child(rune::el().grow(1.0))
-            .child(
-                quiet_button(&ui::REFRESH, "Refresh files")
-                    .on_press(|s: &mut Workspace| live_mut(s).app.refresh_files())
-                    .build(k),
-            ),
+            .child(rune::el().grow(1.0)),
     );
     let Some(checkout) = live.app.services.checkouts.get(project) else {
         return browser.child(ui::skeleton("Loading files", 4, k));
@@ -990,47 +991,111 @@ fn files(s: &Workspace, k: &Kit) -> El {
             .key("file-list")
             .scroll_bar(k),
     );
-    let mut tabs = row().gap(4.0).w_full().scroll_x();
+    let mut tabs = row()
+        .key("file-tabs")
+        .role("tablist")
+        .label("Open files")
+        .focus_group()
+        .focus_follows()
+        .w_full()
+        .scroll_x();
     for path in &checkout.tabs {
         let project = project.clone();
         let path = path.clone();
         let close_path = path.clone();
         let close_project = project.clone();
-        tabs = tabs
-            .child(
-                Button::new(&path)
-                    .variant(if checkout.selected_file.as_ref() == Some(&path) {
-                        ButtonVariant::Outline
+        let selected = checkout.selected_file.as_ref() == Some(&path);
+        let key = format!("file-tab-{}", crate::code_view::source_key(&project, &path));
+        let close_key = format!("close-{key}");
+        let focused = live
+            .focus_key
+            .as_ref()
+            .is_some_and(|f| f == &key || f == &close_key);
+        let name = path.rsplit('/').next().unwrap_or(&path);
+        let width = (rune::text::measure(name, &[], k.ty.ui, None).0 + 62.0).clamp(100.0, 210.0);
+        let close = quiet_button(&glyphs::CLOSE, "Close file")
+            .on_press(move |s: &mut Workspace| {
+                let c = live_mut(s)
+                    .app
+                    .services
+                    .checkouts
+                    .get_mut(&close_project)
+                    .unwrap();
+                c.tabs.retain(|p| p != &close_path);
+                if c.selected_file.as_ref() == Some(&close_path) {
+                    c.selected_file = c.tabs.last().cloned();
+                }
+            })
+            .build(k)
+            .key(close_key)
+            .label(format!("Close {path}"))
+            .size(22.0, 24.0)
+            .group_opacity(if focused { 1.0 } else { 0.0 }, 1.0);
+        tabs = tabs.child(
+            k.interactive(
+                row()
+                    .h(34.0)
+                    .w(width)
+                    .px(8.0)
+                    .gap(6.0)
+                    .center_y()
+                    .fill(if selected {
+                        k.c.layer_01
                     } else {
-                        ButtonVariant::GhostMuted
+                        rune::Color::TRANSPARENT
                     })
-                    .on_press(move |s: &mut Workspace| {
-                        let live = live_mut(s);
-                        live.panels.preview_page = 0;
-                        live.panels.selection = None;
-                        live.app.open_file(project.clone(), path.clone());
-                    })
-                    .build(k),
+                    .child(rune::icon(&ui::FILE, 13.0).color(if selected {
+                        k.c.text_accent
+                    } else {
+                        k.c.icon_muted
+                    }))
+                    .child(
+                        text(name)
+                            .font(k.ty.ui)
+                            .color(if selected {
+                                k.c.text_base
+                            } else {
+                                k.c.text_muted
+                            })
+                            .truncate()
+                            .min_w(0.0)
+                            .grow(1.0),
+                    )
+                    .child(close)
+                    .children(selected.then(|| {
+                        rune::el().h(2.0).fill(k.c.text_accent).pin(
+                            Some(0.0),
+                            None,
+                            Some(0.0),
+                            Some(0.0),
+                        )
+                    })),
             )
-            .child(
-                quiet_button(&glyphs::CLOSE, "Close file")
-                    .on_press(move |s: &mut Workspace| {
-                        let c = live_mut(s)
-                            .app
-                            .services
-                            .checkouts
-                            .get_mut(&close_project)
-                            .unwrap();
-                        c.tabs.retain(|p| p != &close_path);
-                        if c.selected_file.as_ref() == Some(&close_path) {
-                            c.selected_file = c.tabs.last().cloned();
-                        }
-                    })
-                    .build(k)
-                    .label("Close file"),
-            );
+            .key(key)
+            .role("tab")
+            .label(&path)
+            .help(&path)
+            .hover_group()
+            .focus_group()
+            .focus_return(if checkout.tabs.len() == 1 {
+                "find-files"
+            } else {
+                "file-tabs"
+            })
+            .focusable(true)
+            .focus_selected(selected)
+            .focus_ring(1.5, 0.0, k.c.border_focus)
+            .on_press(move |s: &mut Workspace| {
+                let l = live_mut(s);
+                l.panels.preview_page = 0;
+                l.panels.selection = None;
+                l.app.open_file(project.clone(), path.clone());
+            }),
+        );
     }
-    browser = browser.child(tabs);
+    if !checkout.tabs.is_empty() {
+        browser = browser.child(tabs).child(ui::divider(k));
+    }
     let Some(path) = &checkout.selected_file else {
         if live.app.services.busy(&Task::Directory {
             project: project.clone(),
@@ -1062,11 +1127,15 @@ fn files(s: &Workspace, k: &Kit) -> El {
         .is_some_and(|selection| &selection.project == project && &selection.path == path);
     let mut actions = row().w_full().gap(4.0).center_y().child(
         Button::new(if has_selection {
-            "Attach selection"
+            "Add selection"
         } else {
-            "Attach file"
+            "Add to prompt"
         })
-        .variant(ButtonVariant::Outline)
+        .variant(ButtonVariant::GhostMuted)
+        .icon(&crate::PLUS)
+        .disabled(live.app.selected.is_none_or(|i| {
+            live.app.sessions[i].scope.project != *project || live.app.sessions[i].archived
+        }))
         .on_press(move |s: &mut Workspace| {
             let live = live_mut(s);
             let Some(index) = live
@@ -1100,6 +1169,8 @@ fn files(s: &Workspace, k: &Kit) -> El {
             live.app.attach(index, attachment);
         })
         .build(k)
+        .h(28.0)
+        .px(6.0)
         .key("attach-preview"),
     );
     if file.truncated {
@@ -1113,7 +1184,8 @@ fn files(s: &Workspace, k: &Kit) -> El {
         quiet_button(&ui::REFRESH, "Refresh preview")
             .disabled(live.app.services.busy(&refresh))
             .on_press(move |s: &mut Workspace| live_mut(s).app.task(refresh.clone()))
-            .build(k),
+            .build(k)
+            .key("refresh-file-preview"),
     );
     let owner = (project.clone(), path.clone());
     if !live.panels.documents.contains_key(&owner) {
@@ -2086,11 +2158,17 @@ fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                         },
                         k,
                     )
-                    .color(k.c.text_accent)
+                    .color(match details.state.as_str() {
+                        "MERGED" => k.c.text_accent,
+                        "CLOSED" => k.c.danger.fg,
+                        _ if details.pull_request.is_draft => k.c.text_muted,
+                        _ => k.c.success.fg,
+                    })
                     .px(8.0)
                     .py(4.0)
                     .radius(6.0)
-                    .fill(k.alpha(k.c.text_accent, 0.09)),
+                    .fill(k.c.layer_01)
+                    .border(1.0, k.c.border_base),
                 )
                 .child(ui::caption(
                     format!(
@@ -2196,255 +2274,13 @@ fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             ),
         );
     }
-    let mut checks = col()
-        .w_full()
-        .radius(10.0)
-        .clip_rounded(10.0)
-        .fill(k.c.layer_01)
-        .border(1.0, k.c.border_base);
-    use caelum_core::application::presentation::{Check, Outcome};
-    let group = |outcome| match outcome {
-        Outcome::Failure | Outcome::Interrupted => (0, "Needs attention"),
-        Outcome::Running => (1, "In progress"),
-        Outcome::Success => (2, "Passed"),
-        _ => (3, "Other checks"),
-    };
-    let mut reported: Vec<_> = details
-        .status_check_rollup
-        .iter()
-        .flatten()
-        .map(|check| Check::new(check, caelum_core::application::presentation::now()))
-        .collect();
-    reported.sort_by_key(|check| group(check.outcome).0);
-    let failed = reported
-        .iter()
-        .filter(|c| matches!(c.outcome, Outcome::Failure | Outcome::Interrupted))
-        .count();
-    let running = reported
-        .iter()
-        .filter(|c| c.outcome == Outcome::Running)
-        .count();
-    let passed = reported
-        .iter()
-        .filter(|c| c.outcome == Outcome::Success)
-        .count();
-    let summary = if failed > 0 {
-        format!("{failed} failed · {passed} passed · {running} running")
-    } else if running > 0 {
-        format!("{running} running · {passed} passed")
-    } else if !reported.is_empty() {
-        format!("{passed} passed · {} total", reported.len())
-    } else {
-        "No checks configured".into()
-    };
-    checks = checks.child(
-        row()
-            .w_full()
-            .center_y()
-            .gap(10.0)
-            .padding(14.0)
-            .child(
-                text("Checks")
-                    .font(k.ty.ui_medium)
-                    .color(k.c.text_base)
-                    .grow(1.0),
-            )
-            .child(ui::caption(
-                if details.status_check_rollup.is_none() {
-                    "Waiting for checks"
-                } else {
-                    &summary
-                },
-                k,
-            )),
-    );
-    if details.status_check_rollup.is_none() {
-        checks = checks.child(ui::skeleton("Loading checks", 2, k).px(14.0));
-    }
-    for (i, check) in reported.into_iter().enumerate() {
-        let url = check.url.map(str::to_owned);
-        checks = checks.child(
-            k.interactive(
-                row()
-                    .w_full()
-                    .gap(8.0)
-                    .center_y()
-                    .py(8.0)
-                    .px(14.0)
-                    .child(ui::outcome(check.outcome, k))
-                    .child(
-                        text(check.name)
-                            .font(k.ty.small_medium)
-                            .color(k.c.text_base)
-                            .truncate()
-                            .min_w(0.0)
-                            .grow(1.0)
-                            .key(format!("check-name-{i}")),
-                    )
-                    .child(
-                        ui::caption(
-                            match check.outcome {
-                                Outcome::Success => "Passed",
-                                Outcome::Failure => "Failed",
-                                Outcome::Running => "Running",
-                                Outcome::Interrupted => "Cancelled",
-                                Outcome::Neutral => "Skipped",
-                                Outcome::Unknown => "Unknown",
-                            },
-                            k,
-                        )
-                        .help(check.label)
-                        .w(75.0)
-                        .color(if check.outcome == Outcome::Failure {
-                            k.c.danger.fg
-                        } else {
-                            k.c.text_muted
-                        }),
-                    )
-                    .child(ui::caption(check.timing, k).w(64.0))
-                    .child(
-                        rune::icon(&ui::EXTERNAL, 12.0)
-                            .color(k.c.icon_muted)
-                            .opacity(if url.is_some() { 1.0 } else { 0.0 }),
-                    ),
-            )
-            .key(format!("check-{i}"))
-            .role("link")
-            .label(check.name)
-            .focusable(url.is_some())
-            .focus_ring(1.0, 0.0, k.c.border_focus)
-            .on_press_tx(move |_: &mut Workspace, tx| {
-                if let Some(url) = &url {
-                    let _ = tx.open_url(url);
-                }
-            }),
-        );
-    }
-    if details
-        .status_check_rollup
-        .as_ref()
-        .is_some_and(Vec::is_empty)
-    {
-        checks = checks.child(
-            ui::caption("This repository hasn't reported any checks.", k)
-                .px(14.0)
-                .pb(12.0),
-        );
-    }
-    let readiness_title = if details.state == "MERGED" {
-        "Pull request merged"
-    } else if details.state == "CLOSED" {
-        "Pull request closed"
-    } else if details.pull_request.is_draft {
-        "Draft pull request"
-    } else {
-        match details.merge_state_status.as_str() {
-            "CLEAN" => "Ready to merge",
-            "BEHIND" => "Branch is behind the base",
-            "DIRTY" => "Resolve conflicts before merging",
-            "BLOCKED" => "Merge requirements are not met",
-            "UNSTABLE" => "Some checks need attention",
-            _ => "Checking merge readiness…",
-        }
-    };
-    let mut readiness = col()
-        .w_full()
-        .padding(14.0)
-        .gap(10.0)
-        .fill(k.c.layer_02)
+    content = content
+        .child(crate::merge::view(s, k, project, url, details, layers))
         .child(
-            text(readiness_title)
+            text("Discussion & reviews")
                 .font(k.ty.ui_medium)
-                .color(k.c.text_base)
-                .wrap(),
-        )
-        .child(ui::caption(
-            match details.review_decision.as_deref() {
-                Some("APPROVED") => "Review approved",
-                Some("CHANGES_REQUESTED") => "Changes requested",
-                Some("REVIEW_REQUIRED") => "Review required",
-                _ => "No review decision",
-            },
-            k,
-        ));
-    if details.state == "OPEN" {
-        let mut mutations = row().w_full().gap(8.0).center_y();
-        if details.merge_state_status == "BEHIND" {
-            mutations = mutations.child(action(
-                "Update branch",
-                Task::UpdateBranch {
-                    project: project.clone(),
-                    url: url.clone(),
-                    head: head.clone(),
-                },
-                s,
-                k,
-            ));
-        }
-        if !details.pull_request.is_draft {
-            let methods = [
-                ("Squash and merge", GitHubMergeMethod::Squash),
-                ("Create merge commit", GitHubMergeMethod::Merge),
-                ("Rebase and merge", GitHubMergeMethod::Rebase),
-            ];
-            let (name, method) = methods[live(s).panels.merge_method];
-            let task = Task::Merge {
-                project: project.clone(),
-                url: url.clone(),
-                head: head.clone(),
-                method,
-            };
-            let busy = live(s).app.services.busy(&task);
-            let disabled = busy
-                || matches!(
-                    details.merge_state_status.as_str(),
-                    "DIRTY" | "BLOCKED" | "UNKNOWN"
-                );
-            let names: Vec<_> = methods.iter().map(|m| m.0).collect();
-            mutations = mutations.child(
-                row()
-                    .gap(2.0)
-                    .center_y()
-                    .child(
-                        Button::new(if busy { "Merging…" } else { name })
-                            .variant(ButtonVariant::Contrast)
-                            .disabled(disabled)
-                            .on_press(move |s: &mut Workspace| live_mut(s).app.task(task.clone()))
-                            .build(k)
-                            .key("merge-pull-request"),
-                    )
-                    .child(
-                        crate::select::Select::new("merge-method", &names)
-                            .current(Some(name))
-                            .display("")
-                            .label("Merge method")
-                            .appearance(rune_kit::SelectAppearance::Field)
-                            .width(36.0)
-                            .disabled(busy)
-                            .open(live(s).panels.merge_menu)
-                            .on_toggle(|s: &mut Workspace| {
-                                live_mut(s).panels.merge_menu = !live(s).panels.merge_menu
-                            })
-                            .on_close(|s: &mut Workspace| live_mut(s).panels.merge_menu = false)
-                            .on_choose(move |s: &mut Workspace, value, _| {
-                                let p = &mut live_mut(s).panels;
-                                p.merge_method =
-                                    methods.iter().position(|m| m.0 == value).unwrap_or(0);
-                                p.merge_menu = false;
-                            })
-                            .build(k, layers)
-                            .h(32.0),
-                    ),
-            );
-        }
-        readiness = readiness.child(mutations);
-    }
-    checks = checks.child(ui::divider(k)).child(readiness);
-    content = content.child(checks).child(
-        text("Discussion & reviews")
-            .font(k.ty.ui_medium)
-            .color(k.c.text_base),
-    );
+                .color(k.c.text_base),
+        );
     if review.discussion.is_empty() && review.reviews.is_empty() && review.threads.is_empty() {
         content = content.child(if review.cursors.len() < 3 && review.error.is_none() {
             ui::skeleton("Loading discussion", 3, k)
@@ -2917,11 +2753,7 @@ fn comment_view(
         .gap(6.0)
         .padding(10.0)
         .radius(10.0)
-        .fill(if selected {
-            k.alpha(k.c.text_accent, 0.04)
-        } else {
-            k.c.layer_01
-        })
+        .fill(if selected { k.c.hover } else { k.c.layer_01 })
         .border(
             1.0,
             if selected {

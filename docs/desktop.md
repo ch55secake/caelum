@@ -15,7 +15,9 @@ returns focus to its button. Use the archive icon beside
 **Sessions** to switch between active and archived sessions. **New session** opens
 the searchable project/provider launcher.
 
-Choose the provider, model, reasoning effort and available agent in the composer.
+Choose the model, provider, reasoning effort and available agent in the composer.
+The model is the primary setting; controls wrap into rows in narrow panes while
+Send/Stop stays aligned at the lower right. Shortcut hints appear in tooltips.
 Sending creates a provider session when needed. Later selection changes apply
 to the next message. Search models and star favourites in the model picker.
 The anchored popover keeps its original session or Settings target while open. Unavailable
@@ -23,7 +25,8 @@ current models and saved favourites remain visible; arrow keys navigate the
 windowed catalogue, including after Tab moves focus. Escape or an outside click
 closes it; its footer can save the current model, effort and agent as provider defaults.
 Responses, thinking, typed Read/Run/Patch rows, compaction and shell activity
-appear in the transcript with status and timing; expand rows for details. Patch
+appear in the transcript with tool-specific icons, status and timing. Click a row
+or focus it and press Space to toggle **Details / Hide**. Patch
 previews open automatically, with size and tool-detail controls. Explicitly collapsed
 patches stay collapsed as output arrives. Internal reminders are hidden from rows,
 timeline results and copied responses, while literal code stays intact. **Load earlier messages**
@@ -38,7 +41,7 @@ These indicators follow reduced-motion preferences.
 
 ## Drafts, queues and requests
 
-Enter sends or queues; Shift+Enter inserts a newline. The editor grows from 56 to
+Enter sends or queues; Shift+Enter inserts a newline. The editor grows from 46 to
 180 points, then scrolls independently above the model and send/stop controls.
 Local queue entries capture their own settings and context; edit, reorder, remove,
 pause or resume them. Failed entries return to the front with their original options.
@@ -59,7 +62,7 @@ provider history before resuming because it may have been accepted before a cras
 
 ## Composer context and commands
 
-Use project-file drag/drop, caret-aware `@query` suggestions, or **Attach** in the file
+Use project-file drag/drop, caret-aware `@query` suggestions, or **Add to prompt** in the file
 inspector to attach immutable text snapshots. Each message supports 16 snapshots,
 each capped at 64 KiB; partial snapshots are marked. Selection context retains
 its file and line range. Navigation during a file read keeps the attachment with
@@ -90,11 +93,14 @@ date-range and project filters.
 **Files** and **Changes** share the resizable side inspector. **⌘P** opens file
 search; choose filename or content search. Directories and results are paged,
 previews are read-only with syntax highlighting, virtualized lines and **⌘F**
-source search. Tabs, folders and reading positions persist. Native checkout watches,
+source search. Filename tabs use an active underline and reveal their close button
+on hover or keyboard focus. Arrow keys switch tabs; Tab reaches the focused tab's
+close button, and closing it returns focus to a remaining tab. Tabs, folders and
+reading positions persist. Native checkout watches,
 provider/tool events, **Refresh** and foreground activation reload files and Changes
 while preserving position. Repeated edits and staging coalesce; an edit during an
 in-flight refresh schedules another read. Linked-worktree Git metadata is watched too.
-Select lines to attach them to the prompt. Files, local staged/unstaged/untracked
+Select lines and choose **Add selection** to attach them to the prompt. Files, local staged/unstaged/untracked
 changes and continuous PR review share the same native code/diff surfaces.
 
 Use a project's branch icon or **Create worktree** in the project/provider launcher
@@ -125,6 +131,8 @@ Worktrees, Notifications and About. Provider defaults/favourites, notification
 visibility and sounds, worktree storage, legacy settings import and persistence
 retry live here. Unread state persists and clears only when the loaded conversation
 is visible and following the latest messages.
+The default Caelum palette keeps surfaces neutral, with colour in selection markers,
+tab underlines, focus borders, status icons, links and primary actions.
 
 Closing the window keeps sessions running. Clicking the Dock icon or opening
 a project through the CLI brings it back. **⌘Q** quits and saves the latest drafts.

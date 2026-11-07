@@ -1,6 +1,6 @@
 //! Renderer-independent labels, outcomes and summaries for both live and restored work.
 use super::{Entry, EntryKind};
-use caelum_protocol::GitHubStatusCheck;
+use caelum_protocol::{GitHubPullRequestDetails, GitHubStatusCheck};
 use serde_json::Value;
 
 #[derive(Clone, Debug)]
@@ -608,6 +608,156 @@ impl<'a> Check<'a> {
                 outcome: outcome(state, true),
                 timing: "—".into(),
             },
+        }
+    }
+}
+
+pub struct CheckSummary {
+    pub title: &'static str,
+    pub detail: String,
+    pub outcome: Outcome,
+}
+
+impl CheckSummary {
+    pub fn new(checks: Option<&[GitHubStatusCheck]>) -> Self {
+        let Some(checks) = checks else {
+            return Self {
+                title: "Waiting for checks",
+                detail: "GitHub hasn't reported check results yet.".into(),
+                outcome: Outcome::Running,
+            };
+        };
+        let mut passed = 0;
+        let mut failed = 0;
+        let mut running = 0;
+        let mut other = 0;
+        for check in checks {
+            match Check::new(check, 0).outcome {
+                Outcome::Success => passed += 1,
+                Outcome::Failure | Outcome::Interrupted => failed += 1,
+                Outcome::Running => running += 1,
+                _ => other += 1,
+            }
+        }
+        let (title, outcome) = if checks.is_empty() {
+            ("No checks configured", Outcome::Neutral)
+        } else if failed > 0 {
+            ("Some checks need attention", Outcome::Failure)
+        } else if running > 0 {
+            ("Checks are in progress", Outcome::Running)
+        } else if other > 0 {
+            ("Check results reported", Outcome::Unknown)
+        } else {
+            ("All checks have passed", Outcome::Success)
+        };
+        let detail = if checks.is_empty() {
+            "This repository hasn't reported any checks.".into()
+        } else {
+            [
+                (passed, "passed"),
+                (failed, "failed or cancelled"),
+                (running, "running"),
+                (other, "skipped or unknown"),
+            ]
+            .into_iter()
+            .filter(|(n, _)| *n > 0)
+            .map(|(n, label)| format!("{n} {label}"))
+            .collect::<Vec<_>>()
+            .join(" · ")
+        };
+        Self {
+            title,
+            detail,
+            outcome,
+        }
+    }
+}
+
+pub struct MergeReadiness {
+    pub title: &'static str,
+    pub detail: &'static str,
+    pub outcome: Outcome,
+    pub can_merge: bool,
+    pub behind: bool,
+}
+
+impl MergeReadiness {
+    pub fn new(details: &GitHubPullRequestDetails) -> Self {
+        let (title, detail, outcome, can_merge) = if details.state == "MERGED" {
+            (
+                "Pull request merged",
+                "The changes have been merged into the base branch.",
+                Outcome::Success,
+                false,
+            )
+        } else if details.state == "CLOSED" {
+            (
+                "Pull request closed",
+                "This pull request is no longer open for merging.",
+                Outcome::Neutral,
+                false,
+            )
+        } else if details.pull_request.is_draft {
+            (
+                "This pull request is a draft",
+                "Mark it ready for review on GitHub to enable merging.",
+                Outcome::Neutral,
+                false,
+            )
+        } else if details.mergeable == "CONFLICTING" || details.merge_state_status == "DIRTY" {
+            (
+                "This branch has conflicts",
+                "Resolve the conflicts before merging into the base branch.",
+                Outcome::Failure,
+                false,
+            )
+        } else if details.mergeable != "MERGEABLE" {
+            (
+                "Checking merge readiness",
+                "GitHub is calculating whether this branch can be merged.",
+                Outcome::Running,
+                false,
+            )
+        } else {
+            match details.merge_state_status.as_str() {
+                "CLEAN" | "HAS_HOOKS" => (
+                    "No conflicts with the base branch",
+                    "This branch can be merged automatically.",
+                    Outcome::Success,
+                    true,
+                ),
+                "BEHIND" => (
+                    "This branch is out of date",
+                    "Update it with the latest changes from the base branch.",
+                    Outcome::Interrupted,
+                    true,
+                ),
+                "BLOCKED" => (
+                    "Merging is blocked",
+                    "Required reviews or repository rules are not yet satisfied.",
+                    Outcome::Interrupted,
+                    false,
+                ),
+                "UNSTABLE" => (
+                    "Some checks need attention",
+                    "Review the check results before merging this branch.",
+                    Outcome::Interrupted,
+                    true,
+                ),
+                _ => (
+                    "Checking merge readiness",
+                    "GitHub hasn't reported a merge decision yet.",
+                    Outcome::Running,
+                    false,
+                ),
+            }
+        };
+        Self {
+            title,
+            detail,
+            outcome,
+            can_merge: can_merge && details.state == "OPEN",
+            behind: details.state == "OPEN" && details.merge_state_status == "BEHIND",
         }
     }
 }

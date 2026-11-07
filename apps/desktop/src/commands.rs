@@ -353,7 +353,7 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
                         rune::Span::new(r.start, r.end)
                             .color(kit.c.text_accent)
                             .weight(600.0)
-                            .bg(kit.alpha(kit.c.text_accent, 0.10), 1.0)
+                            .bg(kit.c.layer_03, 1.0)
                     })
                     .collect::<Vec<_>>()
                 };
@@ -386,7 +386,7 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
                             .gap(12.0)
                             .radius(8.0)
                             .fill(if selected {
-                                kit.alpha(kit.c.text_accent, 0.09)
+                                kit.c.hover
                             } else {
                                 rune::Color::TRANSPARENT
                             })

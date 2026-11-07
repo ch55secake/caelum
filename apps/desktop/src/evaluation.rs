@@ -249,7 +249,23 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         }
         return true;
     }
-    if matches!(name, "files" | "files-loading" | "changes-empty") {
+    if name == "composer-options" {
+        let session = &mut l.app.sessions[0];
+        session.scope.provider = Provider::OpenCode;
+        session.options.model = Some("model-long".into());
+        session.options.effort = Some("High".into());
+        session.options.agent = Some("build".into());
+        l.app.choices.insert(session.scope.clone(), serde_json::from_value(json!({
+            "models":[{"id":"model-long","name":"A model with a particularly long name","efforts":[{"id":"High","name":"High"},{"id":"Low","name":"Low"}],"defaultEffort":"High"}],
+            "agents":[{"id":"build","name":"Build"},{"id":"plan","name":"Plan"}],"defaultModel":"model-long"
+        })).unwrap());
+        state.inspector.set_open(true);
+        return true;
+    }
+    if matches!(
+        name,
+        "files" | "files-tabs" | "files-loading" | "changes-empty"
+    ) {
         let checkout = l.app.services.checkouts.get_mut(project).unwrap();
         if name == "changes-empty" {
             checkout.git.as_mut().unwrap().changes.clear();
@@ -257,7 +273,7 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             state.inspector.set_open(true);
             return true;
         }
-        if name == "files" {
+        if matches!(name, "files" | "files-tabs") {
             checkout.directories.insert(String::new(), serde_json::from_value(json!({
                 "path":"","entries":[{"name":"src","path":"src","kind":"directory","sizeBytes":null},{"name":"Cargo.toml","path":"Cargo.toml","kind":"file","sizeBytes":245}],"total":2,"nextOffset":null
             })).unwrap());
@@ -266,10 +282,21 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             });
             checkout.tabs = vec!["Cargo.toml".into()];
             checkout.selected_file = Some("Cargo.toml".into());
+            if name == "files-tabs" {
+                for path in [
+                    "src/application/independent_session_workspace.rs",
+                    "README.md",
+                ] {
+                    checkout.files.insert(path.into(), caelum_protocol::ProjectFileContent {
+                        path: path.into(), content: "// Each checkout retains its own draft.\nlet owner = session.key();\n".into(), size_bytes: 70, truncated: false,
+                    });
+                    checkout.tabs.push(path.into());
+                }
+            }
         }
         l.app.services.revision += 1;
         crate::panels::show(state, crate::panels::Screen::Files);
-        if name == "files" {
+        if matches!(name, "files" | "files-tabs") {
             finish_fixture_reads(state.live.as_mut().unwrap());
         }
         return true;
@@ -475,7 +502,7 @@ pub fn scene(state: &mut Workspace, name: &str) {
         l.drafts[0].replace_text(&l.app.sessions[0].draft);
         return;
     }
-    if name == "tools" {
+    if matches!(name, "tools" | "tools-collapsed") {
         let session = &mut l.app.sessions[0];
         session.conversation = Default::default();
         session.conversation.history(Provider::OpenCode,&[json!({"id":"prompt","type":"user","text":"Restore native workspace parity and verify the interactions."}),json!({"id":"work","type":"assistant","content":[
@@ -485,7 +512,7 @@ pub fn scene(state: &mut Workspace, name: &str) {
             {"id":"patch","type":"tool","name":"apply_patch","state":{"status":"completed","input":{"path":"src/workspace.rs","patch":"@@ -1 +1 @@\n-restore();\n+restore_owned_draft();"},"content":[{"type":"text","text":"Updated src/workspace.rs"}],"time":{"start":4600,"end":4800}}}
         ]})],false);
         for entry in &session.conversation.entries {
-            if entry.kind != caelum_core::application::EntryKind::User {
+            if name == "tools" && entry.kind != caelum_core::application::EntryKind::User {
                 l.expanded.insert((0, entry.id.clone()));
             }
         }
@@ -574,6 +601,31 @@ pub fn scene(state: &mut Workspace, name: &str) {
             ])).unwrap());
         }
     }
+    if name.starts_with("merge-") {
+        review.selected_comments.clear();
+        let details = review.details.as_mut().unwrap();
+        details.body = "A focused native workspace refinement, ready for review.".into();
+        match name {
+            "merge-blocked" => {
+                details.merge_state_status = "BLOCKED".into();
+                details.review_decision = Some("REVIEW_REQUIRED".into());
+            }
+            "merge-pending" => {
+                details.merge_state_status = "UNKNOWN".into();
+                details.mergeable = "UNKNOWN".into();
+                details.status_check_rollup = None;
+            }
+            "merge-conflicts" => {
+                details.merge_state_status = "DIRTY".into();
+                details.mergeable = "CONFLICTING".into();
+            }
+            "merge-behind" => details.merge_state_status = "BEHIND".into(),
+            "merge-draft" => details.pull_request.is_draft = true,
+            "merge-merged" => details.state = "MERGED".into(),
+            "merge-closed" => details.state = "CLOSED".into(),
+            _ => {}
+        }
+    }
     for kind in ["Discussion", "Reviews", "Threads"] {
         review.cursors.insert(kind.into(), None);
     }
@@ -592,12 +644,15 @@ pub fn scene(state: &mut Workspace, name: &str) {
         l.drafts[0].focused = true;
     } else {
         crate::panels::open_review(state, project.into(), url.into());
-        state.live.as_mut().unwrap().panels.review_tab =
-            if name == "checks" || name == "discussion" || name.starts_with("overview") {
-                0
-            } else {
-                1
-            };
+        state.live.as_mut().unwrap().panels.review_tab = if name == "checks"
+            || name == "discussion"
+            || name.starts_with("overview")
+            || name.starts_with("merge-")
+        {
+            0
+        } else {
+            1
+        };
         if name == "review-loading" {
             let l = state.live.as_mut().unwrap();
             let r = l

@@ -12,9 +12,10 @@ independent.
 
 Select a PR to open the main review screen. **Back to session** restores the
 conversation and draft. **Overview** uses a centred reading column for Markdown,
-compact branch metadata, aligned checks, merge readiness and discussion, with a
-link to GitHub. Check icons, status labels, timing and links distinguish running,
-successful, failed and unknown results. **Refresh review** reloads metadata;
+compact branch metadata, review/check/branch-readiness rows and discussion, with a
+link to GitHub. Checks start as a summary; **Details / Hide** expands their aligned
+names, icons, statuses, timing and links. Skipped or unknown results are kept
+distinct from successful checks. **Refresh review** reloads metadata;
 open reviews also refresh every 30 seconds.
 
 ## Files and feedback
@@ -43,8 +44,9 @@ refresh failures retain loaded data and expose a retryable error.
 ## Branch updates and merging
 
 **Update branch** appears when the branch is behind and requests GitHub's
-base-into-head update. The merge button and adjacent method menu sit with readiness;
-choose merge commit, squash or rebase. Both mutations pin the displayed head; GitHub checks
+base-into-head update. A joined green merge button and dropdown offer merge commit,
+squash or rebase. Pending, blocked and conflicting states disable merging; draft,
+merged and closed PRs omit the merge action. Both mutations pin the displayed head; GitHub checks
 permissions and repository rules. In-flight mutations remain locked across
 navigation and refresh, and errors remain available for retry.
 

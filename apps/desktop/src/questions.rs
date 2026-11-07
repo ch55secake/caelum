@@ -255,11 +255,7 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                     .key(element_key)
                     .w_full()
                     .radius(8.0)
-                    .fill(if selected {
-                        k.alpha(k.c.text_accent, 0.10)
-                    } else {
-                        k.c.bg_base
-                    })
+                    .fill(if selected { k.c.hover } else { k.c.bg_base })
                     .border(
                         1.0,
                         if selected {

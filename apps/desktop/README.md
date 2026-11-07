@@ -38,9 +38,10 @@ with `python3 apps/desktop/preview/capture.py`; see [design](../../docs/design/R
 and [performance](../../docs/performance/README.md) for headless interaction replay
 and native frame-measurement commands. Pinned Rune's `--native` mode does not
 dispatch `--script` events; check OS interaction in the running application.
-The 188 light/dark, normal/compact captures include populated, empty, loading,
+The 332 light/dark, normal/compact captures include populated, empty, loading,
 error, hover, focus and disabled states. Use `--scene models` (or `worktrees`,
-`shells`, `review-loading`, `tools`, `files`, `crowded`) with `--design-fixture`
+`shells`, `review-loading`, `composer-options`, `files-tabs`, `tools-collapsed`,
+`merge-ready`, `merge-blocked`, `crowded`) with `--design-fixture`
 to inspect one.
 
 ## State and migration

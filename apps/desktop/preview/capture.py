@@ -12,6 +12,8 @@ subprocess.run(["cargo", "build", "--locked", "-p", "caelum-desktop"], check=Tru
 binary = root / "target/debug/caelum-desktop"
 scenes = ("", "inspector", "compact", "settings", "providers", "provider-error", "notifications", "storage", "about", "models", "models-empty", "launcher", "session", "timeline", "timeline-empty", "usage", "usage-loading", "stats", "stats-empty", "stats-loading", "stats-error", "commands", "shells", "working", "thinking", "retrying", "stopping", "empty", "error", "review-loading", "review-error", "discussion", "tools", "review", "checks", "mentions", "images", "image-preview", "files", "files-loading", "changes-empty", "approval", "questions", "crowded", "worktrees", "worktrees-loading", "worktrees-error")
 interactions = {
+    "composer-focus": ("", [{"t": 0.25, "key": "live-draft-0"}]),
+    "check-details": ("merge-ready", [{"t": 0.25, "key": "review-checks-toggle"}]),
     "worktree-base": ("worktree-create", [{"t": 0.25, "key": "worktree-base-trigger"}]),
     "user-copy": ("messages", [{"t": 0.25, "type": "move", "key": "copy-user-0-opencode-formatted"}]),
     "merge-method": ("checks", [{"t": 0.15, "type": "scroll", "key": "review-overview-scroll", "dy": -130, "dur": 0.1}, {"t": 0.5, "key": "merge-method-trigger"}]),
@@ -29,6 +31,7 @@ interactions = {
     "review-navigation": ("review", [{"t": 0.25, "key": "review-nav-toggle"}]),
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
+scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

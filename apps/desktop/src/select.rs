@@ -13,6 +13,8 @@ pub struct Select {
     placeholder: String,
     label: String,
     display: Option<String>,
+    prominent: bool,
+    indicator: &'static rune::Icon,
     field: bool,
     width: f32,
     open: bool,
@@ -33,6 +35,8 @@ impl Select {
             placeholder: String::new(),
             label: String::new(),
             display: None,
+            prominent: false,
+            indicator: &crate::ui::CHOICE,
             field: false,
             width: 260.0,
             open: false,
@@ -58,6 +62,14 @@ impl Select {
     }
     pub fn display(mut self, value: impl Into<String>) -> Self {
         self.display = Some(value.into());
+        self
+    }
+    pub fn prominent(mut self) -> Self {
+        self.prominent = true;
+        self
+    }
+    pub fn indicator(mut self, value: &'static rune::Icon) -> Self {
+        self.indicator = value;
         self
     }
     pub fn appearance(mut self, value: SelectAppearance) -> Self {
@@ -122,18 +134,26 @@ impl Select {
                 .center_y()
                 .px(10.0)
                 .h(if self.field { 34.0 } else { 28.0 })
-                .radius(8.0)
+                .radius(6.0)
                 .fill(if self.open {
                     k.c.hover
                 } else if self.field {
                     k.c.layer_02
                 } else {
-                    rune::Color::TRANSPARENT
+                    k.c.bg_base
                 })
                 .children((!display.is_empty()).then(|| {
                     text(display)
-                        .font(k.ty.ui)
-                        .color(k.c.text_base)
+                        .font(if self.prominent {
+                            k.ty.ui_medium
+                        } else {
+                            k.ty.ui
+                        })
+                        .color(if self.prominent || self.field {
+                            k.c.text_base
+                        } else {
+                            k.c.text_muted
+                        })
                         .truncate()
                         .min_w(0.0)
                         .grow(1.0)
@@ -150,10 +170,21 @@ impl Select {
                         k.c.border_base
                     },
                 )
-                .child(icon(&crate::ui::CHOICE, 13.0).color(k.c.icon_muted));
+                .child(icon(self.indicator, 13.0).color(k.c.icon_muted));
         } else {
             field = field
-                .w((rune::text::measure(display, &[], k.ty.ui, None).0 + 20.0).clamp(36.0, 220.0));
+                .w(
+                    (rune::text::measure(display, &[], k.ty.ui_medium, None).0 + 20.0)
+                        .clamp(36.0, 220.0),
+                )
+                .border(
+                    1.0,
+                    if self.prominent {
+                        k.c.border_strong
+                    } else {
+                        k.c.border_base
+                    },
+                );
         }
         field = field
             .key(format!("{}-trigger", self.key))
@@ -200,7 +231,7 @@ impl Select {
                         .center_y()
                         .radius(6.0)
                         .fill(if selected {
-                            k.alpha(k.c.text_accent, 0.08)
+                            k.c.hover
                         } else {
                             rune::Color::TRANSPARENT
                         })

@@ -136,6 +136,267 @@ fn design_runtime(scene: &str, size: (f32, f32)) -> Runtime<Workspace> {
 }
 
 #[test]
+fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("composer-options", size);
+        for working in [false, true] {
+            rt.update(|s, _| {
+                s.live.as_mut().unwrap().app.sessions[0]
+                    .conversation
+                    .working = working
+            });
+            advance(&mut rt, 0.3);
+            for name in [
+                "model-trigger",
+                "provider-trigger",
+                "effort-trigger",
+                "agent-trigger",
+                "send",
+            ] {
+                let e = element(&rt, name);
+                assert!(e.rect[2] >= 32.0 && e.rect[3] >= 28.0, "{name}: {e:?}");
+                assert!(
+                    e.rect
+                        .iter()
+                        .zip(e.visible)
+                        .all(|(a, b)| (*a - b).abs() < 1.0),
+                    "{name} clipped: {e:?}"
+                );
+                assert!(e.rect[1] + e.rect[3] <= size.1, "{name} below window");
+            }
+            assert!(element(&rt, "composer-editor").visible[3] >= 46.0);
+            if working {
+                assert!(element(&rt, "queue-message").visible[2] >= 50.0);
+                assert_eq!(
+                    element(&rt, "send").label.as_deref(),
+                    Some("Stop generation")
+                );
+            }
+            click(&mut rt, "agent-trigger");
+            key(&mut rt, Key::Escape, Mods::default());
+            advance(&mut rt, 0.2);
+            assert!(element(&rt, "agent-trigger").focused);
+            assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+        }
+    }
+}
+
+#[test]
+fn file_tabs_reveal_keyboard_selection_and_restore_focus_after_closing() {
+    let mut rt = design_runtime("files-tabs", (800.0, 620.0));
+    let project = "/projects/caelum";
+    let paths = [
+        "Cargo.toml",
+        "src/application/independent_session_workspace.rs",
+        "README.md",
+    ];
+    let tabs =
+        paths.map(|path| format!("file-tab-{}", crate::code_view::source_key(project, path)));
+    click(&mut rt, &tabs[0]);
+    for i in [1, 2] {
+        key(&mut rt, Key::Right, Mods::default());
+        advance(&mut rt, 0.4);
+        assert!(element(&rt, &tabs[i]).focused);
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().app.services.checkouts[project]
+                .selected_file
+                .as_deref(),
+            Some(paths[i])
+        );
+        let e = element(&rt, &tabs[i]);
+        assert!(
+            (e.visible[2] - e.rect[2]).abs() < 1.0,
+            "selected tab clipped: {e:?}"
+        );
+    }
+    key(&mut rt, Key::Tab, Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(element(&rt, &format!("close-{}", tabs[2])).focused);
+    key(&mut rt, Key::Text(" ".into()), Mods::default());
+    advance(&mut rt, 0.4);
+    assert!(element(&rt, &tabs[1]).focused);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts[project]
+            .tabs
+            .len(),
+        2
+    );
+    click(&mut rt, "attach-preview");
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(1));
+    advance(&mut rt, 0.2);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0].attachments[0].path,
+        paths[1]
+    );
+    assert!(
+        rt.state.live.as_ref().unwrap().app.sessions[1]
+            .attachments
+            .is_empty()
+    );
+    for i in [1, 0] {
+        let close = format!("close-{}", tabs[i]);
+        let (x, y) = rt.find(&close).unwrap();
+        rt.pointer_move(x, y);
+        advance(&mut rt, 0.2);
+        click(&mut rt, &close);
+        advance(&mut rt, 0.3);
+    }
+    assert!(element(&rt, "find-files").focused);
+    assert!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts[project]
+            .selected_file
+            .is_none()
+    );
+}
+
+#[test]
+fn merge_states_expose_only_available_actions_in_the_compact_overview() {
+    use caelum_core::application::{Command, Task};
+    for scene in [
+        "merge-ready",
+        "merge-behind",
+        "merge-blocked",
+        "merge-pending",
+        "merge-conflicts",
+        "merge-draft",
+        "merge-merged",
+        "merge-closed",
+    ] {
+        let mut rt = design_runtime(scene, (800.0, 620.0));
+        let present = !matches!(scene, "merge-draft" | "merge-merged" | "merge-closed");
+        assert_eq!(rt.find("merge-pull-request").is_some(), present, "{scene}");
+        if present {
+            let e = element(&rt, "merge-pull-request");
+            assert!(e.visible[3] >= 33.0, "{scene} merge clipped: {e:?}");
+            let available = matches!(scene, "merge-ready" | "merge-behind");
+            assert_eq!(e.focusable, available, "{scene}");
+            if !available {
+                click(&mut rt, "merge-pull-request");
+                assert!(
+                    !rt.state
+                        .live
+                        .as_mut()
+                        .unwrap()
+                        .app
+                        .commands()
+                        .iter()
+                        .any(|(_, c)| matches!(c, Command::Task(Task::Merge { .. })))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn merge_checks_methods_and_mutations_retain_the_review_owner() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    use caelum_protocol::GitHubMergeMethod;
+    for update in [false, true] {
+        let mut rt = design_runtime(
+            if update {
+                "merge-behind"
+            } else {
+                "merge-ready"
+            },
+            (800.0, 620.0),
+        );
+        click(&mut rt, "review-checks-toggle");
+        assert_eq!(element(&rt, "review-checks-toggle").expanded, Some(true));
+        assert!(element(&rt, "check-name-0").visible[2] > 100.0);
+        key(&mut rt, Key::Text(" ".into()), Mods::default());
+        advance(&mut rt, 0.2);
+        assert_eq!(element(&rt, "review-checks-toggle").expanded, Some(false));
+        click(&mut rt, "merge-method-trigger");
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.2);
+        assert!(element(&rt, "merge-method-trigger").focused);
+        key(&mut rt, Key::Text(" ".into()), Mods::default());
+        advance(&mut rt, 0.2);
+        key(&mut rt, Key::End, Mods::default());
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.2);
+        assert_eq!(
+            element(&rt, "merge-pull-request").label.as_deref(),
+            Some("Rebase and merge")
+        );
+        let action = if update {
+            "update-review-branch"
+        } else {
+            "merge-pull-request"
+        };
+        click(&mut rt, action);
+        let (request, command) = rt
+            .state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .into_iter()
+            .find(|(_, c)| {
+                matches!(
+                    c,
+                    Command::Task(Task::Merge { .. } | Task::UpdateBranch { .. })
+                )
+            })
+            .unwrap();
+        let original = (
+            "/projects/caelum".to_string(),
+            "https://github.com/ch55secake/caelum/pull/95".to_string(),
+        );
+        match command {
+            Command::Task(Task::UpdateBranch { project, url, head }) if update => {
+                assert_eq!((project, url), original);
+                assert_eq!(head, "a".repeat(40));
+            }
+            Command::Task(Task::Merge {
+                project,
+                url,
+                head,
+                method,
+            }) if !update => {
+                assert_eq!((project, url), original);
+                assert_eq!(head, "a".repeat(40));
+                assert_eq!(method, GitHubMergeMethod::Rebase);
+            }
+            _ => panic!("wrong mutation"),
+        }
+        assert!(!element(&rt, "merge-method-trigger").focusable);
+        click(&mut rt, action);
+        assert!(
+            !rt.state
+                .live
+                .as_mut()
+                .unwrap()
+                .app
+                .commands()
+                .iter()
+                .any(|(_, c)| matches!(
+                    c,
+                    Command::Task(Task::Merge { .. } | Task::UpdateBranch { .. })
+                ))
+        );
+        rt.update(|s, _| {
+            crate::panels::open_review(
+                s,
+                "/other".into(),
+                "https://github.com/example/other/pull/2".into(),
+            );
+            let l = s.live.as_mut().unwrap();
+            l.app.select(1);
+            l.app.commands();
+            l.apply(Event::Completed(request, Ok(Reply::Task(TaskReply::Done))));
+        });
+        advance(&mut rt, 0.2);
+        let l = rt.state.live.as_mut().unwrap();
+        assert_eq!(l.app.selected, Some(1));
+        assert_eq!(l.panels.review.as_ref().unwrap().0, "/other");
+        assert!(l.app.services.reviews[&original].notice.is_some());
+        assert!(l.app.commands().iter().any(|(_, c)| matches!(c, Command::Task(Task::Details { project, url }) if project == &original.0 && url == &original.1)));
+    }
+}
+
+#[test]
 fn worktree_form_searches_bases_and_captures_project_provider_and_branch() {
     use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
     let mut rt = design_runtime("worktree-create", (800.0, 620.0));
@@ -225,7 +486,7 @@ fn background_previews_are_bounded_and_output_actions_keep_their_session() {
         let mut rt = design_runtime("shells-many", size);
         assert!(element(&rt, "shell-preview").rect[3] <= 50.1);
         assert!(element(&rt, "background-shells").rect[3] <= 140.1);
-        assert!(element(&rt, "composer-editor").visible[3] >= 56.0);
+        assert!(element(&rt, "composer-editor").visible[3] >= 46.0);
         click(&mut rt, "view-shell-output");
         advance(&mut rt, 0.3);
         let output = element(&rt, "shell-output-shell_fixture");
@@ -320,7 +581,8 @@ fn review_overview_has_a_readable_column_aligned_checks_and_conditional_feedback
             .iter()
             .any(|e| !e.exiting && e.key.as_deref() == Some("merge-method-content"))
     );
-    let rt = design_runtime("checks", (1280.0, 1000.0));
+    let mut rt = design_runtime("checks", (1280.0, 1000.0));
+    click(&mut rt, "review-checks-toggle");
     let first = element(&rt, "check-name-0");
     let second = element(&rt, "check-name-1");
     assert!((first.rect[0] - second.rect[0]).abs() < 1.0);
@@ -2299,7 +2561,7 @@ fn native_file_preview_attaches_an_immutable_snapshot_to_the_originating_draft()
     );
     assert_eq!(
         element(&rt, "attach-preview").label.as_deref(),
-        Some("Attach file")
+        Some("Add to prompt")
     );
     click(&mut rt, "attach-preview");
     click(&mut rt, "close-inspector");

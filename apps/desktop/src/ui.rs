@@ -48,14 +48,20 @@ impl Button {
             V::Warning => k.alpha(k.c.warning.fg, 0.28),
             _ => rune::Color::TRANSPARENT,
         };
-        self.0
+        let element = self
+            .0
             .build(&skin)
             .h(32.0)
             .px(12.0)
             .radius(8.0)
             .border(1.0, border)
             .focus_ring(1.5, 1.0, k.c.border_focus)
-            .self_start()
+            .self_start();
+        if self.1 == V::Contrast {
+            element.gradient(rune::Color::TRANSPARENT, rune::Color::TRANSPARENT)
+        } else {
+            element
+        }
     }
 }
 
@@ -140,7 +146,7 @@ pub fn choice(title: &str, detail: &str, selected: bool, k: &Kit) -> El {
             .center_y()
             .radius(7.0)
             .fill(if selected {
-                k.alpha(k.c.text_accent, 0.10)
+                k.c.hover
             } else {
                 rune::Color::TRANSPARENT
             })
@@ -176,9 +182,9 @@ pub fn tab(title: &str, selected: bool, k: &Kit) -> El {
             .h(30.0)
             .px(10.0)
             .center_y()
-            .radius(7.0)
+            .radius(4.0)
             .fill(if selected {
-                k.alpha(k.c.text_accent, 0.10)
+                k.c.hover
             } else {
                 rune::Color::TRANSPARENT
             })
@@ -186,6 +192,14 @@ pub fn tab(title: &str, selected: bool, k: &Kit) -> El {
                 k.c.text_accent
             } else {
                 k.c.text_muted
+            }))
+            .children(selected.then(|| {
+                rune::el().h(2.0).radius(1.0).fill(k.c.text_accent).pin(
+                    Some(8.0),
+                    None,
+                    Some(8.0),
+                    Some(0.0),
+                )
             })),
     )
     .role("tab")
@@ -271,7 +285,7 @@ pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) 
                 .label("Running")
                 .key("status-running");
         }
-        Outcome::Success => (&CHECK, k.c.text_muted, "Succeeded"),
+        Outcome::Success => (&CHECK, k.c.success.fg, "Succeeded"),
         Outcome::Failure => (&FAIL, k.c.danger.fg, "Failed"),
         Outcome::Interrupted => (&MINUS, k.c.warning.fg, "Interrupted"),
         Outcome::Neutral => (&MINUS, k.c.text_muted, "Neutral"),
@@ -292,6 +306,21 @@ pub static FILE: Icon = Icon {
     name: "file",
     view: 16.0,
     body: r#"<path d="M4 1.5h5l3 3v10H4zM9 1.5v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>"#,
+};
+pub static TERMINAL: Icon = Icon {
+    name: "terminal",
+    view: 16.0,
+    body: r#"<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="m4 6 2 2-2 2m4 0h3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+pub static EDIT: Icon = Icon {
+    name: "edit",
+    view: 16.0,
+    body: r#"<path d="m9.5 2.5 4 4m-10 7 1-4 7-7a1.4 1.4 0 0 1 2 2l-7 7-4 1Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>"#,
+};
+pub static TOOL: Icon = Icon {
+    name: "tool",
+    view: 16.0,
+    body: r#"<path d="M9 2a4 4 0 0 0-4 5l-3 4a1.8 1.8 0 0 0 3 2l4-4a4 4 0 0 0 5-4l-3 2-2-2 2-3Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>"#,
 };
 pub static BRANCH: Icon = Icon {
     name: "branch",
@@ -404,9 +433,14 @@ pub fn session_row(title: &str, subtitle: &str, selected: bool, k: &Kit) -> Side
 pub fn selected_row(element: El, selected: bool, k: &Kit) -> El {
     let element = element.radius(10.0);
     if selected {
-        element
-            .fill(k.alpha(k.c.text_accent, 0.08))
-            .border(1.0, k.alpha(k.c.text_accent, 0.18))
+        element.fill(k.c.hover).border(1.0, k.c.border_base).child(
+            rune::el().w(3.0).radius(1.5).fill(k.c.text_accent).pin(
+                Some(0.0),
+                Some(14.0),
+                None,
+                Some(14.0),
+            ),
+        )
     } else {
         element
     }
@@ -470,13 +504,13 @@ pub fn composer_activity(
             .w_full()
             .h_full()
             .radius(14.0)
-            .border(1.5, k.c.text_accent)
+            .border(1.5, activity_color(a, k))
             .a11y_hidden()
             .looping(rune::LoopSpec::opacity(
                 if waiting { 4.5 } else { 2.8 },
                 0.0,
-                if waiting { 0.25 } else { 0.3 },
-                if waiting { 0.6 } else { 0.85 },
+                0.15,
+                if waiting { 0.4 } else { 0.6 },
             ))
     });
     col().w_full().max_w(840.0).px(padding).pb(24.0).child(
@@ -485,13 +519,13 @@ pub fn composer_activity(
             .role("form")
             .label("Message composer")
             .w_full()
-            .padding(14.0)
+            .padding(12.0)
             .radius(14.0)
             .fill(k.c.layer_02)
             .border(
                 1.0,
                 if focused {
-                    k.alpha(k.c.text_accent, 0.55)
+                    k.c.border_focus
                 } else {
                     k.c.border_strong
                 },
@@ -500,12 +534,26 @@ pub fn composer_activity(
             .child(
                 rune::auto_grow(input, 2, 8)
                     .key("composer-editor")
-                    .min_h(56.0)
+                    .min_h(46.0)
                     .max_h(180.0),
             )
-            .child(controls.min_h(32.0).mt(8.0))
+            .child(controls.min_h(32.0).mt(10.0))
             .children(outline),
     )
+}
+
+pub fn activity_color(
+    activity: &caelum_core::application::presentation::Activity,
+    k: &Kit,
+) -> rune::Color {
+    use caelum_core::application::presentation::ActivityKind;
+    match activity.kind {
+        ActivityKind::Input
+        | ActivityKind::Background
+        | ActivityKind::Retrying
+        | ActivityKind::Stopping => k.c.warning.fg,
+        _ => k.c.text_accent,
+    }
 }
 
 pub fn empty(title: &str, detail: &str, k: &Kit) -> El {

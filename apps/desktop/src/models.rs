@@ -311,7 +311,7 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
                         .grow(1.0)
                         .min_w(0.0)
                         .fill(if i == selected {
-                            kit.alpha(kit.c.text_accent, 0.10)
+                            kit.c.hover
                         } else {
                             rune::Color::TRANSPARENT
                         })

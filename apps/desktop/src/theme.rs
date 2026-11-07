@@ -44,11 +44,11 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
             "#34548a", "#385f0d", "#9f2240",
         ],
         (_, true) => [
-            "#0b0c0e", "#101114", "#141519", "#1e1f25", "#25262d", "#e7e8ec", "#9698a3", "#a39af6",
+            "#0e0e0e", "#141414", "#1b1b1b", "#252525", "#303030", "#e7e8ec", "#9698a3", "#a39af6",
             "#6659b0", "#89bc9b", "#efa4ab",
         ],
         (_, false) => [
-            "#fafafc", "#f0f0f5", "#ffffff", "#e9e9f1", "#dcdde5", "#252630", "#656776", "#6c56b0",
+            "#fafafa", "#f2f2f2", "#ffffff", "#e9e9e9", "#dddddd", "#252630", "#656776", "#6c56b0",
             "#6659b0", "#337348", "#b53a51",
         ],
     };
@@ -85,7 +85,7 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     k.c.layer_03 = hover;
     k.c.layer_04 = border;
     k.c.hover = k.alpha(text, 0.05);
-    k.c.pressed = k.alpha(accent, 0.12);
+    k.c.pressed = k.alpha(text, 0.10);
     k.c.bg_button_neutral = panel;
     k.c.bg_accent = solid;
     k.c.bg_icon_button_contrast = k.c.bg_accent;
@@ -105,7 +105,7 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     k.c.border_muted = border;
     k.c.border_weak = border;
     k.c.border_strong = if family == "caelum" {
-        color("#cfd0dc", "#303139")
+        color("#cccccc", "#3b3b3b")
     } else {
         border
     };
@@ -128,10 +128,13 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     k.c.text_weak = muted;
     k.c.success.icon = success;
     k.c.success.fg = success;
-    k.c.success.bg = k.alpha(success, 0.12);
+    k.c.success.bg = panel;
     k.c.danger.icon = danger;
     k.c.danger.fg = danger;
-    k.c.danger.bg = k.alpha(danger, 0.12);
+    k.c.danger.bg = panel;
+    k.c.warning.fg = color("#946200", "#d9ad57");
+    k.c.warning.icon = k.c.warning.fg;
+    k.c.warning.bg = panel;
     k.radius.md = 6.0;
     k.radius.lg = 14.0;
     k.ty.body = TextStyle::new(15.0, 400.0).lh(26.0);
