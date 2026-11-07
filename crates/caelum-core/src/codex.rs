@@ -1,6 +1,7 @@
+#[cfg(test)]
+use std::fs;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -413,13 +414,23 @@ impl CodexProvider {
         let project = Project::open(project_path)?;
         let connection = self.connection_for_thread(&project, thread_id)?;
         connection.queue_turn(thread_id);
+        let (prompt, images) = crate::application::provider_prompt(prompt);
+        let mut input = Vec::new();
+        if !prompt.is_empty() {
+            input.push(json!({"type":"text","text":prompt}));
+        }
+        input.extend(
+            images
+                .iter()
+                .map(|a| json!({"type":"image","url":a.content})),
+        );
         match connection.request(
             "turn/start",
             json!({
                 "threadId": thread_id,
                 "model": model,
                 "effort": effort,
-                "input": [{ "type": "text", "text": prompt }]
+                "input": input
             }),
         ) {
             Ok(result) => connection.complete_turn_start(thread_id, &result),
@@ -625,13 +636,14 @@ impl CodexProvider {
         }
 
         let executable = match self.inner.executable.as_deref() {
-            Some(path) if path.is_file() => path.to_path_buf(),
+            Some(path) if crate::executable::executable(path) => path.to_path_buf(),
             Some(path) => return Err(CodexError::ExecutableNotFound(path.to_path_buf())),
             None => find_codex_executable()?,
         };
         check_authentication(&executable, project.path())?;
 
         let mut child = Command::new(&executable)
+            .env("PATH", crate::executable::path(&executable))
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(project.path())
             .stdin(Stdio::piped())
@@ -1027,59 +1039,12 @@ fn project_key(path: &Path) -> String {
 }
 
 fn find_codex_executable() -> Result<PathBuf, CodexError> {
-    let executable_name = if cfg!(windows) { "codex.exe" } else { "codex" };
-    if let Some(paths) = env::var_os("PATH") {
-        for directory in env::split_paths(&paths) {
-            let candidate = directory.join(executable_name);
-            if is_executable_file(&candidate) {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    if let Some(home) = env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        for relative in [
-            ".local/bin/codex",
-            ".npm-global/bin/codex",
-            ".volta/bin/codex",
-            ".bun/bin/codex",
-        ] {
-            let candidate = home.join(relative);
-            if is_executable_file(&candidate) {
-                return Ok(candidate);
-            }
-        }
-    }
-    for candidate in ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"] {
-        let candidate = PathBuf::from(candidate);
-        if is_executable_file(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(CodexError::NotInstalled)
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    crate::executable::find("codex").ok_or(CodexError::NotInstalled)
 }
 
 fn check_authentication(executable: &Path, project_path: &Path) -> Result<(), CodexError> {
     let output = Command::new(executable)
+        .env("PATH", crate::executable::path(executable))
         .args(["login", "status"])
         .current_dir(project_path)
         .output()
@@ -1098,7 +1063,7 @@ fn check_authentication(executable: &Path, project_path: &Path) -> Result<(), Co
 pub enum CodexError {
     #[error(transparent)]
     Project(#[from] ProjectError),
-    #[error("Codex CLI was not found. Install Codex CLI and ensure `codex` is on PATH, then restart Caelum.")]
+    #[error("Codex CLI was not found. Install Codex CLI, then refresh provider status.")]
     NotInstalled,
     #[error("Codex executable was not found at '{0}'. Check the configured Codex CLI path.")]
     ExecutableNotFound(PathBuf),
@@ -1160,7 +1125,7 @@ mod tests {
     impl TestDirectory {
         fn new() -> Self {
             loop {
-                let path = env::temp_dir().join(format!(
+                let path = std::env::temp_dir().join(format!(
                     "caelum-codex-test-{}-{}",
                     std::process::id(),
                     NEXT_DIR.fetch_add(1, Ordering::Relaxed)
@@ -1259,6 +1224,8 @@ for raw in sys.stdin:
             assert params['limit'] == 30
             result = {'data': [{'id': 'turn-b', 'items': [{'id': 'cmd', 'type': 'commandExecution', 'command': 'git status', 'aggregatedOutput': 'clean', 'status': 'completed'}]}, {'id': 'turn-a', 'items': []}], 'nextCursor': 'older-cursor'}
     elif method == 'turn/start':
+        with open('turn-request.json', 'w') as request:
+            json.dump(params, request)
         prompt = params['input'][0]['text']
         if prompt == 'rpc-error':
             print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'fake request error'}}), flush=True)
@@ -1463,6 +1430,23 @@ for raw in sys.stdin:
         assert_eq!(resumed.thread.name.as_deref(), Some("Resumed"));
         assert_eq!(resumed.model.as_deref(), Some("saved-model"));
         assert_eq!(resumed.effort.as_deref(), Some("low"));
+        let image =
+            crate::application::Attachment::image("café.png".into(), b"\x89PNG\r\n\x1a\n").unwrap();
+        let prompt = format!(
+            "Describe this\n\n<caelum-image-context>\n{}\n</caelum-image-context>",
+            json!({"version":1,"images":[image.clone()]})
+        );
+        provider
+            .send_prompt(&project_path, "thread-existing", &prompt)
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&fs::read(project_path.join("turn-request.json")).unwrap())
+                .unwrap();
+        assert_eq!(body["input"][0]["text"], "Describe this");
+        assert_eq!(
+            body["input"][1],
+            json!({"type":"image","url":image.content})
+        );
         let choices = provider.choices(&project_path).unwrap();
         assert_eq!(choices.models[0].id, "test-model");
         assert_eq!(

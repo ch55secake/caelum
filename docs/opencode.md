@@ -4,15 +4,22 @@ Caelum integrates with the local OpenCode v2 server API and `/api/event` SSE str
 
 Waiting activity uses `/api/shell`, filtering running commands by `metadata.sessionID` after validating session ownership. This works with OpenCode 2.2.1 and does not require the newer experimental job endpoint. The selected session and sessions with known running commands refresh on shell/tool/execution events, focus and every five seconds while the app is visible.
 
+The persistent composer strip offers per-command output and Stop. The adapter checks
+ownership with `GET /api/shell/{id}`, reads a tail of at most 12,000 bytes through
+`GET /api/shell/{id}/output` and stops with `DELETE /api/shell/{id}`. Expanded output
+refreshes every two seconds. Stop uses a control worker and retains cached output if
+its final read fails. Completion/Stop removes live caches; late lists and reads cannot
+restore a finished command. At most 64 output tails are cached per checkout.
+
 ## Setup
 
-1. Install OpenCode and make `opencode` available on `PATH`. Caelum also checks common Homebrew and user-local install paths.
+1. Install OpenCode and make `opencode` available on `PATH`. Finder launches also discover common Homebrew, Nix, user-local and Node-manager installations, including their runtime PATH.
 2. Configure and sign in to at least one provider in OpenCode. Caelum relies on OpenCode's existing provider configuration and credentials and does not copy or store them.
 3. Open a project in Caelum and select **OpenCode** in the new-session composer. Caelum connects when sessions are loaded or created.
 
 Service discovery reads `${XDG_STATE_HOME:-~/.local/state}/opencode/service.json`, verifies the loopback endpoint's readiness, PID, and version through `/api/info`, and uses the registered Basic authentication password when present. The shared service remains running when Caelum closes. An explicitly configured executable uses an owned server instead.
 
-OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SERVER_PASSWORD` is unset, the CLI generates a random password and prints it during startup. Caelum captures that startup password privately and authenticates using OpenCode's default `opencode` username. If `OPENCODE_SERVER_PASSWORD` is set for Caelum, the managed server inherits and reuses it instead. You do not need to configure a password manually. Authentication failures and HTTP/API errors are shown in the desktop error banner.
+OpenCode's managed v2 server always uses Basic authentication: when `OPENCODE_SERVER_PASSWORD` is unset, the CLI generates a random password and prints it during startup. Caelum captures that startup password privately and authenticates using OpenCode's default `opencode` username. If `OPENCODE_SERVER_PASSWORD` is set for Caelum, the managed server inherits and reuses it instead. You do not need to configure a password manually. Authentication failures and HTTP/API errors appear in the relevant session or provider surface.
 
 ## Protocol behavior
 

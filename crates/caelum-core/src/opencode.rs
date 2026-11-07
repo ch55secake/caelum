@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
     io::{self, BufReader},
     net::TcpListener,
     path::{Path, PathBuf},
@@ -12,6 +11,8 @@ use std::{
     thread,
     time::Duration,
 };
+#[cfg(test)]
+use std::{env, fs};
 
 use caelum_protocol::{
     ApprovalDecision, LineChanges, OpenCodeCommandInfo, OpenCodeCommandInput, OpenCodeEvent,
@@ -475,12 +476,15 @@ impl OpenCodeProvider {
         let session = self.session(&server, &project, session_id)?;
         select_model(&server, &project, &session, model, effort)?;
         let path = format!("/api/session/{session_id}/prompt");
-        server.request_json(
-            Method::POST,
-            &path,
-            &[],
-            Some(json!({ "text": prompt, "id": message_id })),
-        )?;
+        let (prompt, images) = crate::application::provider_prompt(prompt);
+        let mut body = json!({"text":prompt,"id":message_id});
+        if !images.is_empty() {
+            body["files"] = json!(images
+                .iter()
+                .map(|a| json!({"uri":a.content,"name":a.path}))
+                .collect::<Vec<_>>());
+        }
+        server.request_json(Method::POST, &path, &[], Some(body))?;
         Ok(())
     }
 
@@ -497,11 +501,19 @@ impl OpenCodeProvider {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
         self.session(&server, &project, session_id)?;
+        let (text, images) = crate::application::provider_prompt(prompt);
+        let mut body = json!({ "id": message_id, "text": text, "delivery": "queue" });
+        if !images.is_empty() {
+            body["files"] = json!(images
+                .iter()
+                .map(|a| json!({"uri": a.content,"name":a.path}))
+                .collect::<Vec<_>>());
+        }
         server.request_json(
             Method::POST,
             &format!("/api/session/{session_id}/prompt"),
             &[],
-            Some(json!({ "id": message_id, "text": prompt, "delivery": "queue" })),
+            Some(body),
         )?;
         Ok(())
     }
@@ -931,9 +943,7 @@ fn spawn_event_listener(
                         .location
                         .as_ref()
                         .and_then(|location| location["directory"].as_str())
-                        .map_or(true, |directory| {
-                            directory_matches(directory, &project_path)
-                        })
+                        .is_none_or(|directory| directory_matches(directory, &project_path))
                 {
                     if let (Some(session), Some(id)) =
                         (event.data["sessionID"].as_str(), event.data["id"].as_str())
@@ -1183,10 +1193,8 @@ fn deny_pending_approvals(
         if request.provider != PROVIDER_NAME {
             return false;
         }
-        project_path.map_or(true, |path| request.project_path == path)
-            && request_ids.map_or(true, |request_ids| {
-                request_ids.contains(&request.request_id)
-            })
+        project_path.is_none_or(|path| request.project_path == path)
+            && request_ids.is_none_or(|request_ids| request_ids.contains(&request.request_id))
     }) {
         let _ = approvals.resolve(
             PROVIDER_NAME,
@@ -1288,58 +1296,7 @@ fn reserve_local_port() -> Result<u16, OpenCodeError> {
 }
 
 fn find_opencode_executable() -> Result<PathBuf, OpenCodeError> {
-    let executable_name = if cfg!(windows) {
-        "opencode.exe"
-    } else {
-        "opencode"
-    };
-    if let Some(paths) = env::var_os("PATH") {
-        for directory in env::split_paths(&paths) {
-            let candidate = directory.join(executable_name);
-            if is_executable_file(&candidate) {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    if let Some(home) = env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        for relative in [
-            ".opencode/bin/opencode",
-            ".local/bin/opencode",
-            ".npm-global/bin/opencode",
-            ".bun/bin/opencode",
-        ] {
-            let candidate = home.join(relative);
-            if is_executable_file(&candidate) {
-                return Ok(candidate);
-            }
-        }
-    }
-    for candidate in ["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode"] {
-        let candidate = PathBuf::from(candidate);
-        if is_executable_file(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err(OpenCodeError::NotInstalled)
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    crate::executable::find("opencode").ok_or(OpenCodeError::NotInstalled)
 }
 
 impl ProviderInner {
@@ -1378,7 +1335,7 @@ pub enum OpenCodeError {
     Project(#[from] ProjectError),
     #[error(transparent)]
     Process(#[from] crate::processes::ProcessError),
-    #[error("OpenCode CLI was not found. Install OpenCode and ensure `opencode` is on PATH, then restart Caelum.")]
+    #[error("OpenCode CLI was not found. Install OpenCode, then refresh provider status.")]
     NotInstalled,
     #[error("OpenCode executable was not found at '{0}'. Check the configured OpenCode CLI path.")]
     ExecutableNotFound(PathBuf),
@@ -1605,6 +1562,64 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "requires a locally installed OpenCode V2; runs an isolated shell without model inference"]
+    fn real_background_shell_lifecycle_smoke() {
+        let directory = TestDirectory::new();
+        let project = Project::open(&directory.0).unwrap();
+        let path = project.path().to_string_lossy().into_owned();
+        let provider = OpenCodeProvider::with_executable(
+            Arc::new(ProcessRegistry::default()),
+            ApprovalBroker::default(),
+            QuestionBroker::default(),
+            find_opencode_executable().unwrap(),
+        );
+        let session = provider.start_session(&path).unwrap().session.id;
+        let server = provider.server(&project).unwrap();
+        let query = [("location[directory]", path.clone())];
+        let created = server.request_json(Method::POST, "/api/shell", &query,
+            Some(json!({"command":"echo caelum-shell-ready; sleep 30", "timeout":45000, "metadata":{"sessionID":session}}))).unwrap();
+        let shell = created["data"]["id"].as_str().unwrap();
+        assert!(provider
+            .background_shells(&path, &session)
+            .unwrap()
+            .iter()
+            .any(|s| s.id == shell));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if provider
+                .shell_action(&path, &session, shell, false)
+                .unwrap()
+                .contains("caelum-shell-ready")
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "shell output did not arrive"
+            );
+            thread::sleep(Duration::from_millis(40));
+        }
+        assert!(provider
+            .shell_action(&path, &session, shell, true)
+            .unwrap()
+            .contains("caelum-shell-ready"));
+        assert!(provider
+            .background_shells(&path, &session)
+            .unwrap()
+            .is_empty());
+        server
+            .request_json(
+                Method::PATCH,
+                &format!("/api/session/{session}"),
+                &[],
+                Some(json!({"archived":true})),
+            )
+            .unwrap();
+        provider.shutdown();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn managed_server_lists_creates_restores_prompts_streams_and_shuts_down() {
         if Command::new("python3").arg("--version").output().is_err() {
             return;
@@ -1703,6 +1718,24 @@ class Handler(BaseHTTPRequestHandler):
             assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
             with open(os.path.join(PROJECT, "background-shells.json")) as shells:
                 self.send_json(json.load(shells))
+        elif path.startswith("/api/shell/"):
+            query = parse_qs(urlsplit(self.path).query)
+            assert query["location[directory]"] == [PROJECT]
+            shell_id = path.split("/")[3]
+            with open(os.path.join(PROJECT, "background-shells.json")) as shells:
+                shell = next((s for s in json.load(shells)["data"] if s.get("id") == shell_id), None)
+            if shell is None:
+                self.send_error(404)
+            elif path.endswith("/output"):
+                with open(os.path.join(PROJECT, "shell-reads.jsonl"), "a") as reads:
+                    reads.write(json.dumps(query) + "\n")
+                data = ("x" * 16000 + "latest café output").encode()
+                cursor = int(query.get("cursor", ["0"])[0])
+                limit = int(query["limit"][0])
+                chunk = data[cursor:cursor+limit]
+                self.send_json({"data": {"output": chunk.decode(), "size": len(data), "cursor": cursor+len(chunk), "truncated": cursor+len(chunk)<len(data)}})
+            else:
+                self.send_json({"data": shell})
         elif path == "/api/session/ses_fake":
             session = dict(SESSION)
             self.send_json({"data": session})
@@ -1787,6 +1820,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         if not self.authorized(): return
+        if urlsplit(self.path).path.startswith("/api/shell/"):
+            assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
+            path = os.path.join(PROJECT, "background-shells.json")
+            with open(path) as shells: data = json.load(shells)
+            shell_id = urlsplit(self.path).path.rsplit("/", 1)[1]
+            data["data"] = [s for s in data["data"] if s.get("id") != shell_id]
+            with open(path, "w") as shells: json.dump(data, shells)
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path.startswith("/api/session/ses_fake/inbox/"):
             INBOX.pop(self.path.rsplit("/", 1)[1], None)
             self.send_response(204)
@@ -1835,6 +1878,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
         elif path == "/api/session/ses_fake/prompt":
+            with open(os.path.join(PROJECT, "prompt-request.json"), "w") as request:
+                json.dump(body, request)
             if body.get("delivery") == "queue":
                 INBOX.setdefault(body["id"], {"id": body["id"], "type": "user", "delivery": "queue", "payload": {"text": body["text"]}})
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
@@ -2051,6 +2096,35 @@ server.serve_forever()
             .unwrap()
             .starts_with("data:image/png;base64,"));
         assert!(provider.read_image(&project_path, "../info").is_err());
+        let image =
+            crate::application::Attachment::image("café.png".into(), b"\x89PNG\r\n\x1a\n").unwrap();
+        let prompt = format!(
+            "Describe this\n\n<caelum-image-context>\n{}\n</caelum-image-context>",
+            json!({"version":1,"images":[image.clone()]})
+        );
+        provider
+            .send_prompt(&project_path, "ses_fake", &prompt)
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&fs::read(project_path.join("prompt-request.json")).unwrap())
+                .unwrap();
+        assert_eq!(body["text"], "Describe this");
+        assert_eq!(
+            body["files"],
+            json!([{"uri":image.content,"name":"café.png"}])
+        );
+        provider
+            .enqueue_prompt(&project_path, "ses_fake", "msg_image", &prompt)
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&fs::read(project_path.join("prompt-request.json")).unwrap())
+                .unwrap();
+        assert_eq!(body["delivery"], "queue");
+        assert_eq!(body["text"], "Describe this");
+        assert_eq!(body["files"][0]["uri"], image.content);
+        provider
+            .cancel_queued_prompt(&project_path, "ses_fake", "msg_image")
+            .unwrap();
         provider
             .enqueue_prompt(&project_path, "ses_fake", "msg_queue", "Next task")
             .unwrap();
@@ -2077,7 +2151,7 @@ server.serve_forever()
         let jobs = project_path.join("background-shells.json");
         fs::write(&jobs, serde_json::to_vec(&json!({ "data": [
             { "id": "sh_live", "metadata": { "sessionID": "ses_fake" }, "status": "running", "command": "cargo test", "time": { "started": 1234 } },
-            { "metadata": { "sessionID": "ses_foreign" }, "status": "running" },
+            { "id": "sh_foreign", "metadata": { "sessionID": "ses_foreign" }, "status": "running" },
             { "metadata": {}, "status": "running" },
             { "metadata": { "sessionID": "ses_fake" }, "status": "exited" },
             { "metadata": { "sessionID": "ses_fake" }, "status": "timeout" },
@@ -2090,6 +2164,52 @@ server.serve_forever()
         assert_eq!(shells[0].id, "sh_live");
         assert_eq!(shells[0].command, "cargo test");
         assert_eq!(shells[0].started_at, 1234);
+        for stop in [false, true] {
+            assert!(provider
+                .shell_action(&path, "ses_fake", "sh_foreign", stop)
+                .is_err());
+            assert!(provider
+                .shell_action(&path, "ses_foreign", "sh_live", stop)
+                .is_err());
+            assert!(provider
+                .shell_action(&path, "ses_fake", "../escape", stop)
+                .is_err());
+        }
+        assert!(
+            !project_path.join("shell-reads.jsonl").exists(),
+            "foreign shells must never be read"
+        );
+        let output = provider
+            .shell_action(&path, "ses_fake", "sh_live", false)
+            .unwrap();
+        assert_eq!(output.len(), 12000);
+        assert!(output.ends_with("latest café output"));
+        assert_eq!(
+            fs::read_to_string(project_path.join("shell-reads.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+        assert_eq!(
+            provider
+                .shell_action(&path, "ses_fake", "sh_live", true)
+                .unwrap(),
+            output
+        );
+        assert!(provider
+            .background_shells(&path, "ses_fake")
+            .unwrap()
+            .is_empty());
+        assert!(provider
+            .shell_action(&path, "ses_fake", "sh_live", false)
+            .is_err());
+        let remaining: Value = serde_json::from_slice(&fs::read(&jobs).unwrap()).unwrap();
+        assert!(remaining["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "sh_foreign"));
         assert!(matches!(
             provider.background_shells(&project_path, "ses_foreign"),
             Err(OpenCodeError::SessionNotInProject)

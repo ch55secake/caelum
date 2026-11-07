@@ -2,8 +2,8 @@
 
 ## Project filesystem access
 
-- The React UI has no direct filesystem API. The desktop's only filesystem interaction is opening a project through Tauri's native directory picker.
-- Treat every Tauri command argument as untrusted. `Project::open` rejects empty paths, canonicalizes selected roots, and only accepts directories.
+- Rune selects files/directories with native dialogs and submits requests to the shared Rust application layer. Core owns project reads, Git operations and provider processes.
+- Treat paths from dialogs, project URLs and provider data as untrusted. `Project::open` rejects empty paths, canonicalizes selected roots, and only accepts directories.
 - Filesystem operations must resolve existing paths through `Project::resolve_scoped_path`. It canonicalizes the target and rejects paths, including symlinks, that escape the selected project.
 - The scoped resolver intentionally covers existing paths only. Any future file-creation API must also defend against symlink races (for example, using directory-handle-relative operations) before it is exposed.
 
@@ -27,6 +27,10 @@ The Codex adapter starts `codex app-server --listen stdio://` with an explicit a
 
 The OpenCode adapter first discovers the registered background service, accepts only a loopback endpoint, and verifies readiness, PID, and version through `/api/info`. Its optional registered password is used for Basic authentication. This externally owned service is never registered for termination by Caelum. The fallback starts `opencode serve --hostname 127.0.0.1 --port <available-port>` with the validated project as its working directory. OpenCode generates a random password by default; Caelum captures it from startup output and keeps it in memory for local Basic authentication. If `OPENCODE_SERVER_PASSWORD` is configured, Caelum reuses it instead. Provider credentials remain under OpenCode's control.
 
-## Tauri capabilities
+## Desktop launch and storage
 
-The desktop capability remains limited to core defaults and the native open-dialog command. Do not add filesystem or shell plugins to the frontend capability without a reviewed use case and matching project-scope checks.
+`caelum://open?path=…` accepts a single absolute project path, then uses the same
+core project validation as the CLI. It does not dispatch commands or prompts.
+Workspace JSON is private, atomically replaced and locked for the desktop's
+lifetime. Migration copies legacy data and preserves the sources. Credentials
+remain provider-owned; they do not belong in workspace snapshots or branch metadata.

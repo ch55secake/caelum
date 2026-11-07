@@ -4,16 +4,16 @@ Merges to `main` trigger automatic patch releases for Apple Silicon and Intel Ma
 
 ## Signing without an Apple Developer account
 
-Release builds use **ad-hoc signing** (`APPLE_SIGNING_IDENTITY="-"`) for the desktop app and CLI. No Apple account, certificate, signing secret, or notarization credential is required. Ad-hoc signatures verify bundle integrity but do not identify an Apple-approved developer; the app is **not notarized**.
+Release builds use **ad-hoc signing** (`codesign --sign -`) for the desktop app and CLI. No Apple account, certificate, signing secret, or notarization credential is required. Ad-hoc signatures verify bundle integrity but do not identify an Apple-approved developer; the app is **not notarized**.
 
 After attempting to open the installed app, macOS may require **System Settings → Privacy & Security → Open Anyway**. See [Apple's first-launch instructions](https://support.apple.com/en-us/102445). Release notes include this information and links for each architecture.
 
 ## Release flow
 
-1. Prepare an immutable version tag. Ordinary merges create a `chore(release)` version commit updating the Cargo workspace, local lockfile packages, frontend package, and Tauri version together. Explicit version changes must already agree across these files.
-2. Run the shared CI checks against that exact release commit: Rust formatting, Clippy, Rust tests, frontend build/unit/browser checks, and release-script checks. The architecture-specific release builds run alongside these checks.
+1. Prepare an immutable version tag. Ordinary merges create a `chore(release)` version commit updating the Cargo workspace and local lockfile packages. Every crate inherits the workspace version; native bundle metadata is generated from it.
+2. Run shared CI against that exact release commit: Rust formatting, Clippy, core/CLI/native interaction tests, native previews and Python release/profile checks. The architecture-specific release builds run alongside these checks.
 3. Build ad-hoc-signed app bundles/DMGs and CLI archives on native Apple Silicon and Intel runners with locked dependencies.
-4. Verify signatures, binary architectures, app version/identifier, extracted CLI version and startup, and mounted DMG contents. The app inside the DMG must match the verified build bundle.
+4. Verify signatures, architectures, app metadata, extracted CLI startup and mounted DMG contents. Exercise packaged CLI cold/warm URLs, hidden-window reopening, draft restoration and graceful quit in an isolated workspace.
 5. Generate checksums, upload into a **draft** GitHub release, and verify the complete uploaded asset set before publication. Publication requires both CI and both architecture builds to succeed.
 6. When configured, open a separate Homebrew tap update PR.
 
@@ -31,7 +31,7 @@ The workflow limits the installation token to this repository. It uses the norma
 
 ## Publish and recover
 
-Ordinary releases only need a merge to `main`. For a minor/major release, update `Cargo.toml`, `apps/desktop/package.json`, and `apps/desktop/src-tauri/tauri.conf.json` together and refresh `Cargo.lock` in a PR. Direct pushes of matching `vMAJOR.MINOR.PATCH` or prerelease tags are also supported.
+Ordinary releases only need a merge to `main`. For a minor/major release, update the root `Cargo.toml` workspace version and refresh `Cargo.lock` in a PR. Direct pushes of matching `vMAJOR.MINOR.PATCH` or prerelease tags are also supported.
 
 For a failed build, partial upload, or missed Homebrew update, run **Actions → Release → Run workflow**, choose the default branch, and supply the **existing** version tag. From the CLI:
 
@@ -39,7 +39,7 @@ For a failed build, partial upload, or missed Homebrew update, run **Actions →
 gh workflow run release.yml --ref main -f tag=v0.1.5
 ```
 
-Recovery validates the remote tag and all project/lockfile versions before using it. Unpublished releases rebuild and run CI against the tagged commit using the current packaging/recovery tooling. A partial draft can have its uploads replaced and verified before publication.
+Recovery validates the remote tag and workspace/lockfile versions before using it. Unpublished native releases rebuild with the tagged packaging scripts and current CI; publication uses current recovery tooling. A partial draft can have its uploads replaced and verified before publication. Rebuilding an unpublished pre-cutover web-client tag requires that historical release workflow; already published legacy assets remain recoverable without rebuilding.
 
 Already published releases are verified and reused without rebuilding or replacing assets or checksums; recovery can then retry the Homebrew update. An incomplete or checksum-mismatched published release fails visibly. Publish a new version to correct released binaries. Stable releases use GitHub's semantic-version-aware latest selection; prereleases are marked separately. Intermediate build artifacts are retained for 14 days.
 
@@ -53,6 +53,28 @@ The renderer and templates are already merged in [`ch55secake/homebrew-tap`](htt
 4. Recover the latest published tag to generate its tap update, or wait for the next release.
 
 Merge the generated tap PR to make the version installable. The formula installs the CLI as `caelum`; the cask installs `Caelum.app` without a second executable link. Homebrew installation has the same first-launch behavior as the DMG. Prereleases do not update the stable tap.
+
+## Local native packaging
+
+```sh
+nix develop -c bash scripts/release/package_macos_app.sh
+TARGET=aarch64-apple-darwin ARCH=aarch64 RELEASE_TAG=v0.1.13 \
+RUNNER_TEMP=/absolute/path/to/output \
+nix develop -c bash scripts/release/package_macos_assets.sh
+```
+
+Use the current Cargo version and a pre-created output directory. Intel builds
+use `TARGET=x86_64-apple-darwin ARCH=x86_64` on an Intel host. The app target is
+macOS 13; native packaging retains `Caelum.app`, `dev.caelum.desktop`, the icon,
+version/revision metadata and `caelum://open?path=…` URL registration. It rejects
+non-system dynamic libraries after normalizing the known Nix libiconv dependency.
+
+The asset script builds both binaries, signs them, creates a compressed DMG,
+mounts/verifies it and checks extracted CLI startup. Release publication produces:
+
+- `Caelum-v<version>-aarch64.dmg` and `Caelum-v<version>-x86_64.dmg`
+- `caelum-cli-v<version>-<target>.tar.gz` for both macOS targets
+- `SHA256SUMS`
 
 ## Install
 

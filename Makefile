@@ -1,47 +1,35 @@
 .DEFAULT_GOAL := help
-
 PROJECT ?= .
+CORE := -p caelum-core -p caelum-protocol -p caelum-cli
+PACKAGES := $(if $(filter Darwin,$(shell uname -s)),--workspace,$(CORE))
 
-.PHONY: help install dev app frontend build cli cli-run format lint test check
-
+.PHONY: help dev app build cli cli-run format lint test check previews
 help:
 	@printf '%s\n' \
-	  'Caelum local development:' \
-	  '  make install             Install frontend dependencies' \
-	  '  make dev                 Run the Tauri desktop app in development mode' \
-	  '  make app                 Build the macOS .app bundle' \
-	  '  make frontend            Build the frontend only' \
-	  '  make cli                 Build the standalone CLI' \
-	  '  make cli-run PROJECT=.   Run the CLI against a project path' \
-	  '  make check               Run formatting, lint, tests, and frontend build'
-
-install:
-	pnpm install --frozen-lockfile
-
-dev: install
-	pnpm tauri:dev
-
-app: install
-	pnpm --filter @caelum/desktop tauri build --bundles app
-
-frontend: install
-	pnpm desktop:build
-
+	  'Caelum native development:' \
+	  '  make dev PROJECT=.     Run the native desktop app' \
+	  '  make app               Build the signed macOS app bundle' \
+	  '  make cli               Build the standalone CLI' \
+	  '  make cli-run PROJECT=. Open a project in the installed app' \
+	  '  make previews          Capture native reference screens' \
+	  '  make check             Format, lint and test'
+dev:
+	cargo run --locked -p caelum-desktop -- --project "$(PROJECT)"
+app:
+	bash scripts/release/package_macos_app.sh
 build: app cli
-
 cli:
-	cargo build -p caelum-cli
-
+	cargo build --locked -p caelum-cli
 cli-run:
-	cargo run -p caelum-cli -- "$(PROJECT)"
-
+	cargo run --locked -p caelum-cli -- "$(PROJECT)"
 format:
 	cargo fmt --all -- --check
-
 lint:
-	cargo clippy --workspace --all-targets -- -D warnings
-
+	cargo clippy --locked $(PACKAGES) --all-targets -- -D warnings
 test:
-	cargo test --workspace
-
-check: format lint test frontend
+	cargo test --locked $(PACKAGES) -- --test-threads=4
+	python3 -m unittest discover -s scripts/release -p 'test_*.py'
+	python3 -m unittest discover -s scripts/profile -p 'test_*.py'
+check: format lint test
+previews:
+	python3 apps/desktop/preview/capture.py

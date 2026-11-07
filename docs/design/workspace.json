@@ -1,0 +1,10 @@
+{
+  "title": "Refine the session workspace",
+  "secondaryTitle": "Review the provider adapters",
+  "prompt": "Make the workspace feel calmer and easier to read. Keep the conversation at the centre, with tools and changes close by.",
+  "command": "git diff --stat",
+  "output": "src/workspace.css | 6 +++---\n1 file changed, 3 insertions(+), 3 deletions(-)",
+  "response": "## A little more room to think\n\nThe workspace now has a clearer rhythm: **the conversation leads**, and the surrounding controls stay quiet until you need them.\n\n- More breathing room between messages\n- A softer selected state in the sidebar\n- A composer that feels connected to the conversation\n\n### The details\n\n```css\n.workspace {\n  --radius: 12px;\n  --space: 16px;\n  --motion: 160ms;\n}\n```\n\nThe changes are ready to review in the inspector.",
+  "draft": "Let's take a look at the changes.",
+  "patch": "diff --git a/src/workspace.css b/src/workspace.css\n--- a/src/workspace.css\n+++ b/src/workspace.css\n@@ -1,5 +1,5 @@\n .workspace {\n-  --radius: 6px;\n-  --space: 10px;\n-  --motion: 0ms;\n+  --radius: 12px;\n+  --space: 16px;\n+  --motion: 160ms;\n }\n"
+}

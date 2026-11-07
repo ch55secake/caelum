@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import sys
@@ -36,17 +35,8 @@ class VersionBumpTests(unittest.TestCase):
     def test_updates_project_manifests_and_only_local_lock_packages(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            (root / "apps/desktop/src-tauri").mkdir(parents=True)
             (root / "Cargo.toml").write_text(
                 "[workspace.package]\nversion = \"0.1.9\"\n", encoding="utf-8"
-            )
-            (root / "apps/desktop/package.json").write_text(
-                '{\n  "name": "@caelum/desktop",\n  "version": "0.1.9"\n}\n',
-                encoding="utf-8",
-            )
-            (root / "apps/desktop/src-tauri/tauri.conf.json").write_text(
-                '{\n  "productName": "Caelum",\n  "version": "0.1.9"\n}\n',
-                encoding="utf-8",
             )
             (root / "Cargo.lock").write_text(
                 """[[package]]
@@ -55,6 +45,14 @@ version = "0.1.9"
 
 [[package]]
 name = "caelum-core"
+version = "0.1.9"
+
+[[package]]
+name = "caelum-desktop"
+version = "0.1.9"
+
+[[package]]
+name = "caelum-protocol"
 version = "0.1.9"
 
 [[package]]
@@ -68,14 +66,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             update_version_files(root, "0.1.10")
 
             self.assertIn('version = "0.1.10"', (root / "Cargo.toml").read_text())
-            package = json.loads((root / "apps/desktop/package.json").read_text())
-            tauri = json.loads((root / "apps/desktop/src-tauri/tauri.conf.json").read_text())
-            self.assertEqual(package["version"], "0.1.10")
-            self.assertEqual(tauri["version"], "0.1.10")
             lockfile = (root / "Cargo.lock").read_text()
             self.assertEqual(
                 workspace_lock_versions_from_text(lockfile),
-                {"caelum-cli": "0.1.10", "caelum-core": "0.1.10"},
+                {name: "0.1.10" for name in ("caelum-cli", "caelum-core", "caelum-desktop", "caelum-protocol")},
             )
             self.assertIn('name = "caelum-helper"\nversion = "0.1.0"', lockfile)
 
@@ -101,19 +95,14 @@ class AutomaticReleaseTests(unittest.TestCase):
             self.git(repository, "config", "tag.gpgsign", "false")
             subprocess.run(["git", "init", "--bare", "--quiet", str(remote)], check=True)
 
-            (repository / "apps/desktop/src-tauri").mkdir(parents=True)
-            (repository / "apps/desktop/package.json").write_text(
-                '{"name":"@caelum/desktop","version":"0.1.1"}\n', encoding="utf-8"
-            )
-            (repository / "apps/desktop/src-tauri/tauri.conf.json").write_text(
-                '{"productName":"Caelum","version":"0.1.1"}\n', encoding="utf-8"
-            )
             (repository / "Cargo.toml").write_text(
                 "[workspace.package]\nversion = \"0.1.1\"\n", encoding="utf-8"
             )
             (repository / "Cargo.lock").write_text(
                 '[[package]]\nname = "caelum-cli"\nversion = "0.1.1"\n\n'
-                '[[package]]\nname = "caelum-core"\nversion = "0.1.1"\n',
+                '[[package]]\nname = "caelum-core"\nversion = "0.1.1"\n\n'
+                '[[package]]\nname = "caelum-desktop"\nversion = "0.1.1"\n\n'
+                '[[package]]\nname = "caelum-protocol"\nversion = "0.1.1"\n',
                 encoding="utf-8",
             )
             (repository / "README.md").write_text("release test\n", encoding="utf-8")
@@ -153,6 +142,14 @@ class AutomaticReleaseTests(unittest.TestCase):
             self.assertEqual(self.git(repository, "rev-parse", "origin/main"), release_commit)
             self.assertEqual(self.git(repository, "rev-parse", "v0.1.2^{}"), release_commit)
             self.assertIn('version = "0.1.2"', self.git(repository, "show", "origin/main:Cargo.toml"))
+            self.assertEqual(
+                self.git(repository, "diff-tree", "--no-commit-id", "--name-only", "-r", release_commit).splitlines(),
+                ["Cargo.lock", "Cargo.toml"],
+            )
+            self.assertEqual(
+                set(workspace_lock_versions_from_text(self.git(repository, "show", "origin/main:Cargo.lock")).values()),
+                {"0.1.2"},
+            )
 
             self.git(repository, "checkout", "--quiet", "--detach", source_commit)
             retry_output = root / "retry-output"

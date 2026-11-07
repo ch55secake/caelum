@@ -1,28 +1,38 @@
 # Contributing
 
-## Local checks
+Keep changes focused and follow the existing Rust modules. Application state,
+provider behavior and filesystem/Git/GitHub operations belong in `caelum-core`;
+native editors, focus and rendering belong in `apps/desktop`.
 
-Run the checks relevant to your change before opening a pull request:
+## Checks
 
-```bash
+On macOS, from the repository root:
+
+```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-pnpm --filter @caelum/desktop build
-pnpm --filter @caelum/desktop test
-pnpm --filter @caelum/desktop test:ui
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace -- --test-threads=4
+python3 -m unittest discover -s scripts/release -p 'test_*.py'
+python3 -m unittest discover -s scripts/profile -p 'test_*.py'
 ```
 
-Use small, focused changes. Keep `caelum-core` independent from Tauri and UI code, and do not claim incomplete integrations as working features. Add tests with core behavior and update the docs when architecture or setup changes.
+On Linux, select `-p caelum-core -p caelum-protocol -p caelum-cli` in place of
+`--workspace`. `make check` chooses the packages for the host automatically.
 
-## Browser tests
+`apps/desktop/src/tests.rs` drives Rune's real runtime with keyboard/pointer
+input and injected application events. It covers draft ownership, focus,
+streaming, approvals/questions, bounded long histories and large reviews.
+Core tests use fake provider processes and local HTTP servers for deterministic
+protocol, recovery and lifecycle checks. Real-service smoke tests are opt-in;
+see the [desktop development guide](../apps/desktop/README.md).
 
-Playwright scenarios live in feature-specific `apps/desktop/tests/*.spec.ts` files. `tests/fixtures/desktop.ts` supplies an isolated mock of the native command/event boundary for each page; `tests/fixtures/helpers.ts` contains shared navigation and provider-history helpers. Specs must not import other specs or depend on their execution order.
+For visual changes, run `make previews` and inspect light/dark, inspector,
+compact and settings scenes. Native frame measurements are described in
+[performance](performance/README.md).
 
-Run one area with `pnpm --filter @caelum/desktop test:ui tests/images.spec.ts`, or use `--grep` to select a scenario. Keep provider-specific variants in the same feature spec and use scoped fixture failures and gates for race-condition checks.
+CI runs portable Rust checks on Linux, native checks/previews and packaging on
+macOS, and Python release/profile checks. The historical required context
+`desktop-frontend-build` gates the native-test job during the stacked cutover;
+it runs no web build. `desktop-bundle-build` verifies the app, DMG and CLI archive.
 
-CI runs browser tests in the official Playwright container with browsers and Linux libraries preinstalled. The image version comes from the installed `@playwright/test` package, so lockfile updates select the matching image automatically. The container reuses the checkout's installed dependencies and the pnpm version declared in `package.json`.
-
-## Security
-
-Do not add credentials to source, logs, or SQLite. Avoid shell interpolation for user-controlled paths or prompts. Never discard, reset, or commit project changes automatically.
+Use Conventional Commits and the repository's pull-request template.

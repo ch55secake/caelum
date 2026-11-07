@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import os
 import re
 import subprocess
@@ -14,8 +13,6 @@ from pathlib import Path
 VERSION_FILES = (
     "Cargo.toml",
     "Cargo.lock",
-    "apps/desktop/package.json",
-    "apps/desktop/src-tauri/tauri.conf.json",
 )
 BOT_NAME = "github-actions[bot]"
 BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -27,12 +24,8 @@ def git(*args: str) -> str:
 
 def project_versions(revision: str) -> dict[str, str]:
     cargo = tomllib.loads(git("show", f"{revision}:Cargo.toml"))
-    app = json.loads(git("show", f"{revision}:apps/desktop/src-tauri/tauri.conf.json"))
-    frontend = json.loads(git("show", f"{revision}:apps/desktop/package.json"))
     return {
         "Cargo workspace": cargo["workspace"]["package"]["version"],
-        "Tauri app": app["version"],
-        "frontend package": frontend["version"],
     }
 
 
@@ -54,7 +47,7 @@ def validate_version(revision: str) -> str:
     versions = project_versions(revision)
     if len(set(versions.values())) != 1:
         raise SystemExit(
-            "Cargo workspace, Tauri app, and frontend package versions must match: "
+            "Workspace versions must match: "
             + ", ".join(f"{name}={version}" for name, version in versions.items())
         )
 
@@ -87,15 +80,6 @@ def update_version_files(root: Path, version: str) -> None:
     if count != 1:
         raise SystemExit("Could not find the Cargo workspace version to update.")
     cargo_path.write_text(cargo, encoding="utf-8")
-
-    for relative_path in (
-        "apps/desktop/package.json",
-        "apps/desktop/src-tauri/tauri.conf.json",
-    ):
-        path = root / relative_path
-        document = json.loads(path.read_text(encoding="utf-8"))
-        document["version"] = version
-        path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
     lock_path = root / "Cargo.lock"
     lockfile = lock_path.read_text(encoding="utf-8")
