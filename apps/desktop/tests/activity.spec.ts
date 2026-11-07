@@ -64,6 +64,7 @@ test("foreground, reading position and modal visibility govern read acknowledgem
   await page
     .getByRole("button", { name: "Load earlier messages", exact: true })
     .click();
+  await expect(page.locator(".history-button:disabled")).toHaveCount(0);
   await page.locator(".transcript").evaluate((node) => {
     node.scrollTop = 100;
   });

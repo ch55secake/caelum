@@ -371,7 +371,7 @@ export function Conversation({
   });
   useLatestView(
     scroll,
-    session.historyLoaded && windowEnd === entries.length,
+    following.current && session.historyLoaded && windowEnd === entries.length,
     reportLatestView,
   );
   function jump() {
