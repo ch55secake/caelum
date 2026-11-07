@@ -209,7 +209,7 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     }
     if form.submitted && !busy && l.app.services.error(&task).is_none() {
         fields = fields.child(ui::caption(
-            "Worktree created. It's available in the checkout chooser.",
+            "Worktree created. It's available in the sidebar worktree list.",
             k,
         ));
     }

@@ -396,6 +396,12 @@ fn scroll(content: El) -> El {
 }
 
 pub fn show(s: &mut Workspace, screen: Screen) {
+    if screen == Screen::Worktrees
+        && let Some(project) = live(s).app.active_project.clone()
+    {
+        crate::checkouts::manage(s, project);
+        return;
+    }
     if screen == Screen::Session {
         live_mut(s).session_menu = live(s).app.selected;
         return;
@@ -614,6 +620,13 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
                         }
                     })
                     .build(k),
+            )
+            .child(
+                Button::new("Manage worktrees")
+                    .disabled(l.app.active_project.is_none())
+                    .on_press(|s: &mut Workspace| show(s, Screen::Worktrees))
+                    .build(k)
+                    .key("manage-worktrees"),
             ),
     )
 }
@@ -1881,7 +1894,12 @@ pub fn select_change(s: &mut Workspace, project: String, path: String) {
 
 fn worktrees(s: &Workspace, k: &Kit) -> El {
     let live = live(s);
-    let Some(project) = &live.app.active_project else {
+    let Some(project) = live
+        .checkouts
+        .project
+        .as_ref()
+        .or(live.app.active_project.as_ref())
+    else {
         return ui::empty(
             "Open a Git project",
             "Choose a project before creating a separate checkout.",
@@ -1940,13 +1958,7 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
     {
         content = content.child(ui::notice("Worktree unavailable", error, k));
     }
-    if let Some(listing) = live
-        .app
-        .services
-        .checkouts
-        .get(project)
-        .and_then(|c| c.worktrees.as_ref())
-    {
+    if let Some(listing) = live.app.services.worktrees(project) {
         for tree in &listing.worktrees {
             let path = tree.project.path.clone();
             let mut line = ui::card(k).padding(6.0).gap(4.0).child(
@@ -1957,18 +1969,19 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
                         if tree.main { " · Main checkout" } else { "" }
                     ),
                     &tree.project.path,
-                    &tree.project.path == project,
+                    live.app.active_project.as_ref() == Some(&tree.project.path),
                     k,
                 )
                 .disabled(!tree.available || busy)
                 .opacity(if tree.available { 1.0 } else { 0.5 })
                 .help(&tree.project.path)
-                .on_press(move |s: &mut Workspace| {
-                    let live = live_mut(s);
-                    live.app.open_project(path.clone());
-                    live.panels.overlay = None;
-                }),
+                .key(crate::code_view::source_key(
+                    &tree.project.path,
+                    "manage-checkout",
+                ))
+                .on_press(move |s: &mut Workspace| crate::checkouts::select(s, &path)),
             );
+            line = line.child(ui::caption(crate::checkouts::status(&live.app, tree), k).px(10.0));
             if let Some(reason) = &tree.locked {
                 line = line.child(ui::caption(format!("Locked · {reason}"), k).px(10.0));
             } else if !tree.available {

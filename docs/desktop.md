@@ -125,11 +125,20 @@ in-flight refresh schedules another read. Linked-worktree Git metadata is watche
 Select lines and choose **Add selection** to attach them to the prompt. Files, local staged/unstaged/untracked
 changes and continuous PR review share the same native code/diff surfaces.
 
+Expand **Worktrees** beneath a project to see its main checkout and linked worktrees.
+The list shows branch names, the current checkout and working, queued or unread
+sessions. Missing checkouts remain visible and cannot be selected; locked checkouts
+are identified in the list and path tooltip. Click a row, or use arrows and Enter,
+to return to that checkout's remembered session, draft and reading position.
+Disclosure choices persist, and switching to a linked checkout reveals its group.
+Use **Refresh worktrees** to discover checkouts created outside Caelum, or **… →
+Manage worktrees** beside the list to open the full catalogue.
+
 Use a project's branch icon or **Create worktree** in the project/provider launcher
 to open the creation form. Replace the selected suggested branch, search the starting
 branch and review the destination, then press Enter or **Create worktree**. The form
-keeps its original project and provider. **Manage checkouts** opens discovery and
-removal. Change the parent directory in Settings; the default storage is under
+keeps its original project and provider. **Manage worktrees** in the launcher also
+opens discovery and removal. Change the parent directory in Settings; the default storage is under
 `~/.caelum/worktrees`. Each checkout keeps its own sessions and drafts. Removing
 a checkout preserves its branch and commits; active work and dirty/locked Git
 checkouts prevent removal.

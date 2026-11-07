@@ -213,6 +213,7 @@ pub struct Workspace {
     latest_open: u64,
     launches: HashMap<u64, (Provider, u64)>,
     remembered: HashMap<String, usize>,
+    remembered_checkouts: HashMap<String, usize>,
     deferred_lists: HashMap<Scope, Vec<Summary>>,
     /// Closing only removes open navigation. Reject earlier discovery/open replies
     /// without invalidating the stable sessions or their in-flight work.
@@ -269,7 +270,7 @@ impl Workspace {
             self.saving = true;
             let commands = std::mem::take(&mut self.durable_outgoing);
             self.request(
-                Command::Save(store, snapshot.clone()),
+                Command::Save(store, Box::new(snapshot.clone())),
                 Pending::Save(Box::new(snapshot), commands),
             );
             immediate.append(&mut self.outgoing);
@@ -349,6 +350,15 @@ impl Workspace {
                 })
                 .collect(),
             project_roots: self.project_roots.clone(),
+            remembered_checkouts: self
+                .remembered_checkouts
+                .iter()
+                .filter_map(|(key, index)| {
+                    session_indices
+                        .get(index)
+                        .map(|index| (key.clone(), *index))
+                })
+                .collect(),
             sessions,
         }
     }
@@ -957,6 +967,44 @@ impl Workspace {
         }
     }
 
+    /// Switch to this exact checkout, including the main checkout. A project
+    /// group's remembered session may belong to a different linked worktree.
+    pub fn select_checkout(&mut self, path: &str) -> bool {
+        if !self.projects.iter().any(|project| project.path == path)
+            || self
+                .services
+                .worktrees(self.group_path(path))
+                .is_some_and(|listing| {
+                    !listing
+                        .worktrees
+                        .iter()
+                        .any(|tree| tree.project.path == path && tree.available)
+                })
+        {
+            return false;
+        }
+        let usable = |i: usize| {
+            let session = &self.sessions[i];
+            session.scope.project == path && !session.archived && !session.forgotten
+        };
+        let index = self
+            .remembered_checkouts
+            .get(path)
+            .or(self.remembered.get(path))
+            .copied()
+            .filter(|&i| usable(i))
+            .or_else(|| (0..self.sessions.len()).rev().find(|&i| usable(i)));
+        if let Some(index) = index {
+            self.select(index);
+        } else {
+            self.new_session(Scope {
+                project: path.into(),
+                provider: self.preferences.default_provider,
+            });
+        }
+        true
+    }
+
     pub fn project_is_open(&self, path: &str) -> bool {
         let root = self.group_path(path);
         self.projects
@@ -1157,6 +1205,8 @@ impl Workspace {
         };
         self.active_project = Some(session.scope.project.clone());
         self.remembered.insert(session.scope.project.clone(), index);
+        self.remembered_checkouts
+            .insert(session.scope.project.clone(), index);
         if let Some(root) = self.project_roots.get(&session.scope.project) {
             self.remembered.insert(root.clone(), index);
         }
@@ -1660,6 +1710,8 @@ impl Workspace {
                     }
                     self.remembered
                         .retain(|_, i| self.sessions[*i].scope.project != worktree.project.path);
+                    self.remembered_checkouts
+                        .retain(|_, i| self.sessions[*i].scope.project != worktree.project.path);
                     self.services.checkouts.remove(&worktree.project.path);
                     if self.active_project.as_ref() == Some(&worktree.project.path) {
                         let destination = root
@@ -1958,6 +2010,7 @@ impl Workspace {
             (Pending::Load, Reply::Snapshot(snapshot)) => {
                 self.store_ready = true;
                 if let Some(snapshot) = snapshot {
+                    let snapshot = *snapshot;
                     self.saved = Some(snapshot.clone());
                     self.preferences = snapshot.preferences;
                     for (project, saved) in &self.preferences.files {
@@ -2025,11 +2078,28 @@ impl Workspace {
                             .filter(|(_, s)| !s.archived)
                         {
                             self.remembered.insert(s.scope.project.clone(), i);
+                            self.remembered_checkouts.insert(s.scope.project.clone(), i);
                         }
                         self.remembered
                             .extend(snapshot.remembered.into_iter().filter(|(_, i)| {
                                 *i < self.sessions.len() && !self.sessions[*i].archived
                             }));
+                        self.remembered_checkouts.extend(
+                            self.remembered
+                                .iter()
+                                .filter(|(path, i)| self.sessions[**i].scope.project == **path)
+                                .map(|(path, i)| (path.clone(), *i)),
+                        );
+                        self.remembered_checkouts.extend(
+                            snapshot
+                                .remembered_checkouts
+                                .into_iter()
+                                .filter(|(path, i)| {
+                                    self.sessions
+                                        .get(*i)
+                                        .is_some_and(|s| s.scope.project == *path && !s.archived)
+                                }),
+                        );
                         let details: Vec<_> = self
                             .sessions
                             .iter()

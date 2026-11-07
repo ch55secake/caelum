@@ -579,6 +579,177 @@ fn stale_opencode_archive_error_forgets_the_session_locally() {
 }
 
 #[test]
+fn switching_worktrees_restores_each_checkout_session_without_redirecting_main() {
+    let mut app = Workspace::default();
+    for path in ["/main", "/linked"] {
+        app.projects.push(ProjectInfo {
+            path: path.into(),
+            name: path.into(),
+        });
+    }
+    app.project_roots.insert("/linked".into(), "/main".into());
+    let main = app.new_session(scope(Provider::Codex, "/main"));
+    app.sessions[main].draft = "Main draft café".into();
+    app.sessions[main].reading = 220.0;
+    let other_main = app.new_session(scope(Provider::OpenCode, "/main"));
+    app.select(main);
+    let linked = app.new_session(scope(Provider::Codex, "/linked"));
+    app.sessions[linked].draft = "Linked draft".into();
+    app.sessions[linked].conversation.working = true;
+    app.sessions[linked].queue.push(QueuedPrompt {
+        text: "Next linked turn".into(),
+        options: Default::default(),
+    });
+    app.attach(
+        linked,
+        Attachment::new("src/main.rs".into(), "snapshot".into(), None, false),
+    );
+
+    assert!(app.select_checkout("/main"));
+    assert_eq!(app.selected, Some(main));
+    assert_eq!(app.sessions[main].reading, 220.0);
+    assert!(app.select_checkout("/linked"));
+    assert_eq!(app.selected, Some(linked));
+    assert!(app.sessions[linked].working());
+    assert!(
+        app.commands().is_empty(),
+        "navigation must not send or cancel work"
+    );
+    app.select_project("/main");
+    assert_eq!(
+        app.selected,
+        Some(linked),
+        "the project card still recalls its active worktree"
+    );
+    app.preferences
+        .worktree_expanded
+        .insert("/main".into(), false);
+    let snapshot: Snapshot =
+        serde_json::from_value(serde_json::to_value(app.snapshot()).unwrap()).unwrap();
+    let mut restored = Workspace::default();
+    restored.enable_store("unused-checkout-restore.json".into());
+    let load = restored.commands().pop().unwrap().0;
+    restored.apply(Event::Completed(
+        load,
+        Ok(Reply::Snapshot(Some(Box::new(snapshot)))),
+    ));
+    assert!(restored.select_checkout("/main"));
+    assert_eq!(restored.selected, Some(main));
+    assert_eq!(restored.sessions[main].draft, "Main draft café");
+    assert_eq!(
+        restored.preferences.worktree_expanded.get("/main"),
+        Some(&false)
+    );
+    assert!(restored.select_checkout("/linked"));
+    assert_eq!(restored.sessions[linked].draft, "Linked draft");
+    assert_eq!(restored.sessions[linked].queue[0].text, "Next linked turn");
+    assert_eq!(restored.sessions[linked].attachments[0].content, "snapshot");
+    restored.sessions[main].archived = true;
+    assert!(restored.select_checkout("/main"));
+    assert_eq!(restored.selected, Some(other_main));
+    assert!(!restored.select_checkout("/unknown"));
+    assert_eq!(restored.selected, Some(other_main));
+}
+
+#[test]
+fn worktree_catalog_uses_the_latest_checkout_read_without_stealing_selection() {
+    let mut app = Workspace::default();
+    for path in ["/main", "/linked"] {
+        app.projects.push(ProjectInfo {
+            path: path.into(),
+            name: path.into(),
+        });
+    }
+    app.project_roots.insert("/linked".into(), "/main".into());
+    let owner = app.new_session(scope(Provider::Codex, "/main"));
+    let mut requests = Vec::new();
+    for path in ["/main", "/linked"] {
+        app.task(Task::Worktrees {
+            project: path.into(),
+            directory: String::new(),
+        });
+        requests.push(app.commands().pop().unwrap().0);
+    }
+    let listing = |source: &str, branch: &str, available: bool| {
+        serde_json::from_value(json!({
+        "project":{"path":source,"name":source},"storageDirectory":"/worktrees","branches":["main",branch],"defaultBase":"main",
+        "worktrees":[
+            {"path":"/main","project":{"path":"/main","name":"Main"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
+            {"path":"/linked","project":{"path":"/linked","name":"Linked"},"branch":branch,"main":false,"locked":null,"prunable":null,"available":available}
+        ]
+    })).unwrap()
+    };
+    app.apply(Event::Completed(
+        requests[1],
+        Ok(Reply::Task(TaskReply::Worktrees(Some(listing(
+            "/linked",
+            "new-branch",
+            false,
+        ))))),
+    ));
+    app.apply(Event::Completed(
+        requests[0],
+        Ok(Reply::Task(TaskReply::Worktrees(Some(listing(
+            "/main",
+            "old-branch",
+            true,
+        ))))),
+    ));
+    for path in ["/main", "/linked"] {
+        assert_eq!(
+            app.services.worktrees(path).unwrap().worktrees[1]
+                .branch
+                .as_deref(),
+            Some("new-branch")
+        );
+    }
+    assert!(
+        !app.select_checkout("/linked"),
+        "a missing checkout cannot be selected"
+    );
+    assert_eq!(app.selected, Some(owner));
+    app.task(Task::Worktrees {
+        project: "/main".into(),
+        directory: String::new(),
+    });
+    let retry = app
+        .commands()
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Task(Task::Worktrees { .. })))
+        .unwrap()
+        .0;
+    app.apply(Event::Completed(retry, Err("Git unavailable".into())));
+    assert_eq!(
+        app.services.worktrees("/main").unwrap().worktrees[1]
+            .branch
+            .as_deref(),
+        Some("new-branch"),
+        "a failed refresh keeps the last successful listing"
+    );
+    app.task(Task::Worktrees {
+        project: "/main".into(),
+        directory: String::new(),
+    });
+    let refresh = app
+        .commands()
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Task(Task::Worktrees { .. })))
+        .unwrap()
+        .0;
+    let mut removed: caelum_protocol::GitWorktrees = listing("/main", "removed", true);
+    removed.worktrees.retain(|tree| tree.main);
+    app.apply(Event::Completed(
+        refresh,
+        Ok(Reply::Task(TaskReply::Worktrees(Some(removed)))),
+    ));
+    assert!(
+        !app.select_checkout("/linked"),
+        "a stale row cannot select a removed worktree"
+    );
+    assert_eq!(app.selected, Some(owner));
+}
+
+#[test]
 fn removing_the_active_linked_checkout_returns_to_the_surviving_project() {
     let mut app = Workspace::default();
     for path in ["/main", "/linked"] {
@@ -701,7 +872,10 @@ fn closing_project_groups_keeps_sessions_work_and_drafts_through_reopen_and_rest
     let mut restored = Workspace::default();
     restored.enable_store("unused-project-close.json".into());
     let load = restored.commands().pop().unwrap().0;
-    restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
+    restored.apply(Event::Completed(
+        load,
+        Ok(Reply::Snapshot(Some(Box::new(snapshot)))),
+    ));
     assert!(restored.projects.is_empty());
     assert!(restored.selected.is_none());
     assert!(!restored
@@ -957,7 +1131,7 @@ fn restart_preserves_unsent_and_unacknowledged_prompts_and_pauses_all_queues() {
     let (load, _) = restored.commands().pop().unwrap();
     restored.apply(Event::Completed(
         load,
-        Ok(Reply::Snapshot(Some(original.snapshot()))),
+        Ok(Reply::Snapshot(Some(Box::new(original.snapshot())))),
     ));
     assert_eq!(restored.sessions[index].draft, "newer draft");
     assert_eq!(

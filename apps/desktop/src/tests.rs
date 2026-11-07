@@ -447,6 +447,151 @@ fn design_runtime(scene: &str, size: (f32, f32)) -> Runtime<Workspace> {
 }
 
 #[test]
+fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("sidebar-worktrees", size);
+        let root = "/projects/caelum";
+        let linked = "/projects/caelum-native";
+        let main_key = crate::code_view::source_key(root, "checkout");
+        let linked_key = crate::code_view::source_key(linked, "checkout");
+        let linked_path = element(&rt, &linked_key).path;
+        assert!(rt.elements().iter().any(|e| e.path.starts_with(&linked_path)
+            && e.text.as_deref() == Some("1 working")));
+        fill(&mut rt, "live-draft-0", "Keep the main draft");
+        click(&mut rt, &linked_key);
+        let index = rt.state.live.as_ref().unwrap().app.selected.unwrap();
+        assert_eq!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .app
+                .active_project
+                .as_deref(),
+            Some(linked)
+        );
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().drafts[0].text,
+            "Keep the main draft"
+        );
+        click(&mut rt, &main_key);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+        assert!(rt.state.live.as_ref().unwrap().app.sessions[index].working());
+        assert!(!rt.state.live.as_ref().unwrap().app.sessions[index].stopping);
+        assert!(element(&rt, "sidebar-scroll").visible[3] >= 80.0);
+        let toggle = crate::code_view::source_key(root, "worktrees-toggle");
+        click(&mut rt, &toggle);
+        assert!(rt.find(&linked_key).is_none());
+        assert_eq!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .app
+                .preferences
+                .worktree_expanded
+                .get(root),
+            Some(&false)
+        );
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(rt.find(&linked_key).is_some());
+        click(&mut rt, &main_key);
+        key(&mut rt, Key::Down, Mods::default());
+        advance(&mut rt, 0.2);
+        assert!(element(&rt, &linked_key).focused);
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.2);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(index));
+    }
+}
+
+#[test]
+fn worktree_management_keeps_its_project_and_missing_rows_cannot_navigate() {
+    let mut rt = design_runtime("sidebar-worktrees-many", (800.0, 620.0));
+    let root = "/projects/caelum";
+    let missing = crate::code_view::source_key("/projects/caelum-task-11", "checkout");
+    assert!(!element(&rt, &missing).focusable);
+    let last = crate::code_view::source_key("/projects/caelum-task-10", "checkout");
+    click(&mut rt, &crate::code_view::source_key(root, "checkout"));
+    for _ in 0..13 {
+        key(&mut rt, Key::Down, Mods::default());
+    }
+    advance(&mut rt, 0.3);
+    let row = element(&rt, &last);
+    assert!(row.focused && row.visible[3] >= 41.0, "{row:?}");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    rt.update(|s, tx| {
+        crate::checkouts::manage(s, root.into());
+        tx.scroll_to_y("projects-scroll", 0.0);
+        let l = s.live.as_mut().unwrap();
+        l.app.projects.push(caelum_protocol::ProjectInfo {
+            path: "/other".into(),
+            name: "Other".into(),
+        });
+        l.app.select_project("/other");
+        l.sync_editors();
+    });
+    advance(&mut rt, 0.3);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().checkouts.project.as_deref(),
+        Some(root)
+    );
+    assert!(
+        rt.find(&crate::code_view::source_key(root, "manage-checkout"))
+            .is_some()
+    );
+    click(
+        &mut rt,
+        &crate::code_view::source_key(root, "manage-checkout"),
+    );
+    assert_eq!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .active_project
+            .as_deref(),
+        Some(root)
+    );
+    assert!(rt.state.live.as_ref().unwrap().panels.overlay.is_none());
+}
+
+#[test]
+fn worktree_discovery_loads_background_projects_once_and_refreshes_without_navigation() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let mut rt = design_runtime("sidebar-projects", (1280.0, 1000.0));
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.commands();
+        assert!(l.checkouts.sync(&mut l.app));
+        let commands = l.app.commands();
+        assert_eq!(commands.len(), 4);
+        for (id, command) in commands {
+            assert!(matches!(command, Command::Task(Task::Worktrees { .. })));
+            l.app.apply(Event::Completed(
+                id,
+                Ok(Reply::Task(TaskReply::Worktrees(None))),
+            ));
+        }
+        assert!(
+            !l.checkouts.sync(&mut l.app),
+            "non-Git projects must not retry every frame"
+        );
+        assert!(l.app.commands().is_empty());
+    });
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    let mut rt = design_runtime("sidebar-worktrees", (1280.0, 1000.0));
+    click(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum", "refresh-worktrees"),
+    );
+    assert!(rt.state.live.as_mut().unwrap().app.commands().iter().any(|(_, c)| matches!(c, Command::Task(Task::Worktrees { project, .. }) if project == "/projects/caelum")));
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+}
+
+#[test]
 fn populated_sidebar_shares_space_and_scrolls_projects_and_pull_requests_independently() {
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         let mut rt = design_runtime("sidebar-projects", size);
@@ -1157,7 +1302,10 @@ fn vercel_theme_is_keyboard_selectable_and_retains_mode_and_accent_on_restore() 
         let mut restored = caelum_core::application::Workspace::default();
         restored.enable_store("unused-fixture-state.json".into());
         let load = restored.commands().pop().unwrap().0;
-        restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
+        restored.apply(Event::Completed(
+            load,
+            Ok(Reply::Snapshot(Some(Box::new(snapshot)))),
+        ));
         assert_eq!(restored.preferences.theme_family, "vercel");
         assert_eq!(restored.preferences.accent_color, "teal");
     }
@@ -2344,7 +2492,7 @@ fn project_links_wait_for_restore_and_keep_drafts_when_the_app_is_running() {
     assert!(matches!(commands[0].1, Command::Load(_)));
     live.app.apply(Event::Completed(
         commands[0].0,
-        Ok(Reply::Snapshot(Some(original.snapshot()))),
+        Ok(Reply::Snapshot(Some(Box::new(original.snapshot())))),
     ));
     live.poll(&mut rune::Tx::default());
     let mut commands = live.app.commands();

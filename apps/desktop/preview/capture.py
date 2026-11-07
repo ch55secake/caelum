@@ -39,6 +39,7 @@ interactions = {
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
+scenes += ("sidebar-worktrees", "sidebar-worktrees-many")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

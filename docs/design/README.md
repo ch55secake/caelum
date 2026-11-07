@@ -124,6 +124,10 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Custom session actions](previews/rune-dark-context-session.png) | ![Custom editing actions](previews/rune-light-context-editor-small.png) |
 
+| Active worktrees | Compact worktree navigation |
+| --- | --- |
+| ![Worktree branches and activity](previews/rune-dark-sidebar-worktrees.png) | ![Worktrees in a compact workspace](previews/rune-light-sidebar-worktrees-small.png) |
+
 | Compact file tabs | Tool icons and details |
 | --- | --- |
 | ![Native compact files](previews/rune-dark-files-tabs-small.png) | ![Native collapsed tools](previews/rune-dark-tools-collapsed.png) |
