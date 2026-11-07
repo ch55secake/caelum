@@ -144,9 +144,10 @@ is visible and following the latest messages.
 The default Caelum palette keeps surfaces neutral, with colour in selection markers,
 tab underlines, focus borders, status icons, links and primary actions.
 Choose **Vercel** for a monochrome theme with a pure-black workspace and sidebar,
-subtly raised panels, and visible pane borders. Its light variant follows Light/System
-appearance. Selecting Vercel starts with the theme's monochrome accent; other accents
-remain available. The former **Black backgrounds** setting migrates to Vercel.
+subtly raised panels, and a soft hairline sidebar divider with fading ends. Its light
+variant follows Light/System appearance. Selecting Vercel starts with the theme's
+monochrome accent; other accents remain available. The former **Black backgrounds**
+setting migrates to Vercel.
 
 Closing the window keeps sessions running. Clicking the Dock icon or opening
 a project through the CLI brings it back. **⌘Q** quits and saves the latest drafts.

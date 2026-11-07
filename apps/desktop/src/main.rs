@@ -407,6 +407,15 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
             )
         },
     );
+    let vercel = s
+        .live
+        .as_ref()
+        .is_some_and(|l| l.app.preferences.theme_family == "vercel");
+    let pane_border = if vercel {
+        k.alpha(k.c.text_base, 0.12)
+    } else {
+        k.c.border_base
+    };
     let mut layers = Vec::new();
     let window_width = cx.layout("shell").map_or(1280.0, |r| r[2]);
     // Keep both panes usable at the minimum window size without overwriting the
@@ -432,7 +441,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .h_full()
         .min_h(0.0)
         .items_center()
-        .child(rune::el().w_full().h(1.0).fill(k.c.border_base))
+        .child(rune::el().w_full().h(1.0).fill(pane_border))
         .child(transcript(
             s,
             &k,
@@ -449,6 +458,23 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     } else {
         main.child(composer(s, &k, padding, width > 760.0, &mut layers))
     };
+    let main = main.children((vercel && sidebar_pane.is_open()).then(|| {
+        // Separate the black sidebar from the canvas with a softly fading hairline.
+        rune::el()
+            .key("sidebar-divider")
+            .w(1.0)
+            .pin(Some(0.0), Some(8.0), None, Some(12.0))
+            .linear_gradient(
+                std::f32::consts::PI,
+                [
+                    (0.0, rune::Color::TRANSPARENT),
+                    (0.04, pane_border),
+                    (0.96, pane_border),
+                    (1.0, rune::Color::TRANSPARENT),
+                ],
+            )
+            .a11y_hidden()
+    }));
     let toolbar = Toolbar::new()
         .leading(
             row()
@@ -530,15 +556,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     // retaining rounded controls and composer surfaces inside the panes.
     let mut shell_kit = k.clone();
     shell_kit.radius.lg = 0.0;
-    shell_kit.c.border_muted = if s
-        .live
-        .as_ref()
-        .is_some_and(|l| l.app.preferences.theme_family == "vercel")
-    {
-        k.c.border_base
-    } else {
-        k.c.bg_base
-    };
+    shell_kit.c.border_muted = k.c.bg_base;
     let shell = SplitView::new(main)
         .sidebar(
             &sidebar_pane,
