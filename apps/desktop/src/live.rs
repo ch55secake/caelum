@@ -1513,7 +1513,10 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
     let input = text_input(draft, TextStyle::new(14.0, 400.0).lh(23.0))
         .key(format!("live-draft-{index}"))
         .label("Message")
-        .placeholder("Message your session…", k.c.text_muted)
+        .placeholder(
+            "Message… Use / for commands, @ for files, # for PRs.",
+            k.c.text_muted,
+        )
         .help("Enter to send · Shift+Enter for a new line")
         .color(k.c.text_base)
         .selection_color(k.selection())
