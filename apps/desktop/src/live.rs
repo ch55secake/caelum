@@ -14,11 +14,13 @@ use rune_kit::{
     ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar, glyphs,
 };
 
+use crate::context::EditMenu;
 use crate::select::{Choice, Select};
 use crate::ui::Button;
 use crate::{PLUS, SEND, STOP, Workspace, on_key, quiet_button, theme, ui};
 
 pub struct Live {
+    pub context: crate::context::State,
     pub completion: crate::completion::Menu,
     pub commands: crate::commands::State,
     pub models: crate::models::Picker,
@@ -74,6 +76,7 @@ impl Live {
             app.open_project(project);
         }
         Self {
+            context: Default::default(),
             completion: Default::default(),
             commands: Default::default(),
             models: Default::default(),
@@ -860,7 +863,6 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
     if live(s).panels.searching_sessions {
         sidebar = sidebar.child(
             text_input(&live(s).panels.sessions, k.ty.ui)
-                .key("session-search")
                 .label("Search sessions")
                 .placeholder("Search sessions · ⌘K", k.c.text_muted)
                 .color(k.c.text_base)
@@ -868,7 +870,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 .padding(6.0)
                 .radius(6.0)
                 .border(1.0, k.c.border_base)
-                .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.sessions),
+                .edit_menu("session-search", |s| Some(&mut live_mut(s).panels.sessions)),
         );
     }
     let mut sessions = col()
@@ -1027,7 +1029,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             }
             let project = project.clone();
             let url = pr.url.clone();
-            requests = requests.child(
+            let context_project = project.clone();
+            requests = requests.child(crate::context::pull_request(
                 SidebarRow::new(&pr.title)
                     .icon(&ui::BRANCH)
                     .subtitle(format!("#{} · into {}", pr.number, pr.base_ref_name))
@@ -1040,7 +1043,10 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     .build(k)
                     .help(format!("#{} · {}", pr.number, pr.title))
                     .key(format!("pull-request-{}", pr.number)),
-            );
+                context_project,
+                pr.url.clone(),
+                pr.number,
+            ));
         }
     }
     sidebar = sidebar
@@ -1302,6 +1308,9 @@ fn timeline_row(
                             .on_link_tx(move |s: &mut Workspace, url, tx| {
                                 crate::panels::open_link(s, index, url, tx)
                             })
+                            .on_link_secondary(move |s: &mut Workspace, url, at, tx| {
+                                crate::context::link(s, index, url, at, tx)
+                            })
                             .render(&ui::user_markdown(k)),
                     );
                 }
@@ -1433,6 +1442,9 @@ fn timeline_row(
                             .on_link_tx(move |s: &mut Workspace, url, tx| {
                                 crate::panels::open_link(s, index, url, tx)
                             })
+                            .on_link_secondary(move |s: &mut Workspace, url, at, tx| {
+                                crate::context::link(s, index, url, at, tx)
+                            })
                             .render(&theme::markdown(k)),
                     );
             }
@@ -1455,6 +1467,7 @@ fn timeline_row(
             item,
             caelum_core::application::presentation::entry_text(entry),
             index,
+            format!("live-entry-{index}-{}", entry.id),
         ));
     }
     if let Some(error) = &session.error {
@@ -1571,7 +1584,6 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
     let session = &live.app.sessions[index];
     let draft = &live.drafts[index];
     let input = text_input(draft, TextStyle::new(14.0, 400.0).lh(23.0))
-        .key(format!("live-draft-{index}"))
         .label("Message")
         .placeholder(
             "Use / for commands, @ for files, # for PRs.",
@@ -1581,8 +1593,11 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .color(k.c.text_base)
         .selection_color(k.selection())
         .w_full()
-        .on_edit(move |s: &mut Workspace| &mut live_mut(s).drafts[index])
-        .on_input_change(crate::completion::changed)
+        .edit_menu_changed(
+            format!("live-draft-{index}"),
+            move |s| live_mut(s).drafts.get_mut(index),
+            crate::completion::changed,
+        )
         .on_input_key(on_key)
         .on_submit(Workspace::send)
         .on_input_paste(move |s: &mut Workspace, content, _| {
@@ -1879,20 +1894,7 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
             .focus_highlight(k.c.hover)
             .key("refresh-history"),
         );
-    let archive_disabled = session.working()
-        || session.archiving
-        || !session.queue.is_empty()
-        || !session.inbox.items.is_empty()
-        || live.app.approvals.iter().any(|p| {
-            p.project_path == session.scope.project
-                && p.provider == session.scope.provider.as_str()
-                && p.session_id == session.remote_id
-        })
-        || live.app.questions.iter().any(|p| {
-            p.project_path == session.scope.project
-                && p.provider == session.scope.provider.as_str()
-                && Some(&p.session_id) == session.remote_id.as_ref()
-        });
+    let archive_disabled = archive_disabled(live, index);
     content = content.child(
         ui::choice(
             if session.archived {
@@ -1919,6 +1921,24 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
         .key("archive-session"),
     );
     content
+}
+
+pub(crate) fn archive_disabled(live: &Live, index: usize) -> bool {
+    let session = &live.app.sessions[index];
+    session.working()
+        || session.archiving
+        || !session.queue.is_empty()
+        || !session.inbox.items.is_empty()
+        || live.app.approvals.iter().any(|p| {
+            p.project_path == session.scope.project
+                && p.provider == session.scope.provider.as_str()
+                && p.session_id == session.remote_id
+        })
+        || live.app.questions.iter().any(|p| {
+            p.project_path == session.scope.project
+                && p.provider == session.scope.provider.as_str()
+                && Some(&p.session_id) == session.remote_id.as_ref()
+        })
 }
 
 pub fn close_session_menu(s: &mut Workspace) {
