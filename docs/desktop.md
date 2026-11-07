@@ -11,20 +11,25 @@ the remembered session. Closing the final project returns to the welcome screen.
 Arrow keys navigate each section; Tab enters a project's actions and Left/Right
 moves between Create worktree and Close. **⌘K** searches sessions in open projects.
 **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that project's
-draft. Each session retains an independent draft and reading position. Hover a
+draft for the default provider chosen in Settings. Each session retains an
+independent draft and reading position. Hover a
 session to close it with **×**. A temporary notice names the archived session and
 offers **Undo**; it expires after eight unengaged seconds and pauses while hovered,
 keyboard-focused or restoring. Undo preserves newer navigation. Session actions and
 native context menus also offer archive/reconnect. Hover any session row for its
 **…** popover; actions belong to that row, including background sessions. Escape
 returns focus to its button. Use the archive icon beside
-**Sessions** to switch between active and archived sessions. **New session** opens
-the searchable project/provider launcher.
+**Sessions** to switch between active and archived sessions. **New session** uses
+the default provider chosen in Settings → Providers.
 
-Choose the model, provider, reasoning effort and available agent in the composer.
+Choose the model, reasoning effort and available agent in the composer. Effort
+and agent controls have distinct icons and labelled popouts with readable names,
+selected checkmarks and options to return to the model/provider default.
 The model is the primary setting; borderless labels with small chevrons wrap into
 rows in narrow panes while Send/Stop stays aligned at the lower right. Shortcut
 hints and full setting values appear in tooltips.
+Send/Stop keeps equal 12-point right and bottom insets as Queue, context usage
+and wrapped settings change; the action row takes only the space it needs.
 Sending creates a provider session when needed. Later selection changes apply
 to the next message. Search models and star favourites in the model picker.
 The anchored popover keeps its original session or Settings target while open. Unavailable
@@ -88,8 +93,9 @@ provide copy, reuse and attachment actions. Up in an empty composer recalls the
 last prompt; Shift+Tab cycles available OpenCode agents. The context meter shows
 reported token usage and model capacity when available.
 
-Type **/** to discover local and provider commands. `/new`, `/timeline`, `/files`,
-`/changes` and `/settings` open native workflows. OpenCode also supports `/usage`,
+Type **/** to discover local and provider commands. `/new`, `/models`, `/timeline`,
+`/files`, `/changes` and `/settings` open native workflows. `/models` opens the
+searchable model picker for the current session. OpenCode also supports `/usage`,
 `/stats`, provider-discovered commands and `/btw question` (`/ask` is an alias).
 Side questions have a separate editor, context, retry and answer-copy actions;
 they preserve the main draft and do not add a conversation turn. Timeline groups
@@ -135,7 +141,7 @@ while comments are selected. See
 
 ## Appearance and window lifecycle
 
-The top-toolbar gear or **⌘,** opens Settings. Choose System/Light/Dark, Caelum/Catppuccin/Nord/Tokyo Night,
+The top-toolbar gear or **⌘,** opens Settings. Choose System/Light/Dark, Caelum/Vercel/Catppuccin/Nord/Tokyo Night,
 and six accents or the theme default. Its five pages are Appearance, Providers,
 Worktrees, Notifications and About. Provider defaults/favourites, notification
 visibility and sounds, worktree storage, legacy settings import and persistence
@@ -143,9 +149,11 @@ retry live here. Unread state persists and clears only when the loaded conversat
 is visible and following the latest messages.
 The default Caelum palette keeps surfaces neutral, with colour in selection markers,
 tab underlines, focus borders, status icons, links and primary actions.
-Enable **Black backgrounds** under Appearance for a black workspace/sidebar and
-near-black panels. This saved preference applies to dark appearance, including
-System when macOS is dark, and retains the selected theme family and accent.
+Choose **Vercel** for a monochrome theme with a pure-black workspace and sidebar,
+subtly raised panels, and a soft hairline sidebar divider with fading ends. Its light
+variant follows Light/System appearance. Selecting Vercel starts with the theme's
+monochrome accent; other accents remain available. The former **Black backgrounds**
+setting migrates to Vercel.
 
 Closing the window keeps sessions running. Clicking the Dock icon or opening
 a project through the CLI brings it back. **⌘Q** quits and saves the latest drafts.

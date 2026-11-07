@@ -6,14 +6,36 @@ type Handler = Box<dyn FnOnce(El) -> El>;
 type Choose = Box<dyn Fn(&str, El) -> El>;
 type Dismiss = Box<dyn FnOnce(El, &mut Vec<El>) -> El>;
 
+pub struct Choice {
+    value: String,
+    label: String,
+    detail: Option<String>,
+}
+
+impl Choice {
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            detail: None,
+        }
+    }
+    pub fn detail(mut self, value: impl Into<String>) -> Self {
+        self.detail = Some(value.into());
+        self
+    }
+}
+
 pub struct Select {
     key: String,
-    options: Vec<String>,
+    options: Vec<Choice>,
     current: Option<String>,
     placeholder: String,
     label: String,
     display: Option<String>,
     prominent: bool,
+    icon: Option<&'static rune::Icon>,
+    menu_description: Option<String>,
     indicator: &'static rune::Icon,
     field: bool,
     width: f32,
@@ -30,12 +52,17 @@ impl Select {
     pub fn new<T: AsRef<str>>(key: impl Into<String>, options: &[T]) -> Self {
         Self {
             key: key.into(),
-            options: options.iter().map(|v| v.as_ref().into()).collect(),
+            options: options
+                .iter()
+                .map(|v| Choice::new(v.as_ref(), v.as_ref()))
+                .collect(),
             current: None,
             placeholder: String::new(),
             label: String::new(),
             display: None,
             prominent: false,
+            icon: None,
+            menu_description: None,
             indicator: &crate::ui::CHOICE,
             field: false,
             width: 260.0,
@@ -47,6 +74,11 @@ impl Select {
             dismiss: None,
             search: None,
         }
+    }
+    pub fn choices(key: impl Into<String>, options: Vec<Choice>) -> Self {
+        let mut select = Self::new::<&str>(key, &[]);
+        select.options = options;
+        select
     }
     pub fn current(mut self, value: Option<&str>) -> Self {
         self.current = value.map(str::to_owned);
@@ -66,6 +98,14 @@ impl Select {
     }
     pub fn prominent(mut self) -> Self {
         self.prominent = true;
+        self
+    }
+    pub fn icon(mut self, value: &'static rune::Icon) -> Self {
+        self.icon = Some(value);
+        self
+    }
+    pub fn menu_description(mut self, value: impl Into<String>) -> Self {
+        self.menu_description = Some(value.into());
         self
     }
     pub fn indicator(mut self, value: &'static rune::Icon) -> Self {
@@ -127,6 +167,11 @@ impl Select {
     }
     fn field(&mut self, k: &Kit) -> El {
         let value = self.current.as_deref().unwrap_or(&self.placeholder);
+        let value = self
+            .options
+            .iter()
+            .find(|o| o.value == value)
+            .map_or(value, |o| o.label.as_str());
         let display = self.display.as_deref().unwrap_or(value);
         let mut field = k.interactive(
             row()
@@ -142,6 +187,12 @@ impl Select {
                 } else {
                     rune::Color::TRANSPARENT
                 })
+                .children(self.icon.map(|glyph| {
+                    icon(glyph, 14.0)
+                        .key(format!("{}-icon", self.key))
+                        .color(k.c.icon_muted)
+                        .a11y_hidden()
+                }))
                 .children((!display.is_empty()).then(|| {
                     text(display)
                         .font(if self.prominent {
@@ -173,10 +224,10 @@ impl Select {
                 .child(icon(self.indicator, 13.0).color(k.c.icon_muted));
         } else {
             field = field
-                .w(
-                    (rune::text::measure(display, &[], k.ty.ui_medium, None).0 + 26.0)
-                        .clamp(36.0, 220.0),
-                )
+                .w((rune::text::measure(display, &[], k.ty.ui_medium, None).0
+                    + 26.0
+                    + if self.icon.is_some() { 18.0 } else { 0.0 })
+                .clamp(36.0, 220.0))
                 .child(icon(&rune_kit::glyphs::CHEVRON_DOWN, 10.0).color(k.c.icon_muted));
         }
         field = field
@@ -204,22 +255,30 @@ impl Select {
             return trigger;
         }
         let anchor = format!("{}-trigger", self.key);
-        let width = rune::memo::window_layout(&anchor)
-            .map_or(self.width, |r| r[2])
-            .clamp(200.0, 340.0);
+        let width = if self.menu_description.is_some() {
+            self.width
+        } else {
+            rune::memo::window_layout(&anchor).map_or(self.width, |r| r[2])
+        }
+        .clamp(200.0, 340.0);
         let mut list = col()
             .w_full()
             .gap(2.0)
             .focus_group()
             .role("listbox")
             .label(&self.label);
-        for (i, value) in self.options.iter().enumerate() {
-            let selected = self.current.as_ref() == Some(value);
+        for (i, choice) in self.options.iter().enumerate() {
+            let selected = self.current.as_ref() == Some(&choice.value);
             let mut item = k
                 .interactive(
                     row()
                         .w_full()
-                        .h(32.0)
+                        .min_h(if self.menu_description.is_some() {
+                            36.0
+                        } else {
+                            32.0
+                        })
+                        .py(if choice.detail.is_some() { 7.0 } else { 0.0 })
                         .px(10.0)
                         .gap(12.0)
                         .center_y()
@@ -230,12 +289,18 @@ impl Select {
                             rune::Color::TRANSPARENT
                         })
                         .child(
-                            text(value)
-                                .font(k.ty.ui)
-                                .color(k.c.text_base)
-                                .truncate()
+                            col()
                                 .min_w(0.0)
-                                .grow(1.0),
+                                .grow(1.0)
+                                .child(
+                                    text(&choice.label)
+                                        .font(if selected { k.ty.ui_medium } else { k.ty.ui })
+                                        .color(k.c.text_base)
+                                        .truncate(),
+                                )
+                                .children(choice.detail.as_ref().map(|detail| {
+                                    text(detail).font(k.ty.small).color(k.c.text_muted)
+                                })),
                         )
                         .child(
                             icon(k.glyph.check_small, 14.0)
@@ -245,38 +310,61 @@ impl Select {
                 )
                 .key(format!("option{i}"))
                 .role("option")
-                .label(value)
+                .label(&choice.label)
                 .focusable(true)
                 .focus_selected(selected)
                 .focus_highlight(k.c.hover)
                 .focus_ring(1.0, 0.0, k.c.border_focus);
+            if let Some(detail) = &choice.detail {
+                item = item.description(detail);
+            }
             if let Some(f) = &self.choose {
-                item = f(value, item);
+                item = f(&choice.value, item);
             }
             list = list.child(item);
         }
         if self.options.is_empty() {
             list = list.child(crate::ui::caption("No matching choices", k).padding(10.0));
         }
-        let mut content = col()
-            .key(format!("{}-content", self.key))
-            .label(&self.label)
-            .w(width)
-            .padding(6.0)
-            .gap(6.0)
-            .focus_return(&anchor)
-            .children(self.search)
-            .child(
-                col()
-                    .w_full()
-                    .max_h(238.0)
-                    .min_h(0.0)
-                    .scroll(rune::ScrollSpec {
-                        stick_bottom: false,
-                    })
-                    .child(list)
-                    .scroll_bar(k),
-            );
+        let mut content =
+            col()
+                .key(format!("{}-content", self.key))
+                .label(&self.label)
+                .w(width)
+                .padding(6.0)
+                .gap(6.0)
+                .focus_return(&anchor)
+                .children(self.menu_description.as_ref().map(|description| {
+                    col()
+                        .w_full()
+                        .gap(3.0)
+                        .px(8.0)
+                        .pt(6.0)
+                        .pb(4.0)
+                        .child(
+                            row()
+                                .gap(7.0)
+                                .center_y()
+                                .children(self.icon.map(|glyph| {
+                                    icon(glyph, 14.0).color(k.c.icon_muted).a11y_hidden()
+                                }))
+                                .child(text(&self.label).font(k.ty.ui_medium).color(k.c.text_base)),
+                        )
+                        .child(text(description).font(k.ty.small).color(k.c.text_muted))
+                        .child(crate::ui::divider(k).mt(7.0))
+                }))
+                .children(self.search)
+                .child(
+                    col()
+                        .w_full()
+                        .max_h(238.0)
+                        .min_h(0.0)
+                        .scroll(rune::ScrollSpec {
+                            stick_bottom: false,
+                        })
+                        .child(list)
+                        .scroll_bar(k),
+                );
         if let Some(f) = self.dismiss {
             content = f(content, layers);
         }

@@ -69,6 +69,7 @@ pub fn dispatch(s: &mut Workspace, tx: &mut Tx) -> bool {
     l.commands.search.clear();
     match command {
         LocalCommand::New => l.new_session(),
+        LocalCommand::Models => crate::models::open(s, None),
         LocalCommand::Files => panels::show(s, Screen::Files),
         LocalCommand::Changes => panels::show(s, Screen::Changes),
         LocalCommand::Settings => panels::show(s, Screen::Settings),

@@ -3,9 +3,7 @@
 
 use std::{cell::Cell, collections::HashSet, rc::Rc};
 
-use caelum_core::application::{
-    EntryKind, Event, Provider, Runtime, Scope, Workspace as Application,
-};
+use caelum_core::application::{EntryKind, Event, Runtime, Scope, Workspace as Application};
 use caelum_protocol::ApprovalDecision;
 use rune::{
     El, FileDialogOptions, ScrollPos, ScrollSpec, TextEdit, TextStyle, Tx, Waker, col, icon, row,
@@ -16,7 +14,7 @@ use rune_kit::{
     ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar, glyphs,
 };
 
-use crate::select::Select;
+use crate::select::{Choice, Select};
 use crate::ui::Button;
 use crate::{PLUS, SEND, STOP, Workspace, on_key, quiet_button, theme, ui};
 
@@ -39,7 +37,7 @@ pub struct Live {
     visible_entries: HashSet<(usize, String)>,
     pub current_prompt: Option<String>,
     pub(crate) patches: std::collections::HashMap<(usize, String), crate::code_view::Document>,
-    menu: Option<&'static str>,
+    menu: Option<(&'static str, usize)>,
     pub session_menu: Option<usize>,
     pub shell_panel: Option<crate::shells::Panel>,
     pub(crate) collapsed_shells: HashSet<usize>,
@@ -131,11 +129,7 @@ impl Live {
             self.panels.overlay = Some(crate::panels::Screen::Launcher);
             return;
         };
-        let provider = self
-            .app
-            .selected
-            .map(|i| self.app.sessions[i].scope.provider)
-            .unwrap_or(self.app.preferences.default_provider);
+        let provider = self.app.preferences.default_provider;
         let index = self.app.project_draft(Scope { project, provider });
         self.sync_editors();
         self.drafts[index].focused = true;
@@ -483,6 +477,7 @@ impl Live {
             || (self.panels.screen == crate::panels::Screen::Conversation
                 && self.last_screen != self.panels.screen)
         {
+            self.menu = None;
             if let Some(previous) = self.last_selected
                 && self.last_selected != self.app.selected
             {
@@ -1579,7 +1574,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .key(format!("live-draft-{index}"))
         .label("Message")
         .placeholder(
-            "Message… Use / for commands, @ for files, # for PRs.",
+            "Use / for commands, @ for files, # for PRs.",
             k.c.text_muted,
         )
         .help("Enter to send · Shift+Enter for a new line")
@@ -1641,7 +1636,11 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
             "Send message · Enter\nShift+Enter for a new line"
         })
         .size(32.0, 32.0);
-    let mut controls = row().center_y().gap(6.0);
+    let mut controls = row()
+        .key("composer-actions")
+        .center_y()
+        .justify_end()
+        .gap(6.0);
     if session.working() && !draft.text.trim().is_empty() {
         controls = controls.child(
             Button::new("Queue")
@@ -1662,13 +1661,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .child(
             controls
                 .child(crate::activity::context(s, k, index, wide))
-                .child(submit)
-                .w((if wide { 148.0 } else { 60.0 })
-                    + if session.working() && !draft.text.trim().is_empty() {
-                        60.0
-                    } else {
-                        0.0
-                    }),
+                .child(submit),
         );
     let activity = crate::activity::session_activity(s, index);
     ui::composer_activity(
@@ -1703,124 +1696,108 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         return content;
     };
     let session = &live.app.sessions[index];
-    let provider = Select::new("provider", &["Codex", "OpenCode"])
-        .current(Some(ui::provider_name(session.scope.provider)))
-        .label("Provider")
-        .placement(Placement::TopStart)
-        .open(live.menu == Some("provider"))
-        .disabled(session.remote_id.is_some() || !session.can_send())
-        .on_toggle(|s: &mut Workspace| toggle_menu(s, "provider"))
-        .on_close(|s: &mut Workspace| live_mut(s).menu = None)
-        .on_choose(move |s: &mut Workspace, value, _| {
-            let live = live_mut(s);
-            let session = &mut live.app.sessions[index];
-            session.scope.provider = if value == "Codex" {
-                Provider::Codex
-            } else {
-                Provider::OpenCode
-            };
-            session.options = live
-                .app
-                .preferences
-                .providers
-                .get(session.scope.provider.as_str())
-                .cloned()
-                .unwrap_or_default();
-            if let Some(choices) = live.app.choices.get(&session.scope)
-                && session.options.model.is_none()
-            {
-                session.options.model = choices.default_model.clone();
-            }
-            live.app.options_changed(index);
-            live.menu = None;
-            live.focus();
-        })
-        .build(k, layers)
-        .max_w(maximum);
     let choices = live.app.choices.get(&session.scope);
-    content = content
-        .child(
-            Select::new::<&str>("model", &[])
-                .current(
-                    choices
-                        .and_then(|c| {
-                            c.models
-                                .iter()
-                                .find(|m| Some(&m.id) == session.options.model.as_ref())
-                        })
-                        .map(|m| m.name.as_str())
-                        .or(session.options.model.as_deref()),
-                )
-                .placeholder("Provider default")
-                .label("Model")
-                .prominent()
-                .placement(Placement::TopStart)
-                .open(live.models.is_open())
-                .disabled(session.archived || session.archiving)
-                .on_toggle(|s: &mut Workspace| crate::models::open(s, None))
-                .trigger(k)
-                .max_w(maximum.min(220.0))
-                .min_w(0.0),
-        )
-        .child(provider);
+    content = content.child(
+        Select::new::<&str>("model", &[])
+            .current(
+                choices
+                    .and_then(|c| {
+                        c.models
+                            .iter()
+                            .find(|m| Some(&m.id) == session.options.model.as_ref())
+                    })
+                    .map(|m| m.name.as_str())
+                    .or(session.options.model.as_deref()),
+            )
+            .placeholder("Provider default")
+            .label("Model")
+            .prominent()
+            .placement(Placement::TopStart)
+            .open(live.models.is_open())
+            .disabled(session.archived || session.archiving)
+            .on_toggle(|s: &mut Workspace| crate::models::open(s, None))
+            .trigger(k)
+            .max_w(maximum.min(220.0))
+            .min_w(0.0),
+    );
     if let Some(choices) = choices {
         if let Some(model) = choices
             .models
             .iter()
             .find(|model| Some(&model.id) == session.options.model.as_ref())
+            && !model.efforts.is_empty()
         {
-            let efforts: Vec<_> = model
+            let default = model
+                .default_effort
+                .as_deref()
+                .and_then(|id| model.efforts.iter().find(|e| e.id == id))
+                .map(choice_label);
+            let mut efforts = vec![
+                Choice::new("", "Model default").detail(default.unwrap_or("Let the model choose")),
+            ];
+            efforts.extend(model.efforts.iter().map(effort_choice));
+            let current = session.options.effort.as_deref().unwrap_or("");
+            let display = model
                 .efforts
                 .iter()
-                .map(|effort| effort.id.as_str())
-                .collect();
-            if !efforts.is_empty() {
-                content = content.child(
-                    Select::new("effort", &efforts)
-                        .current(
-                            session
-                                .options
-                                .effort
-                                .as_deref()
-                                .or(model.default_effort.as_deref()),
-                        )
-                        .label("Reasoning effort")
-                        .placement(Placement::TopStart)
-                        .open(live.menu == Some("effort"))
-                        .disabled(session.archived || session.archiving)
-                        .on_toggle(|s: &mut Workspace| toggle_menu(s, "effort"))
-                        .on_close(|s: &mut Workspace| live_mut(s).menu = None)
-                        .on_choose(move |s: &mut Workspace, value, _| {
-                            let live = live_mut(s);
-                            live.app.sessions[index].options.effort = Some(value.into());
-                            live.app.options_changed(index);
-                            live.menu = None;
-                            live.focus();
-                        })
-                        .build(k, layers)
-                        .max_w(maximum),
-                );
-            }
-        }
-        let agents: Vec<_> = choices
-            .agents
-            .iter()
-            .map(|agent| agent.id.as_str())
-            .collect();
-        if !agents.is_empty() {
+                .find(|e| e.id == current)
+                .map(choice_label)
+                .or(default.filter(|_| current.is_empty()))
+                .unwrap_or(if current.is_empty() {
+                    "Default"
+                } else {
+                    current
+                });
             content = content.child(
-                Select::new("agent", &agents)
-                    .current(session.options.agent.as_deref())
-                    .placeholder("Provider default")
-                    .label("Agent")
+                Select::choices("effort", efforts)
+                    .current(Some(current))
+                    .display(display)
+                    .label("Reasoning effort")
+                    .icon(&ui::EFFORT)
+                    .menu_description("Depth of reasoning for the next message")
+                    .width(280.0)
                     .placement(Placement::TopStart)
-                    .open(live.menu == Some("agent"))
+                    .open(live.menu == Some(("effort", index)))
+                    .disabled(session.archived || session.archiving)
+                    .on_toggle(|s: &mut Workspace| toggle_menu(s, "effort"))
+                    .on_close(|s: &mut Workspace| live_mut(s).menu = None)
+                    .on_choose(move |s: &mut Workspace, value, _| {
+                        let live = live_mut(s);
+                        live.app.sessions[index].options.effort =
+                            (!value.is_empty()).then(|| value.into());
+                        live.app.options_changed(index);
+                        live.menu = None;
+                        live.focus();
+                    })
+                    .build(k, layers)
+                    .max_w(maximum),
+            );
+        }
+        if !choices.agents.is_empty() {
+            let mut agents =
+                vec![Choice::new("", "Default agent").detail("Use the provider's default agent")];
+            agents.extend(
+                choices
+                    .agents
+                    .iter()
+                    .map(|agent| Choice::new(&agent.id, choice_label(agent))),
+            );
+            content = content.child(
+                Select::choices("agent", agents)
+                    .current(Some(session.options.agent.as_deref().unwrap_or("")))
+                    .label("Agent")
+                    .icon(&ui::AGENT)
+                    .menu_description("Agent for the next message")
+                    .width(280.0)
+                    .placement(Placement::TopStart)
+                    .open(live.menu == Some(("agent", index)))
                     .disabled(session.archived || session.archiving)
                     .on_toggle(|s: &mut Workspace| toggle_menu(s, "agent"))
                     .on_close(|s: &mut Workspace| live_mut(s).menu = None)
                     .on_choose(move |s: &mut Workspace, value, _| {
                         let live = live_mut(s);
-                        live.app.sessions[index].options.agent = Some(value.into());
+                        live.app.sessions[index].options.agent =
+                            (!value.is_empty()).then(|| value.into());
                         live.app.options_changed(index);
                         live.menu = None;
                         live.focus();
@@ -1831,6 +1808,35 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         }
     }
     content
+}
+
+fn choice_label(choice: &caelum_protocol::ProviderChoice) -> &str {
+    if choice.name != choice.id {
+        return &choice.name;
+    }
+    match choice.name.as_str() {
+        "none" => "None",
+        "minimal" => "Minimal",
+        "low" => "Low",
+        "medium" => "Medium",
+        "high" => "High",
+        "xhigh" => "Extra high",
+        "build" => "Build",
+        "plan" => "Plan",
+        _ => &choice.name,
+    }
+}
+
+fn effort_choice(effort: &caelum_protocol::ProviderChoice) -> Choice {
+    let choice = Choice::new(&effort.id, choice_label(effort));
+    match effort.id.to_ascii_lowercase().as_str() {
+        "none" => choice.detail("Respond without extra reasoning"),
+        "minimal" | "low" => choice.detail("Less reasoning, quicker responses"),
+        "medium" => choice.detail("Balance reasoning depth and speed"),
+        "high" => choice.detail("Think more deeply about complex tasks"),
+        "xhigh" => choice.detail("Use the most reasoning time"),
+        _ => choice,
+    }
 }
 
 pub fn session_actions(s: &Workspace, k: &Kit) -> El {
@@ -2028,10 +2034,7 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
 }
 
 fn toggle_menu(s: &mut Workspace, name: &'static str) {
-    let menu = &mut live_mut(s).menu;
-    *menu = if *menu == Some(name) {
-        None
-    } else {
-        Some(name)
-    };
+    let live = live_mut(s);
+    let next = live.app.selected.map(|index| (name, index));
+    live.menu = if live.menu == next { None } else { next };
 }

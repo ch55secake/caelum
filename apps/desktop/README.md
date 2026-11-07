@@ -43,7 +43,7 @@ dispatch `--script` events; check OS interaction in the running application.
 The 360 light/dark, normal/compact captures include populated, empty, loading,
 error, hover, focus and disabled states. Use `--scene models` (or `worktrees`,
 `shells`, `review-loading`, `composer-options`, `files-tabs`, `tools-collapsed`,
-`merge-ready`, `merge-blocked`, `shells-collapsed`, `black`, `black-settings`, `sidebar-projects`, `crowded`) with `--design-fixture`
+`merge-ready`, `merge-blocked`, `shells-collapsed`, `vercel`, `vercel-settings`, `sidebar-projects`, `crowded`) with `--design-fixture`
 to inspect one.
 
 ## State and migration

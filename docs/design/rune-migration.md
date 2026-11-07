@@ -35,7 +35,7 @@ to Rust 1.95.0 and Rune `ddf14140253bd1b963993895e3fa025d1ec58537`.
 
 | Workflow | Implementation and evidence boundary |
 | --- | --- |
-| Native editing, panes and appearance | Flush surfaces, keyboard editing, navigation, theme modes, saved Black backgrounds option and pane tests |
+| Native editing, panes and appearance | Flush surfaces, keyboard editing, navigation, theme modes, Vercel theme with legacy Black backgrounds migration and pane tests |
 | Projects and real sessions | Both Rust providers, list/resume/history/stream/cancel; real OpenCode discovery/history smoke; Codex executable unavailable locally |
 | Conversations | Scoped concurrent activity, paged/virtualized transcript, right-aligned Markdown user bubbles with grouped context/copy, default patch previews, reminder filtering, reasoning/tools/statuses, compaction, session-local hide/show for three-line shell previews and a captured output reader; synthetic six-session stress workload |
 | Approvals and questions | Scoped permission replies and native forms with defaults/custom/conditional validation; reducer, broker and native interaction tests |

@@ -22,8 +22,8 @@ interactions = {
     "model-focus": ("models", [{"t": 0.25, "type": "key", "name": "Tab"}]),
     "settings-hover": ("settings", [{"t": 0.25, "type": "move", "key": "settings-providers"}]),
     "worktrees-form": ("worktree-create", []),
-    "composer-provider": ("", [{"t": 0.25, "key": "provider-trigger"}]),
-    "composer-effort": ("", [{"t": 0.25, "key": "effort-trigger"}]),
+    "composer-agent": ("composer-options", [{"t": 0.25, "key": "agent-trigger"}]),
+    "composer-effort": ("composer-options", [{"t": 0.25, "key": "effort-trigger"}]),
     "session-hover": ("session", [{"t": 0.25, "type": "move", "key": "archive-session"}]),
     "stats-details": ("stats", [{"t": 0.25, "type": "scroll", "key": "command-results", "dy": -420, "dur": 0.2}]),
     "stats-projects": ("stats", [{"t": 0.25, "key": "stats-project-trigger"}]),
@@ -31,11 +31,11 @@ interactions = {
     "review-navigation": ("review", [{"t": 0.25, "key": "review-nav-toggle"}]),
     "shells-hide": ("shells-many", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "shells-reopen": ("shells-collapsed", [{"t": 0.25, "key": "toggle-background-shells"}]),
-    "black-toggle": ("settings", [{"t": 0.25, "key": "black-backgrounds"}]),
+    "vercel-select": ("settings", [{"t": 0.25, "key": "family-vercel"}]),
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
-scenes += ("shells-collapsed", "black", "black-settings", "sidebar-projects")
+scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):
