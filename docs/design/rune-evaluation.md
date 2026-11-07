@@ -1,5 +1,69 @@
 # Native desktop evaluation record
 
+## Overview, controls and message polish — 7 November 2026
+
+This pass updates #95 above #94 against the historical `82ca39d` reference.
+
+- **215 Rust tests passed**: 165 core, 36 native, 6 protocol and 8 CLI.
+  `nix develop -c make check` passed formatting, warnings-denied Clippy and
+  **17 release + 2 profile Python checks**. The grouped-file/image fixture was
+  subsequently checked with its native rendering/copy regression and workspace Clippy.
+- PR Overview now uses a centred 960-point reading column, Markdown description,
+  compact branch metadata, aligned status/timing columns and joined readiness/merge
+  controls. Selected-feedback actions appear only when needed and retain their
+  captured destination and independent draft/attachments.
+- Archive Undo is an eight-second, session-named notice above the composer. Core
+  owns expiry, hover/focus/restoration pauses, retry lifetime and revision ordering
+  so late archive/restore responses cannot replace a newer notice.
+- Session actions use a row-anchored popover. A regression opens a background row,
+  roves its menu, dismisses with Escape and refreshes its captured session without
+  selecting it or cancelling foreground work. Row action focus is isolated from
+  the sidebar's selection-following group.
+- Worktree creation has a selected suggested branch, searchable base and automatic
+  location preview. Its regression covers nested-menu Escape, Enter submission,
+  duplicate Enter during the successful handoff, captured provider/project and
+  focus in the new checkout. Default-base discovery honours `origin/HEAD`.
+- Shared dropdowns cover composer controls, Settings, statistics, worktree bases
+  and merge methods. The composer paperclip is removed; mentions, Files actions,
+  project-file drops and image paste remain available.
+- Background previews occupy three truncated visual lines. The scrollable reader
+  retains its session and output snapshot, and **View all** exposes multiple commands.
+  Native tests check compact bounds and Stop after session navigation. User messages
+  use content-sized neutral Markdown bubbles, grouped file/image context and
+  hover/keyboard copy actions that preserve the original Markdown.
+- Generated **280 captures** (55 scenes and 15 interaction states × two themes × two
+  sizes), refreshed affected captures after the focus repair, and reviewed
+  representative light/dark normal/compact surfaces. **32 checked-in native images**
+  document this pass. Capture trees/logs report no warnings or missing targets.
+- Archive, interaction and six-session evaluation headless replays completed with
+  no tree warnings; expected replacement drafts, submitted prompt and concurrent
+  session draft text remained present. These replays exercise scripted input.
+- Native rendering was remeasured with the presented-focus bridge enabled:
+
+  | Scene | Presents / timed samples | Interval p50 / p95 / max | Failed acquisitions |
+  | --- | --- | --- | --- |
+  | Compact working state | 360 / 357 | 8.33 / 8.33 / 16.67 ms | 0 |
+  | Six concurrent sessions, 2,000 entries each | 600 / 598 | 8.33 / 16.67 / 16.67 ms | 0 |
+
+  Both used display-link pacing and reported zero bunched intervals or intervals
+  over the report's 25 ms missed-frame threshold. The timing reports excluded 3 and
+  2 samples respectively. Pinned Rune's native path does not dispatch scripts;
+  these measurements cover rendering, not native input latency.
+- Real OpenCode discovery/history passed with **3 sessions / 178 entries**; real
+  directory, file, search, Git/diff, worktree and GitHub reads loaded **30 changed
+  files** and all feedback categories. The isolated background-shell lifecycle
+  smoke passed. Application state was isolated; model turns and PR mutations were
+  not part of these service checks.
+- Apple Silicon app/DMG/CLI packaging passed architecture, signing, system-library,
+  disk-image and mounted-bundle checks, cold/warm project URLs, hidden-app reopening,
+  draft restoration and graceful quit.
+
+The stack remains unmerged. Codex's executable is unavailable locally; Intel
+packaging, native OS-context-menu visual acceptance (screen-capture permission is
+unavailable), complete authenticated provider workflows and manual accessibility
+acceptance remain open. Artifacts for this pass are under
+`/private/var/folders/sd/8zxnlg513mlfz8nkx928l6s00000gn/T/opencode/caelum-followup-v2/`.
+
 ## PR workspace and in-session follow-up — 7 November 2026
 
 This follow-up continues in #95 above #94, using the final TypeScript tree at

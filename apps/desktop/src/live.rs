@@ -12,10 +12,9 @@ use rune::{
     text, text_input,
 };
 use rune_kit::shell::{RowStatus, SidebarHeader, SidebarRow};
-use rune_kit::{
-    ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, Select, glyphs,
-};
+use rune_kit::{ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, glyphs};
 
+use crate::select::Select;
 use crate::ui::Button;
 use crate::{PLUS, SEND, STOP, Workspace, on_key, quiet_button, theme, ui};
 
@@ -39,6 +38,10 @@ pub struct Live {
     pub current_prompt: Option<String>,
     pub(crate) patches: std::collections::HashMap<(usize, String), crate::code_view::Document>,
     menu: Option<&'static str>,
+    pub session_menu: Option<usize>,
+    pub shell_panel: Option<crate::shells::Panel>,
+    pub focus_key: Option<String>,
+    pub archive_hovered: bool,
     reading: Vec<Rc<Cell<ScrollPos>>>,
     last_selected: Option<usize>,
     history_lengths: Vec<usize>,
@@ -89,6 +92,10 @@ impl Live {
             current_prompt: None,
             patches: Default::default(),
             menu: None,
+            session_menu: None,
+            shell_panel: None,
+            focus_key: None,
+            archive_hovered: false,
             reading: Vec::new(),
             last_selected: None,
             history_lengths: Vec::new(),
@@ -146,6 +153,7 @@ impl Live {
         self.sync_editors();
         self.menu = None;
         self.panels.overlay = None;
+        self.session_menu = None;
         if self.app.selected != selected || (!archived && !self.app.sessions[index].archived) {
             self.panels.archived = false;
             self.panels.screen = crate::panels::Screen::Conversation;
@@ -154,6 +162,9 @@ impl Live {
     }
 
     pub(crate) fn apply(&mut self, event: Event) {
+        if let Some(panel) = &mut self.shell_panel {
+            panel.sync(&self.app);
+        }
         let selected = self.app.selected;
         let was_archived = selected.is_some_and(|i| self.app.sessions[i].archived);
         self.app.apply(event);
@@ -182,7 +193,11 @@ impl Live {
         {
             if matches!(
                 self.panels.overlay,
-                Some(crate::panels::Screen::Launcher | crate::panels::Screen::Worktrees)
+                Some(
+                    crate::panels::Screen::Launcher
+                        | crate::panels::Screen::Worktrees
+                        | crate::panels::Screen::CreateWorktree
+                )
             ) {
                 self.panels.overlay = None;
             }
@@ -217,10 +232,28 @@ impl Live {
         }
     }
 
+    pub(crate) fn tick_archive(&mut self, now: u64) -> bool {
+        self.app.tick_archive_notice(
+            now,
+            self.archive_hovered
+                || self
+                    .focus_key
+                    .as_ref()
+                    .is_some_and(|key| key == "undo-archive" || key == "dismiss-archive"),
+        )
+    }
+
     pub fn poll(&mut self, tx: &mut Tx) -> bool {
         self.app.conversation_hidden = self.panels.screen != crate::panels::Screen::Conversation
             || self.panels.overlay.is_some();
         let mut changed = self.media.poll();
+        if let Some(panel) = &mut self.shell_panel {
+            panel.sync(&self.app);
+        }
+        changed |= self.tick_archive(caelum_core::application::presentation::now());
+        if self.app.last_archived.is_some() {
+            tx.wake_after(std::time::Duration::from_millis(100));
+        }
         if self.evaluation {
             self.evaluation_ticks += 1;
             if self.evaluation_ticks.is_multiple_of(3) {
@@ -325,8 +358,12 @@ impl Live {
                 .as_mut()
                 .unwrap()
                 .watch_checkouts(self.app.projects.iter().map(|p| p.path.clone()).collect());
-            if let Some(index) = self.app.selected
-                && self.expanded.contains(&(index, "background-shells".into()))
+            if let Some(index) = self
+                .shell_panel
+                .as_ref()
+                .filter(|_| self.panels.overlay == Some(crate::panels::Screen::Shells))
+                .map(|p| p.index)
+                .or(self.app.selected)
                 && !self.app.sessions[index].shells.is_empty()
                 && self
                     .shell_refresh
@@ -589,6 +626,10 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 .unwrap_or_default()
         };
         let context_path = path.clone();
+        let worktree_project = path.clone();
+        let worktree_provider = active
+            .map(|s| s.scope.provider)
+            .unwrap_or(app.preferences.default_provider);
         projects = projects.child(crate::context::project(
             k.interactive(
                 col()
@@ -620,6 +661,18 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                                     .color(k.c.text_base)
                                     .truncate()
                                     .grow(1.0),
+                            )
+                            .child(
+                                quiet_button(&ui::BRANCH, "Create worktree")
+                                    .on_press(move |s: &mut Workspace| {
+                                        crate::worktree::open(
+                                            s,
+                                            worktree_project.clone(),
+                                            worktree_provider,
+                                        )
+                                    })
+                                    .build(k)
+                                    .key(crate::code_view::source_key(&path, "create-worktree")),
                             ),
                     )
                     .child(
@@ -847,14 +900,25 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         } else if session.unread {
             item = item.status(RowStatus::Unread);
         }
-        if app.selected == Some(index) {
+        {
             item = item.trailing(
                 quiet_button(&ui::MORE, "Session actions")
                     .on_press(move |s: &mut Workspace| {
-                        live_mut(s).app.select(index);
-                        crate::panels::show(s, crate::panels::Screen::Session);
+                        live_mut(s).session_menu = Some(index);
                     })
                     .build(k)
+                    .group_opacity(
+                        if app.selected == Some(index)
+                            || live(s).focus_key.as_ref().is_some_and(|key| {
+                                key.ends_with(&format!("session-actions-{index}"))
+                            })
+                        {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                        1.0,
+                    )
                     .size(22.0, 24.0)
                     .key(format!("session-actions-{index}")),
             );
@@ -871,7 +935,13 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             });
         }
         sessions = sessions.child(ui::selected_row(
-            crate::context::session(item.build(k).key(format!("live-session-{index}")), index),
+            // Row actions must not inherit the list's selection-following focus.
+            crate::context::session(
+                item.build(k)
+                    .focus_group()
+                    .key(format!("live-session-{index}")),
+                index,
+            ),
             app.selected == Some(index),
             k,
         ));
@@ -887,20 +957,6 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             })
             .child(sessions),
     );
-    let mut footer = col().key("sidebar-footer").w_full().gap(6.0);
-    if app.last_archived.is_some() {
-        footer = footer.child(
-            Button::new("Undo archive")
-                .variant(ButtonVariant::Outline)
-                .on_press(move |s: &mut Workspace| {
-                    let live = live_mut(s);
-                    live.app.undo_archive();
-                    live.sync_editors();
-                })
-                .build(k)
-                .key("undo-archive"),
-        );
-    }
     let mut seen = HashSet::new();
     let mut requests = col().w_full().gap(2.0);
     for (project, checkout) in &app.services.checkouts {
@@ -970,12 +1026,12 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     requests
                 }),
         );
-    sidebar.child(footer)
+    sidebar
 }
 
-pub fn transcript(s: &Workspace, k: &Kit, reduced: bool, padding: f32) -> El {
+pub fn transcript(s: &Workspace, k: &Kit, reduced: bool, padding: f32, layers: &mut Vec<El>) -> El {
     if live(s).panels.screen == crate::panels::Screen::Review {
-        return crate::panels::view(s, k);
+        return crate::panels::view(s, k, layers);
     }
     let live = live(s);
     let mut content = col().w_full().max_w(840.0).px(padding).py(24.0).gap(24.0);
@@ -1173,13 +1229,25 @@ fn timeline_row(
         match entry.kind {
             EntryKind::User => {
                 let (_, files) = caelum_core::application::split_context(&entry.text);
-                item = item.child(ui::user_message(
-                    &caelum_core::application::presentation::entry_text(entry),
-                    k,
-                ));
+                let message = caelum_core::application::presentation::entry_text(entry);
+                let mut bubble =
+                    ui::user_bubble(&message, !files.is_empty() || !entry.media.is_empty(), k)
+                        .key(format!("user-bubble-{index}-{}", entry.id));
+                if !message.trim().is_empty() {
+                    bubble = bubble.child(
+                        Markdown::new(&message)
+                            .selectable(true)
+                            .on_link_tx(move |s: &mut Workspace, url, tx| {
+                                crate::panels::open_link(s, index, url, tx)
+                            })
+                            .render(&ui::user_markdown(k)),
+                    );
+                }
+                let mut attachments = col().w_full().gap(6.0);
+                let has_files = !files.is_empty() || !entry.media.is_empty();
                 for file in files {
                     if file.kind == caelum_core::application::AttachmentKind::Image {
-                        item = item.child(crate::media::thumbnail(
+                        attachments = attachments.child(crate::media::thumbnail(
                             s,
                             k,
                             &session.scope.project,
@@ -1190,16 +1258,67 @@ fn timeline_row(
                         ));
                         continue;
                     }
-                    item = item.child(
-                        text(format!(
-                            "Attached: {}{}",
-                            file.label(),
-                            if file.truncated { " · truncated" } else { "" }
-                        ))
-                        .font(k.ty.small)
-                        .color(k.c.text_muted),
+                    let path = file.path.clone();
+                    attachments = attachments.child(
+                        k.interactive(
+                            row()
+                                .w_full()
+                                .max_w(600.0)
+                                .gap(7.0)
+                                .px(8.0)
+                                .py(5.0)
+                                .radius(6.0)
+                                .fill(k.c.layer_01)
+                                .child(icon(&ui::FILE, 13.0).color(k.c.icon_muted))
+                                .child(
+                                    text(format!(
+                                        "{}{}",
+                                        file.label(),
+                                        if file.truncated { " · truncated" } else { "" }
+                                    ))
+                                    .font(k.ty.small)
+                                    .color(k.c.text_muted)
+                                    .truncate()
+                                    .min_w(0.0),
+                                ),
+                        )
+                        .role("button")
+                        .label(file.label())
+                        .focusable(true)
+                        .focus_ring(1.0, 0.0, k.c.border_focus)
+                        .on_press_tx(move |s: &mut Workspace, tx| {
+                            crate::panels::open_link(s, index, &path, tx)
+                        }),
                     );
                 }
+                for media in &entry.media {
+                    attachments = attachments.child(crate::media::thumbnail(
+                        s,
+                        k,
+                        &session.scope.project,
+                        media,
+                    ));
+                }
+                if has_files {
+                    bubble = bubble.child(attachments);
+                }
+                let copy_key = format!("copy-user-{index}-{}", entry.id);
+                let focused = live
+                    .focus_key
+                    .as_ref()
+                    .is_some_and(|key| key.ends_with(&copy_key));
+                let mut turn = row().w_full().justify_end().gap(6.0);
+                if !message.is_empty() {
+                    turn = turn.child(
+                        quiet_button(&glyphs::COPY, "Copy message")
+                            .on_press_tx(move |_: &mut Workspace, tx| tx.copy(message.clone()))
+                            .build(k)
+                            .key(copy_key)
+                            .self_end()
+                            .group_opacity(if focused { 1.0 } else { 0.0 }, 1.0),
+                    );
+                }
+                item = item.hover_group().child(turn.child(bubble));
             }
             EntryKind::Assistant => {
                 let id = entry.id.clone();
@@ -1267,7 +1386,7 @@ fn timeline_row(
                 );
             }
         }
-        for media in &entry.media {
+        for media in entry.media.iter().filter(|_| entry.kind != EntryKind::User) {
             item = item.child(crate::media::thumbnail(s, k, &session.scope.project, media));
         }
         return content.child(crate::context::message(
@@ -1450,12 +1569,6 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .w_full()
         .center_y()
         .gap(8.0)
-        .child(
-            quiet_button(&ui::ATTACH, "Attach a file")
-                .on_press_tx(crate::panels::attach_dialog)
-                .build(k)
-                .key("attach-file"),
-        )
         .child(rune::el().grow(1.0));
     if session.working() && !draft.text.trim().is_empty() {
         controls = controls.child(
@@ -1473,7 +1586,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
                 .color(k.c.text_muted),
         );
     }
-    let pickers = pickers(s, k, layers).h(24.0).min_w(0.0).scroll_x();
+    let pickers = pickers(s, k, layers).h(28.0).min_w(0.0).scroll_x();
     let controls = row()
         .w_full()
         .gap(4.0)
@@ -1483,7 +1596,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
             controls
                 .child(crate::activity::context(s, k, index, wide))
                 .child(submit)
-                .w((if wide { 320.0 } else { 96.0 })
+                .w((if wide { 280.0 } else { 64.0 })
                     + if session.working() && !draft.text.trim().is_empty() {
                         60.0
                     } else {
@@ -1650,22 +1763,15 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
 
 pub fn session_actions(s: &Workspace, k: &Kit) -> El {
     let live = live(s);
-    let Some(index) = live.app.selected else {
+    let Some(index) = live.session_menu else {
         return col();
     };
     let session = &live.app.sessions[index];
     let mut content = col()
         .w_full()
-        .gap(6.0)
-        .child(ui::section(
-            &session.title,
-            &format!(
-                "{} · {}",
-                ui::provider_name(session.scope.provider),
-                session.scope.project
-            ),
-            k,
-        ))
+        .gap(4.0)
+        .child(ui::caption(&session.title, k).truncate().padding(8.0))
+        .child(ui::divider(k))
         .child(
             ui::choice(
                 "Refresh session",
@@ -1687,13 +1793,28 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
                     1.0
                 },
             )
-            .on_press(move |s: &mut Workspace| live_mut(s).app.refresh(index))
+            .on_press(move |s: &mut Workspace| {
+                live_mut(s).app.refresh(index);
+                close_session_menu(s);
+            })
+            .role("menuitem")
+            .focus_highlight(k.c.hover)
             .key("refresh-history"),
         );
     let archive_disabled = session.working()
         || session.archiving
         || !session.queue.is_empty()
-        || !session.inbox.items.is_empty();
+        || !session.inbox.items.is_empty()
+        || live.app.approvals.iter().any(|p| {
+            p.project_path == session.scope.project
+                && p.provider == session.scope.provider.as_str()
+                && p.session_id == session.remote_id
+        })
+        || live.app.questions.iter().any(|p| {
+            p.project_path == session.scope.project
+                && p.provider == session.scope.provider.as_str()
+                && Some(&p.session_id) == session.remote_id.as_ref()
+        });
     content = content.child(
         ui::choice(
             if session.archived {
@@ -1702,7 +1823,7 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
                 "Archive session"
             },
             if archive_disabled {
-                "Finish active work and queued messages first"
+                "Finish active work, requests and queued messages first"
             } else {
                 "Keep its history and return to it later"
             },
@@ -1710,6 +1831,8 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
             k,
         )
         .disabled(archive_disabled)
+        .role("menuitem")
+        .focus_highlight(k.c.hover)
         .opacity(if archive_disabled { 0.5 } else { 1.0 })
         .on_press(move |s: &mut Workspace| {
             let archived = crate::live::live(s).app.sessions[index].archived;
@@ -1718,6 +1841,118 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
         .key("archive-session"),
     );
     content
+}
+
+pub fn close_session_menu(s: &mut Workspace) {
+    let l = live_mut(s);
+    if let Some(index) = l.session_menu.take() {
+        l.focus_key = Some(format!("session-actions-{index}"));
+    }
+}
+
+/// Rune's Tx exposes focus only during key handlers. Read the presented focus after
+/// navigation (including Tab, pointer and accessibility moves), never from a timer.
+pub fn presented_focus(rt: &rune::Runtime<Workspace>) -> Option<Option<String>> {
+    let l = rt.state.live.as_ref()?;
+    let focused = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.focused && !e.exiting)
+        .and_then(|e| e.key);
+    (l.focus_key != focused).then_some(focused)
+}
+
+pub fn frame_drawn(rt: &rune::Runtime<Workspace>) {
+    if let Some(focused) = presented_focus(rt)
+        && let Some(handle) = &rt.state.handle
+    {
+        handle.update(move |s, _| {
+            live_mut(s).focus_key = focused;
+        });
+    }
+}
+
+pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
+    let l = live(s);
+    if let Some(index) = l.app.last_archived {
+        let session = &l.app.sessions[index];
+        let width =
+            rune::memo::window_layout("main-pane").map_or(480.0, |r| (r[2] - 32.0).min(480.0));
+        let toast = row()
+            .key("archive-toast")
+            .role("status")
+            .label("Session archived")
+            .w(width)
+            .padding(10.0)
+            .gap(10.0)
+            .center_y()
+            .on_hover_change(|s: &mut Workspace, inside, _| live_mut(s).archive_hovered = inside)
+            .child(icon(&ui::ARCHIVE, 15.0).color(k.c.icon_muted))
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(3.0)
+                    .child(
+                        text("Session archived")
+                            .font(k.ty.ui_medium)
+                            .color(k.c.text_base),
+                    )
+                    .child(ui::caption(&session.title, k).truncate())
+                    .children(
+                        session
+                            .error
+                            .as_ref()
+                            .map(|e| ui::caption(e, k).color(k.c.danger.fg)),
+                    ),
+            )
+            .child(
+                Button::new(if session.archiving {
+                    "Restoring…"
+                } else {
+                    "Undo"
+                })
+                .variant(ButtonVariant::GhostMuted)
+                .disabled(session.archiving)
+                .on_press(move |s: &mut Workspace| {
+                    let l = live_mut(s);
+                    if l.app.last_archived == Some(index) {
+                        l.app.undo_archive();
+                        l.sync_editors();
+                    }
+                })
+                .build(k)
+                .key("undo-archive"),
+            )
+            .child(
+                quiet_button(&glyphs::CLOSE, "Dismiss archive notice")
+                    .on_press(move |s: &mut Workspace| live_mut(s).app.dismiss_archive(index))
+                    .build(k)
+                    .key("dismiss-archive"),
+            );
+        let x =
+            rune::memo::window_layout("main-pane").map_or(16.0, |r| r[0] + (r[2] - width) / 2.0);
+        let bottom = rune::memo::window_layout("message-composer")
+            .zip(rune::memo::window_layout("shell"))
+            .map_or(18.0, |(composer, shell)| shell[3] - composer[1] + 12.0);
+        layers.push(rune_kit::popover::raised(k, toast, 12.0).pin(
+            Some(x),
+            None,
+            None,
+            Some(bottom),
+        ));
+    }
+    if let Some(index) = l.session_menu {
+        ui::popup(
+            "session-menu",
+            &format!("session-actions-{index}"),
+            session_actions(s, k).w(300.0),
+            Placement::BottomStart,
+            close_session_menu,
+            k,
+            layers,
+        );
+    }
 }
 
 fn toggle_menu(s: &mut Workspace, name: &'static str) {

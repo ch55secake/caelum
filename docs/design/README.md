@@ -3,8 +3,9 @@
 Caelum uses flush conversation surfaces, quiet sidebar selection, system-font
 typography and a rounded composer. Rune supplies native text editing, animated
 split panes, Markdown and windowed diffs. Provider/model/effort/agent controls live
-in the composer; files and changes share the side inspector. Settings, session
-actions and worktrees use focus-scoped dialogs. PR review occupies the main screen.
+in the composer; files and changes share the side inspector. Settings and worktree
+creation use focus-scoped dialogs; session actions use row-anchored popovers.
+PR review occupies the main screen.
 
 ## Visual reference
 
@@ -15,9 +16,11 @@ The follow-up captures restore the original 18-point Lucide Orbit mark, keep the
 sidebar toggle beside the brand, and use browser-equivalent unsmoothed system text.
 The inspector sits below the shared toolbar; pane widths adapt to compact windows
 while retaining the user's preferred sizes. The bounded multiline editor and
-composer controls occupy separate rows. Settings lives in the top toolbar, Undo
-stays in the sidebar footer, archive filtering sits beside Sessions, and session
-actions live on the selected row.
+composer controls occupy separate rows. Settings lives in the top toolbar, archive
+filtering sits beside Sessions, and session actions belong to the clicked row.
+Archive Undo is a temporary bottom-centred notice above the composer, pausing on
+hover or keyboard focus. Files attach through mentions, the inspector or drops;
+images also support paste.
 The final TypeScript tree at `82ca39d`, its regression tests and historical UI
 captures are the parity reference. `388d09e` adds the follow-intent unread repair.
 Shared controls now cover command panels, questions, dialogs and dropdowns, with
@@ -25,7 +28,13 @@ quiet successful-tool indicators and explicit loading, empty and error surfaces.
 Model selection is an anchored searchable popover. Patch previews open by default;
 the composer pulse and active-agent indicator follow session state between output
 events. PR review restores Overview / Files changed, searchable file/thread
-navigation, inline feedback and a pinned action naming its destination session.
+navigation, inline feedback and a selected-feedback bar naming its destination session.
+The overview has a centred 960-point reading column, aligned checks and joined
+readiness/merge controls. Shared dropdowns keep field controls distinct from quiet
+inline composer choices. Worktree creation provides a selected suggested branch,
+searchable base and automatic location preview. Background commands show three
+visual lines and open a captured-session output reader. User messages use
+content-sized neutral Markdown bubbles with grouped attachments and copy actions.
 Statistics uses summary/chart/token/model sections; timeline has date groups,
 excerpts, highlighted search and stable prompt jumps.
 
@@ -82,6 +91,18 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native statistics details](previews/rune-dark-stats-details-small.png) | ![Native prompt search](previews/rune-light-timeline-search-small.png) |
 
+| Readable PR overview | Temporary archive Undo |
+| --- | --- |
+| ![Native PR overview](previews/rune-light-overview.png) | ![Native archive notice](previews/rune-dark-archive-small.png) |
+
+| User messages and attachments | Command output reader |
+| --- | --- |
+| ![Native user messages](previews/rune-light-messages.png) | ![Native command output](previews/rune-dark-shell-output-small.png) |
+
+| Searchable worktree base | Merge method menu |
+| --- | --- |
+| ![Native worktree bases](previews/rune-light-worktree-base-small.png) | ![Native merge methods](previews/rune-dark-merge-method-small.png) |
+
 Four theme families and six accent colours (plus the theme default) apply across
 the workspace. Rune follows system reduced-motion preferences. Use the running
 application to judge focus, typing, scrolling, pane motion and OS context menus;
@@ -117,9 +138,9 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **236 states**: 47 scenes and twelve headless
+The capture script writes **280 states**: 55 scenes and fifteen headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
-includes all five Settings pages, models, launcher, session/worktree dialogs, commands, shells,
+includes all five Settings pages, models, launcher, session popovers/worktree forms, commands, shells,
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
 loading/error/empty views, questions, images, hover and keyboard focus.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output

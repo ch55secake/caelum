@@ -7,7 +7,7 @@ use crate::{
 };
 use caelum_core::application::{Attachment, Task, Workspace as Application};
 use caelum_protocol::{GitHubFeedbackKind, GitHubMergeMethod, ProjectEntryKind, ProjectSearchMode};
-use rune::{El, FileDialogOptions, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, row, text};
+use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, row, text};
 use rune_kit::{
     ButtonVariant, Dialog, Kit, Markdown, ScrollBar,
     diff::{self, DiffMode, DiffState, DiffView},
@@ -25,6 +25,8 @@ pub enum Screen {
     Files,
     Changes,
     Worktrees,
+    CreateWorktree,
+    Shells,
     Review,
     Settings,
     Session,
@@ -55,6 +57,7 @@ pub struct Panels {
     review_nav: Option<bool>,
     review_search: TextEdit,
     merge_method: usize,
+    merge_menu: bool,
     expanded_threads: HashSet<String>,
     search: TextEdit,
     find: TextEdit,
@@ -80,8 +83,7 @@ pub struct Panels {
     change_positions: std::collections::HashMap<Target, crate::code_view::Position>,
     selection: Option<Selection>,
     preview_page: usize,
-    branch: TextEdit,
-    base: TextEdit,
+    pub worktree: Option<crate::worktree::Form>,
     pub(crate) directory: TextEdit,
     directory_loaded: bool,
 }
@@ -111,6 +113,7 @@ impl Default for Panels {
             review_nav: None,
             review_search: TextEdit::new(""),
             merge_method: 0,
+            merge_menu: false,
             expanded_threads: Default::default(),
             search: TextEdit::new(""),
             find: TextEdit::new(""),
@@ -136,8 +139,7 @@ impl Default for Panels {
             change_positions: Default::default(),
             selection: None,
             preview_page: 0,
-            branch: TextEdit::new(""),
-            base: TextEdit::new(""),
+            worktree: None,
             directory: TextEdit::new(""),
             directory_loaded: false,
         }
@@ -175,6 +177,7 @@ impl Panels {
         }
     }
     pub fn sync(&mut self, app: &Application) -> bool {
+        let form_changed = self.worktree.as_mut().is_some_and(|form| form.sync(app));
         if self.change_file.as_ref().is_some_and(|(p, f)| {
             app.services
                 .checkouts
@@ -235,10 +238,10 @@ impl Panels {
                 .flatten(),
         );
         if self.synced.as_ref() == Some(&signature) {
-            return false;
+            return form_changed;
         }
         self.synced = Some(signature);
-        let mut changed = false;
+        let mut changed = form_changed;
         if let Some((project, checkout)) = app
             .active_project
             .as_ref()
@@ -390,6 +393,10 @@ fn scroll(content: El) -> El {
 }
 
 pub fn show(s: &mut Workspace, screen: Screen) {
+    if screen == Screen::Session {
+        live_mut(s).session_menu = live(s).app.selected;
+        return;
+    }
     if matches!(screen, Screen::Files | Screen::Changes) {
         s.inspector.set_open(true);
     }
@@ -531,28 +538,61 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
             .contains(&query)
     }) {
         let path = project.path.clone();
+        let tree_project = path.clone();
+        let branch = l
+            .app
+            .services
+            .checkouts
+            .get(&path)
+            .and_then(|c| c.git.as_ref())
+            .and_then(|g| g.branch.as_deref());
         projects = projects.child(
-            ui::choice(
-                &project.name,
-                &project.path,
-                l.app.active_project.as_ref() == Some(&path),
-                k,
-            )
-            .on_press(move |s: &mut Workspace| {
-                let l = live_mut(s);
-                l.app.select_project(&path);
-                let scope = caelum_core::application::Scope {
-                    project: path.clone(),
-                    provider: l.panels.launch_provider,
-                };
-                l.app.project_draft(scope);
-                l.sync_editors();
-                l.panels.overlay = None;
-                l.panels.screen = Screen::Conversation;
-                l.focus();
-            })
-            .w_full()
-            .key(crate::code_view::source_key(&project.path, "launch")),
+            row()
+                .w_full()
+                .gap(6.0)
+                .center_y()
+                .child(
+                    ui::choice(
+                        &branch.map_or_else(
+                            || project.name.clone(),
+                            |b| format!("{} · {b}", project.name),
+                        ),
+                        &project.path,
+                        l.app.active_project.as_ref() == Some(&path),
+                        k,
+                    )
+                    .on_press(move |s: &mut Workspace| {
+                        let l = live_mut(s);
+                        l.app.select_project(&path);
+                        let scope = caelum_core::application::Scope {
+                            project: path.clone(),
+                            provider: l.panels.launch_provider,
+                        };
+                        l.app.project_draft(scope);
+                        l.sync_editors();
+                        l.panels.overlay = None;
+                        l.panels.screen = Screen::Conversation;
+                        l.focus();
+                    })
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .key(crate::code_view::source_key(&project.path, "launch")),
+                )
+                .child(
+                    quiet_button(&ui::BRANCH, "Create worktree for this project")
+                        .on_press(move |s: &mut Workspace| {
+                            crate::worktree::open(
+                                s,
+                                tree_project.clone(),
+                                live(s).panels.launch_provider,
+                            )
+                        })
+                        .build(k)
+                        .key(crate::code_view::source_key(
+                            &project.path,
+                            "launch-worktree",
+                        )),
+                ),
         );
     }
     body.child(scroll(projects)).child(ui::divider(k)).child(
@@ -566,7 +606,11 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
             .child(
                 Button::new("Create worktree…")
                     .disabled(l.app.active_project.is_none())
-                    .on_press(|s: &mut Workspace| show(s, Screen::Worktrees))
+                    .on_press(|s: &mut Workspace| {
+                        if let Some(project) = live(s).app.active_project.clone() {
+                            crate::worktree::open(s, project, live(s).panels.launch_provider);
+                        }
+                    })
                     .build(k),
             ),
     )
@@ -650,7 +694,7 @@ pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
     true
 }
 
-pub fn view(s: &Workspace, k: &Kit) -> El {
+pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let mut surface = col()
         .w_full()
         .grow(1.0)
@@ -696,7 +740,7 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
     {
         surface = surface.child(label(error, k));
     }
-    surface.child(review(s, k))
+    surface.child(review(s, k, layers))
 }
 
 pub fn inspector(s: &Workspace, k: &Kit) -> El {
@@ -761,27 +805,30 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             "Independent checkouts for parallel work.",
             worktrees(s, k),
         ),
-        Screen::Session => (
-            "Session actions",
-            "Manage this session’s history.",
-            scroll(crate::live::session_actions(s, k))
-                .key("session-actions-scroll")
-                .scroll_bar(k),
+        Screen::CreateWorktree => (
+            "Create worktree",
+            "A fresh checkout for an independent session.",
+            crate::worktree::view(s, k, &mut menus),
+        ),
+        Screen::Shells => (
+            "Background commands",
+            "Live output from this session.",
+            crate::shells::panel(s, k),
         ),
         Screen::Timeline => (
             "Timeline",
             "Find and reveal an earlier prompt.",
-            crate::commands::view(s, k, screen),
+            crate::commands::view(s, k, screen, &mut menus),
         ),
         Screen::Usage => (
             "OpenCode Go usage",
             "Subscription allowances.",
-            crate::commands::view(s, k, screen),
+            crate::commands::view(s, k, screen, &mut menus),
         ),
         Screen::Stats => (
             "Statistics",
             "Tokens, cost and activity across recorded history.",
-            crate::commands::view(s, k, screen),
+            crate::commands::view(s, k, screen, &mut menus),
         ),
         Screen::Image => (
             "Image preview",
@@ -798,7 +845,7 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     let (width, height) = match screen {
         Screen::Settings => (760.0, 460.0),
         Screen::Launcher => (520.0, 310.0),
-        Screen::Session => (480.0, 210.0),
+        Screen::CreateWorktree => (500.0, 330.0),
         Screen::Timeline => (580.0, 344.0),
         Screen::Stats => (720.0, 620.0),
         Screen::Image => (760.0, 480.0),
@@ -1448,7 +1495,8 @@ fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                     && file.patch.is_none()
                 {
                     let url = format!("{}/files", key.1);
-                    return Button::new("Patch unavailable ↗")
+                    return Button::new("Patch unavailable")
+                        .icon(&ui::EXTERNAL)
                         .variant(ButtonVariant::GhostMuted)
                         .on_press_tx(move |_: &mut Workspace, tx| {
                             let _ = tx.open_url(&url);
@@ -1769,7 +1817,24 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
                     .min_w(0.0)
                     .help(project),
             )
-            .child(action("Refresh", refresh.clone(), s, k)),
+            .child(action("Refresh", refresh.clone(), s, k))
+            .child(
+                Button::new("Create worktree…")
+                    .variant(ButtonVariant::Contrast)
+                    .on_press({
+                        let project = project.clone();
+                        move |s: &mut Workspace| {
+                            let l = crate::live::live(s);
+                            let provider = l
+                                .app
+                                .selected
+                                .map(|i| l.app.sessions[i].scope.provider)
+                                .unwrap_or(l.app.preferences.default_provider);
+                            crate::worktree::open(s, project.clone(), provider);
+                        }
+                    })
+                    .build(k),
+            ),
     );
     if let Some(error) = live
         .app
@@ -1827,61 +1892,6 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
             }
             content = content.child(line);
         }
-        let default = listing.default_base.clone();
-        content = content
-            .child(ui::divider(k))
-            .child(ui::section(
-                "Create a worktree",
-                &format!(
-                    "Start an independent {} session in a new checkout.",
-                    ui::provider_name(live.panels.launch_provider)
-                ),
-                k,
-            ))
-            .child(ui::caption("Branch name", k))
-            .child(
-                ui::field(&live.panels.branch, "New branch", "feature/my-change", k)
-                    .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.branch)
-                    .key("worktree-branch"),
-            )
-            .child(ui::caption("Base branch", k))
-            .child(
-                ui::field(&live.panels.base, "Base branch", &default, k)
-                    .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.base)
-                    .key("worktree-base"),
-            )
-            .child(ui::caption(
-                format!("Storage · {}", listing.storage_directory),
-                k,
-            ));
-        let project = project.clone();
-        content = content.child(
-            Button::new(if busy {
-                "Creating worktree…"
-            } else {
-                "Create worktree"
-            })
-            .variant(ButtonVariant::Outline)
-            .disabled(busy || live.panels.branch.text.trim().is_empty())
-            .on_press(move |s: &mut Workspace| {
-                let live = live_mut(s);
-                live.app.launch_worktree(
-                    Task::CreateWorktree {
-                        project: project.clone(),
-                        branch: live.panels.branch.text.clone(),
-                        base: if live.panels.base.text.trim().is_empty() {
-                            default.clone()
-                        } else {
-                            live.panels.base.text.clone()
-                        },
-                        directory: live.app.preferences.worktree_directory.clone(),
-                    },
-                    live.panels.launch_provider,
-                );
-            })
-            .build(k)
-            .key("create-worktree"),
-        );
     } else {
         content = content.child(
             if live.app.services.busy(&Task::Worktrees {
@@ -2004,7 +2014,7 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
     content.child(accents)
 }
 
-fn review(s: &Workspace, k: &Kit) -> El {
+fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let Some((project, url)) = &live(s).panels.review else {
         return label("Choose a pull request", k);
     };
@@ -2045,9 +2055,15 @@ fn review(s: &Workspace, k: &Kit) -> El {
     };
     let head = &details.head_ref_oid;
     let mut tabs = row().w_full().gap(6.0);
-    for (tab, name) in ["Overview", "Files changed"].into_iter().enumerate() {
+    for (tab, name) in [
+        "Overview".to_owned(),
+        format!("Files changed ({})", details.changed_files),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         tabs = tabs.child(
-            ui::tab(name, live(s).panels.review_tab == tab, k)
+            ui::tab(&name, live(s).panels.review_tab == tab, k)
                 .on_press(move |s: &mut Workspace| live_mut(s).panels.review_tab = tab)
                 .key(format!("review-tab-{tab}")),
         );
@@ -2090,7 +2106,8 @@ fn review(s: &Workspace, k: &Kit) -> El {
                 ))
                 .child(rune::el().grow(1.0))
                 .child(
-                    Button::new("GitHub ↗")
+                    Button::new("GitHub")
+                        .icon(&ui::EXTERNAL)
                         .variant(ButtonVariant::GhostMuted)
                         .on_press_tx(move |_: &mut Workspace, tx| {
                             let _ = tx.open_url(&link);
@@ -2127,14 +2144,24 @@ fn review(s: &Workspace, k: &Kit) -> El {
                     text(&details.head_ref_name)
                         .font(k.ty.mono)
                         .color(k.c.text_accent)
-                        .truncate(),
+                        .truncate()
+                        .min_w(0.0)
+                        .px(8.0)
+                        .py(4.0)
+                        .radius(5.0)
+                        .fill(k.c.layer_02),
                 )
-                .child(ui::caption("→", k))
+                .child(rune::icon(&ui::BRANCH, 14.0).color(k.c.icon_muted))
                 .child(
                     text(&details.pull_request.base_ref_name)
                         .font(k.ty.mono)
                         .color(k.c.text_muted)
-                        .truncate(),
+                        .truncate()
+                        .min_w(0.0)
+                        .px(8.0)
+                        .py(4.0)
+                        .radius(5.0)
+                        .fill(k.c.layer_02),
                 )
                 .child(rune::el().grow(1.0))
                 .child(ui::caption(
@@ -2142,7 +2169,7 @@ fn review(s: &Workspace, k: &Kit) -> El {
                     k,
                 )),
         )
-        .child(tabs.child(ui::caption(format!("{} files", details.changed_files), k).self_center()))
+        .child(tabs)
         .child(ui::divider(k));
     let header = content;
     if live(s).panels.review_tab == 1 {
@@ -2150,36 +2177,31 @@ fn review(s: &Workspace, k: &Kit) -> El {
             .grow(1.0)
             .min_h(0.0)
             .child(review_files_view(s, k, project, url, review))
-            .child(review_actions(s, k, project, url, review));
+            .children(
+                (!review.selected_comments.is_empty())
+                    .then(|| review_actions(s, k, project, url, review)),
+            );
     }
-    let mut content = col().w_full().gap(16.0);
+    let mut content = col().w_full().max_w(960.0).self_center().gap(24.0).pb(24.0);
     if live(s).panels.review_tab == 0 {
         content = content.child(
-            ui::card(k)
-                .child(
-                    text("Description")
-                        .font(k.ty.ui_medium)
-                        .color(k.c.text_base),
-                )
-                .child(
-                    Markdown::new(if details.body.trim().is_empty() {
-                        "No description provided."
-                    } else {
-                        &details.body
-                    })
-                    .selectable(true)
-                    .render(&theme::markdown(k)),
-                ),
+            col().w_full().py(8.0).child(
+                Markdown::new(if details.body.trim().is_empty() {
+                    "No description provided."
+                } else {
+                    &details.body
+                })
+                .selectable(true)
+                .render(&theme::markdown(k)),
+            ),
         );
     }
-    let mut checks = ui::card(k).gap(8.0).child(
-        text("Checks & merge readiness")
-            .font(k.ty.ui_medium)
-            .color(k.c.text_base),
-    );
-    if details.status_check_rollup.is_none() {
-        checks = checks.child(ui::skeleton("Loading checks", 3, k));
-    }
+    let mut checks = col()
+        .w_full()
+        .radius(10.0)
+        .clip_rounded(10.0)
+        .fill(k.c.layer_01)
+        .border(1.0, k.c.border_base);
     use caelum_core::application::presentation::{Check, Outcome};
     let group = |outcome| match outcome {
         Outcome::Failure | Outcome::Interrupted => (0, "Needs attention"),
@@ -2194,34 +2216,108 @@ fn review(s: &Workspace, k: &Kit) -> El {
         .map(|check| Check::new(check, caelum_core::application::presentation::now()))
         .collect();
     reported.sort_by_key(|check| group(check.outcome).0);
-    let mut previous = None;
-    for check in reported {
-        let (i, name) = group(check.outcome);
-        if previous != Some(i) {
-            checks = checks.child(ui::caption(name, k).pt(6.0));
-            previous = Some(i);
-        }
+    let failed = reported
+        .iter()
+        .filter(|c| matches!(c.outcome, Outcome::Failure | Outcome::Interrupted))
+        .count();
+    let running = reported
+        .iter()
+        .filter(|c| c.outcome == Outcome::Running)
+        .count();
+    let passed = reported
+        .iter()
+        .filter(|c| c.outcome == Outcome::Success)
+        .count();
+    let summary = if failed > 0 {
+        format!("{failed} failed · {passed} passed · {running} running")
+    } else if running > 0 {
+        format!("{running} running · {passed} passed")
+    } else if !reported.is_empty() {
+        format!("{passed} passed · {} total", reported.len())
+    } else {
+        "No checks configured".into()
+    };
+    checks = checks.child(
+        row()
+            .w_full()
+            .center_y()
+            .gap(10.0)
+            .padding(14.0)
+            .child(
+                text("Checks")
+                    .font(k.ty.ui_medium)
+                    .color(k.c.text_base)
+                    .grow(1.0),
+            )
+            .child(ui::caption(
+                if details.status_check_rollup.is_none() {
+                    "Waiting for checks"
+                } else {
+                    &summary
+                },
+                k,
+            )),
+    );
+    if details.status_check_rollup.is_none() {
+        checks = checks.child(ui::skeleton("Loading checks", 2, k).px(14.0));
+    }
+    for (i, check) in reported.into_iter().enumerate() {
         let url = check.url.map(str::to_owned);
         checks = checks.child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .py(4.0)
-                .child(ui::outcome(check.outcome, k))
-                .child(
-                    Button::new(check.name)
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press_tx(move |_: &mut Workspace, tx| {
-                            if let Some(url) = &url {
-                                let _ = tx.open_url(url);
-                            }
-                        })
-                        .build(k)
-                        .grow(1.0),
-                )
-                .child(ui::caption(check.label, k))
-                .child(ui::caption(check.timing, k)),
+            k.interactive(
+                row()
+                    .w_full()
+                    .gap(8.0)
+                    .center_y()
+                    .py(8.0)
+                    .px(14.0)
+                    .child(ui::outcome(check.outcome, k))
+                    .child(
+                        text(check.name)
+                            .font(k.ty.small_medium)
+                            .color(k.c.text_base)
+                            .truncate()
+                            .min_w(0.0)
+                            .grow(1.0)
+                            .key(format!("check-name-{i}")),
+                    )
+                    .child(
+                        ui::caption(
+                            match check.outcome {
+                                Outcome::Success => "Passed",
+                                Outcome::Failure => "Failed",
+                                Outcome::Running => "Running",
+                                Outcome::Interrupted => "Cancelled",
+                                Outcome::Neutral => "Skipped",
+                                Outcome::Unknown => "Unknown",
+                            },
+                            k,
+                        )
+                        .help(check.label)
+                        .w(75.0)
+                        .color(if check.outcome == Outcome::Failure {
+                            k.c.danger.fg
+                        } else {
+                            k.c.text_muted
+                        }),
+                    )
+                    .child(ui::caption(check.timing, k).w(64.0))
+                    .child(
+                        rune::icon(&ui::EXTERNAL, 12.0)
+                            .color(k.c.icon_muted)
+                            .opacity(if url.is_some() { 1.0 } else { 0.0 }),
+                    ),
+            )
+            .key(format!("check-{i}"))
+            .role("link")
+            .label(check.name)
+            .focusable(url.is_some())
+            .focus_ring(1.0, 0.0, k.c.border_focus)
+            .on_press_tx(move |_: &mut Workspace, tx| {
+                if let Some(url) = &url {
+                    let _ = tx.open_url(url);
+                }
+            }),
         );
     }
     if details
@@ -2229,69 +2325,121 @@ fn review(s: &Workspace, k: &Kit) -> El {
         .as_ref()
         .is_some_and(Vec::is_empty)
     {
-        checks = checks.child(ui::caption("No checks configured", k));
+        checks = checks.child(
+            ui::caption("This repository hasn't reported any checks.", k)
+                .px(14.0)
+                .pb(12.0),
+        );
     }
-    checks = checks.child(ui::divider(k)).child(ui::caption(
-        format!(
-            "{} · {}",
+    let readiness_title = if details.state == "MERGED" {
+        "Pull request merged"
+    } else if details.state == "CLOSED" {
+        "Pull request closed"
+    } else if details.pull_request.is_draft {
+        "Draft pull request"
+    } else {
+        match details.merge_state_status.as_str() {
+            "CLEAN" => "Ready to merge",
+            "BEHIND" => "Branch is behind the base",
+            "DIRTY" => "Resolve conflicts before merging",
+            "BLOCKED" => "Merge requirements are not met",
+            "UNSTABLE" => "Some checks need attention",
+            _ => "Checking merge readiness…",
+        }
+    };
+    let mut readiness = col()
+        .w_full()
+        .padding(14.0)
+        .gap(10.0)
+        .fill(k.c.layer_02)
+        .child(
+            text(readiness_title)
+                .font(k.ty.ui_medium)
+                .color(k.c.text_base)
+                .wrap(),
+        )
+        .child(ui::caption(
             match details.review_decision.as_deref() {
                 Some("APPROVED") => "Review approved",
                 Some("CHANGES_REQUESTED") => "Changes requested",
                 Some("REVIEW_REQUIRED") => "Review required",
                 _ => "No review decision",
             },
-            match details.merge_state_status.as_str() {
-                "CLEAN" => "Ready to merge",
-                "BEHIND" => "Branch is behind the base",
-                "DIRTY" => "Resolve conflicts before merging",
-                "BLOCKED" => "Merge requirements are not met",
-                "UNSTABLE" => "Some checks need attention",
-                _ => "Merge readiness pending",
-            }
-        ),
-        k,
-    ));
-    if details.state == "OPEN" {
-        let mut mutations = row().w_full().scroll_x().gap(6.0).child(action(
-            "Update branch",
-            Task::UpdateBranch {
-                project: project.clone(),
-                url: url.clone(),
-                head: head.clone(),
-            },
-            s,
             k,
         ));
-        if !details.pull_request.is_draft {
-            let methods = [
-                ("Squash", GitHubMergeMethod::Squash),
-                ("Merge", GitHubMergeMethod::Merge),
-                ("Rebase", GitHubMergeMethod::Rebase),
-            ];
-            let mut selector = row().gap(2.0).center_y();
-            for (i, (name, _)) in methods.iter().enumerate() {
-                selector =
-                    selector
-                        .child(ui::tab(name, live(s).panels.merge_method == i, k).on_press(
-                            move |s: &mut Workspace| live_mut(s).panels.merge_method = i,
-                        ));
-            }
-            checks = checks.child(selector);
-            let (name, method) = methods[live(s).panels.merge_method];
+    if details.state == "OPEN" {
+        let mut mutations = row().w_full().gap(8.0).center_y();
+        if details.merge_state_status == "BEHIND" {
             mutations = mutations.child(action(
-                &format!("{name} pull request"),
-                Task::Merge {
+                "Update branch",
+                Task::UpdateBranch {
                     project: project.clone(),
                     url: url.clone(),
                     head: head.clone(),
-                    method,
                 },
                 s,
                 k,
             ));
         }
-        checks = checks.child(mutations);
+        if !details.pull_request.is_draft {
+            let methods = [
+                ("Squash and merge", GitHubMergeMethod::Squash),
+                ("Create merge commit", GitHubMergeMethod::Merge),
+                ("Rebase and merge", GitHubMergeMethod::Rebase),
+            ];
+            let (name, method) = methods[live(s).panels.merge_method];
+            let task = Task::Merge {
+                project: project.clone(),
+                url: url.clone(),
+                head: head.clone(),
+                method,
+            };
+            let busy = live(s).app.services.busy(&task);
+            let disabled = busy
+                || matches!(
+                    details.merge_state_status.as_str(),
+                    "DIRTY" | "BLOCKED" | "UNKNOWN"
+                );
+            let names: Vec<_> = methods.iter().map(|m| m.0).collect();
+            mutations = mutations.child(
+                row()
+                    .gap(2.0)
+                    .center_y()
+                    .child(
+                        Button::new(if busy { "Merging…" } else { name })
+                            .variant(ButtonVariant::Contrast)
+                            .disabled(disabled)
+                            .on_press(move |s: &mut Workspace| live_mut(s).app.task(task.clone()))
+                            .build(k)
+                            .key("merge-pull-request"),
+                    )
+                    .child(
+                        crate::select::Select::new("merge-method", &names)
+                            .current(Some(name))
+                            .display("")
+                            .label("Merge method")
+                            .appearance(rune_kit::SelectAppearance::Field)
+                            .width(36.0)
+                            .disabled(busy)
+                            .open(live(s).panels.merge_menu)
+                            .on_toggle(|s: &mut Workspace| {
+                                live_mut(s).panels.merge_menu = !live(s).panels.merge_menu
+                            })
+                            .on_close(|s: &mut Workspace| live_mut(s).panels.merge_menu = false)
+                            .on_choose(move |s: &mut Workspace, value, _| {
+                                let p = &mut live_mut(s).panels;
+                                p.merge_method =
+                                    methods.iter().position(|m| m.0 == value).unwrap_or(0);
+                                p.merge_menu = false;
+                            })
+                            .build(k, layers)
+                            .h(32.0),
+                    ),
+            );
+        }
+        readiness = readiness.child(mutations);
     }
+    checks = checks.child(ui::divider(k)).child(readiness);
     content = content.child(checks).child(
         text("Discussion & reviews")
             .font(k.ty.ui_medium)
@@ -2301,19 +2449,21 @@ fn review(s: &Workspace, k: &Kit) -> El {
         content = content.child(if review.cursors.len() < 3 && review.error.is_none() {
             ui::skeleton("Loading discussion", 3, k)
         } else {
-            ui::empty(
-                "No discussion yet",
-                "Review comments and replies will appear here.",
+            ui::caption(
+                "No discussion yet. Review comments and replies will appear here.",
                 k,
             )
+            .py(12.0)
         });
     }
+    let mut discussion = col().w_full().gap(10.0);
     for comment in review.discussion.iter().chain(&review.reviews) {
-        content = content.child(comment_view(s, k, project, url, comment));
+        discussion = discussion.child(comment_view(s, k, project, url, comment));
     }
     for thread in &review.threads {
-        content = content.child(thread_view(s, k, project, url, thread));
+        discussion = discussion.child(thread_view(s, k, project, url, thread));
     }
+    content = content.child(discussion);
     for kind in [
         GitHubFeedbackKind::Discussion,
         GitHubFeedbackKind::Reviews,
@@ -2336,10 +2486,15 @@ fn review(s: &Workspace, k: &Kit) -> El {
         }
     }
     header
+        .max_w(960.0)
+        .self_center()
         .grow(1.0)
         .min_h(0.0)
         .child(scroll(content).key("review-overview-scroll").scroll_bar(k))
-        .child(review_actions(s, k, project, url, review))
+        .children(
+            (!review.selected_comments.is_empty())
+                .then(|| review_actions(s, k, project, url, review)),
+        )
 }
 
 fn review_actions(
@@ -2362,7 +2517,7 @@ fn review_actions(
     row()
         .w_full()
         .gap(8.0)
-        .padding(10.0)
+        .padding(12.0)
         .radius(10.0)
         .fill(k.c.layer_02)
         .center_y()
@@ -2502,7 +2657,7 @@ fn review_files_view(
                     let id = thread.id.clone();
                     item = item.child(
                         Button::new(format!(
-                            "↳ Line {} · {}",
+                            "Line {} · {}",
                             thread.line.or(thread.original_line).unwrap_or(0),
                             thread
                                 .comments
@@ -2762,8 +2917,19 @@ fn comment_view(
         .gap(6.0)
         .padding(10.0)
         .radius(10.0)
-        .fill(k.c.layer_02)
-        .border(1.0, k.c.border_base)
+        .fill(if selected {
+            k.alpha(k.c.text_accent, 0.04)
+        } else {
+            k.c.layer_01
+        })
+        .border(
+            1.0,
+            if selected {
+                k.alpha(k.c.text_accent, 0.3)
+            } else {
+                k.c.border_base
+            },
+        )
         .child(
             row()
                 .w_full()
@@ -2795,8 +2961,7 @@ fn comment_view(
                     k,
                 ))
                 .child(
-                    Button::new("↗")
-                        .variant(ButtonVariant::GhostMuted)
+                    quiet_button(&ui::EXTERNAL, "Open comment on GitHub")
                         .on_press_tx(move |_: &mut Workspace, tx| {
                             let _ = tx.open_url(&link);
                         })
@@ -2821,12 +2986,13 @@ fn thread_view(
     if !open {
         let id = thread.id.clone();
         return Button::new(format!(
-            "▸ Resolved · {}:{} · {} replies",
+            "Resolved · {}:{} · {} replies",
             thread.path,
             thread.line.or(thread.original_line).unwrap_or(0),
             thread.comments.len()
         ))
         .variant(ButtonVariant::GhostMuted)
+        .icon(&glyphs::CARET_RIGHT)
         .on_press(move |s: &mut Workspace| {
             live_mut(s).panels.expanded_threads.insert(id.clone());
         })
@@ -2904,32 +3070,6 @@ fn thread_view(
         ));
     }
     content
-}
-
-pub fn attach_dialog(s: &mut Workspace, tx: &mut Tx) {
-    let Some(index) = live(s).app.selected else {
-        return;
-    };
-    let project = live(s).app.sessions[index].scope.project.clone();
-    tx.open_file(
-        FileDialogOptions {
-            title: "Attach a project file".into(),
-            ..Default::default()
-        },
-        move |s: &mut Workspace, result, _| match result {
-            Ok(Some(path)) => match path.strip_prefix(&project) {
-                Ok(path) => live_mut(s)
-                    .app
-                    .attach_file(index, path.to_string_lossy().into_owned()),
-                Err(_) => {
-                    live_mut(s).app.sessions[index].error =
-                        Some("Choose a file inside this session’s project".into())
-                }
-            },
-            Ok(None) => {}
-            Err(error) => live_mut(s).app.sessions[index].error = Some(error.to_string()),
-        },
-    );
 }
 
 pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {

@@ -81,10 +81,34 @@ impl WorktreeClient {
             .iter()
             .find(|entry| Path::new(&entry.path) == root)
             .and_then(|entry| entry.branch.clone());
-        let default_base = ["main", "origin/main"]
-            .into_iter()
-            .find(|base| branches.iter().any(|branch| branch == base))
-            .map(str::to_owned)
+        let remote_head = git(
+            project.path(),
+            &[
+                "symbolic-ref",
+                "--quiet",
+                "--short",
+                "refs/remotes/origin/HEAD",
+            ],
+        )?;
+        let remote_base = remote_head
+            .status
+            .success()
+            .then(|| text(&remote_head.stdout));
+        let default_base = remote_base
+            .as_deref()
+            .and_then(|remote| {
+                let local = remote.strip_prefix("origin/").unwrap_or(remote);
+                [local, remote]
+                    .into_iter()
+                    .find(|base| branches.iter().any(|b| b == base))
+                    .map(str::to_owned)
+            })
+            .or_else(|| {
+                ["main", "master", "origin/main", "origin/master"]
+                    .into_iter()
+                    .find(|base| branches.iter().any(|branch| branch == base))
+                    .map(str::to_owned)
+            })
             .or(current_branch)
             .unwrap_or_else(|| {
                 if head.status.success() {
@@ -117,7 +141,7 @@ impl WorktreeClient {
         let listing = self
             .list(project.path(), base_directory)?
             .ok_or(WorktreeError::NotRepository)?;
-        Ok(PathBuf::from(listing.storage_directory).join(slug(branch)))
+        Ok(destination_preview(&listing, branch))
     }
 
     pub fn create(
@@ -307,6 +331,24 @@ fn validate_branch(path: &Path, branch: &str) -> Result<(), WorktreeError> {
         return Err(WorktreeError::InvalidBranch);
     }
     Ok(())
+}
+
+/// Uses the resolved listing, so previews never perform Git or filesystem work.
+pub fn destination_preview(listing: &GitWorktrees, branch: &str) -> PathBuf {
+    PathBuf::from(&listing.storage_directory).join(slug(branch.trim()))
+}
+
+pub fn suggested_branch(listing: &GitWorktrees) -> String {
+    (1..)
+        .map(|n| format!("work/session-{n}"))
+        .find(|branch| {
+            !listing.branches.contains(branch)
+                && !listing
+                    .worktrees
+                    .iter()
+                    .any(|tree| Path::new(&tree.path) == destination_preview(listing, branch))
+        })
+        .unwrap()
 }
 
 fn slug(value: &str) -> String {

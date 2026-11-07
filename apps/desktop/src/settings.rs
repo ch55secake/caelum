@@ -1,16 +1,16 @@
 //! Settings navigation and native controls. Preferences and async work live in core.
-use crate::ui::Button;
 use crate::{
     Workspace,
     live::{live, live_mut},
     panels, ui,
 };
+use crate::{select::Select, ui::Button};
 use caelum_core::{
     application::{Provider, Scope, Task},
     updates,
 };
 use rune::{El, FileDialogOptions, ScrollSpec, col, row, text};
-use rune_kit::{ButtonVariant, Kit, ScrollBar, Select, SelectAppearance, Switch};
+use rune_kit::{ButtonVariant, Kit, ScrollBar, SelectAppearance, Switch};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Page {

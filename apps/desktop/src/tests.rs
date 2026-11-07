@@ -15,6 +15,9 @@ fn runtime(size: (f32, f32)) -> Runtime<Workspace> {
 fn advance(rt: &mut Runtime<Workspace>, seconds: f64) {
     for _ in 0..(seconds * 60.0).ceil() as usize {
         rt.frame(1.0 / 60.0);
+        if let Some(focused) = crate::live::presented_focus(rt) {
+            rt.update(|s, _| s.live.as_mut().unwrap().focus_key = focused);
+        }
     }
 }
 
@@ -50,6 +53,278 @@ fn fill(rt: &mut Runtime<Workspace>, field: &str, value: &str) {
     );
     rt.paste(value);
     advance(rt, 0.1);
+}
+
+#[test]
+fn session_popover_roves_without_selecting_its_background_owner() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.sessions[1].remote_id = Some("background".into());
+        l.app.sessions[1].loaded = true;
+        l.app.sessions[0].conversation.working = true;
+    });
+    let (x, y) = rt.find("session-actions-1").unwrap();
+    rt.pointer_move(x, y);
+    advance(&mut rt, 0.2);
+    click(&mut rt, "session-actions-1");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    let popup = element(&rt, "session-menu");
+    assert!(
+        popup
+            .rect
+            .iter()
+            .zip(popup.visible)
+            .all(|(a, b)| (*a - b).abs() < 1.0)
+    );
+    key(&mut rt, Key::Down, Mods::default());
+    advance(&mut rt, 0.1);
+    assert!(element(&rt, "archive-session").focused || element(&rt, "refresh-history").focused);
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(element(&rt, "session-actions-1").focused);
+    assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+    click(&mut rt, "session-actions-1");
+    click(&mut rt, "refresh-history");
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, c)| matches!(c, caelum_core::application::Command::Resume(key) if key.id == "background")));
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+}
+
+#[test]
+fn archive_toast_pauses_for_presented_keyboard_focus_then_expires() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| s.live.as_mut().unwrap().archive(1, true));
+    advance(&mut rt, 0.3);
+    for _ in 0..40 {
+        key(&mut rt, Key::Tab, Mods::default());
+        advance(&mut rt, 0.05);
+        if element(&rt, "undo-archive").focused {
+            break;
+        }
+    }
+    assert!(element(&rt, "undo-archive").focused);
+    let now = caelum_core::application::presentation::now();
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        assert_eq!(l.focus_key.as_deref(), Some("undo-archive"));
+        assert!(!l.tick_archive(now + 30_000));
+    });
+    click(&mut rt, "live-draft-0");
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        assert!(l.tick_archive(now + 39_000));
+        assert!(l.app.sessions[1].archived);
+    });
+    advance(&mut rt, 0.2);
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some("archive-toast"))
+    );
+}
+
+fn design_runtime(scene: &str, size: (f32, f32)) -> Runtime<Workspace> {
+    let app = spec();
+    let mut state = crate::evaluation::design();
+    crate::evaluation::scene(&mut state, scene);
+    let mut rt = Runtime::new(state, app.view, size, Env::new(true, 1.0));
+    rt.poll = app.poll;
+    rt.on_key = app.on_key;
+    advance(&mut rt, 0.4);
+    rt
+}
+
+#[test]
+fn worktree_form_searches_bases_and_captures_project_provider_and_branch() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let mut rt = design_runtime("worktree-create", (800.0, 620.0));
+    assert!(element(&rt, "worktree-branch").focused);
+    rt.paste("feat/café");
+    advance(&mut rt, 0.1);
+    click(&mut rt, "worktree-base-trigger");
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.1);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.overlay,
+        Some(crate::panels::Screen::CreateWorktree)
+    );
+    assert!(element(&rt, "worktree-base-trigger").focused);
+    click(&mut rt, "worktree-base-trigger");
+    fill(&mut rt, "worktree-base-search", "native");
+    assert_eq!(
+        element(&rt, "option0").label.as_deref(),
+        Some("feat/native")
+    );
+    click(&mut rt, "option0");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.overlay,
+        Some(crate::panels::Screen::CreateWorktree)
+    );
+    click(&mut rt, "worktree-branch");
+    key(&mut rt, Key::Enter, Mods::default());
+    let (request, command) = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Task(Task::CreateWorktree { .. })))
+        .expect("Enter submits the form");
+    assert!(
+        matches!(command, Command::Task(Task::CreateWorktree { project, branch, base, .. })
+        if project == "/projects/caelum" && branch == "feat/café" && base == "feat/native")
+    );
+    let mut open = None;
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.panels.launch_provider = caelum_core::application::Provider::Codex;
+        l.apply(Event::Completed(request, Ok(Reply::Task(TaskReply::Worktree(serde_json::from_value(serde_json::json!({
+            "path":"/linked","project":{"path":"/linked","name":"Linked"},"branch":"feat/café","main":false,"locked":null,"prunable":null,"available":true
+        })).unwrap())))));
+        open = Some(l.app.commands().into_iter().find(|(_, c)| matches!(c, Command::Open(_))).unwrap().0);
+    });
+    advance(&mut rt, 0.1);
+    click(&mut rt, "worktree-branch");
+    key(&mut rt, Key::Enter, Mods::default());
+    assert!(
+        !rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, c)| matches!(c, Command::Task(Task::CreateWorktree { .. })))
+    );
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().apply(Event::Completed(
+            open.unwrap(),
+            Ok(Reply::Project(caelum_protocol::ProjectInfo {
+                path: "/linked".into(),
+                name: "Linked".into(),
+            })),
+        ));
+    });
+    advance(&mut rt, 0.3);
+    let l = rt.state.live.as_ref().unwrap();
+    assert!(l.panels.overlay.is_none());
+    assert_eq!(
+        l.app.sessions[l.app.selected.unwrap()].scope.provider,
+        caelum_core::application::Provider::OpenCode
+    );
+    assert!(element(&rt, &format!("live-draft-{}", l.app.selected.unwrap())).focused);
+}
+
+#[test]
+fn background_previews_are_bounded_and_output_actions_keep_their_session() {
+    use caelum_core::application::{Command, Task};
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("shells-many", size);
+        assert!(element(&rt, "shell-preview").rect[3] <= 50.1);
+        assert!(element(&rt, "background-shells").rect[3] <= 140.1);
+        assert!(element(&rt, "composer-editor").visible[3] >= 56.0);
+        click(&mut rt, "view-shell-output");
+        advance(&mut rt, 0.3);
+        let output = element(&rt, "shell-output-shell_fixture");
+        assert!(output.visible[3] >= 80.0 && output.rect[3] < size.1);
+        rt.update(|s, _| s.live.as_mut().unwrap().app.select(1));
+        advance(&mut rt, 0.2);
+        click(&mut rt, "output-stop-shell-shell_fixture");
+        let commands = rt.state.live.as_mut().unwrap().app.commands();
+        assert!(commands.iter().any(
+            |(_, c)| matches!(c, Command::Task(Task::Shell { project, session, id, stop:true })
+            if project == "/projects/caelum" && session == "ses_fixture" && id == "shell_fixture")
+        ));
+    }
+}
+
+#[test]
+fn user_bubbles_size_to_content_group_images_and_copy_the_original_markdown() {
+    let mut rt = design_runtime("messages", (1280.0, 1000.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    let bubbles: Vec<_> = rt
+        .elements()
+        .into_iter()
+        .filter(|e| {
+            e.key
+                .as_ref()
+                .is_some_and(|k| k.starts_with("user-bubble-"))
+                && !e.exiting
+        })
+        .collect();
+    assert_eq!(bubbles.len(), 3);
+    let short = bubbles
+        .iter()
+        .find(|b| b.key.as_ref().unwrap().contains("short"))
+        .unwrap();
+    assert!(short.rect[2] < 260.0);
+    assert!(
+        bubbles
+            .iter()
+            .all(|b| (b.rect[0] + b.rect[2] - (short.rect[0] + short.rect[2])).abs() < 1.0)
+    );
+    let formatted = rt
+        .elements()
+        .into_iter()
+        .find(|e| {
+            e.key
+                .as_ref()
+                .is_some_and(|k| k.starts_with("copy-user-") && k.contains("formatted"))
+        })
+        .unwrap()
+        .key
+        .unwrap();
+    let (x, y) = rt.find(&formatted).unwrap();
+    rt.pointer_move(x, y);
+    advance(&mut rt, 0.2);
+    click(&mut rt, &formatted);
+    assert!(clipboard.text().unwrap().contains("**session owner**"));
+    assert!(clipboard.text().unwrap().contains("```rust"));
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.role == "img" && e.path.contains("user-bubble-"))
+    );
+    let file = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.text.as_deref() == Some("src/session.rs"))
+        .expect("grouped file label");
+    assert!(
+        file.path.contains("user-bubble-") && file.visible[2] > 60.0,
+        "{file:?}"
+    );
+}
+
+#[test]
+fn review_overview_has_a_readable_column_aligned_checks_and_conditional_feedback() {
+    let mut rt = design_runtime("overview-empty", (1600.0, 1000.0));
+    let column = element(&rt, "review-overview-scroll");
+    assert!(column.rect[2] <= 960.1);
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some("address-comments"))
+    );
+    click(&mut rt, "merge-method-trigger");
+    key(&mut rt, Key::Down, Mods::default());
+    key(&mut rt, Key::Down, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some("merge-method-content"))
+    );
+    let rt = design_runtime("checks", (1280.0, 1000.0));
+    let first = element(&rt, "check-name-0");
+    let second = element(&rt, "check-name-1");
+    assert!((first.rect[0] - second.rect[0]).abs() < 1.0);
+    assert!(element(&rt, "address-comments").visible[3] >= 30.0);
 }
 
 #[test]
@@ -1824,7 +2099,14 @@ fn compact_live_inspector_and_modals_preserve_the_composer_and_focus() {
     advance(&mut rt, 0.5);
     for screen in ["nav-worktrees", "nav-settings", "session-actions-0"] {
         click(&mut rt, screen);
-        let dialog = element(&rt, "workspace-dialog");
+        let dialog = element(
+            &rt,
+            if screen == "session-actions-0" {
+                "session-menu"
+            } else {
+                "workspace-dialog"
+            },
+        );
         assert!(
             dialog
                 .rect

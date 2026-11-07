@@ -6,9 +6,12 @@ Open a project with **⌘O**, the sidebar's **+**, or `caelum /path/to/project`.
 The sidebar groups projects, sessions and related pull requests. **⌘K** searches
 sessions. **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that project's
 draft. Each session retains an independent draft and reading position. Hover a
-session to close it with **×**; **Undo** restores it without replacing newer
-navigation. Session actions and native context menus also offer archive/reconnect.
-Use the selected session row’s **…** for session actions and the archive icon beside
+session to close it with **×**. A temporary notice names the archived session and
+offers **Undo**; it expires after eight unengaged seconds and pauses while hovered,
+keyboard-focused or restoring. Undo preserves newer navigation. Session actions and
+native context menus also offer archive/reconnect. Hover any session row for its
+**…** popover; actions belong to that row, including background sessions. Escape
+returns focus to its button. Use the archive icon beside
 **Sessions** to switch between active and archived sessions. **New session** opens
 the searchable project/provider launcher.
 
@@ -25,9 +28,10 @@ previews open automatically, with size and tool-detail controls. Explicitly coll
 patches stay collapsed as output arrives. Internal reminders are hidden from rows,
 timeline results and copied responses, while literal code stays intact. **Load earlier messages**
 pages provider history while the visible transcript stays bounded.
-Running OpenCode background commands also remain above the composer. Expand the
-strip for a bounded output tail, refresh and per-command **Stop**; completed
-commands retain their output in the transcript.
+Running OpenCode background commands remain above the composer with three truncated
+output lines, elapsed time, refresh and **Stop**. **View output** opens a scrollable
+reader; **View all** lists multiple commands. The reader keeps its original session
+and retains output after completion. Completed commands also appear in the transcript.
 The composer pulse and agent indicator show working, thinking, responding, tools,
 retry, input, background-waiting and stopping states, including between output events.
 These indicators follow reduced-motion preferences.
@@ -55,7 +59,7 @@ provider history before resuming because it may have been accepted before a cras
 
 ## Composer context and commands
 
-Use **Attach**, project-file drag/drop, caret-aware `@query` suggestions, or the file
+Use project-file drag/drop, caret-aware `@query` suggestions, or **Attach** in the file
 inspector to attach immutable text snapshots. Each message supports 16 snapshots,
 each capped at 64 KiB; partial snapshots are marked. Selection context retains
 its file and line range. Navigation during a file read keeps the attachment with
@@ -63,8 +67,10 @@ its originating draft. **#** finds session-related pull requests and captures th
 context. Tab/Enter accepts a mention; Escape cancels it, including an in-flight read.
 Surrounding text and Unicode caret positions are preserved.
 
-Paste or attach images for a thumbnail; open it to zoom and drag-pan the preview.
-Images remain image payloads when sent or queued. Message and file context menus
+Paste or drop images for a thumbnail; open it to zoom and drag-pan the preview.
+Images remain image payloads when sent or queued. User messages use right-aligned
+Markdown bubbles with grouped file/image context and a hover/keyboard copy action.
+Message and file context menus
 provide copy, reuse and attachment actions. Up in an empty composer recalls the
 last prompt; Shift+Tab cycles available OpenCode agents. The context meter shows
 reported token usage and model capacity when available.
@@ -91,8 +97,11 @@ in-flight refresh schedules another read. Linked-worktree Git metadata is watche
 Select lines to attach them to the prompt. Files, local staged/unstaged/untracked
 changes and continuous PR review share the same native code/diff surfaces.
 
-The sidebar's **Worktrees** button opens checkout discovery, creation and removal.
-Choose a branch/base and parent directory; the default storage is under
+Use a project's branch icon or **Create worktree** in the project/provider launcher
+to open the creation form. Replace the selected suggested branch, search the starting
+branch and review the destination, then press Enter or **Create worktree**. The form
+keeps its original project and provider. **Manage checkouts** opens discovery and
+removal. Change the parent directory in Settings; the default storage is under
 `~/.caelum/worktrees`. Each checkout keeps its own sessions and drafts. Removing
 a checkout preserves its branch and commits; active work and dirty/locked Git
 checkouts prevent removal.
@@ -104,7 +113,8 @@ Inline feedback, collapsed resolved threads, outdated context and missing/binary
 patches remain available. Open reviews refresh every 30 seconds and preserve their
 reading position across refreshes, pagination and tab changes. The pinned
 **Address selected comments** action starts a new turn in the displayed destination
-session, preserving its independent draft and attachments. See
+session, preserving its independent draft and attachments. This bar appears only
+while comments are selected. See
 [pull requests](pull-requests.md) for feedback and merging.
 
 ## Appearance and window lifecycle

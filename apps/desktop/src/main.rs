@@ -10,10 +10,13 @@ mod media;
 mod models;
 mod panels;
 mod questions;
+mod select;
 mod settings;
+mod shells;
 mod state;
 mod theme;
 mod ui;
+mod worktree;
 
 #[cfg(test)]
 mod tests;
@@ -153,9 +156,15 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
     sidebar.build(k)
 }
 
-fn transcript(s: &Workspace, k: &Kit, reduced_motion: bool, padding: f32) -> El {
+fn transcript(
+    s: &Workspace,
+    k: &Kit,
+    reduced_motion: bool,
+    padding: f32,
+    layers: &mut Vec<El>,
+) -> El {
     if s.live.is_some() {
-        return live::transcript(s, k, reduced_motion, padding);
+        return live::transcript(s, k, reduced_motion, padding, layers);
     }
     let mut content = col().w_full().max_w(840.0).px(padding).py(28.0).gap(28.0);
     if s.active().turns.is_empty() {
@@ -423,7 +432,13 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .min_h(0.0)
         .items_center()
         .child(rune::el().w_full().h(1.0).fill(k.c.border_base))
-        .child(transcript(s, &k, cx.is_reduced_motion(), padding));
+        .child(transcript(
+            s,
+            &k,
+            cx.is_reduced_motion(),
+            padding,
+            &mut layers,
+        ));
     let main = if s
         .live
         .as_ref()
@@ -540,6 +555,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     }
     .build(&shell_kit);
     if s.live.is_some() {
+        live::overlays(s, &k, &mut layers);
         panels::overlays(s, &k, &mut layers);
         models::overlay(s, &k, &mut layers);
     }
@@ -552,6 +568,13 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if s.live.as_ref().is_some_and(|l| l.session_menu.is_some()) {
+        if ev.key == Key::Escape {
+            live::close_session_menu(s);
+            return true;
+        }
+        return false;
+    }
     if s.live.as_ref().is_some_and(|l| l.models.is_open()) {
         return models::key(s, ev, tx);
     }
@@ -592,6 +615,18 @@ fn spec() -> AppSpec<Workspace> {
         setup: Some(live::setup),
         on_key: Some(on_key),
         scenes: &[
+            ("worktree-create", |s| {
+                evaluation::scene(s, "worktree-create")
+            }),
+            ("shell-output", |s| evaluation::scene(s, "shell-output")),
+            ("shells-many", |s| evaluation::scene(s, "shells-many")),
+            ("messages", |s| evaluation::scene(s, "messages")),
+            ("archive", |s| evaluation::scene(s, "archive")),
+            ("overview", |s| evaluation::scene(s, "overview")),
+            ("overview-empty", |s| evaluation::scene(s, "overview-empty")),
+            ("overview-blocked", |s| {
+                evaluation::scene(s, "overview-blocked")
+            }),
             ("worktrees", |s| evaluation::scene(s, "worktrees")),
             ("worktrees-loading", |s| {
                 evaluation::scene(s, "worktrees-loading")
@@ -684,7 +719,11 @@ fn main() {
             _ => args.push(arg),
         }
     }
-    let app = lifecycle::configure(rune::App::new(spec()).font_smoothing(rune::FontSmoothing::Off));
+    let app = lifecycle::configure(
+        rune::App::new(spec())
+            .font_smoothing(rune::FontSmoothing::Off)
+            .on_frame_drawn(live::frame_drawn),
+    );
     let handle = app.handle();
     app.init(move || {
         let mut state = if design {

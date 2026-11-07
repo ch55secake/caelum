@@ -80,6 +80,7 @@ pub fn project(el: El, project: String) -> El {
         tx.popup_menu(
             PopupMenu::new()
                 .item(PopupItem::new("new", "New session"))
+                .item(PopupItem::new("worktree", "Create worktree…"))
                 .separator()
                 .item(PopupItem::new("copy", "Copy project path"))
                 .item(PopupItem::new("reveal", "Reveal in Finder")),
@@ -94,6 +95,15 @@ pub fn project(el: El, project: String) -> El {
                     let l = live_mut(s);
                     l.app.select_project(&project);
                     l.new_session();
+                }
+                Some("worktree") => {
+                    let l = live(s);
+                    let provider = l
+                        .app
+                        .selected
+                        .map(|i| l.app.sessions[i].scope.provider)
+                        .unwrap_or(l.app.preferences.default_provider);
+                    crate::worktree::open(s, project.clone(), provider);
                 }
                 _ => {}
             },

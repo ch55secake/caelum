@@ -116,7 +116,10 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         crate::panels::show(state, crate::panels::Screen::Session);
         return true;
     }
-    if matches!(name, "worktrees" | "worktrees-loading" | "worktrees-error") {
+    if matches!(
+        name,
+        "worktrees" | "worktrees-loading" | "worktrees-error" | "worktree-create"
+    ) {
         crate::panels::show(state, crate::panels::Screen::Worktrees);
         let l = state.live.as_mut().unwrap();
         if name == "worktrees-loading" {
@@ -137,6 +140,9 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             ]
         })).unwrap());
         finish_fixture_reads(l);
+        if name == "worktree-create" {
+            crate::worktree::open(state, project.into(), Provider::OpenCode);
+        }
         return true;
     }
     if matches!(
@@ -303,7 +309,7 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         l.app.sessions[0].stopping = name == "stopping";
         return true;
     }
-    if name == "shells" {
+    if matches!(name, "shells" | "shell-output" | "shells-many") {
         let session = &mut l.app.sessions[0];
         session.scope.provider = Provider::OpenCode;
         session.remote_id = Some("ses_fixture".into());
@@ -312,7 +318,6 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             command: "cargo test --workspace".into(),
             started_at: caelum_core::application::presentation::now() - 12_000,
         }];
-        l.expanded.insert((0, "background-shells".into()));
         l.app
             .services
             .checkouts
@@ -321,8 +326,49 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             .shell_output
             .insert(
                 ("ses_fixture".into(), "shell_fixture".into()),
-                "Running 162 tests…\ntest application::queue_recovery ... ok".into(),
+                format!(
+                    "{}\nRunning 162 tests…\ntest application::queue_recovery ... ok\n{}",
+                    "Compiling workspace…\n".repeat(180),
+                    "test scoped_worktree_handoff_with_independent_sessions ... ok ".repeat(12)
+                ),
             );
+        if name == "shells-many" {
+            l.app.sessions[0].shells.extend((1..8).map(|i| {
+                caelum_protocol::OpenCodeBackgroundShell {
+                    id: format!("shell-{i}"),
+                    command: format!("cargo test --package provider-{i}"),
+                    started_at: caelum_core::application::presentation::now() - 6000,
+                }
+            }));
+        }
+        if name == "shell-output" {
+            crate::shells::open(state, 0, "shell_fixture".into());
+        }
+        return true;
+    }
+    if name == "archive" {
+        l.archive(2, true);
+        return true;
+    }
+    if name == "messages" {
+        let attachment = caelum_core::application::Attachment::image(
+            "Caelum.png".into(),
+            include_bytes!("../assets/icon.png"),
+        )
+        .unwrap();
+        let files = json!({"version":1,"files":[
+            {"id":"session-source","path":"src/session.rs","content":"let owner = session.key();","startLine":12,"endLine":12,"truncated":false},
+            {"id":"session-fixture","path":"tests/fixtures/independent-session-drafts/input.json","content":"{}","truncated":true}
+        ]});
+        let context = format!("\n\n<caelum-file-context>\n{files}\n</caelum-file-context>");
+        let session = &mut l.app.sessions[0];
+        session.conversation = Default::default();
+        session.conversation.history(Provider::OpenCode, &[
+            json!({"id":"short", "type":"user", "text":"Looks good — go ahead."}),
+            json!({"id":"reply", "type":"assistant", "content":[{"id":"text", "type":"text", "text":"I'll keep the draft and reading position intact."}]}),
+            json!({"id":"formatted", "type":"user", "text":"Please keep the **session owner** captured.\n\n- Preserve the independent draft\n- Restore the exact reading position\n\n```rust\nlet owner = session.key();\n```"}),
+            json!({"id":"attachment", "type":"user", "text":context, "files":[{"mime":"image/png", "uri":attachment.content, "name":"Caelum.png"}]})
+        ], false);
         return true;
     }
     if matches!(name, "empty" | "error") {
@@ -507,6 +553,27 @@ pub fn scene(state: &mut Workspace, name: &str) {
     ];
     review.discussion = comments.iter().enumerate().map(|(n, body)| serde_json::from_value(json!({"id":format!("discussion-{n}"),"body":body,"url":url,"author":{"login":if n%2==0 {"reviewer"} else {"maintainer"}},"createdAt":"2026-11-07T10:00:00Z","state":null,"diffHunk":null})).unwrap()).collect();
     review.selected_comments.insert("comment-0".into());
+    if name.starts_with("overview") {
+        review.selected_comments.clear();
+        let details = review.details.as_mut().unwrap();
+        details.body = "## A calmer native workspace\n\nThis follow-up brings the review and conversation surfaces back together, while keeping each session's **draft, attachments and reading position** independent.\n\n### What changed\n\n- A focused worktree form with a searchable starting branch\n- Compact background commands with a full output reader\n- Content-sized user messages and temporary archive Undo\n\n### Review notes\n\nUse the files tab to review the shared Rust changes, then select feedback to send to the current session.".into();
+        if name == "overview-empty" {
+            details.body.clear();
+            details.status_check_rollup = Some(Vec::new());
+            review.discussion.clear();
+            review.reviews.clear();
+            review.threads.clear();
+        }
+        if name == "overview-blocked" {
+            details.merge_state_status = "BLOCKED".into();
+            details.review_decision = Some("CHANGES_REQUESTED".into());
+            details.status_check_rollup = Some(serde_json::from_value(json!([
+                {"__typename":"CheckRun","name":"Build native desktop / aarch64-apple-darwin","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":url,"startedAt":"2026-11-07T10:00:00Z","completedAt":"2026-11-07T10:02:43Z"},
+                {"__typename":"CheckRun","name":"Core regression tests","status":"IN_PROGRESS","conclusion":null,"detailsUrl":url},
+                {"__typename":"CheckRun","name":"Formatting and static analysis","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":url}
+            ])).unwrap());
+        }
+    }
     for kind in ["Discussion", "Reviews", "Threads"] {
         review.cursors.insert(kind.into(), None);
     }
@@ -525,15 +592,12 @@ pub fn scene(state: &mut Workspace, name: &str) {
         l.drafts[0].focused = true;
     } else {
         crate::panels::open_review(state, project.into(), url.into());
-        if name == "checks" {
-            state.live.as_mut().unwrap().panels.review_tab = 0;
-        }
-        state.live.as_mut().unwrap().panels.review_tab = if name == "checks" || name == "discussion"
-        {
-            0
-        } else {
-            1
-        };
+        state.live.as_mut().unwrap().panels.review_tab =
+            if name == "checks" || name == "discussion" || name.starts_with("overview") {
+                0
+            } else {
+                1
+            };
         if name == "review-loading" {
             let l = state.live.as_mut().unwrap();
             let r = l

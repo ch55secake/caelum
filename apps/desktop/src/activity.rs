@@ -74,148 +74,7 @@ pub fn indicator(
 }
 
 pub fn shells(s: &Workspace, k: &Kit, index: usize) -> El {
-    use caelum_core::application::Task;
-    let l = live(s);
-    let session = &l.app.sessions[index];
-    if session.shells.is_empty() {
-        return col();
-    }
-    let expanded = l.expanded.contains(&(index, "background-shells".into()));
-    let mut body = col().w_full().gap(6.0).child(
-        ui::tab(
-            &format!(
-                "{} background command{} {}",
-                session.shells.len(),
-                if session.shells.len() == 1 { "" } else { "s" },
-                if expanded { "⌃" } else { "⌄" }
-            ),
-            expanded,
-            k,
-        )
-        .key("background-shells")
-        .expanded(expanded)
-        .w_full()
-        .on_press(move |s: &mut Workspace| {
-            let l = live_mut(s);
-            if !l.expanded.remove(&(index, "background-shells".into())) {
-                l.expanded.insert((index, "background-shells".into()));
-                let session = &l.app.sessions[index];
-                let tasks: Vec<_> = session
-                    .shells
-                    .iter()
-                    .filter_map(|shell| {
-                        Some(Task::Shell {
-                            project: session.scope.project.clone(),
-                            session: session.remote_id.clone()?,
-                            id: shell.id.clone(),
-                            stop: false,
-                        })
-                    })
-                    .collect();
-                for task in tasks {
-                    l.app.task(task);
-                }
-            }
-        }),
-    );
-    if expanded {
-        let mut list = col().w_full().gap(8.0);
-        for shell in &session.shells {
-            let Some(remote) = &session.remote_id else {
-                continue;
-            };
-            let task = Task::Shell {
-                project: session.scope.project.clone(),
-                session: remote.clone(),
-                id: shell.id.clone(),
-                stop: true,
-            };
-            let read = Task::Shell {
-                project: session.scope.project.clone(),
-                session: remote.clone(),
-                id: shell.id.clone(),
-                stop: false,
-            };
-            let stop = task.clone();
-            let refresh = read.clone();
-            let mut command = ui::card(k).padding(8.0).gap(4.0).child(
-                row()
-                    .w_full()
-                    .center_y()
-                    .gap(6.0)
-                    .child(ui::outcome(Outcome::Running, k))
-                    .child(
-                        text(&shell.command)
-                            .font(k.ty.mono)
-                            .color(k.c.text_base)
-                            .truncate()
-                            .grow(1.0)
-                            .min_w(0.0)
-                            .help(&shell.command),
-                    )
-                    .child(ui::caption(
-                        caelum_core::application::presentation::duration(
-                            now().saturating_sub(shell.started_at),
-                        ),
-                        k,
-                    ))
-                    .child(
-                        quiet_button(&ui::REFRESH, "Refresh command output")
-                            .disabled(l.app.services.busy(&read))
-                            .on_press(move |s: &mut Workspace| {
-                                live_mut(s).app.task(refresh.clone())
-                            })
-                            .build(k),
-                    )
-                    .child(
-                        Button::new("Stop")
-                            .variant(ButtonVariant::GhostMuted)
-                            .disabled(l.app.services.busy(&task))
-                            .on_press(move |s: &mut Workspace| live_mut(s).app.task(stop.clone()))
-                            .build(k)
-                            .key(format!("stop-shell-{}", shell.id)),
-                    ),
-            );
-            if let Some(output) = l
-                .app
-                .services
-                .checkouts
-                .get(&session.scope.project)
-                .and_then(|c| c.shell_output.get(&(remote.clone(), shell.id.clone())))
-            {
-                command = command.child(
-                    text(if output.is_empty() {
-                        "Waiting for output…"
-                    } else {
-                        output
-                    })
-                    .font(k.ty.mono)
-                    .color(k.c.text_muted)
-                    .wrap()
-                    .selectable(true),
-                );
-            }
-            if let Some(error) = l
-                .app
-                .services
-                .error(&task)
-                .or_else(|| l.app.services.error(&read))
-            {
-                command = command.child(ui::caption(error, k).color(k.c.danger.fg));
-            }
-            list = list.child(command);
-        }
-        body = body.child(
-            col()
-                .w_full()
-                .max_h(140.0)
-                .scroll(rune::ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(list),
-        );
-    }
-    body
+    crate::shells::view(s, k, index)
 }
 
 pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
@@ -305,11 +164,13 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
             .collect::<Vec<_>>()
             .join("\n");
         content = content.child(
-            text(recent)
-                .font(k.ty.mono)
-                .color(k.c.text_muted)
-                .wrap()
-                .pl(27.0),
+            col().w_full().max_h(54.0).clip_rounded(0.0).child(
+                text(recent)
+                    .font(k.ty.mono)
+                    .color(k.c.text_muted)
+                    .wrap()
+                    .pl(27.0),
+            ),
         );
     }
     if !presentation.patch.is_empty() {

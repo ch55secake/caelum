@@ -275,14 +275,14 @@ pub fn side_view(s: &Workspace, k: &Kit, padding: f32) -> El {
     )
 }
 
-pub fn view(s: &Workspace, k: &Kit, screen: Screen) -> El {
+pub fn view(s: &Workspace, k: &Kit, screen: Screen, layers: &mut Vec<El>) -> El {
     let Some(index) = live(s).commands.owner else {
         return col();
     };
     match screen {
         Screen::Timeline => timeline(s, k, index),
         Screen::Usage => usage(s, k, index),
-        Screen::Stats => stats(s, k, index),
+        Screen::Stats => stats(s, k, index, layers),
         _ => col(),
     }
 }
@@ -685,7 +685,7 @@ fn refresh_stats(s: &mut Workspace) {
         live_mut(s).app.task(task);
     }
 }
-fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
+fn stats(s: &Workspace, k: &Kit, index: usize, layers: &mut Vec<El>) -> El {
     let l = live(s);
     let checkout = l
         .app
@@ -713,86 +713,75 @@ fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
         })
         .and_then(|p| p.name.as_deref())
         .unwrap_or("All projects");
+    let query = l.commands.search.text.to_lowercase();
+    let mut projects = vec![("All projects".to_owned(), None)];
+    if let Some(c) = checkout {
+        projects.extend(
+            c.stats_projects
+                .iter()
+                .filter(|p| {
+                    format!("{} {}", p.name.as_deref().unwrap_or_default(), p.canonical)
+                        .to_lowercase()
+                        .contains(&query)
+                })
+                .map(|p| {
+                    (
+                        format!(
+                            "{} · {}",
+                            p.name.as_deref().unwrap_or("Project"),
+                            p.canonical
+                        ),
+                        Some(p.id.clone()),
+                    )
+                }),
+        );
+    }
+    let options: Vec<_> = projects.iter().map(|p| p.0.clone()).collect();
+    let current = projects
+        .iter()
+        .find(|p| p.1 == l.commands.stats_project)
+        .map(|p| p.0.as_str());
     ranges = ranges.child(rune::el().grow(1.0)).child(
-        Button::new(format!("{project_name} ⌄"))
-            .variant(ButtonVariant::Outline)
-            .on_press(|s: &mut Workspace| {
+        crate::select::Select::new("stats-project", &options)
+            .current(current)
+            .display(project_name)
+            .label("Statistics project")
+            .appearance(rune_kit::SelectAppearance::Field)
+            .width(180.0)
+            .open(l.commands.stats_projects_open)
+            .on_toggle(|s: &mut Workspace| {
                 let c = &mut live_mut(s).commands;
                 c.stats_projects_open = !c.stats_projects_open;
                 c.search.clear();
                 c.search.focused = c.stats_projects_open;
             })
-            .build(k)
-            .key("stats-project-filter"),
+            .on_close(|s: &mut Workspace| {
+                live_mut(s).commands.stats_projects_open = false;
+                live_mut(s).commands.search.focused = false;
+            })
+            .on_choose(move |s: &mut Workspace, value, _| {
+                let c = &mut live_mut(s).commands;
+                c.stats_project = projects
+                    .iter()
+                    .find(|p| p.0 == value)
+                    .and_then(|p| p.1.clone());
+                c.stats_projects_open = false;
+                c.search.focused = false;
+                refresh_stats(s);
+            })
+            .search(
+                ui::field(
+                    &l.commands.search,
+                    "Find statistics project",
+                    "Search projects…",
+                    k,
+                )
+                .key("stats-project-search")
+                .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+            )
+            .build(k, layers),
     );
     let mut body = col().w_full().gap(16.0).child(ranges);
-    if l.commands.stats_projects_open {
-        body = body.child(
-            ui::field(
-                &l.commands.search,
-                "Find statistics project",
-                "Search projects by name or path…",
-                k,
-            )
-            .single_line()
-            .label("Find statistics project")
-            .placeholder("Search projects by name or path…", k.c.text_muted)
-            .color(k.c.text_base)
-            .w_full()
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
-        );
-        let query = l.commands.search.text.to_lowercase();
-        let mut projects = col().w_full().gap(3.0).child(
-            Button::new("All projects")
-                .variant(if l.commands.stats_project.is_none() {
-                    ButtonVariant::Outline
-                } else {
-                    ButtonVariant::GhostMuted
-                })
-                .on_press(|s: &mut Workspace| {
-                    live_mut(s).commands.stats_project = None;
-                    live_mut(s).commands.stats_projects_open = false;
-                    refresh_stats(s);
-                })
-                .build(k),
-        );
-        if let Some(c) = checkout {
-            for project in c.stats_projects.iter().filter(|p| {
-                format!("{} {}", p.name.as_deref().unwrap_or_default(), p.canonical)
-                    .to_lowercase()
-                    .contains(&query)
-            }) {
-                let id = project.id.clone();
-                projects = projects.child(
-                    Button::new(format!(
-                        "{} · {}",
-                        project.name.as_deref().unwrap_or("Project"),
-                        project.canonical
-                    ))
-                    .variant(if l.commands.stats_project.as_ref() == Some(&id) {
-                        ButtonVariant::Outline
-                    } else {
-                        ButtonVariant::GhostMuted
-                    })
-                    .on_press(move |s: &mut Workspace| {
-                        live_mut(s).commands.stats_project = Some(id.clone());
-                        live_mut(s).commands.stats_projects_open = false;
-                        refresh_stats(s);
-                    })
-                    .build(k),
-                );
-            }
-        }
-        body = body.child(
-            col()
-                .w_full()
-                .max_h(144.0)
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(projects),
-        );
-    }
     if let Some(stats) = checkout.and_then(|c| c.stats.as_ref()) {
         let mut totals = row().w_full().gap(8.0);
         for (name, value) in [

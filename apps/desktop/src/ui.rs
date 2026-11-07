@@ -96,6 +96,39 @@ pub fn divider(k: &Kit) -> El {
     rune::el().w_full().h(1.0).fill(k.c.border_base)
 }
 
+pub fn popup<S: 'static>(
+    key: &str,
+    anchor: &str,
+    content: El,
+    placement: rune_kit::Placement,
+    close: impl Fn(&mut S) + Clone + 'static,
+    k: &Kit,
+    layers: &mut Vec<El>,
+) {
+    layers.push(
+        rune::el()
+            .key(format!("{key}-scrim"))
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .on_press(close.clone()),
+    );
+    let content = content
+        .key(key)
+        .padding(6.0)
+        .role("menu")
+        .focus_group()
+        .modal(true, close)
+        .focus_return(anchor);
+    layers.push(rune_kit::popover::anchored(
+        k,
+        rune_kit::popover::raised(k, content, 10.0),
+        anchor,
+        placement,
+        6.0,
+    ));
+}
+
 pub fn choice(title: &str, detail: &str, selected: bool, k: &Kit) -> El {
     k.interactive(
         row()
@@ -275,10 +308,15 @@ pub static REFRESH: Icon = Icon {
     view: 16.0,
     body: r#"<path d="M13 6a5 5 0 0 0-8-3L2 6m0-4v4h4M3 10a5 5 0 0 0 8 3l3-3m0 4v-4h-4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
-pub static ATTACH: Icon = Icon {
-    name: "attach",
+pub static CHOICE: Icon = Icon {
+    name: "choice",
     view: 16.0,
-    body: r#"<path d="m5 9 5-5a2 2 0 0 1 3 3l-6 6a3.5 3.5 0 0 1-5-5l6-6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>"#,
+    body: r#"<path d="m5 6 3-3 3 3m-6 4 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+pub static EXTERNAL: Icon = Icon {
+    name: "external",
+    view: 16.0,
+    body: r#"<path d="M9 2h5v5m0-5L7 9M6 3H3v10h10v-3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
 pub static ARCHIVE: Icon = Icon {
     name: "archive",
@@ -375,23 +413,39 @@ pub fn selected_row(element: El, selected: bool, k: &Kit) -> El {
 }
 
 pub fn user_message(message: &str, k: &Kit) -> El {
-    row()
-        .w_full()
-        .radius(10.0)
-        .clip_rounded(10.0)
-        .fill(k.alpha(k.c.text_accent, 0.025))
-        .border(1.0, k.c.border_muted)
-        .child(rune::el().w(2.0).h_full().fill(k.c.text_accent).radius(2.0))
-        .child(
-            text(message)
-                .font(TextStyle::new(14.0, 400.0).lh(23.0))
-                .color(k.c.text_base)
-                .wrap()
-                .selectable(true)
-                .grow(1.0)
-                .min_w(0.0)
-                .padding(16.0),
-        )
+    user_bubble(message, false, k).child(
+        rune_kit::Markdown::new(message)
+            .selectable(true)
+            .render(&user_markdown(k)),
+    )
+}
+
+pub fn user_markdown(k: &Kit) -> rune_kit::MarkdownStyle {
+    crate::theme::markdown(k)
+        .body_font(TextStyle::new(14.0, 400.0).lh(23.0))
+        .code_block_padding(10.0, 12.0)
+        .list(18.0, 3.0)
+}
+
+pub fn user_bubble(message: &str, attachments: bool, k: &Kit) -> El {
+    let maximum =
+        rune::memo::window_layout("main-pane").map_or(660.0, |r| (r[2] - 96.0).clamp(140.0, 660.0));
+    let width = if message.len() < 180 && !message.contains('\n') {
+        rune::text::measure(message, &[], TextStyle::new(14.0, 400.0).lh(23.0), None).0 + 30.0
+    } else {
+        maximum
+    };
+    col()
+        .self_end()
+        .w(width
+            .max(if attachments { 320.0 } else { 48.0 })
+            .min(maximum))
+        .max_w(maximum)
+        .gap(10.0)
+        .px(14.0)
+        .py(10.0)
+        .radius(14.0)
+        .fill(k.c.layer_02.mix(k.c.bg_base, 0.25))
 }
 
 pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f32, k: &Kit) -> El {

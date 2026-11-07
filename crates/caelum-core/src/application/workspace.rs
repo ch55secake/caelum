@@ -140,7 +140,7 @@ enum Pending {
     Task(Task),
     Commands(Scope),
     Shells(usize, u64),
-    Archive(usize, bool, Option<(usize, u64)>),
+    Archive(usize, bool, Option<(usize, u64)>, u64),
     Attachment(usize, String),
     Mention {
         index: usize,
@@ -190,6 +190,9 @@ pub struct Workspace {
     pub provider_commands: HashMap<Scope, Vec<caelum_protocol::OpenCodeCommandInfo>>,
     pub persistence_error: Option<String>,
     pub last_archived: Option<usize>,
+    archive_clock: Option<(u64, u64)>,
+    archive_revision: u64,
+    archive_notice_revision: u64,
     archive_replacement: Option<usize>,
     navigation: u64,
     store: Option<Store>,
@@ -484,6 +487,43 @@ impl Workspace {
         }
     }
 
+    /// Presentation lifetime starts at successful archival, and pauses during interaction.
+    pub fn tick_archive_notice(&mut self, now: u64, engaged: bool) -> bool {
+        let Some(index) = self.last_archived else {
+            return false;
+        };
+        let Some((last, remaining)) = self.archive_clock.as_mut() else {
+            return false;
+        };
+        if !engaged && !self.sessions[index].archiving {
+            *remaining = remaining.saturating_sub(now.saturating_sub(*last));
+        }
+        *last = now;
+        if *remaining == 0 {
+            self.dismiss_archive(index);
+            return true;
+        }
+        false
+    }
+
+    pub fn dismiss_archive(&mut self, index: usize) {
+        if self.last_archived == Some(index) {
+            self.last_archived = None;
+            self.archive_clock = None;
+        }
+    }
+
+    fn archived_notice(&mut self, index: usize, revision: u64) -> bool {
+        if revision < self.archive_notice_revision {
+            return false;
+        }
+        self.archive_notice_revision = revision;
+        self.last_archived = Some(index);
+        self.archive_clock = Some((super::presentation::now(), 8_000));
+        self.archive_replacement = None;
+        true
+    }
+
     fn set_archived(&mut self, index: usize, archived: bool, select: bool) {
         let needs_answer = self.approvals.iter().any(|p| {
             self.sessions[index].remote_id == p.session_id
@@ -503,6 +543,8 @@ impl Workspace {
         {
             return;
         }
+        session.error = None;
+        self.archive_revision += 1;
         if let Some(key) = session.key() {
             session.archiving = true;
             self.request(
@@ -511,12 +553,16 @@ impl Workspace {
                     index,
                     archived,
                     select.then(|| (self.selected.unwrap_or(index), self.navigation)),
+                    self.archive_revision,
                 ),
             );
         } else {
             session.archived = archived;
-            self.last_archived = archived.then_some(index);
-            self.archive_replacement = None;
+            if archived {
+                self.archived_notice(index, self.archive_revision);
+            } else {
+                self.dismiss_archive(index);
+            }
             if archived && self.selected == Some(index) {
                 self.new_session(self.sessions[index].scope.clone());
                 self.archive_replacement = self.selected;
@@ -1618,9 +1664,12 @@ impl Workspace {
                         self.notices.insert(scope, error);
                     }
                     Pending::Shells(index, _) => self.sessions[index].error = Some(error),
-                    Pending::Archive(index, _, _) => {
+                    Pending::Archive(index, archived, _, _) => {
                         self.sessions[index].archiving = false;
                         self.sessions[index].error = Some(error);
+                        if !archived && self.last_archived == Some(index) {
+                            self.archive_clock = Some((super::presentation::now(), 8_000));
+                        }
                     }
                     Pending::Attachment(index, _) => {
                         self.sessions[index].attaching =
@@ -1894,18 +1943,19 @@ impl Workspace {
                     });
                 }
             }
-            (Pending::Archive(index, archived, select), Reply::Done) => {
+            (Pending::Archive(index, archived, select, revision), Reply::Done) => {
                 self.sessions[index].archiving = false;
                 self.sessions[index].archived = archived;
                 if archived {
-                    self.last_archived = Some(index);
-                    self.archive_replacement = None;
+                    let owns_notice = self.archived_notice(index, revision);
                     if self.selected == Some(index) {
                         self.new_session(self.sessions[index].scope.clone());
-                        self.archive_replacement = self.selected;
+                        if owns_notice {
+                            self.archive_replacement = self.selected;
+                        }
                     }
                 } else {
-                    self.last_archived = None;
+                    self.dismiss_archive(index);
                     if select.is_some_and(|(selected, navigation)| {
                         self.selected == Some(selected) && self.navigation == navigation
                     }) {
