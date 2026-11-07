@@ -35,6 +35,9 @@ pub struct Session {
     pub inbox: super::Inbox,
     pub queue_paused: bool,
     pub archived: bool,
+    /// Removed from Caelum because the provider no longer associates it with
+    /// this project. Kept in memory only so pending requests retain stable indices.
+    pub forgotten: bool,
     pub archiving: bool,
     pub reading: f32,
     pub unread: bool,
@@ -82,6 +85,7 @@ impl Session {
             inbox: Default::default(),
             queue_paused: false,
             archived: false,
+            forgotten: false,
             archiving: false,
             reading: -1.0,
             unread: false,
@@ -123,6 +127,7 @@ impl Session {
             && !self.disconnected
             && !self.stopping
             && !self.archived
+            && !self.forgotten
             && !self.archiving
             && self.attaching == 0
     }
@@ -296,21 +301,18 @@ impl Workspace {
             files.tabs = checkout.tabs.clone();
             files.selected = checkout.selected_file.clone();
         }
-        Snapshot {
-            version: 1,
-            projects: self.projects.clone(),
-            selected: self.selected,
-            preferences,
-            remembered: self
-                .remembered
-                .iter()
-                .map(|(k, v)| (k.clone(), *v))
-                .collect(),
-            project_roots: self.project_roots.clone(),
-            sessions: self
-                .sessions
-                .iter()
-                .map(|s| SavedSession {
+        let mut session_indices = HashMap::new();
+        let sessions = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, s)| {
+                if s.forgotten {
+                    return None;
+                }
+                let saved_index = session_indices.len();
+                session_indices.insert(index, saved_index);
+                Some(SavedSession {
                     scope: s.scope.clone(),
                     remote_id: s.remote_id.clone(),
                     title: s.title.clone(),
@@ -328,7 +330,26 @@ impl Workspace {
                     reading: s.reading,
                     unread: s.unread,
                 })
+            })
+            .collect();
+        Snapshot {
+            version: 1,
+            projects: self.projects.clone(),
+            selected: self
+                .selected
+                .and_then(|index| session_indices.get(&index).copied()),
+            preferences,
+            remembered: self
+                .remembered
+                .iter()
+                .filter_map(|(key, index)| {
+                    session_indices
+                        .get(index)
+                        .map(|index| (key.clone(), *index))
+                })
                 .collect(),
+            project_roots: self.project_roots.clone(),
+            sessions,
         }
     }
 
@@ -347,6 +368,7 @@ impl Workspace {
         if let Task::RemoveWorktree { path, project } = &task {
             if self.sessions.iter().any(|s| {
                 std::path::Path::new(&s.scope.project).starts_with(path)
+                    && !s.forgotten
                     && (s.working()
                         || s.attaching > 0
                         || s.generating
@@ -534,6 +556,9 @@ impl Workspace {
     }
 
     fn set_archived(&mut self, index: usize, archived: bool, select: bool) {
+        if self.sessions[index].forgotten {
+            return;
+        }
         let needs_answer = self.approvals.iter().any(|p| {
             self.sessions[index].remote_id == p.session_id
                 && self.sessions[index].scope.project == p.project_path
@@ -578,6 +603,36 @@ impl Workspace {
             } else if !archived && select {
                 self.select(index);
             }
+        }
+    }
+
+    fn forget_stale_opencode_session(&mut self, index: usize) {
+        let selected = self.selected == Some(index);
+        let (scope, options, draft, attachments) = {
+            let session = &mut self.sessions[index];
+            session.forgotten = true;
+            session.archiving = false;
+            session.error = None;
+            (
+                session.scope.clone(),
+                session.options.clone(),
+                std::mem::take(&mut session.draft),
+                std::mem::take(&mut session.attachments),
+            )
+        };
+        self.remembered.retain(|_, remembered| *remembered != index);
+        let message = "This OpenCode session no longer belongs to this project. It was removed from Caelum, but was not archived in OpenCode.";
+        if selected {
+            let mut replacement_session = Session::new(scope);
+            replacement_session.options = options;
+            replacement_session.draft = draft;
+            replacement_session.attachments = attachments;
+            replacement_session.error = Some(message.into());
+            let replacement = self.sessions.len();
+            self.sessions.push(replacement_session);
+            self.select(replacement);
+        } else {
+            self.error = Some(message.into());
         }
     }
 
@@ -891,7 +946,7 @@ impl Workspace {
             .remembered
             .get(path)
             .copied()
-            .filter(|i| !self.sessions[*i].archived)
+            .filter(|i| !self.sessions[*i].archived && !self.sessions[*i].forgotten)
         {
             self.select(index);
         } else {
@@ -1063,11 +1118,9 @@ impl Workspace {
     }
 
     pub fn project_draft(&mut self, scope: Scope) -> usize {
-        if let Some(i) = self
-            .sessions
-            .iter()
-            .rposition(|s| s.scope == scope && s.remote_id.is_none() && !s.archived && !s.working())
-        {
+        if let Some(i) = self.sessions.iter().rposition(|s| {
+            s.scope == scope && s.remote_id.is_none() && !s.archived && !s.forgotten && !s.working()
+        }) {
             self.select(i);
             i
         } else {
@@ -1090,7 +1143,7 @@ impl Workspace {
     }
 
     pub fn select(&mut self, index: usize) {
-        if index >= self.sessions.len() {
+        if index >= self.sessions.len() || self.sessions[index].forgotten {
             return;
         }
         if self.selected != Some(index) {
@@ -1153,6 +1206,7 @@ impl Workspace {
             .any(|p| matches!(p, Pending::Inbox(i, _) if *i == index));
         let session = &mut self.sessions[index];
         if session.archived
+            || session.forgotten
             || session.stopping
             || session.archiving
             || session.attaching > 0
@@ -1739,6 +1793,13 @@ impl Workspace {
                         self.notices.insert(scope, error);
                     }
                     Pending::Shells(index, _) => self.sessions[index].error = Some(error),
+                    Pending::Archive(index, true, _, _)
+                        if self.sessions[index].scope.provider == Provider::OpenCode
+                            && error
+                                .contains("OpenCode session does not belong to this project") =>
+                    {
+                        self.forget_stale_opencode_session(index);
+                    }
                     Pending::Archive(index, archived, _, _) => {
                         self.sessions[index].archiving = false;
                         self.sessions[index].error = Some(error);
@@ -2223,6 +2284,9 @@ impl Workspace {
                 .iter_mut()
                 .find(|session| session.key().as_ref() == Some(&summary.key))
             {
+                if session.forgotten {
+                    continue;
+                }
                 if session.revision == 0 {
                     session.conversation.working = summary.working;
                     update_summary(session, summary);

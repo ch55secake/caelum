@@ -540,6 +540,45 @@ fn scope(provider: Provider, project: &str) -> Scope {
 }
 
 #[test]
+fn stale_opencode_archive_error_forgets_the_session_locally() {
+    let mut app = Workspace::default();
+    let project = "/project";
+    let index = app.new_session(scope(Provider::OpenCode, project));
+    app.sessions[index].remote_id = Some("ses_stale".into());
+    app.sessions[index].draft = "Keep this draft".into();
+    app.attach(
+        index,
+        Attachment::new("src/main.rs".into(), "snapshot".into(), None, false),
+    );
+    app.archive(index, true);
+    let (request, command) = app.commands().pop().unwrap();
+    assert!(matches!(command, Command::Archive(_, true)));
+
+    app.apply(Event::Completed(
+        request,
+        Err("OpenCode session does not belong to this project".into()),
+    ));
+
+    assert!(app.sessions[index].forgotten);
+    assert!(!app.sessions[index].archiving);
+    assert_eq!(app.last_archived, None, "there is no provider Undo action");
+    let selected = app.selected.unwrap();
+    assert_ne!(selected, index);
+    assert_eq!(app.sessions[selected].draft, "Keep this draft");
+    assert_eq!(app.sessions[selected].attachments[0].content, "snapshot");
+    assert!(app.sessions[selected]
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("not archived in OpenCode")));
+
+    let snapshot = app.snapshot();
+    assert_eq!(snapshot.sessions.len(), 1);
+    assert_eq!(snapshot.selected, Some(0));
+    assert_eq!(snapshot.sessions[0].draft, "Keep this draft");
+    assert_eq!(snapshot.sessions[0].remote_id, None);
+}
+
+#[test]
 fn removing_the_active_linked_checkout_returns_to_the_surviving_project() {
     let mut app = Workspace::default();
     for path in ["/main", "/linked"] {
