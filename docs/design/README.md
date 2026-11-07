@@ -16,8 +16,9 @@ The follow-up captures restore the original 18-point Lucide Orbit mark, keep the
 sidebar toggle beside the brand, and use browser-equivalent unsmoothed system text.
 The inspector sits below the shared toolbar; pane widths adapt to compact windows
 while retaining the user's preferred sizes. The bounded multiline editor and
-composer controls occupy separate rows; borderless model-first labels with small
-chevrons wrap in narrow panes
+composer controls occupy separate rows; borderless model-first labels and icon-led
+effort/agent choices wrap in narrow panes. Their popouts show titles, readable
+choices and default options; the provider is chosen in Settings. The controls sit
 beside an aligned Send/Stop action. Settings lives in the top toolbar, archive
 filtering sits beside Sessions, and session actions belong to the clicked row.
 Archive Undo is a temporary bottom-centred notice above the composer, pausing on
@@ -114,6 +115,10 @@ excerpts, highlighted search and stable prompt jumps.
 | Wrapping composer settings | Filename tabs and attachment actions |
 | --- | --- |
 | ![Native narrow composer](previews/rune-dark-composer-options-small.png) | ![Native file tabs](previews/rune-light-files-tabs.png) |
+
+| Reasoning effort menu | Agent menu |
+| --- | --- |
+| ![Native effort choices](previews/rune-dark-composer-effort.png) | ![Native agent choices](previews/rune-light-composer-agent-small.png) |
 
 | Compact file tabs | Tool icons and details |
 | --- | --- |

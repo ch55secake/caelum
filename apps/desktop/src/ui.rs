@@ -342,6 +342,16 @@ pub static CHOICE: Icon = Icon {
     view: 16.0,
     body: r#"<path d="m5 6 3-3 3 3m-6 4 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
+pub static EFFORT: Icon = Icon {
+    name: "reasoning-effort",
+    view: 16.0,
+    body: r#"<path d="M3 12.5a6 6 0 1 1 10 0M8 9l3-4M4 6l1 1M8 3v1M12 6l-1 1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="9" r="1" fill="currentColor"/>"#,
+};
+pub static AGENT: Icon = Icon {
+    name: "agent",
+    view: 16.0,
+    body: r#"<rect x="3" y="5" width="10" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 2v3M1 8v2M15 8v2M6 11h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="6" cy="8" r=".7" fill="currentColor"/><circle cx="10" cy="8" r=".7" fill="currentColor"/>"#,
+};
 pub static EXTERNAL: Icon = Icon {
     name: "external",
     view: 16.0,
