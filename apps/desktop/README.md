@@ -35,7 +35,9 @@ Append one of these modes to `cargo run --locked -p caelum-desktop --`:
 
 These modes do not start providers or write workspace state. Capture previews
 with `python3 apps/desktop/preview/capture.py`; see [design](../../docs/design/README.md)
-and [performance](../../docs/performance/README.md) for native replay commands.
+and [performance](../../docs/performance/README.md) for headless interaction replay
+and native frame-measurement commands. Pinned Rune's `--native` mode does not
+dispatch `--script` events; check OS interaction in the running application.
 The 188 light/dark, normal/compact captures include populated, empty, loading,
 error, hover, focus and disabled states. Use `--scene models` (or `worktrees`,
 `shells`, `review-loading`, `tools`, `files`, `crowded`) with `--design-fixture`

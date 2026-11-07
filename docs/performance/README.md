@@ -10,21 +10,33 @@ builds/tests. Keep raw JSON with reports under ignored `apps/desktop/profile-res
 Repeat scenarios and compare medians/ranges rather than enforcing machine-specific
 CI timing thresholds.
 
-## Deterministic native workload
+## Synthetic native frame measurement
 
 ```sh
 nix develop -c cargo build --locked --release -p caelum-desktop
 /usr/bin/time -l target/release/caelum-desktop \
   --evaluation-workload --native \
-  --script apps/desktop/preview/evaluation.json \
   --fps 120 --frames 1200 --trace /path/to/output/native.jsonl
 ```
 
 This creates six sessions with 2,000 entries each and concurrent synthetic deltas,
-plus a 300-file PR. The replay opens a patch, returns to chat, types, navigates and
-pastes independent drafts. It starts no providers and writes no saved workspace.
+plus a 300-file PR. The native window stays in the initial chat view while deltas
+continue. Pinned Rune's `--native` path does not dispatch `--script` events.
+It starts no providers and writes no saved workspace.
 Report native presentation intervals separately from CPU/headless frame time and
 end-to-end input latency. Synthetic work omits provider/network/storage cost.
+
+## Headless interaction replay
+
+```sh
+target/release/caelum-desktop \
+  --evaluation-workload --script apps/desktop/preview/evaluation.json \
+  --fps 120 --frames 1200 --trace /path/to/output/headless.jsonl
+```
+
+The headless replay opens a patch, returns to chat, types, navigates and pastes
+independent drafts on a virtual clock. Its timing describes headless CPU work.
+Use the running application for native input, OS-menu and end-to-end latency checks.
 
 ## Packaged application
 

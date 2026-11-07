@@ -35,17 +35,26 @@ The follow-up remains in #95, stacked on #94. It uses the same historical
   versions, bundle identity, URL registration, image verification and mounted-bundle
   equality. The isolated packaged launch smoke passed cold/warm URLs, hidden-app
   reopening, draft preservation, restart and graceful quit.
-- The packaged native close/undo/typing replay completed **780 presents**, with no
+- The packaged native rendering run completed **780 presents**, with no
   acquisition failures. Its presentation trace reported p50/p95 **8.33/8.33 ms**,
-  maximum **16.67 ms**, and no intervals above 25 ms. This scripted window run is
-  separate from OS context-menu acceptance.
+  maximum **16.67 ms**, and no intervals above 25 ms.
+
+**Replay-mode correction:** pinned Rune's `--native` window path does not dispatch
+`--script` events. The latest trace contained only `live-draft-0`, with no replacement
+editors from the close/undo script. The native measurements here, including earlier
+runs originally described as replays, establish rendering/frame pacing of the
+initial view and any ongoing synthetic deltas. Headless replays and runtime tests
+dispatch the inputs; close/undo/typing remains covered by those interaction checks.
+All three headless scripts were rerun successfully after correcting the commands;
+the archive replay reached focused `live-draft-4` with the expected final text.
 
 **Acceptance still open:** Codex is absent from PATH and the supported GUI discovery
 locations, so its real authenticated workflow remains unverified. Intel packaging
-was not run locally. macOS screen capture permission is unavailable, and the
-external native-menu driver could not obtain foreground focus; actual OS context
-menu appearance/selection is not signed off. Native runtime interaction tests and
-fixture captures do not close that gap. Both PRs remain unmerged pending the
+was not run locally. macOS screen capture permission is unavailable. External
+native-menu input attempts stalled, and a foreground-guarded attempt could not
+obtain focus; actual OS context-menu appearance/selection is not signed off.
+Runtime interaction tests and fixture captures do not close that gap.
+Both PRs remain unmerged pending the
 remaining visual and real-provider acceptance in [the migration record](rune-migration.md).
 
 ## Historical parity repair — 7 November 2026
@@ -110,9 +119,10 @@ preserve the user's current selection and independent drafts.
   The original Orbit mark, brand-row toggle and lighter text rendering are restored,
   with quieter session rows, a compact composer and aligned inspector controls.
 - The Apple Silicon `.app` was rebuilt and passed signature/plist checks, including
-  the bundled icon attribution. Its native close/undo replay ran for 780 native
-  frames without an acquisition failure. The equivalent headless replay reached
-  `live-draft-4` containing “Closing another session still works.”
+  the bundled icon attribution. Its native rendering run recorded 780 frames
+  without an acquisition failure; the supplied close/undo script was not dispatched.
+  The separate headless replay reached `live-draft-4` containing
+  “Closing another session still works.”
 
 ## Production cutover — 6 November 2026
 
@@ -158,7 +168,8 @@ background focus/draft isolation. Long histories and review files remain windowe
 The same 1,200-frame native workload after the design changes reported presentation
 interval p50/p95 **8.33/16.67 ms**, maximum **33.33 ms**, with ten intervals over
 25 ms. Maximum RSS was **145,342,464 bytes** and peak footprint **279,954,296 bytes**.
-This run is a responsiveness check, not an end-to-end input-latency measurement.
+This run measures rendering under synthetic deltas; scripted navigation and typing
+were not dispatched, and end-to-end input latency was not measured.
 The earlier baseline remains below for comparison.
 
 ## Scope — 6 November 2026
@@ -202,10 +213,11 @@ four test threads passed. No production timeout changes were made for it.
 ## Synthetic native measurement
 
 `--evaluation-workload` creates six sessions with 2,000 initial history entries
-each and continuing small text deltas, plus a 300-file PR. The replay opens a
-100-addition/100-deletion patch, returns to chat, types, switches sessions, pastes
-an independent draft and returns. Providers and workspace persistence are disabled
-in this mode.
+each and continuing small text deltas, plus a 300-file PR. The native measurement
+stays in the initial chat view while deltas continue. The separate headless replay
+opens a 100-addition/100-deletion patch, returns to chat, types, switches sessions,
+pastes an independent draft and returns. Providers and workspace persistence are
+disabled in this mode.
 
 The final native run was performed after builds/tests finished, with no other
 agent-launched checks running. Actual viewport: **1280 × 949 pt at 2×** (macOS
@@ -234,17 +246,23 @@ are not native GPU presentation times. The native table is the useful baseline.
 
 ## Reproduce
 
-Run from the repository root. These commands use the promoted desktop paths;
-the observations above were recorded before promotion. Choose a fresh output directory:
+Run from the repository root. These commands use the promoted desktop paths for
+the historical workload. Choose a fresh output directory:
 
 ```sh
 nix develop -c cargo build --locked --release -p caelum-desktop
 
+# Native frame measurement: initial chat view with synthetic deltas.
 /usr/bin/time -l target/release/caelum-desktop \
   --evaluation-workload --native \
-  --script apps/desktop/preview/evaluation.json \
   --fps 120 --frames 1200 --trace /path/to/output/native.jsonl
 
+# Headless interaction replay on a virtual clock.
+target/release/caelum-desktop \
+  --evaluation-workload --script apps/desktop/preview/evaluation.json \
+  --fps 120 --frames 1200 --trace /path/to/output/headless.jsonl
+
+# Headless capture during the review step.
 target/release/caelum-desktop \
   --evaluation-workload --script apps/desktop/preview/evaluation.json \
   --theme light --scale 1 --size 1280x1000 --at 1.3 \

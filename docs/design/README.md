@@ -63,8 +63,9 @@ quiet successful-tool indicators and explicit loading, empty and error surfaces.
 | ![Native provider error](previews/rune-light-provider-error.png) | ![Native questions](previews/rune-dark-questions-small.png) |
 
 Four theme families and six accent colours (plus the theme default) apply across
-the workspace. Rune follows system reduced-motion preferences. Use native replay
-and the running application to judge focus, typing, scrolling and pane motion.
+the workspace. Rune follows system reduced-motion preferences. Use the running
+application to judge focus, typing, scrolling, pane motion and OS context menus;
+headless replays provide deterministic interaction coverage.
 
 ## Capture and replay
 
@@ -80,15 +81,25 @@ cargo run --locked -p caelum-desktop -- \
   --theme dark --scale 1 --at 9 \
   --snap apps/desktop/preview-results/rune-stream.png
 
-# Close, type into the replacement, undo, switch back, and close again.
+# Headless: close, type into the replacement, undo, switch back, and close again.
 cargo run --locked -p caelum-desktop -- \
   --design-fixture --script apps/desktop/preview/archive.json \
-  --native --fps 120 --frames 780
+  --fps 120 --at 6 \
+  --snap apps/desktop/preview-results/rune-archive.png \
+  --tree apps/desktop/preview-results/rune-archive.json
+
+# Native rendering/frame measurement of the initial fixture view.
+cargo run --locked -p caelum-desktop -- \
+  --design-fixture --native --fps 120 --frames 780 \
+  --trace apps/desktop/preview-results/native.jsonl
 ```
 
-The capture script writes **188 states**: 39 scenes and eight pointer/keyboard
-replays, each in light/dark and normal/compact layouts. Coverage includes all five
-Settings pages, models, launcher, session/worktree dialogs, commands, shells,
+Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
+headless commands above for scripted input and the running app for OS interaction.
+
+The capture script writes **188 states**: 39 scenes and eight headless
+pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
+includes all five Settings pages, models, launcher, session/worktree dialogs, commands, shells,
 Files/Changes, PR loading/error states, questions, images, hover and keyboard focus.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
@@ -102,7 +113,7 @@ from providers and saved data.
 
 ## Checks and measurements
 
-`cargo test --locked -p caelum-desktop` drives native keyboard/pointer interactions,
+`cargo test --locked -p caelum-desktop` drives Rune runtime keyboard/pointer interactions,
 including drafts, focus, approvals/questions, compact layout and bounded mounting.
 `make check` also checks the shared Rust core and release scripts.
 
