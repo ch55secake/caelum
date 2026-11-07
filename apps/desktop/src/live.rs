@@ -40,6 +40,7 @@ pub struct Live {
     menu: Option<&'static str>,
     pub session_menu: Option<usize>,
     pub shell_panel: Option<crate::shells::Panel>,
+    pub(crate) collapsed_shells: HashSet<usize>,
     pub focus_key: Option<String>,
     pub archive_hovered: bool,
     reading: Vec<Rc<Cell<ScrollPos>>>,
@@ -94,6 +95,7 @@ impl Live {
             menu: None,
             session_menu: None,
             shell_panel: None,
+            collapsed_shells: Default::default(),
             focus_key: None,
             archive_hovered: false,
             reading: Vec::new(),
@@ -1575,9 +1577,10 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
     if session.working() && !draft.text.trim().is_empty() {
         controls = controls.child(
             Button::new("Queue")
-                .variant(ButtonVariant::Outline)
+                .variant(ButtonVariant::GhostMuted)
                 .on_press_tx(Workspace::send)
                 .build(k)
+                .h(28.0)
                 .key("queue-message"),
         );
     }

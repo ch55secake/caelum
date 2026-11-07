@@ -487,6 +487,20 @@ fn background_previews_are_bounded_and_output_actions_keep_their_session() {
         assert!(element(&rt, "shell-preview").rect[3] <= 50.1);
         assert!(element(&rt, "background-shells").rect[3] <= 140.1);
         assert!(element(&rt, "composer-editor").visible[3] >= 46.0);
+        click(&mut rt, "toggle-background-shells");
+        advance(&mut rt, 0.3);
+        let collapsed = element(&rt, "background-shells");
+        assert!(collapsed.rect[3] <= 24.1, "{collapsed:?}");
+        assert!(rt.find("shell-preview").is_none());
+        assert!(rt.find("view-shell-output").is_none());
+        assert!(element(&rt, "toggle-background-shells").focused);
+        key(&mut rt, Key::Text(" ".into()), Mods::default());
+        advance(&mut rt, 0.2);
+        assert!(element(&rt, "toggle-background-shells").focused);
+        assert_eq!(
+            element(&rt, "toggle-background-shells").expanded,
+            Some(true)
+        );
         click(&mut rt, "view-shell-output");
         advance(&mut rt, 0.3);
         let output = element(&rt, "shell-output-shell_fixture");
@@ -499,6 +513,146 @@ fn background_previews_are_bounded_and_output_actions_keep_their_session() {
             |(_, c)| matches!(c, Command::Task(Task::Shell { project, session, id, stop:true })
             if project == "/projects/caelum" && session == "ses_fixture" && id == "shell_fixture")
         ));
+    }
+}
+
+#[test]
+fn collapsed_background_commands_keep_running_and_remain_session_local() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let mut rt = design_runtime("shells-many", (800.0, 620.0));
+    fill(
+        &mut rt,
+        "live-draft-0",
+        "Keep this draft while commands run",
+    );
+    click(&mut rt, "toggle-background-shells");
+    let read = Task::Shell {
+        project: "/projects/caelum".into(),
+        session: "ses_fixture".into(),
+        id: "shell_fixture".into(),
+        stop: false,
+    };
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        assert!(!l.app.commands().iter().any(|(_, c)| matches!(
+            c,
+            Command::Cancel(_) | Command::Task(Task::Shell { stop: true, .. })
+        )));
+        l.app.task(read.clone());
+        let request = l
+            .app
+            .commands()
+            .into_iter()
+            .find(|(_, c)| {
+                matches!(c,
+            Command::Task(Task::Shell { id, stop: false, .. }) if id == "shell_fixture")
+            })
+            .unwrap()
+            .0;
+        l.app.select(1);
+        l.app.sessions[1].scope.provider = caelum_core::application::Provider::OpenCode;
+        l.app.sessions[1].remote_id = Some("ses_other".into());
+        l.app.sessions[1].shells = l.app.sessions[0].shells.clone();
+        l.apply(Event::Completed(
+            request,
+            Ok(Reply::Task(TaskReply::Shell(
+                "Fresh output while hidden".into(),
+            ))),
+        ));
+    });
+    advance(&mut rt, 0.3);
+    assert_eq!(
+        element(&rt, "toggle-background-shells").expanded,
+        Some(true)
+    );
+    assert!(rt.find("shell-preview").is_some());
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(0));
+    advance(&mut rt, 0.3);
+    assert_eq!(
+        element(&rt, "toggle-background-shells").expanded,
+        Some(false)
+    );
+    assert!(rt.find("shell-preview").is_none());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0].shells.len(),
+        8
+    );
+    click(&mut rt, "toggle-background-shells");
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some("Fresh output while hidden"))
+    );
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep this draft while commands run"
+    );
+}
+
+#[test]
+fn black_backgrounds_toggle_saves_and_preserves_theme_and_accent_across_modes() {
+    use caelum_core::application::{Event, Reply, Snapshot};
+    let mut rt = design_runtime("black-settings", (800.0, 620.0));
+    click(&mut rt, "black-backgrounds");
+    assert!(
+        !rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .preferences
+            .black_backgrounds
+    );
+    key(&mut rt, Key::Text(" ".into()), Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .preferences
+            .black_backgrounds
+    );
+    assert!(element(&rt, "black-backgrounds").focused);
+    click(&mut rt, "family-nord");
+    click(&mut rt, "accent-teal");
+    for mode in ["light", "dark", "system"] {
+        click(&mut rt, &format!("theme-{mode}"));
+        let p = &rt.state.live.as_ref().unwrap().app.preferences;
+        assert_eq!(p.theme, mode);
+        assert!(p.black_backgrounds);
+        assert_eq!(p.theme_family, "nord");
+        assert_eq!(p.accent_color, "teal");
+    }
+    let snapshot: Snapshot = serde_json::from_slice(
+        &serde_json::to_vec(&rt.state.live.as_ref().unwrap().app.snapshot()).unwrap(),
+    )
+    .unwrap();
+    let mut restored = caelum_core::application::Workspace::default();
+    restored.enable_store("unused-fixture-state.json".into());
+    let load = restored.commands().pop().unwrap().0;
+    restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
+    assert!(restored.preferences.black_backgrounds);
+    assert_eq!(restored.preferences.theme_family, "nord");
+    assert_eq!(restored.preferences.accent_color, "teal");
+    for (family, _) in crate::theme::FAMILIES {
+        for dark in [false, true] {
+            let regular = crate::theme::appearance(dark, family, "teal", false);
+            let black = crate::theme::appearance(dark, family, "teal", true);
+            assert_eq!(black.c.text_accent, regular.c.text_accent);
+            assert_eq!(black.c.bg_accent, regular.c.bg_accent);
+            assert_eq!(black.c.text_base, regular.c.text_base);
+            if dark {
+                assert_eq!(black.c.bg_base, rune::color::hex("#000000").unwrap());
+                assert_eq!(black.c.bg_deep, black.c.bg_base);
+                assert_eq!(black.c.layer_01, rune::color::hex("#080808").unwrap());
+            } else {
+                assert_eq!(black.c.bg_base, regular.c.bg_base);
+                assert_eq!(black.c.bg_deep, regular.c.bg_deep);
+                assert_eq!(black.c.layer_01, regular.c.layer_01);
+            }
+        }
     }
 }
 

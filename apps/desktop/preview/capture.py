@@ -29,9 +29,13 @@ interactions = {
     "stats-projects": ("stats", [{"t": 0.25, "key": "stats-project-trigger"}]),
     "timeline-search": ("timeline", [{"t": 0.25, "key": "timeline-search"}, {"t": 0.3, "paste": "draft"}]),
     "review-navigation": ("review", [{"t": 0.25, "key": "review-nav-toggle"}]),
+    "shells-hide": ("shells-many", [{"t": 0.25, "key": "toggle-background-shells"}]),
+    "shells-reopen": ("shells-collapsed", [{"t": 0.25, "key": "toggle-background-shells"}]),
+    "black-toggle": ("settings", [{"t": 0.25, "key": "black-backgrounds"}]),
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
+scenes += ("shells-collapsed", "black", "black-settings")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

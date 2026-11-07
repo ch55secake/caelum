@@ -16,8 +16,9 @@ returns focus to its button. Use the archive icon beside
 the searchable project/provider launcher.
 
 Choose the model, provider, reasoning effort and available agent in the composer.
-The model is the primary setting; controls wrap into rows in narrow panes while
-Send/Stop stays aligned at the lower right. Shortcut hints appear in tooltips.
+The model is the primary setting; borderless labels with small chevrons wrap into
+rows in narrow panes while Send/Stop stays aligned at the lower right. Shortcut
+hints and full setting values appear in tooltips.
 Sending creates a provider session when needed. Later selection changes apply
 to the next message. Search models and star favourites in the model picker.
 The anchored popover keeps its original session or Settings target while open. Unavailable
@@ -31,10 +32,13 @@ previews open automatically, with size and tool-detail controls. Explicitly coll
 patches stay collapsed as output arrives. Internal reminders are hidden from rows,
 timeline results and copied responses, while literal code stays intact. **Load earlier messages**
 pages provider history while the visible transcript stays bounded.
-Running OpenCode background commands remain above the composer with three truncated
-output lines, elapsed time, refresh and **Stop**. **View output** opens a scrollable
-reader; **View all** lists multiple commands. The reader keeps its original session
-and retains output after completion. Completed commands also appear in the transcript.
+Running OpenCode background commands appear above the composer with three truncated
+output lines, elapsed time, refresh and **Stop**. **Hide** reduces them to a command-count
+row; **Show** restores the preview. Each session remembers this choice during the app
+run, including after navigation and output updates. Hidden commands keep running.
+**Output** opens a scrollable reader; **View all** lists multiple commands. The reader
+keeps its original session and retains output after completion. Completed commands
+also appear in the transcript.
 The composer pulse and agent indicator show working, thinking, responding, tools,
 retry, input, background-waiting and stopping states, including between output events.
 These indicators follow reduced-motion preferences.
@@ -133,6 +137,9 @@ retry live here. Unread state persists and clears only when the loaded conversat
 is visible and following the latest messages.
 The default Caelum palette keeps surfaces neutral, with colour in selection markers,
 tab underlines, focus borders, status icons, links and primary actions.
+Enable **Black backgrounds** under Appearance for a black workspace/sidebar and
+near-black panels. This saved preference applies to dark appearance, including
+System when macOS is dark, and retains the selected theme family and accent.
 
 Closing the window keeps sessions running. Clicking the Dock icon or opening
 a project through the CLI brings it back. **⌘Q** quits and saves the latest drafts.

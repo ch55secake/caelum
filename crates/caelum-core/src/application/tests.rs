@@ -485,6 +485,9 @@ fn workspace_roundtrip_keeps_drafts_and_unknown_versions_are_not_imported() {
     ));
     let store = Store(directory.join("workspace.json"));
     let mut app = Workspace::default();
+    app.preferences.black_backgrounds = true;
+    app.preferences.theme_family = "nord".into();
+    app.preferences.accent_color = "teal".into();
     let index = app.new_session(scope(Provider::OpenCode, "/project with spaces"));
     app.sessions[index].draft = "café ☁️\nnext line".into();
     app.attach(
@@ -493,6 +496,15 @@ fn workspace_roundtrip_keeps_drafts_and_unknown_versions_are_not_imported() {
     );
     store.save(&app.snapshot()).unwrap();
     assert_eq!(store.load().unwrap(), Some(app.snapshot()));
+    let mut old = serde_json::to_value(app.snapshot()).unwrap();
+    old["preferences"]
+        .as_object_mut()
+        .unwrap()
+        .remove("blackBackgrounds");
+    let old: Snapshot = serde_json::from_value(old).unwrap();
+    assert!(!old.preferences.black_backgrounds);
+    assert_eq!(old.preferences.theme_family, "nord");
+    assert_eq!(old.preferences.accent_color, "teal");
     let mut future = app.snapshot();
     future.version = 2;
     store.save(&future).unwrap();

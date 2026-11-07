@@ -142,6 +142,76 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
     let (Some(shell), Some(remote)) = (session.shells.first(), session.remote_id.as_ref()) else {
         return col();
     };
+    let collapsed = l.collapsed_shells.contains(&index);
+    let title = if session.shells.len() > 1 {
+        format!("{} background commands", session.shells.len())
+    } else {
+        "Background command".into()
+    };
+    let mut summary = row()
+        .key("background-shell-summary")
+        .w_full()
+        .center_y()
+        .gap(4.0)
+        .child(rune::icon(&ui::TERMINAL, 13.0).color(k.c.icon_muted))
+        .child(
+            ui::caption(&title, k)
+                .truncate()
+                .min_w(0.0)
+                .grow(1.0)
+                .help(&title),
+        );
+    if !collapsed {
+        let id = shell.id.clone();
+        summary = summary.child(
+            ui::Button::new(if session.shells.len() > 1 {
+                "View all"
+            } else {
+                "Output"
+            })
+            .variant(ButtonVariant::GhostMuted)
+            .on_press(move |s: &mut Workspace| open(s, index, id.clone()))
+            .build(k)
+            .h(24.0)
+            .px(6.0)
+            .key("view-shell-output")
+            .label("View command output"),
+        );
+    }
+    summary = summary.child(
+        ui::Button::new(if collapsed { "Show" } else { "Hide" })
+            .variant(ButtonVariant::GhostMuted)
+            .on_press(move |s: &mut Workspace| {
+                let hidden = &mut live_mut(s).collapsed_shells;
+                if !hidden.remove(&index) {
+                    hidden.insert(index);
+                }
+            })
+            .build(k)
+            .h(24.0)
+            .px(6.0)
+            .key("toggle-background-shells")
+            .label(if collapsed {
+                "Show background commands"
+            } else {
+                "Hide background commands"
+            })
+            .expanded(!collapsed),
+    );
+    let body = col()
+        .key("background-shells")
+        .w_full()
+        .gap(4.0)
+        .padding(if collapsed { 0.0 } else { 9.0 })
+        .radius(8.0)
+        .fill(if collapsed {
+            rune::Color::TRANSPARENT
+        } else {
+            k.c.layer_01
+        });
+    if collapsed {
+        return body.child(summary);
+    }
     let mut preview = col()
         .w_full()
         .gap(1.0)
@@ -166,14 +236,7 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                 .h(16.0),
         );
     }
-    let id = shell.id.clone();
-    let mut body = col()
-        .key("background-shells")
-        .w_full()
-        .gap(4.0)
-        .padding(9.0)
-        .radius(8.0)
-        .fill(k.c.layer_01)
+    let mut body = body
         .child(header(
             &l.app,
             shell,
@@ -184,34 +247,7 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
             k,
         ))
         .child(preview)
-        .child(
-            row()
-                .w_full()
-                .center_y()
-                .gap(8.0)
-                .child(
-                    ui::caption(
-                        if session.shells.len() > 1 {
-                            format!("{} background commands", session.shells.len())
-                        } else {
-                            "Background command".into()
-                        },
-                        k,
-                    )
-                    .grow(1.0),
-                )
-                .child(
-                    ui::Button::new(if session.shells.len() > 1 {
-                        "View all"
-                    } else {
-                        "View output"
-                    })
-                    .variant(ButtonVariant::GhostMuted)
-                    .on_press(move |s: &mut Workspace| open(s, index, id.clone()))
-                    .build(k)
-                    .key("view-shell-output"),
-                ),
-        );
+        .child(summary);
     for stop in [true, false] {
         if let Some(error) =
             l.app

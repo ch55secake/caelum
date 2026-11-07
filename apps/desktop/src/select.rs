@@ -130,9 +130,9 @@ impl Select {
         let display = self.display.as_deref().unwrap_or(value);
         let mut field = k.interactive(
             row()
-                .gap(8.0)
+                .gap(if self.field { 8.0 } else { 4.0 })
                 .center_y()
-                .px(10.0)
+                .px(if self.field { 10.0 } else { 6.0 })
                 .h(if self.field { 34.0 } else { 28.0 })
                 .radius(6.0)
                 .fill(if self.open {
@@ -140,7 +140,7 @@ impl Select {
                 } else if self.field {
                     k.c.layer_02
                 } else {
-                    k.c.bg_base
+                    rune::Color::TRANSPARENT
                 })
                 .children((!display.is_empty()).then(|| {
                     text(display)
@@ -174,22 +174,16 @@ impl Select {
         } else {
             field = field
                 .w(
-                    (rune::text::measure(display, &[], k.ty.ui_medium, None).0 + 20.0)
+                    (rune::text::measure(display, &[], k.ty.ui_medium, None).0 + 26.0)
                         .clamp(36.0, 220.0),
                 )
-                .border(
-                    1.0,
-                    if self.prominent {
-                        k.c.border_strong
-                    } else {
-                        k.c.border_base
-                    },
-                );
+                .child(icon(&rune_kit::glyphs::CHEVRON_DOWN, 10.0).color(k.c.icon_muted));
         }
         field = field
             .key(format!("{}-trigger", self.key))
             .role("combobox")
             .label(&self.label)
+            .help(format!("{}: {value}", self.label))
             .a11y_value(value)
             .expanded(self.open)
             .disabled(self.disabled)

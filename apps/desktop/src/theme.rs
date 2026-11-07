@@ -3,7 +3,7 @@ use rune_kit::{Kit, MarkdownStyle};
 
 // Caelum's default palette, mapped to Rune's semantic component tokens.
 pub fn kit(dark: bool) -> Kit {
-    appearance(dark, "caelum", "violet")
+    appearance(dark, "caelum", "violet", false)
 }
 
 pub const FAMILIES: [(&str, &str); 4] = [
@@ -14,11 +14,11 @@ pub const FAMILIES: [(&str, &str); 4] = [
 ];
 pub const ACCENTS: [&str; 7] = ["theme", "violet", "blue", "teal", "green", "amber", "rose"];
 
-pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
+pub fn appearance(dark: bool, family: &str, accent_name: &str, black_backgrounds: bool) -> Kit {
     let mut k = Kit::neutral(dark);
     let color = |light, dark_value| hex(if dark { dark_value } else { light }).unwrap();
     // Background, sidebar, panel, hover, border, text, muted, accent, solid, success, danger.
-    let values = match (family, dark) {
+    let mut values = match (family, dark) {
         ("catppuccin", true) => [
             "#1e1e2e", "#181825", "#313244", "#45475a", "#45475a", "#cdd6f4", "#a6adc8", "#cba6f7",
             "#6c468f", "#a6e3a1", "#f38ba8",
@@ -52,6 +52,9 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
             "#6659b0", "#337348", "#b53a51",
         ],
     };
+    if dark && black_backgrounds {
+        values[..5].copy_from_slice(&["#000000", "#000000", "#080808", "#141414", "#242424"]);
+    }
     let [
         bg,
         sidebar,
@@ -104,7 +107,9 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     k.c.border_base = border;
     k.c.border_muted = border;
     k.c.border_weak = border;
-    k.c.border_strong = if family == "caelum" {
+    k.c.border_strong = if dark && black_backgrounds {
+        hex("#303030").unwrap()
+    } else if family == "caelum" {
         color("#cccccc", "#3b3b3b")
     } else {
         border

@@ -73,6 +73,13 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         return false;
     };
     let project = "/projects/caelum";
+    if matches!(name, "black" | "black-settings") {
+        l.app.preferences.black_backgrounds = true;
+        if name == "black-settings" {
+            crate::panels::show(state, crate::panels::Screen::Settings);
+        }
+        return true;
+    }
     if matches!(
         name,
         "providers" | "provider-error" | "notifications" | "storage" | "about"
@@ -336,7 +343,10 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         l.app.sessions[0].stopping = name == "stopping";
         return true;
     }
-    if matches!(name, "shells" | "shell-output" | "shells-many") {
+    if matches!(
+        name,
+        "shells" | "shell-output" | "shells-many" | "shells-collapsed"
+    ) {
         let session = &mut l.app.sessions[0];
         session.scope.provider = Provider::OpenCode;
         session.remote_id = Some("ses_fixture".into());
@@ -359,7 +369,7 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
                     "test scoped_worktree_handoff_with_independent_sessions ... ok ".repeat(12)
                 ),
             );
-        if name == "shells-many" {
+        if matches!(name, "shells-many" | "shells-collapsed") {
             l.app.sessions[0].shells.extend((1..8).map(|i| {
                 caelum_protocol::OpenCodeBackgroundShell {
                     id: format!("shell-{i}"),
@@ -367,6 +377,9 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
                     started_at: caelum_core::application::presentation::now() - 6000,
                 }
             }));
+        }
+        if name == "shells-collapsed" {
+            l.collapsed_shells.insert(0);
         }
         if name == "shell-output" {
             crate::shells::open(state, 0, "shell_fixture".into());

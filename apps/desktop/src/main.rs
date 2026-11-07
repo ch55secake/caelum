@@ -404,6 +404,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
                 dark,
                 &live.app.preferences.theme_family,
                 &live.app.preferences.accent_color,
+                live.app.preferences.black_backgrounds,
             )
         },
     );
@@ -638,6 +639,11 @@ fn spec() -> AppSpec<Workspace> {
             }),
             ("shell-output", |s| evaluation::scene(s, "shell-output")),
             ("shells-many", |s| evaluation::scene(s, "shells-many")),
+            ("shells-collapsed", |s| {
+                evaluation::scene(s, "shells-collapsed")
+            }),
+            ("black", |s| evaluation::scene(s, "black")),
+            ("black-settings", |s| evaluation::scene(s, "black-settings")),
             ("messages", |s| evaluation::scene(s, "messages")),
             ("archive", |s| evaluation::scene(s, "archive")),
             ("overview", |s| evaluation::scene(s, "overview")),

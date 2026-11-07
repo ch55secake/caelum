@@ -16,7 +16,8 @@ The follow-up captures restore the original 18-point Lucide Orbit mark, keep the
 sidebar toggle beside the brand, and use browser-equivalent unsmoothed system text.
 The inspector sits below the shared toolbar; pane widths adapt to compact windows
 while retaining the user's preferred sizes. The bounded multiline editor and
-composer controls occupy separate rows; model-first settings wrap in narrow panes
+composer controls occupy separate rows; borderless model-first labels with small
+chevrons wrap in narrow panes
 beside an aligned Send/Stop action. Settings lives in the top toolbar, archive
 filtering sits beside Sessions, and session actions belong to the clicked row.
 Archive Undo is a temporary bottom-centred notice above the composer, pausing on
@@ -39,7 +40,8 @@ hover/focus close controls and a compact Add to prompt / Add selection toolbar.
 Shared dropdowns keep field controls distinct from quiet
 inline composer choices. Worktree creation provides a selected suggested branch,
 searchable base and automatic location preview. Background commands show three
-visual lines and open a captured-session output reader. User messages use
+visual lines and open a captured-session output reader. Hide/Show collapses them to
+a command-count row, remembered per session during the app run. User messages use
 content-sized neutral Markdown bubbles with grouped attachments and copy actions.
 Statistics uses summary/chart/token/model sections; timeline has date groups,
 excerpts, highlighted search and stable prompt jumps.
@@ -125,12 +127,22 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native check details](previews/rune-light-check-details.png) | ![Native branch behind](previews/rune-dark-merge-behind-small.png) |
 
-[Before/after comparison with `6e56970`](previews/rune-refinement-comparison.png)
-shows the composer, Files inspector, merge panel and tool-header changes using
-matching fixture content.
+| Black workspace | Black appearance setting |
+| --- | --- |
+| ![Native black workspace](previews/rune-dark-black.png) | ![Native black settings](previews/rune-dark-black-settings-small.png) |
+
+| Hidden background commands | Reopened command previews |
+| --- | --- |
+| ![Native hidden commands](previews/rune-dark-shells-hide-small.png) | ![Native reopened commands](previews/rune-light-shells-reopen-small.png) |
+
+[Earlier before/after comparison (`6e56970` → `9281793`)](previews/rune-refinement-comparison.png)
+records the previous composer, Files inspector, merge panel and tool-header pass
+using matching fixture content.
 
 Four theme families and six accent colours (plus the theme default) apply across
-the workspace. Rune follows system reduced-motion preferences. Use the running
+the workspace. The saved **Black backgrounds** option uses black workspace/sidebar
+surfaces and near-black panels in dark appearance, keeping theme text and accents.
+Rune follows system reduced-motion preferences. Use the running
 application to judge focus, typing, scrolling, pane motion and OS context menus;
 headless replays provide deterministic interaction coverage.
 
@@ -164,13 +176,14 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **332 states**: 66 scenes and seventeen headless
+The capture script writes **356 states**: 69 scenes and twenty headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
 includes all five Settings pages, models, launcher, session popovers/worktree forms, commands, shells,
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
 loading/error/empty views, questions, images, hover and keyboard focus. The latest
-fixtures include long composer options, multiple file tabs, collapsed tools and
-ready/blocked/pending/conflicting/behind/draft/merged/closed PR states.
+fixtures include long composer options, multiple file tabs, collapsed tools,
+ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, black
+backgrounds and command collapse/reopen interactions.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
 replace the replay's `--at 9 --snap …` with `--video /path/to/replay.mp4 --duration auto`.

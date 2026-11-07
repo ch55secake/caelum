@@ -15,6 +15,7 @@ mod migration;
 pub struct Preferences {
     pub files: BTreeMap<String, FileWorkspace>,
     pub theme: String,
+    pub black_backgrounds: bool,
     pub theme_family: String,
     pub accent_color: String,
     pub default_provider: Provider,
@@ -33,6 +34,7 @@ impl Default for Preferences {
         Self {
             files: BTreeMap::new(),
             theme: "system".into(),
+            black_backgrounds: false,
             theme_family: "caelum".into(),
             accent_color: "violet".into(),
             default_provider: Provider::Codex,

@@ -1,5 +1,38 @@
 # Native desktop evaluation record
 
+## Lighter composer, hideable commands and black appearance — 7 November 2026
+
+This follow-up continues in #95 above #94, following `9281793`.
+
+- Composer settings now use borderless inline labels, small chevrons, neutral hover
+  treatment and full-value help; the model stays prominent and Queue is a quiet action.
+- Background commands collapse to a 24-point count/Show row. Hide/Show retains keyboard
+  focus, remembers each session independently across navigation/output updates and
+  leaves commands running. Reopened Output/View all and Stop keep their captured owner.
+- Settings → Appearance adds a saved **Black backgrounds** switch. Dark workspace and
+  sidebar surfaces become `#000000`, with `#080808` panels; light appearance and
+  theme-family text/accent choices are retained. Old snapshots default the option to off.
+- `nix develop -c make check` passed: **222 Rust tests** (166 core, 42 native, 6 protocol,
+  8 CLI), formatting, warnings-denied workspace Clippy and **19 Python checks**.
+  Native regressions cover collapse/reopen bounds and keyboard focus, background output
+  after navigation, draft retention and the appearance control across light/dark/system
+  modes and snapshot restoration. Core store coverage includes the new preference and
+  older snapshots lacking it. Palette assertions cover all four theme families.
+- Generated **356 captures**: 69 scenes plus 20 interaction states in light/dark and
+  normal/compact layouts. All trees/logs passed diagnostic checks; collapse/reopen state
+  and bounds and dark/light surface values were checked. Representative composer,
+  command and Settings images were visually reviewed. **44 native reference screens**
+  are checked in, alongside the earlier historical before/after comparison.
+- Archive, interaction and six-session evaluation replays passed with expected retained
+  or submitted text and no tree warnings or missing-target/zero-height diagnostics.
+- The final Apple Silicon app/DMG/CLI passed architecture, signing, system-library,
+  disk-image and mounted-bundle checks. The packaged lifecycle smoke passed cold/warm
+  project URLs, hidden-app reopening, draft restoration and graceful quit.
+
+Both PRs remain open and unmerged. The existing Codex, Intel, native-menu and manual
+provider/accessibility acceptance gaps remain recorded below. Artifacts for this pass:
+`/private/var/folders/sd/8zxnlg513mlfz8nkx928l6s00000gn/T/opencode/caelum-refinement-v4/`.
+
 ## Composer, merge and Files refinement — 7 November 2026
 
 This approved follow-up continues in #95 above #94. The previous pass at `6e56970`
