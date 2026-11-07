@@ -200,6 +200,7 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .current(options.model.as_deref())
             .placeholder("Provider default")
             .label("Default model")
+            .open(live(s).models.is_open())
             .on_toggle(move |s: &mut Workspace| crate::models::open(s, Some(provider)))
             .trigger(k),
     );

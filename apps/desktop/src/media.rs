@@ -106,15 +106,12 @@ fn data<'a>(s: &'a Workspace, project: &str, source: &'a str) -> Option<&'a str>
             .map(String::as_str)
     }
 }
-pub fn request(s: &mut Workspace, index: usize, range: std::ops::Range<usize>) -> bool {
+pub fn request(s: &mut Workspace, index: usize, positions: &[usize]) -> bool {
     let l = s.live.as_mut().unwrap();
     let project = l.app.sessions[index].scope.project.clone();
-    let sources: Vec<_> = l.app.sessions[index]
-        .conversation
-        .entries
+    let sources: Vec<_> = positions
         .iter()
-        .skip(range.start.saturating_sub(1))
-        .take(range.len())
+        .filter_map(|i| l.app.sessions[index].conversation.entries.get(*i))
         .flat_map(|e| e.media.iter().map(|m| m.source.clone()))
         .collect();
     for source in sources {

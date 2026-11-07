@@ -9,7 +9,7 @@ use crate::{
 use caelum_core::application::{EntryKind, Task, commands::LocalCommand};
 use caelum_protocol::OpenCodeStatsFilter;
 use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, row, text, text_input};
-use rune_kit::{ButtonVariant, Kit, Markdown, Progress, glyphs};
+use rune_kit::{ButtonVariant, Kit, Markdown, Progress, ScrollBar, glyphs};
 
 pub struct State {
     pub owner: Option<usize>,
@@ -17,6 +17,9 @@ pub struct State {
     pub stats_project: Option<String>,
     pub stats_days: Option<u64>,
     pub stats_anchor: u64,
+    pub stats_projects_open: bool,
+    pub timeline_selected: Option<String>,
+    pub timeline_current: Option<String>,
     pub side_owner: Option<usize>,
     pub side_editor: TextEdit,
     pub previous_drafts: Vec<String>,
@@ -29,6 +32,9 @@ impl Default for State {
             stats_project: None,
             stats_days: None,
             stats_anchor: 0,
+            stats_projects_open: false,
+            timeline_selected: None,
+            timeline_current: None,
             side_owner: None,
             side_editor: TextEdit::new(""),
             previous_drafts: Vec::new(),
@@ -67,6 +73,8 @@ pub fn dispatch(s: &mut Workspace, tx: &mut Tx) -> bool {
         LocalCommand::Changes => panels::show(s, Screen::Changes),
         LocalCommand::Settings => panels::show(s, Screen::Settings),
         LocalCommand::Timeline => {
+            l.commands.timeline_selected = l.current_prompt.clone();
+            l.commands.timeline_current = l.current_prompt.clone();
             l.panels.overlay = Some(Screen::Timeline);
             l.commands.search.focused = true;
         }
@@ -169,7 +177,10 @@ pub fn side_view(s: &Workspace, k: &Kit, padding: f32) -> El {
         );
     }
     if let Some((question, answer)) = &session.side_question {
-        body = body.child(ui::caption(question, k));
+        body = body.child(ui::caption(
+            caelum_core::application::presentation::visible_text(question),
+            k,
+        ));
         if session.generating {
             body = body.child(ui::caption("Answering independently…", k).role("status"));
         } else {
@@ -183,16 +194,18 @@ pub fn side_view(s: &Workspace, k: &Kit, padding: f32) -> El {
                             stick_bottom: false,
                         })
                         .child(
-                            Markdown::new(answer)
-                                .selectable(true)
-                                .render(&theme::markdown(k)),
+                            Markdown::new(caelum_core::application::presentation::visible_text(
+                                answer,
+                            ))
+                            .selectable(true)
+                            .render(&theme::markdown(k)),
                         ),
                 );
             }
             if let Some(error) = &session.side_error {
                 body = body.child(ui::caption(error, k).color(k.c.danger.fg));
             }
-            let copy = answer.clone();
+            let copy = caelum_core::application::presentation::visible_text(answer);
             let mut actions = row().gap(8.0).child(
                 Button::new("Edit question")
                     .variant(ButtonVariant::Outline)
@@ -247,6 +260,13 @@ pub fn side_view(s: &Workspace, k: &Kit, padding: f32) -> El {
                     .build(k),
             );
     }
+    if let Some(activity) = crate::activity::session_activity(s, index) {
+        body = body.child(crate::activity::indicator(
+            &activity,
+            session.options.agent.as_deref(),
+            k,
+        ));
+    }
     col().w_full().items_center().px(padding).pb(20.0).child(
         body.role("region")
             .label("Side question")
@@ -276,53 +296,152 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.kind == EntryKind::User && e.text.to_lowercase().contains(&query))
-        .map(|(i, _)| i)
+        .filter(|(_, e)| {
+            e.kind == EntryKind::User && caelum_core::application::presentation::entry_visible(e)
+        })
+        .enumerate()
+        .filter(|(_, (_, e))| {
+            caelum_core::application::presentation::entry_text(e)
+                .to_lowercase()
+                .contains(&query)
+        })
+        .map(|(ordinal, (i, _))| (ordinal + 1, i))
         .collect();
     let kit = k.clone();
     let ids = matches.clone();
     let count = matches.len();
     let rows = col()
+        .key("timeline-rows")
         .w_full()
         .growth(rune::GrowthSpec::default())
         .virtual_rows(
             count,
-            54.0,
+            82.0,
             move |s: &Workspace, i| {
                 format!(
                     "timeline-{}",
-                    live(s).app.sessions[index].conversation.entries[ids[i]].id
+                    live(s).app.sessions[index].conversation.entries[ids[i].1].id
                 )
                 .into()
             },
             move |s: &Workspace, i| {
-                let position = matches[i];
+                let (ordinal, position) = matches[i];
                 let entry = &live(s).app.sessions[index].conversation.entries[position];
-                ui::choice(
-                    caelum_core::application::split_context(&entry.text)
-                        .0
-                        .lines()
-                        .next()
-                        .unwrap_or("Prompt"),
-                    &format!("Prompt {} · Reveal in conversation", i + 1),
-                    false,
-                    &kit,
+                let id = entry.id.clone();
+                let current = live(s).commands.timeline_current.as_ref() == Some(&id);
+                let selected = live(s).commands.timeline_selected.as_ref() == Some(&id);
+                let shown = caelum_core::application::presentation::entry_text(entry);
+                let excerpt = shown
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or("Attached context")
+                    .trim()
+                    .to_owned();
+                let detail = shown
+                    .lines()
+                    .skip(1)
+                    .filter(|l| !l.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let highlights = |value: &str| {
+                    caelum_core::application::presentation::search_ranges(
+                        value,
+                        &live(s).commands.search.text,
+                    )
+                    .into_iter()
+                    .map(|r| {
+                        rune::Span::new(r.start, r.end)
+                            .color(kit.c.text_accent)
+                            .weight(600.0)
+                            .bg(kit.alpha(kit.c.text_accent, 0.10), 1.0)
+                    })
+                    .collect::<Vec<_>>()
+                };
+                let group =
+                    |e: &caelum_core::application::Entry| e.started_at.map(|at| at / 86_400_000);
+                let day = group(entry);
+                let start = i == 0
+                    || group(&live(s).app.sessions[index].conversation.entries[matches[i - 1].1])
+                        != day;
+                let day_label = day.map_or_else(
+                    || "This session".into(),
+                    |day| match (caelum_core::application::presentation::now() / 86_400_000)
+                        .saturating_sub(day)
+                    {
+                        0 => "Today".into(),
+                        1 => "Yesterday".into(),
+                        n => format!("{n} days ago"),
+                    },
+                );
+                let mut item = col().w_full().gap(5.0);
+                if start {
+                    item = item.child(ui::caption(day_label, &kit).px(10.0).pt(8.0));
+                }
+                item.child(
+                    kit.interactive(
+                        row()
+                            .w_full()
+                            .min_h(62.0)
+                            .padding(10.0)
+                            .gap(12.0)
+                            .radius(8.0)
+                            .fill(if selected {
+                                kit.alpha(kit.c.text_accent, 0.09)
+                            } else {
+                                rune::Color::TRANSPARENT
+                            })
+                            .child(text(format!("{ordinal:02}")).font(kit.ty.mono).color(
+                                if current {
+                                    kit.c.text_accent
+                                } else {
+                                    kit.c.text_faint
+                                },
+                            ))
+                            .child(
+                                col()
+                                    .grow(1.0)
+                                    .min_w(0.0)
+                                    .gap(4.0)
+                                    .child(
+                                        text(&excerpt)
+                                            .spans(highlights(&excerpt))
+                                            .font(kit.ty.ui)
+                                            .color(kit.c.text_base)
+                                            .truncate(),
+                                    )
+                                    .child(
+                                        ui::caption(
+                                            if current {
+                                                "Reading here"
+                                            } else if detail.is_empty() {
+                                                "Prompt"
+                                            } else {
+                                                &detail
+                                            },
+                                            &kit,
+                                        )
+                                        .spans(if current {
+                                            Vec::new()
+                                        } else {
+                                            highlights(&detail)
+                                        })
+                                        .truncate(),
+                                    ),
+                            ),
+                    )
+                    .role("button")
+                    .label(&excerpt)
+                    .description(if current {
+                        "Current reading position"
+                    } else {
+                        "Reveal in conversation"
+                    })
+                    .focusable(true)
+                    .focus_ring(1.5, 0.0, kit.c.border_focus)
+                    .on_press_tx(move |s: &mut Workspace, tx| {
+                        jump(s, index, &id, tx);
+                    }),
                 )
-                .on_press_tx(move |s: &mut Workspace, tx| {
-                    let l = live_mut(s);
-                    l.app.select(index);
-                    l.panels.overlay = None;
-                    l.panels.screen = Screen::Conversation;
-                    tx.scroll_center_in_instant(
-                        format!("live-rows-{index}"),
-                        format!(
-                            "live-entry-{index}-{}",
-                            l.app.sessions[index].conversation.entries[position].id
-                        ),
-                    );
-                })
-                .h(54.0)
-                .w_full()
             },
         );
     let mut body = col()
@@ -343,10 +462,16 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
             .color(k.c.text_base)
             .w_full()
             .single_line()
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search)
+            .on_input_change(|s: &mut Workspace, tx| {
+                live_mut(s).commands.timeline_selected = None;
+                tx.scroll_to_y("timeline-scroll", 0.0);
+            })
+            .on_input_key(timeline_key),
         )
         .child(
             col()
+                .key("timeline-scroll")
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
@@ -365,6 +490,10 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
     if let Some(error) = &session.error {
         body = body.child(ui::caption(error, k).color(k.c.danger.fg));
     }
+    body = body.child(ui::divider(k)).child(ui::caption(
+        format!("{count} prompts · ↑↓ Navigate · ↵ Jump · Esc Close"),
+        k,
+    ));
     if session.next_cursor.is_some() {
         body = body.child(
             Button::new(if session.loading {
@@ -378,6 +507,68 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
         );
     }
     body
+}
+
+fn jump(s: &mut Workspace, index: usize, id: &str, tx: &mut Tx) {
+    let l = live_mut(s);
+    if !l.app.sessions[index]
+        .conversation
+        .entries
+        .iter()
+        .any(|e| e.id == id)
+    {
+        return;
+    }
+    l.app.select(index);
+    l.current_prompt = Some(id.into());
+    l.panels.overlay = None;
+    l.panels.screen = Screen::Conversation;
+    l.commands.search.focused = false;
+    tx.scroll_center_in_instant(
+        format!("live-rows-{index}"),
+        format!("live-entry-{index}-{id}"),
+    );
+}
+
+pub fn timeline_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    let l = live(s);
+    let Some(index) = l.commands.owner else {
+        return false;
+    };
+    let query = l.commands.search.text.to_lowercase();
+    let ids: Vec<_> = l.app.sessions[index]
+        .conversation
+        .entries
+        .iter()
+        .filter(|e| {
+            e.kind == EntryKind::User
+                && caelum_core::application::presentation::entry_visible(e)
+                && caelum_core::application::presentation::entry_text(e)
+                    .to_lowercase()
+                    .contains(&query)
+        })
+        .map(|e| e.id.clone())
+        .collect();
+    let current = ids
+        .iter()
+        .position(|id| Some(id) == l.commands.timeline_selected.as_ref());
+    let at = match ev.key {
+        Key::Down => current.map_or(0, |i| (i + 1).min(ids.len().saturating_sub(1))),
+        Key::Up => current.unwrap_or(0).saturating_sub(1),
+        Key::Enter => {
+            if let Some(id) = ids.get(current.unwrap_or(0)) {
+                jump(s, index, id, tx);
+            }
+            return true;
+        }
+        _ => return false,
+    };
+    live_mut(s).commands.timeline_selected = ids.get(at).cloned();
+    live_mut(s).commands.search.focused = true;
+    if let Some(id) = ids.get(at) {
+        tx.scroll_center_in_instant("timeline-rows", format!("timeline-{id}"));
+    }
+    true
 }
 
 fn usage(s: &Workspace, k: &Kit, index: usize) -> El {
@@ -501,7 +692,7 @@ fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
         .services
         .checkouts
         .get(&l.app.sessions[index].scope.project);
-    let mut ranges = row().w_full().gap(5.0);
+    let mut ranges = row().w_full().gap(4.0).center_y();
     for (name, days) in [
         ("All history", None),
         ("7 days", Some(7)),
@@ -514,96 +705,182 @@ fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
             },
         ));
     }
-    let mut body = col().w_full().gap(10.0).child(ranges).child(
-        ui::field(
-            &l.commands.search,
-            "Find statistics project",
-            "Search projects by name or path…",
-            k,
-        )
-        .single_line()
-        .label("Find statistics project")
-        .placeholder("Search projects by name or path…", k.c.text_muted)
-        .color(k.c.text_base)
-        .w_full()
-        .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
-    );
-    let query = l.commands.search.text.to_lowercase();
-    let mut projects = col().w_full().gap(3.0).child(
-        Button::new("All projects")
-            .variant(if l.commands.stats_project.is_none() {
-                ButtonVariant::Outline
-            } else {
-                ButtonVariant::GhostMuted
-            })
+    let project_name = checkout
+        .and_then(|c| {
+            c.stats_projects
+                .iter()
+                .find(|p| Some(&p.id) == l.commands.stats_project.as_ref())
+        })
+        .and_then(|p| p.name.as_deref())
+        .unwrap_or("All projects");
+    ranges = ranges.child(rune::el().grow(1.0)).child(
+        Button::new(format!("{project_name} ⌄"))
+            .variant(ButtonVariant::Outline)
             .on_press(|s: &mut Workspace| {
-                live_mut(s).commands.stats_project = None;
-                refresh_stats(s);
+                let c = &mut live_mut(s).commands;
+                c.stats_projects_open = !c.stats_projects_open;
+                c.search.clear();
+                c.search.focused = c.stats_projects_open;
             })
-            .build(k),
+            .build(k)
+            .key("stats-project-filter"),
     );
-    if let Some(c) = checkout {
-        for project in c.stats_projects.iter().filter(|p| {
-            format!("{} {}", p.name.as_deref().unwrap_or_default(), p.canonical)
-                .to_lowercase()
-                .contains(&query)
-        }) {
-            let id = project.id.clone();
-            projects = projects.child(
-                Button::new(format!(
-                    "{} · {}",
-                    project.name.as_deref().unwrap_or("Project"),
-                    project.canonical
-                ))
-                .variant(if l.commands.stats_project.as_ref() == Some(&id) {
+    let mut body = col().w_full().gap(16.0).child(ranges);
+    if l.commands.stats_projects_open {
+        body = body.child(
+            ui::field(
+                &l.commands.search,
+                "Find statistics project",
+                "Search projects by name or path…",
+                k,
+            )
+            .single_line()
+            .label("Find statistics project")
+            .placeholder("Search projects by name or path…", k.c.text_muted)
+            .color(k.c.text_base)
+            .w_full()
+            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+        );
+        let query = l.commands.search.text.to_lowercase();
+        let mut projects = col().w_full().gap(3.0).child(
+            Button::new("All projects")
+                .variant(if l.commands.stats_project.is_none() {
                     ButtonVariant::Outline
                 } else {
                     ButtonVariant::GhostMuted
                 })
-                .on_press(move |s: &mut Workspace| {
-                    live_mut(s).commands.stats_project = Some(id.clone());
+                .on_press(|s: &mut Workspace| {
+                    live_mut(s).commands.stats_project = None;
+                    live_mut(s).commands.stats_projects_open = false;
                     refresh_stats(s);
                 })
                 .build(k),
-            );
+        );
+        if let Some(c) = checkout {
+            for project in c.stats_projects.iter().filter(|p| {
+                format!("{} {}", p.name.as_deref().unwrap_or_default(), p.canonical)
+                    .to_lowercase()
+                    .contains(&query)
+            }) {
+                let id = project.id.clone();
+                projects = projects.child(
+                    Button::new(format!(
+                        "{} · {}",
+                        project.name.as_deref().unwrap_or("Project"),
+                        project.canonical
+                    ))
+                    .variant(if l.commands.stats_project.as_ref() == Some(&id) {
+                        ButtonVariant::Outline
+                    } else {
+                        ButtonVariant::GhostMuted
+                    })
+                    .on_press(move |s: &mut Workspace| {
+                        live_mut(s).commands.stats_project = Some(id.clone());
+                        live_mut(s).commands.stats_projects_open = false;
+                        refresh_stats(s);
+                    })
+                    .build(k),
+                );
+            }
         }
+        body = body.child(
+            col()
+                .w_full()
+                .max_h(144.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(projects),
+        );
     }
-    body = body.child(
-        col()
-            .w_full()
-            .max_h(100.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(projects),
-    );
     if let Some(stats) = checkout.and_then(|c| c.stats.as_ref()) {
         let mut totals = row().w_full().gap(8.0);
         for (name, value) in [
             ("Sessions", stats.sessions.to_string()),
             ("Prompts", stats.prompts.to_string()),
-            ("Cost", format!("${:.2}", stats.cost)),
+            ("Total cost", format!("${:.2}", stats.cost)),
         ] {
             totals = totals.child(
                 ui::card(k)
                     .grow(1.0)
                     .min_w(0.0)
-                    .gap(4.0)
+                    .gap(8.0)
+                    .child(ui::caption(name, k))
                     .child(
                         text(value)
-                            .font(rune::TextStyle::new(22.0, 550.0))
+                            .font(rune::TextStyle::new(26.0, 550.0))
                             .color(k.c.text_base),
-                    )
-                    .child(ui::caption(name, k)),
+                    ),
             );
         }
-        body = body.child(totals).child(ui::caption(
-            format!(
-                "{} steps · {} active days · {} day streak",
-                stats.steps, stats.active_days, stats.streak
-            ),
-            k,
-        ));
+        body = body.child(totals);
+        let mut activity = ui::card(k).gap(12.0).child(
+            row()
+                .w_full()
+                .center_y()
+                .justify_between()
+                .child(text("Activity").font(k.ty.ui_medium).color(k.c.text_base))
+                .child(ui::caption(
+                    format!(
+                        "{} active days · {} day streak",
+                        stats.active_days, stats.streak
+                    ),
+                    k,
+                )),
+        );
+        if stats.activity.is_empty() {
+            activity = activity.child(
+                ui::caption("No activity in this period. Try a wider date range.", k).py(20.0),
+            );
+        } else {
+            let days = &stats.activity[stats.activity.len().saturating_sub(60)..];
+            let peak = days.iter().map(|d| d.steps).max().unwrap_or(1).max(1) as f32;
+            let mut bars = row().w_full().h(92.0).gap(3.0);
+            for day in days {
+                let description = format!("{} · {} steps", day.date, day.steps);
+                bars = bars.child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .h_full()
+                        .justify_end()
+                        .child(
+                            rune::el()
+                                .w_full()
+                                .h((day.steps as f32 / peak * 88.0).max(3.0))
+                                .radius(3.0)
+                                .fill(k.alpha(
+                                    k.c.text_accent,
+                                    if day.steps == 0 { 0.12 } else { 0.65 },
+                                )),
+                        )
+                        .role("img")
+                        .label(&description)
+                        .help(description)
+                        .focusable(true),
+                );
+            }
+            activity = activity.child(bars).child(
+                row()
+                    .w_full()
+                    .justify_between()
+                    .child(ui::caption(&days[0].date, k))
+                    .child(ui::caption(format!("{} steps", stats.steps), k))
+                    .child(ui::caption(&days[days.len() - 1].date, k)),
+            );
+        }
+        body = body.child(activity);
+        let mut tokens = ui::card(k).gap(10.0).child(
+            text("Token breakdown")
+                .font(k.ty.ui_medium)
+                .color(k.c.text_base),
+        );
+        let total = (stats.tokens.input
+            + stats.tokens.output
+            + stats.tokens.reasoning
+            + stats.tokens.cache.read
+            + stats.tokens.cache.write)
+            .max(1.0);
         for (name, n) in [
             ("Input", stats.tokens.input),
             ("Output", stats.tokens.output),
@@ -611,29 +888,94 @@ fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
             ("Cache read", stats.tokens.cache.read),
             ("Cache write", stats.tokens.cache.write),
         ] {
-            body = body.child(
-                ui::caption(format!("{name}: {} tokens", compact(n)), k)
-                    .help(format!("{n:.0} tokens")),
+            tokens = tokens.child(
+                row()
+                    .w_full()
+                    .gap(12.0)
+                    .center_y()
+                    .child(ui::caption(name, k).w(82.0))
+                    .child(
+                        row().grow(1.0).h(5.0).radius(3.0).fill(k.c.layer_03).child(
+                            rune::el()
+                                .w_frac((n / total).clamp(0.0, 1.0) as f32)
+                                .h_full()
+                                .radius(3.0)
+                                .fill(k.alpha(k.c.text_accent, 0.65)),
+                        ),
+                    )
+                    .child(
+                        row()
+                            .w(68.0)
+                            .justify_end()
+                            .child(text(compact(n)).font(k.ty.mono).color(k.c.text_base)),
+                    )
+                    .help(format!("{name}: {n:.0} tokens")),
             );
         }
+        body = body.child(tokens);
+        let mut models = ui::card(k).gap(10.0).child(
+            row()
+                .w_full()
+                .gap(16.0)
+                .child(
+                    text("Models")
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_base)
+                        .grow(1.0),
+                )
+                .child(ui::caption("Steps", k).w(54.0))
+                .child(ui::caption("Cost", k).w(60.0)),
+        );
         for model in &stats.models {
-            body = body.child(ui::caption(
-                format!(
-                    "{}/{} · {} steps · ${:.2}",
-                    model.model.provider_id, model.model.id, model.steps, model.cost
-                ),
-                k,
-            ));
+            models = models.child(ui::divider(k)).child(
+                row()
+                    .w_full()
+                    .gap(16.0)
+                    .center_y()
+                    .child(
+                        col()
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .gap(3.0)
+                            .child(
+                                text(&model.model.id)
+                                    .font(k.ty.ui_medium)
+                                    .color(k.c.text_base)
+                                    .truncate(),
+                            )
+                            .child(ui::caption(&model.model.provider_id, k)),
+                    )
+                    .child(
+                        text(model.steps.to_string())
+                            .font(k.ty.mono)
+                            .color(k.c.text_muted)
+                            .w(54.0),
+                    )
+                    .child(
+                        text(format!("${:.2}", model.cost))
+                            .font(k.ty.mono)
+                            .color(k.c.text_base)
+                            .w(60.0),
+                    ),
+            );
         }
-        for day in &stats.activity {
-            body = body.child(ui::caption(
-                format!("{} · {} steps", day.date, day.steps),
-                k,
-            ));
+        if stats.models.is_empty() {
+            models = models.child(ui::caption("No model usage reported in this period.", k));
         }
+        body = body.child(models);
     }
     if checkout.is_none_or(|c| c.stats.is_none()) && l.app.services.busy(&stats_task(s).unwrap()) {
-        body = body.child(ui::skeleton("Loading statistics", 3, k));
+        body = body
+            .child(ui::card(k).child(ui::skeleton("Loading summary", 2, k)))
+            .child(ui::card(k).child(ui::skeleton("Loading activity", 3, k)));
+    } else if checkout.is_none_or(|c| c.stats.is_none())
+        && l.app.services.error(&stats_task(s).unwrap()).is_none()
+    {
+        body = body.child(ui::empty(
+            "No statistics yet",
+            "Recorded sessions, tokens and model usage will appear here.",
+            k,
+        ));
     }
     service_status(
         body,
@@ -657,20 +999,18 @@ fn compact(n: f64) -> String {
 fn service_status(mut body: El, s: &Workspace, k: &Kit, task: Task, cached: bool) -> El {
     let services = &live(s).app.services;
     if let Some(error) = services.error(&task) {
-        body = body.child(
-            ui::caption(
-                format!(
-                    "{error}{}",
-                    if cached {
-                        " · Showing the last reported result."
-                    } else {
-                        ""
-                    }
-                ),
-                k,
-            )
-            .color(k.c.danger.fg),
-        );
+        body = body.child(ui::notice(
+            "Couldn’t load results",
+            &format!(
+                "{error}{}",
+                if cached {
+                    " · Showing the last reported result."
+                } else {
+                    ""
+                }
+            ),
+            k,
+        ));
     }
     body = body.child(
         Button::new(if services.busy(&task) {
@@ -685,6 +1025,7 @@ fn service_status(mut body: El, s: &Workspace, k: &Kit, task: Task, cached: bool
         .build(k),
     );
     col()
+        .key("command-results")
         .w_full()
         .h_full()
         .min_h(0.0)
@@ -692,4 +1033,5 @@ fn service_status(mut body: El, s: &Workspace, k: &Kit, task: Task, cached: bool
             stick_bottom: false,
         })
         .child(body)
+        .scroll_bar(k)
 }

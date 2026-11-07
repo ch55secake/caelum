@@ -10,7 +10,7 @@ output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "apps/desk
 output.mkdir(parents=True, exist_ok=True)
 subprocess.run(["cargo", "build", "--locked", "-p", "caelum-desktop"], check=True, cwd=root)
 binary = root / "target/debug/caelum-desktop"
-scenes = ("", "inspector", "compact", "settings", "providers", "provider-error", "notifications", "storage", "about", "models", "models-empty", "launcher", "session", "timeline", "usage", "usage-loading", "stats", "commands", "shells", "empty", "error", "review-loading", "review-error", "discussion", "tools", "review", "checks", "mentions", "images", "image-preview", "files", "files-loading", "changes-empty", "approval", "questions", "crowded", "worktrees", "worktrees-loading", "worktrees-error")
+scenes = ("", "inspector", "compact", "settings", "providers", "provider-error", "notifications", "storage", "about", "models", "models-empty", "launcher", "session", "timeline", "timeline-empty", "usage", "usage-loading", "stats", "stats-empty", "stats-loading", "stats-error", "commands", "shells", "working", "thinking", "retrying", "stopping", "empty", "error", "review-loading", "review-error", "discussion", "tools", "review", "checks", "mentions", "images", "image-preview", "files", "files-loading", "changes-empty", "approval", "questions", "crowded", "worktrees", "worktrees-loading", "worktrees-error")
 interactions = {
     "provider-dropdown": ("providers", [{"t": 0.25, "key": "Default effort-trigger"}]),
     "model-hover": ("models", [{"t": 0.25, "type": "move", "key": "model-favorite-1"}]),
@@ -20,6 +20,10 @@ interactions = {
     "composer-provider": ("", [{"t": 0.25, "key": "provider-trigger"}]),
     "composer-effort": ("", [{"t": 0.25, "key": "effort-trigger"}]),
     "session-hover": ("session", [{"t": 0.25, "type": "move", "key": "archive-session"}]),
+    "stats-details": ("stats", [{"t": 0.25, "type": "scroll", "key": "command-results", "dy": -420, "dur": 0.2}]),
+    "stats-projects": ("stats", [{"t": 0.25, "key": "stats-project-filter"}]),
+    "timeline-search": ("timeline", [{"t": 0.25, "key": "timeline-search"}, {"t": 0.3, "paste": "draft"}]),
+    "review-navigation": ("review", [{"t": 0.25, "key": "review-nav-toggle"}]),
 }
 for theme in ("dark", "light"):
     for compact in (False, True):

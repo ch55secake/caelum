@@ -2,7 +2,6 @@
 use crate::{
     Workspace,
     live::{live, live_mut},
-    panels::Screen,
     ui,
 };
 use caelum_core::application::{Provider, Scope};
@@ -37,8 +36,17 @@ impl Default for Picker {
         }
     }
 }
+impl Picker {
+    pub fn is_open(&self) -> bool {
+        self.owner.is_some()
+    }
+}
 
 pub fn open(s: &mut Workspace, settings: Option<Provider>) {
+    if live(s).models.is_open() {
+        close(s);
+        return;
+    }
     let l = live_mut(s);
     let owner = if let Some(provider) = settings {
         let Some(project) = l.app.active_project.clone() else {
@@ -64,19 +72,19 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
     l.models.query.clear();
     l.models.query.focused = true;
     l.panels.settings_menu = None;
-    l.panels.overlay = Some(Screen::Models);
+    for draft in &mut l.drafts {
+        draft.focused = false;
+    }
+    l.commands.side_editor.focused = false;
     let at = selected_index(s, &matches(s));
     live_mut(s).models.reveal = Some(at);
 }
 pub fn close(s: &mut Workspace) {
     let l = live_mut(s);
     l.models.query.focused = false;
-    l.panels.overlay = if matches!(l.models.owner.take(), Some(Owner::Defaults(_))) {
-        Some(Screen::Settings)
-    } else {
+    if matches!(l.models.owner.take(), Some(Owner::Session(..))) {
         l.focus();
-        None
-    };
+    }
 }
 
 #[derive(Clone)]
@@ -84,6 +92,7 @@ struct Model {
     id: String,
     name: String,
     detail: String,
+    group: String,
     available: bool,
 }
 fn matches(s: &Workspace) -> Vec<Model> {
@@ -106,6 +115,14 @@ fn matches(s: &Workspace) -> Vec<Model> {
             id: m.id.clone(),
             name: m.name.clone(),
             available: true,
+            group: if favorites.is_some_and(|f| f.contains(&m.id)) {
+                "Favourites".into()
+            } else {
+                m.provider
+                    .as_ref()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| ui::provider_name(scope.provider).into())
+            },
             detail: format!(
                 "{} · {}{}",
                 m.provider
@@ -140,12 +157,14 @@ fn matches(s: &Workspace) -> Vec<Model> {
                 }
                 .into(),
                 available: false,
+                group: "Unavailable".into(),
             });
         }
     }
     options.sort_by_key(|m| {
         (
             !favorites.is_some_and(|f| f.contains(&m.id)),
+            m.group.to_lowercase(),
             m.name.to_lowercase(),
             m.id.clone(),
         )
@@ -157,6 +176,7 @@ fn matches(s: &Workspace) -> Vec<Model> {
             name: "Provider default".into(),
             detail: "Use the provider’s recommended model".into(),
             available: true,
+            group: String::new(),
         },
     );
     let query = l.models.query.text.trim().to_lowercase();
@@ -241,7 +261,9 @@ pub fn key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
             close(s);
             true
         }
-        _ => false,
+        _ => ['n', 'p', 'o', 'l', 'k', ',', 'i']
+            .iter()
+            .any(|c| ev.is_command(*c)),
     }
 }
 pub fn view(s: &Workspace, k: &Kit) -> El {
@@ -330,10 +352,18 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
                             }),
                     );
                 }
-                entry
+                if !m.group.is_empty() && (i == 0 || items[i - 1].group != m.group) {
+                    col()
+                        .w_full()
+                        .gap(4.0)
+                        .child(ui::caption(&m.group, &kit).px(10.0).pt(8.0))
+                        .child(entry)
+                } else {
+                    entry
+                }
             },
         );
-    let mut body = col().w_full().h_full().min_h(0.0).gap(10.0).child(
+    let mut body = col().w_full().grow(1.0).min_h(0.0).gap(10.0).child(
         ui::field(
             &l.models.query,
             "Search models",
@@ -355,26 +385,109 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
             k,
         ));
     }
-    body.child(if count == 0 {
-        ui::empty("No matching models", "Try a model name or provider.", k).grow(1.0)
+    let body = body
+        .child(if count == 0 {
+            ui::empty("No matching models", "Try a model name or provider.", k).grow(1.0)
+        } else {
+            col()
+                .key("model-scroll")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(rows)
+                .scroll_bar(k)
+        })
+        .child(ui::divider(k))
+        .child(ui::caption(
+            format!("{count} models · ↑↓ Navigate · ↵ Choose"),
+            k,
+        ));
+    if let Some(Owner::Session(index, scope)) = &l.models.owner {
+        let index = *index;
+        let scope = scope.clone();
+        body.child(
+            ui::Button::new("Use current settings for new sessions")
+                .variant(ButtonVariant::GhostMuted)
+                .on_press(move |s: &mut Workspace| {
+                    let l = live_mut(s);
+                    if l.app.sessions[index].scope == scope {
+                        l.app.preferences.providers.insert(
+                            scope.provider.as_str().into(),
+                            l.app.sessions[index].options.clone(),
+                        );
+                        l.app.preferences.default_provider = scope.provider;
+                    }
+                })
+                .build(k)
+                .key("save-provider-defaults"),
+        )
     } else {
-        col()
-            .key("model-scroll")
+        body
+    }
+}
+
+pub fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
+    let Some(owner) = live(s).models.owner.as_ref() else {
+        return;
+    };
+    let anchor = if matches!(owner, Owner::Defaults(_)) {
+        "settings-model-trigger"
+    } else {
+        "model-trigger"
+    };
+    let width = rune::memo::window_layout("shell").map_or(420.0, |r| (r[2] - 32.0).min(420.0));
+    layers.push(
+        rune::el()
+            .key("models-scrim")
+            .role("none")
+            .absolute(0.0, 0.0)
             .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(rows)
-            .scroll_bar(k)
-    })
-    .child(ui::divider(k))
-    .child(ui::caption(
-        format!(
-            "{} · {count} results · ↑↓ Navigate · ↵ Choose · Esc Close",
-            ui::provider_name(provider)
-        ),
+            .h_full()
+            .on_press(close),
+    );
+    let content = col()
+        .key("model-popover")
+        .role("dialog")
+        .label("Choose model")
+        .modal(true, close)
+        .focus_return(anchor)
+        .w(width)
+        .h(400.0)
+        .min_h(0.0)
+        .padding(12.0)
+        .gap(10.0)
+        .child(
+            row()
+                .w_full()
+                .center_y()
+                .justify_between()
+                .child(
+                    rune::text(format!(
+                        "{} models",
+                        ui::provider_name(owner.scope().provider)
+                    ))
+                    .font(k.ty.ui_medium)
+                    .color(k.c.text_base),
+                )
+                .child(
+                    crate::quiet_button(&rune_kit::glyphs::CLOSE, "Close model picker")
+                        .on_press(close)
+                        .build(k),
+                ),
+        )
+        .child(view(s, k));
+    layers.push(rune_kit::popover::anchored(
         k,
-    ))
+        rune_kit::popover::raised(k, content, 12.0),
+        anchor,
+        if matches!(owner, Owner::Defaults(_)) {
+            rune_kit::Placement::BottomStart
+        } else {
+            rune_kit::Placement::TopStart
+        },
+        8.0,
+    ));
 }

@@ -37,15 +37,15 @@ to Rust 1.95.0 and Rune `ddf14140253bd1b963993895e3fa025d1ec58537`.
 | --- | --- |
 | Native editing, panes and appearance | Flush surfaces, keyboard editing, navigation, theme modes and pane tests |
 | Projects and real sessions | Both Rust providers, list/resume/history/stream/cancel; real OpenCode discovery/history smoke; Codex executable unavailable locally |
-| Conversations | Scoped concurrent activity, paged/virtualized transcript, reasoning/tools/statuses, compaction, shells and context counts; synthetic six-session stress workload |
+| Conversations | Scoped concurrent activity, paged/virtualized transcript, default patch previews, reminder filtering, reasoning/tools/statuses, compaction, shells and context counts; synthetic six-session stress workload |
 | Approvals and questions | Scoped permission replies and native forms with defaults/custom/conditional validation; reducer, broker and native interaction tests |
 | Drafts and queues | Atomic private saves, save-before-dispatch, independent drafts/failed submissions/pending admissions, paused local restore, captured options, edit/reorder/remove/pause/resume; OpenCode inbox identity, retry/removal and reconciliation |
 | Recovery | One automatic reconnect attempt, explicit retry, history reconciliation, cancellation admission guards; race tests; extended real-provider fault testing pending |
-| Composer | Bounded multiline editor, caret-aware file/PR mentions, image paste/attachments/viewer, context meter, prompt recall, agent shortcut and model search/favourites; local/discovered commands, timeline, usage/statistics and independent `/btw` (`/ask`) |
+| Composer | Bounded multiline editor, session-driven pulse/activity, caret-aware file/PR mentions, image paste/attachments/viewer, context meter, prompt recall, agent shortcut and anchored model search/favourites; local/discovered commands, grouped/searchable timeline, structured statistics and independent `/btw` (`/ask`) |
 | Workspace | Persisted projects/checkout groups, remembered sessions/reading/unread, session search, guarded archive/undo, project/provider launcher and navigation-aware worktree handoff |
 | Files and Git | Paged directories, filename/content/source search, persisted tabs/folders/position, live refresh, shared virtualized source/diff views and native context actions |
-| GitHub | Branch/stack discovery, status/check links/timing, continuous paginated review, independent file navigation, inline/resolved threads, selected-comment prompts, head-pinned update/merge and periodic refresh with reading-position preservation |
-| Settings | Five native pages; saved appearance/provider/worktree defaults, notification visibility and sounds, favourites; explicit legacy v1 JSON import |
+| GitHub | Branch/stack discovery, Overview / Files changed, grouped checks/readiness, continuous paginated review, searchable file/thread navigation, inline/resolved feedback, targeted selected-comment submission preserving drafts/attachments, head-pinned update/merge and exact reading-position restoration after refresh/pagination |
+| Settings | Top-toolbar gear and ⌘, open five native pages; saved appearance/provider/worktree defaults, notification visibility and sounds, favourites; explicit legacy v1 JSON import |
 | Production lifecycle | Standard menus, close/reopen, cold/running project URLs, lifetime state lock and shutdown flush |
 | Distribution | Native app, architecture-specific DMGs/CLI archives, ad-hoc signatures, checksums, release/version and Homebrew automation |
 

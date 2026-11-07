@@ -156,6 +156,221 @@ fn tool_patches_share_the_source_renderer_for_fragments_and_multiple_files() {
 }
 
 #[test]
+fn model_popover_stays_anchored_and_returns_focus_without_cancelling_work() {
+    let app = spec();
+    let mut state = crate::evaluation::design();
+    crate::evaluation::scene(&mut state, "models");
+    let mut rt = Runtime::new(state, app.view, (800.0, 620.0), Env::new(true, 1.0));
+    rt.poll = app.poll;
+    rt.on_key = app.on_key;
+    advance(&mut rt, 0.4);
+    let popup = element(&rt, "model-popover");
+    let trigger = element(&rt, "model-trigger");
+    assert!(popup.rect[1] + popup.rect[3] <= trigger.rect[1]);
+    assert!(
+        popup
+            .rect
+            .into_iter()
+            .zip(popup.visible)
+            .all(|(a, b)| (a - b).abs() < 1.0)
+    );
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some("workspace-dialog"))
+    );
+    let defaults = element(&rt, "save-provider-defaults");
+    assert!(defaults.rect[1] + defaults.rect[3] <= popup.rect[1] + popup.rect[3]);
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.sessions[0]
+            .conversation
+            .working = true;
+    });
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.4);
+    assert!(!rt.state.live.as_ref().unwrap().models.is_open());
+    assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+    click(&mut rt, "model-trigger");
+    rt.pointer_down(250.0, 80.0);
+    rt.pointer_up(250.0, 80.0);
+    advance(&mut rt, 0.4);
+    assert!(!rt.state.live.as_ref().unwrap().models.is_open());
+}
+
+#[test]
+fn reminders_are_absent_from_transcript_copy_and_timeline_with_stable_jumps() {
+    let app = spec();
+    let mut state = crate::evaluation::design();
+    let l = state.live.as_mut().unwrap();
+    l.app.sessions[0].conversation = Default::default();
+    let mut messages = vec![
+        serde_json::json!({"id":"prompt","type":"user","text":"Visible café prompt"}),
+        serde_json::json!({"id":"answer","type":"assistant","content":[{"id":"text","type":"text","text":"Visible answer<system-reminder>internal secret</system-reminder>"}]}),
+    ];
+    messages.extend((0..30).map(|i| serde_json::json!({"id":format!("hidden-{i}"),"type":"synthetic","text":"<system-reminder>internal secret</system-reminder>"})));
+    l.app.sessions[0].conversation.history(
+        caelum_core::application::Provider::OpenCode,
+        &messages,
+        false,
+    );
+    let mut rt = Runtime::new(state, app.view, (800.0, 620.0), Env::new(true, 1.0));
+    rt.poll = app.poll;
+    rt.on_key = app.on_key;
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    advance(&mut rt, 0.5);
+    assert!(!rt.elements().iter().any(|e| {
+        e.text
+            .as_deref()
+            .is_some_and(|t| t.contains("internal secret"))
+    }));
+    assert!(element(&rt, "live-entry-0-opencode-prompt").visible[3] > 20.0);
+    click(&mut rt, "copy-response-0-opencode-answer");
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("Visible answer")
+    );
+    fill(&mut rt, "live-draft-0", "/timeline");
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.3);
+    fill(&mut rt, "timeline-search", "internal secret");
+    assert!(!rt.elements().iter().any(|e| {
+        !e.exiting
+            && e.key
+                .as_deref()
+                .is_some_and(|k| k.starts_with("timeline-opencode"))
+    }));
+    fill(&mut rt, "timeline-search", "café");
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.sessions[0]
+            .conversation
+            .history(
+                caelum_core::application::Provider::OpenCode,
+                &[serde_json::json!({"id":"older","type":"user","text":"Earlier history"})],
+                true,
+            )
+    });
+    key(&mut rt, Key::Down, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.5);
+    assert!(rt.state.live.as_ref().unwrap().panels.overlay.is_none());
+    assert!(element(&rt, "live-entry-0-opencode-prompt").visible[3] > 20.0);
+}
+
+#[test]
+fn composer_activity_is_visible_without_sidebar_and_settles_with_reduced_motion() {
+    for reduced in [false, true] {
+        let mut rt = live_runtime_size((800.0, 620.0));
+        rt.reduced_motion = reduced;
+        fill(&mut rt, "live-draft-0", "Start working");
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(element(&rt, "session-activity").visible[3] > 15.0);
+        rt.update(|s, _| {
+            s.sidebar.set_open(false);
+        });
+        advance(&mut rt, 0.4);
+        assert!(element(&rt, "composer-pulse").visible[2] > 200.0);
+        rt.update(|s, _| {
+            let session = &mut s.live.as_mut().unwrap().app.sessions[0];
+            session.submitting = false;
+            session.conversation.settle();
+        });
+        advance(&mut rt, 0.4);
+        assert!(
+            !rt.elements()
+                .iter()
+                .any(|e| !e.exiting && e.key.as_deref() == Some("session-activity"))
+        );
+    }
+}
+
+#[test]
+fn default_patch_previews_are_lazy_and_explicit_collapse_survives_stream_updates() {
+    let app = spec();
+    let mut state = crate::evaluation::design();
+    crate::evaluation::scene(&mut state, "tools");
+    state.live.as_mut().unwrap().expanded.clear();
+    let mut rt = Runtime::new(state, app.view, (1280.0, 1000.0), Env::new(true, 1.0));
+    rt.poll = app.poll;
+    advance(&mut rt, 0.5);
+    let l = rt.state.live.as_ref().unwrap();
+    let id = l.app.sessions[0]
+        .conversation
+        .entries
+        .iter()
+        .find(|e| e.name == "apply_patch")
+        .unwrap()
+        .id
+        .clone();
+    assert!(l.patches.contains_key(&(0, id.clone())));
+    assert!(rt.elements().iter().any(|e| {
+        e.text
+            .as_deref()
+            .is_some_and(|t| t.contains("restore_owned_draft"))
+    }));
+    click(&mut rt, &format!("tool-0-{id}"));
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        let entry = l.app.sessions[0]
+            .conversation
+            .entries
+            .iter_mut()
+            .find(|e| e.id == id)
+            .unwrap();
+        entry.output.push_str("\nAnother output event");
+    });
+    advance(&mut rt, 0.5);
+    assert!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .collapsed_patches
+            .contains(&(0, id.clone()))
+    );
+    assert!(!rt.elements().iter().any(|e| {
+        !e.exiting
+            && e.text
+                .as_deref()
+                .is_some_and(|t| t.contains("restore_owned_draft"))
+    }));
+}
+
+#[test]
+fn compact_review_keeps_code_and_the_targeted_feedback_action_visible() {
+    let app = spec();
+    let mut state = crate::evaluation::design();
+    crate::evaluation::scene(&mut state, "review");
+    let mut rt = Runtime::new(state, app.view, (800.0, 620.0), Env::new(true, 1.0));
+    rt.poll = app.poll;
+    advance(&mut rt, 0.5);
+    let diff = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.path.ends_with("/diff/scroll") && !e.exiting)
+        .unwrap();
+    assert!(
+        diff.visible[3] >= 170.0,
+        "compact code viewport: {:?}",
+        diff.visible
+    );
+    let action = element(&rt, "address-comments");
+    assert!(action.visible[3] >= 30.0);
+    click(&mut rt, "review-nav-toggle");
+    advance(&mut rt, 0.3);
+    fill(&mut rt, "review-file-search", "composer");
+    click(&mut rt, "review-file-src/composer.rs");
+    click(&mut rt, "review-nav-toggle");
+    advance(&mut rt, 0.3);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref().is_some_and(|t| t.contains("MAX_HEIGHT")))
+    );
+}
+
+#[test]
 fn settings_dropdown_escape_dismisses_only_the_foremost_surface() {
     for dark in [false, true] {
         let app = spec();
@@ -695,6 +910,7 @@ fn review_refresh_and_tab_navigation_preserve_exact_patch_reading_position() {
     let mut rt = Runtime::new(state, app.view, (1280.0, 1000.0), Env::new(true, 1.0));
     rt.poll = app.poll;
     advance(&mut rt, 0.3);
+    click(&mut rt, "review-tab-1");
     rt.update(|_, tx| tx.scroll_to_y("diff/scroll", 1000.0));
     advance(&mut rt, 0.3);
     let offset = |rt: &Runtime<Workspace>| {
@@ -707,7 +923,7 @@ fn review_refresh_and_tab_navigation_preserve_exact_patch_reading_position() {
             .iter()
             .find(|e| e.path.ends_with("/diff/scroll/rows") && !e.exiting)
             .unwrap();
-        view.rect[1] - rows.rect[1]
+        rows.scrolled[1] - view.scrolled[1]
     };
     let before = offset(&rt);
     assert!(before > 900.0);
@@ -719,6 +935,40 @@ fn review_refresh_and_tab_navigation_preserve_exact_patch_reading_position() {
     });
     advance(&mut rt, 0.3);
     assert!((offset(&rt) - before).abs() < 1.0);
+    let files = rt
+        .state
+        .live
+        .as_ref()
+        .unwrap()
+        .app
+        .services
+        .reviews
+        .values()
+        .next()
+        .unwrap()
+        .files
+        .clone();
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.services.refresh_review(
+            "/evaluation",
+            "https://github.com/example/evaluation/pull/1",
+        );
+    });
+    advance(&mut rt, 0.3);
+    rt.update(|s, _| {
+        let services = &mut s.live.as_mut().unwrap().app.services;
+        let review = services.reviews.values_mut().next().unwrap();
+        review.files = files.clone();
+        review.files_loaded = true;
+        services.revision += 1;
+    });
+    advance(&mut rt, 0.3);
+    assert!(
+        (offset(&rt) - before).abs() < 1.0,
+        "explicit refresh restores the continuous patch position: {} → {}",
+        before,
+        offset(&rt)
+    );
     rt.update(|s, _| s.live.as_mut().unwrap().panels.review_tab = 0);
     advance(&mut rt, 0.2);
     rt.update(|s, _| s.live.as_mut().unwrap().panels.review_tab = 1);
@@ -726,6 +976,49 @@ fn review_refresh_and_tab_navigation_preserve_exact_patch_reading_position() {
     assert!(
         (offset(&rt) - before).abs() < 1.0,
         "returning to files restores the continuous patch position"
+    );
+    fill(&mut rt, "review-file-search", "src/file-100.rs");
+    click(&mut rt, "review-file-src/file-100.rs");
+    advance(&mut rt, 0.3);
+    let before = offset(&rt);
+    assert!(before > 100_000.0, "later file offset: {before}");
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.services.refresh_review(
+            "/evaluation",
+            "https://github.com/example/evaluation/pull/1",
+        );
+    });
+    advance(&mut rt, 0.2);
+    rt.update(|s, _| {
+        let services = &mut s.live.as_mut().unwrap().app.services;
+        let review = services.reviews.values_mut().next().unwrap();
+        review.files = files[..25].to_vec();
+        review.files_loaded = true;
+        review.next_page = Some(2);
+        services.revision += 1;
+    });
+    advance(&mut rt, 0.3);
+    assert!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .panels
+            .restoring_review()
+            .is_some()
+    );
+    rt.update(|s, _| {
+        let services = &mut s.live.as_mut().unwrap().app.services;
+        let review = services.reviews.values_mut().next().unwrap();
+        review.files = files.clone();
+        review.next_page = None;
+        services.revision += 1;
+    });
+    advance(&mut rt, 0.3);
+    assert!(
+        (offset(&rt) - before).abs() < 1.0,
+        "paginated refresh: {before} → {}",
+        offset(&rt)
     );
 }
 
@@ -906,7 +1199,7 @@ fn closing_local_sessions_and_undo_keep_the_workspace_editable() {
         rt.paste("Independent background draft");
         click(&mut rt, "live-session-0");
         if dialog {
-            click(&mut rt, "session-options");
+            click(&mut rt, "session-actions-0");
             click(&mut rt, "archive-session");
             advance(&mut rt, 0.4);
         } else {
@@ -942,11 +1235,10 @@ fn closing_local_sessions_and_undo_keep_the_workspace_editable() {
                 .ends_with(" after undo")
         );
 
-        click(&mut rt, "session-options");
         click(&mut rt, "toggle-archived");
         advance(&mut rt, 0.4);
         click(&mut rt, "live-session-0");
-        click(&mut rt, "session-options");
+        click(&mut rt, "session-actions-0");
         click(&mut rt, "archive-session");
         let live = rt.state.live.as_ref().unwrap();
         assert!(!live.panels.archived);
@@ -1045,7 +1337,7 @@ fn closing_provider_sessions_handles_completion_failure_and_selection_changes() 
         );
 
         // The selected provider session also creates a ready-to-type replacement.
-        click(&mut rt, "session-options");
+        click(&mut rt, "session-actions-0");
         click(&mut rt, "archive-session");
         let request = rt
             .state
@@ -1530,7 +1822,7 @@ fn compact_live_inspector_and_modals_preserve_the_composer_and_focus() {
     }
     click(&mut rt, "close-inspector");
     advance(&mut rt, 0.5);
-    for screen in ["nav-worktrees", "nav-settings", "session-options"] {
+    for screen in ["nav-worktrees", "nav-settings", "session-actions-0"] {
         click(&mut rt, screen);
         let dialog = element(&rt, "workspace-dialog");
         assert!(
@@ -1759,6 +2051,7 @@ fn large_review_files_are_windowed_while_streams_continue() {
     let mut rt = Runtime::new(state, app.view, (1280.0, 1000.0), Env::new(true, 1.0));
     rt.poll = app.poll;
     advance(&mut rt, 0.5);
+    click(&mut rt, "review-tab-1");
     let count = rt
         .elements()
         .iter()

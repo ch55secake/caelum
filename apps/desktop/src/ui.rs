@@ -3,13 +3,17 @@ use rune::{El, Icon, TextStyle, col, icon, row, text};
 use rune_kit::{Kit, shell::SidebarRow};
 
 /// App-sized controls, including the same keyboard and disabled treatment everywhere.
-pub struct Button(rune_kit::Button);
+pub struct Button(rune_kit::Button, rune_kit::ButtonVariant);
 impl Button {
     pub fn new(label: impl Into<String>) -> Self {
-        Self(rune_kit::Button::new(label).control_size(rune_kit::ControlSize::Large))
+        Self(
+            rune_kit::Button::new(label).control_size(rune_kit::ControlSize::Large),
+            rune_kit::ButtonVariant::Neutral,
+        )
     }
     pub fn variant(mut self, value: rune_kit::ButtonVariant) -> Self {
         self.0 = self.0.variant(value);
+        self.1 = value;
         self
     }
     pub fn disabled(mut self, value: bool) -> Self {
@@ -29,9 +33,27 @@ impl Button {
         self
     }
     pub fn build(self, k: &Kit) -> El {
+        use rune_kit::ButtonVariant as V;
+        let mut skin = k.clone();
+        skin.ty.ui = TextStyle::new(12.0, 450.0);
+        skin.ty.ui_medium = TextStyle::new(12.0, 550.0);
+        skin.elevation.button_neutral.clear();
+        skin.elevation.button_contrast.clear();
+        skin.c.bg_button_neutral = k.c.layer_02;
+        skin.c.bg_contrast = k.c.bg_accent;
+        skin.c.text_contrast = k.c.submit_fg;
+        let border = match self.1 {
+            V::Neutral | V::Outline | V::Loading => k.c.border_strong,
+            V::Danger => k.alpha(k.c.danger.fg, 0.28),
+            V::Warning => k.alpha(k.c.warning.fg, 0.28),
+            _ => rune::Color::TRANSPARENT,
+        };
         self.0
-            .build(k)
-            .radius(7.0)
+            .build(&skin)
+            .h(32.0)
+            .px(12.0)
+            .radius(8.0)
+            .border(1.0, border)
             .focus_ring(1.5, 1.0, k.c.border_focus)
             .self_start()
     }
@@ -258,6 +280,21 @@ pub static ATTACH: Icon = Icon {
     view: 16.0,
     body: r#"<path d="m5 9 5-5a2 2 0 0 1 3 3l-6 6a3.5 3.5 0 0 1-5-5l6-6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>"#,
 };
+pub static ARCHIVE: Icon = Icon {
+    name: "archive",
+    view: 16.0,
+    body: r#"<path d="M2 2h12v3H2zM3 5v9h10V5M6 8h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>"#,
+};
+pub static MORE: Icon = Icon {
+    name: "more",
+    view: 16.0,
+    body: r#"<circle cx="3" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="13" cy="8" r="1" fill="currentColor"/>"#,
+};
+pub static BACK: Icon = Icon {
+    name: "back",
+    view: 16.0,
+    body: r#"<path d="m10 3-5 5 5 5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
 
 pub fn provider_name(provider: caelum_core::application::Provider) -> &'static str {
     match provider {
@@ -358,8 +395,41 @@ pub fn user_message(message: &str, k: &Kit) -> El {
 }
 
 pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f32, k: &Kit) -> El {
+    composer_activity(input, controls, context, focused, padding, k, None)
+}
+
+pub fn composer_activity(
+    input: El,
+    controls: El,
+    context: El,
+    focused: bool,
+    padding: f32,
+    k: &Kit,
+    activity: Option<&caelum_core::application::presentation::Activity>,
+) -> El {
+    use caelum_core::application::presentation::ActivityKind;
+    let outline = activity.map(|a| {
+        let waiting = matches!(a.kind, ActivityKind::Background | ActivityKind::Input);
+        rune::el()
+            .key("composer-pulse")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .radius(14.0)
+            .border(1.5, k.c.text_accent)
+            .a11y_hidden()
+            .looping(rune::LoopSpec::opacity(
+                if waiting { 4.5 } else { 2.8 },
+                0.0,
+                if waiting { 0.25 } else { 0.3 },
+                if waiting { 0.6 } else { 0.85 },
+            ))
+    });
     col().w_full().max_w(840.0).px(padding).pb(24.0).child(
         col()
+            .key("message-composer")
+            .role("form")
+            .label("Message composer")
             .w_full()
             .padding(14.0)
             .radius(14.0)
@@ -379,7 +449,8 @@ pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f3
                     .min_h(56.0)
                     .max_h(180.0),
             )
-            .child(controls.min_h(32.0).mt(8.0)),
+            .child(controls.min_h(32.0).mt(8.0))
+            .children(outline),
     )
 }
 

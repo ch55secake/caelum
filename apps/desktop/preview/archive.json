@@ -1,11 +1,11 @@
 [
-  { "t": 0.4, "type": "tap", "key": "session-options" },
+  { "t": 0.4, "type": "tap", "key": "session-actions-0" },
   { "t": 0.8, "type": "tap", "key": "archive-session" },
   { "t": 1.4, "paste": "The replacement session is editable." },
   { "t": 2.0, "type": "tap", "key": "undo-archive" },
   { "t": 2.6, "paste": " The restored draft is editable too." },
   { "t": 3.2, "type": "tap", "key": "live-session-3" },
-  { "t": 3.8, "type": "tap", "key": "session-options" },
+  { "t": 3.8, "type": "tap", "key": "session-actions-3" },
   { "t": 4.2, "type": "tap", "key": "archive-session" },
   { "t": 4.8, "paste": "Closing another session still works." },
   { "t": 5.5, "type": "mark", "name": "end" }

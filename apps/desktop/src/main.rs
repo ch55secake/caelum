@@ -461,6 +461,16 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
                 ),
         )
         .trailing(
+            quiet_button(&ui::SETTINGS, "Settings · ⌘,")
+                .on_press(|s: &mut Workspace| {
+                    if s.live.is_some() {
+                        panels::show(s, panels::Screen::Settings);
+                    }
+                })
+                .build(&k)
+                .key("nav-settings"),
+        )
+        .trailing(
             quiet_button(
                 &APPEARANCE,
                 if dark {
@@ -531,6 +541,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     .build(&shell_kit);
     if s.live.is_some() {
         panels::overlays(s, &k, &mut layers);
+        models::overlay(s, &k, &mut layers);
     }
     col()
         .w_full()
@@ -541,6 +552,9 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if s.live.as_ref().is_some_and(|l| l.models.is_open()) {
+        return models::key(s, ev, tx);
+    }
     if s.live.is_some() && live::live(s).panels.overlay.is_some() {
         return panels::on_key(s, ev, tx);
     }
@@ -605,6 +619,14 @@ fn spec() -> AppSpec<Workspace> {
             ("timeline", |s| evaluation::scene(s, "timeline")),
             ("usage", |s| evaluation::scene(s, "usage")),
             ("stats", |s| evaluation::scene(s, "stats")),
+            ("stats-empty", |s| evaluation::scene(s, "stats-empty")),
+            ("stats-loading", |s| evaluation::scene(s, "stats-loading")),
+            ("stats-error", |s| evaluation::scene(s, "stats-error")),
+            ("timeline-empty", |s| evaluation::scene(s, "timeline-empty")),
+            ("working", |s| evaluation::scene(s, "working")),
+            ("thinking", |s| evaluation::scene(s, "thinking")),
+            ("retrying", |s| evaluation::scene(s, "retrying")),
+            ("stopping", |s| evaluation::scene(s, "stopping")),
             ("commands", |s| evaluation::scene(s, "commands")),
             ("shells", |s| evaluation::scene(s, "shells")),
             ("empty", |s| evaluation::scene(s, "empty")),

@@ -69,6 +69,7 @@ pub struct Conversation {
     pub activity: u64,
     pub entries: Vec<Entry>,
     pub working: bool,
+    pub retrying: bool,
     pub used_tokens: Option<u64>,
     pub context_window: Option<u64>,
     pub usage_model: Option<String>,
@@ -80,6 +81,7 @@ pub struct Conversation {
 impl Conversation {
     pub fn optimistic(&mut self, id: String, prompt: String) {
         let mut entry = Entry::new(id, EntryKind::User, prompt, true);
+        entry.started_at = Some(super::presentation::now());
         entry.optimistic = true;
         self.entries.push(entry);
         self.working = true;
@@ -117,10 +119,25 @@ impl Conversation {
                             turn["status"].as_str().or(turn["status"]["type"].as_str())
                                 != Some("inProgress"),
                         )
+                        .map(|mut entry| {
+                            entry.started_at = entry.started_at.or(turn["createdAt"]
+                                .as_u64()
+                                .map(|n| if n < 10_000_000_000 { n * 1000 } else { n }));
+                            entry
+                        })
                     })
                 })
                 .collect(),
-            Provider::OpenCode => data.iter().flat_map(opencode_message).collect(),
+            Provider::OpenCode => data
+                .iter()
+                .flat_map(|message| {
+                    let at = message["time"]["created"].as_u64();
+                    opencode_message(message).into_iter().map(move |mut entry| {
+                        entry.started_at = entry.started_at.or(at);
+                        entry
+                    })
+                })
+                .collect(),
         };
         self.merge(entries, older);
     }
@@ -220,6 +237,7 @@ impl Conversation {
 
     pub fn settle(&mut self) {
         self.working = false;
+        self.retrying = false;
         for entry in &mut self.entries {
             if !entry.background {
                 entry.complete = true;
@@ -231,6 +249,19 @@ impl Conversation {
     }
 
     pub fn apply(&mut self, provider: Provider, method: &str, data: &Value) {
+        if method == "session.retry.scheduled"
+            || (method == "session.status" && data["status"]["type"] == "retry")
+        {
+            self.retrying = true;
+        } else if method.ends_with("delta")
+            || method.ends_with("Delta")
+            || method.ends_with(".started")
+            || method == "item/started"
+            || method == "turn/started"
+            || (method == "session.status" && data["status"]["type"] == "busy")
+        {
+            self.retrying = false;
+        }
         match provider {
             Provider::Codex => self.codex(method, data),
             Provider::OpenCode => self.opencode(method, data),

@@ -37,7 +37,11 @@ pub fn token(s: &Workspace) -> Option<Completion> {
     let l = live(s);
     let index = l.app.selected?;
     let editor = editor(s)?;
-    if !editor.focused || editor.preedit.is_some() || l.panels.overlay.is_some() {
+    if !editor.focused
+        || editor.preedit.is_some()
+        || l.panels.overlay.is_some()
+        || l.models.is_open()
+    {
         return None;
     }
     if l.completion

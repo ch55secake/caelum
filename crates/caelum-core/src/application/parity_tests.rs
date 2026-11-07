@@ -443,6 +443,125 @@ fn rendered_media_hides_reminders_but_preserves_literal_code_and_unicode() {
 }
 
 #[test]
+fn reminder_fragments_never_enter_presented_rows_or_copied_text() {
+    let mut c = Conversation::default();
+    for ch in "<system-reminder>secret ![private](private.png)</system-reminder>".chars() {
+        c.apply(
+            Provider::Codex,
+            "item/agentMessage/delta",
+            &json!({"itemId":"answer","delta":ch.to_string()}),
+        );
+        let entry = &c.entries[0];
+        assert_eq!(presentation::entry_text(entry), "");
+        assert!(!presentation::entry_visible(entry));
+        assert!(presentation::markdown_media(&entry.text).is_empty());
+    }
+    c.apply(
+        Provider::Codex,
+        "item/agentMessage/delta",
+        &json!({"itemId":"answer","delta":"Visible café"}),
+    );
+    assert_eq!(presentation::entry_text(&c.entries[0]), "Visible café");
+    assert!(
+        c.entries[0].text.contains("secret"),
+        "presentation must retain provider records"
+    );
+    c.history(Provider::OpenCode, &[
+        json!({"id":"synthetic","type":"synthetic","text":"<system-reminder>secret status</system-reminder>"}),
+        json!({"id":"user","type":"user","text":"```xml\n<system-reminder>literal</system-reminder>\n```\n    <system-reminder>indented code</system-reminder>\n`<system-reminder>inline</system-reminder>`"}),
+    ], false);
+    let literal = c
+        .entries
+        .iter()
+        .find(|e| e.kind == EntryKind::User)
+        .unwrap();
+    assert!(presentation::entry_text(literal).contains("indented code"));
+    assert!(presentation::entry_text(literal).contains("literal"));
+    assert!(presentation::entry_text(literal).contains("inline"));
+    assert!(c
+        .entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Status)
+        .all(|e| !presentation::entry_visible(e)));
+}
+
+#[test]
+fn session_activity_survives_gaps_and_obeys_waiting_retry_and_terminal_states() {
+    use presentation::{activity, ActivityKind as A};
+    let mut app = workspace();
+    assert!(app.send(1, "Work on this".into()));
+    assert_eq!(activity(&app.sessions[1], false).unwrap().kind, A::Working);
+    app.sessions[1].submitting = false;
+    app.sessions[1].conversation.apply(
+        Provider::Codex,
+        "item/reasoning/summaryTextDelta",
+        &json!({"itemId":"thought","delta":"Think"}),
+    );
+    assert_eq!(activity(&app.sessions[1], false).unwrap().kind, A::Thinking);
+    app.sessions[1].conversation.apply(
+        Provider::Codex,
+        "item/completed",
+        &json!({"item":{"id":"thought","type":"reasoning","summary":[{"text":"Think"}]}}),
+    );
+    assert_eq!(activity(&app.sessions[1], false).unwrap().kind, A::Working);
+    app.sessions[1]
+        .conversation
+        .apply(Provider::OpenCode, "session.retry.scheduled", &json!({}));
+    assert_eq!(activity(&app.sessions[1], false).unwrap().kind, A::Retrying);
+    app.sessions[1].conversation.apply(
+        Provider::Codex,
+        "item/started",
+        &json!({"item":{"id":"tool","type":"commandExecution","command":"cargo test"}}),
+    );
+    assert_eq!(activity(&app.sessions[1], false).unwrap().kind, A::Tool);
+    assert_eq!(activity(&app.sessions[1], true).unwrap().kind, A::Input);
+    app.cancel(1);
+    assert_eq!(activity(&app.sessions[1], false).unwrap().kind, A::Stopping);
+    app.sessions[1].stopping = false;
+    app.sessions[1].conversation.settle();
+    assert!(activity(&app.sessions[1], false).is_none());
+    app.sessions[1].shells.push(
+        serde_json::from_value(json!({"id":"shell","command":"cargo test","startedAt":1})).unwrap(),
+    );
+    assert_eq!(
+        activity(&app.sessions[1], false).unwrap().kind,
+        A::Background
+    );
+    app.sessions[1].disconnected = true;
+    assert!(activity(&app.sessions[1], false).is_none());
+    assert!(activity(&app.sessions[0], false).is_none());
+}
+
+#[test]
+fn addressing_review_feedback_submits_to_the_target_and_preserves_its_draft() {
+    let mut app = workspace();
+    let url = "https://github.com/example/project/pull/1";
+    let r = app
+        .services
+        .reviews
+        .entry(("/project".into(), url.into()))
+        .or_default();
+    r.details = Some(serde_json::from_value(json!({"number":1,"title":"Review","url":url,"isDraft":false,"body":"","state":"OPEN","author":null,"baseRefName":"main","headRefName":"feature","headRefOid":"abc","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","additions":1,"deletions":0,"changedFiles":1,"reviewDecision":null,"statusCheckRollup":[]})).unwrap());
+    r.discussion.push(serde_json::from_value(json!({"id":"comment","body":"Preserve the newer draft.","url":url,"author":null,"createdAt":"2026-11-07","state":null,"diffHunk":null})).unwrap());
+    r.selected_comments.insert("comment".into());
+    app.sessions[1].draft = "Independent draft".into();
+    app.sessions[1].attachments.push(Attachment::new(
+        "draft.rs".into(),
+        "not feedback".into(),
+        None,
+        false,
+    ));
+    assert!(!app.address_review(1, "/other", url));
+    assert!(app.address_review(1, "/project", url));
+    let requests = app.commands();
+    assert!(requests.iter().any(|(_, c)| matches!(c, Command::Send(key, prompt, _) if key.id == "session-1" && prompt.contains("Preserve the newer draft.") && !prompt.contains("not feedback"))));
+    assert_eq!(app.selected, Some(0));
+    assert_eq!(app.sessions[1].draft, "Independent draft");
+    assert_eq!(app.sessions[1].attachments.len(), 1);
+    assert!(!app.address_review(1, "/project", url));
+}
+
+#[test]
 fn tool_timing_is_frozen_when_complete_and_usage_remains_attributed_to_its_model() {
     let mut c = Conversation::default();
     c.apply(Provider::Codex,"item/started",&json!({"_created":1000,"item":{"id":"run","type":"commandExecution","command":"cargo test"}}));

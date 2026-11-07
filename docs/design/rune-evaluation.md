@@ -1,5 +1,65 @@
 # Native desktop evaluation record
 
+## PR workspace and in-session follow-up — 7 November 2026
+
+This follow-up continues in #95 above #94, using the final TypeScript tree at
+`82ca39d` and its historical captures as the workflow reference.
+
+- **207 Rust tests passed**: 163 core, 30 native, 6 protocol and 8 CLI.
+  `nix develop -c make check` also passed formatting, warnings-denied workspace
+  Clippy, **17 release + 2 profile Python checks**.
+- PR review restores **Overview / Files changed**, description/discussion,
+  grouped checks and merge readiness, searchable/collapsible file navigation,
+  inline feedback, thread navigation and collapsed resolved threads. The pinned
+  selected-comment action names its captured destination and submits a new turn
+  while preserving that session’s independent draft and attachments.
+- Exact-position coverage now includes an explicit refresh that clears/reloads
+  files, a multi-page refresh beyond file 100, and tab navigation. Position capture
+  includes the virtualized prefix; restoration survives the remounted viewport’s
+  first measurements.
+- Models open in an anchored, viewport-aware popover with search, grouped
+  favourites/providers, unavailable models, keyboard navigation, modal focus,
+  outside-click/Escape dismissal, focus return and saved-default controls.
+- Settings is in the top toolbar; archive filtering is beside Sessions and actions
+  are on the selected row. Shared buttons use consistent 32-point styling.
+- Statistics has populated summary cards, an activity chart, token bars and model
+  costs. Timeline has date groups, excerpts, Unicode search highlighting and
+  stable-ID keyboard jumps, including after older history is inserted.
+- Patches open by default with lazy visible-document preparation, bounded cache,
+  retained collapse, preview-size and tool-detail controls. Reminder-only rows
+  are removed before virtualization; displayed/copied responses, reasoning,
+  statuses, timeline and side answers share filtering while literal code remains.
+- Composer pulse and active-agent animation use session state through output gaps,
+  tools, retry, input, background waiting and stopping. Tests cover settlement,
+  hidden sidebar and reduced motion, alongside existing independent editors,
+  captured approvals, cancellation, queues and six concurrent streams.
+- Generated **236 captures** (47 scenes and 12 pointer/keyboard states × two themes
+  × two sizes), inspected representative surfaces and updated **26 checked-in
+  native images**. Populated fixtures include 48 prompts, activity/model statistics
+  and a 12-file PR with inline and overview discussion. Capture logs reported no
+  missing targets or zero-height scroll viewports. Statistics errors show a retryable
+  notice rather than a misleading empty-history message.
+- Headless archive, interaction and evaluation replays completed with no element-tree
+  warnings. The archive replacement and concurrent-session editor retained their
+  expected drafts; the submitted fixture prompt remained visible. These are scripted
+  runtime results, not native OS-input evidence.
+- A compact native working-scene run reported **360 display-link presents** and
+  zero acquisition failures. The timing report used **357 presented samples / 3
+  skipped**, with interval p50/p95 **8.33/8.33 ms**, maximum **16.67 ms**, and zero
+  bunched or missed intervals. This records rendering and animation pacing; the
+  replay-mode boundary described below still applies.
+- Real OpenCode discovery/history passed with **3 sessions / 159 entries**; real
+  workspace/GitHub reads loaded **30 changed files** and all feedback categories.
+  The isolated background-shell lifecycle smoke passed. These checks use isolated
+  application state and do not submit authenticated model turns or mutate PRs.
+- Apple Silicon app/DMG/CLI packaging passed signing, architecture, dependency,
+  disk-image verification and mounted-bundle checks, plus cold/warm project URLs,
+  hidden-app reopening, draft restoration and graceful quit.
+
+Visual and real-workflow acceptance remains distinct from these automated checks.
+The two PRs remain unmerged while the documented provider, native-menu and manual
+accessibility acceptance gaps remain open.
+
 ## Whole-workspace polish — 7 November 2026
 
 The follow-up remains in #95, stacked on #94. It uses the same historical

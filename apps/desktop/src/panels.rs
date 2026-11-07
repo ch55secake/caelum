@@ -31,7 +31,6 @@ pub enum Screen {
     Timeline,
     Usage,
     Stats,
-    Models,
     Image,
     Launcher,
 }
@@ -53,6 +52,9 @@ pub struct Panels {
     pub launch_provider: caelum_core::application::Provider,
     documents: std::collections::BTreeMap<(String, String), crate::code_view::Document>,
     pub review_tab: usize,
+    review_nav: Option<bool>,
+    review_search: TextEdit,
+    merge_method: usize,
     expanded_threads: HashSet<String>,
     search: TextEdit,
     find: TextEdit,
@@ -72,6 +74,7 @@ pub struct Panels {
     pending_scroll: Option<(String, [f32; 2])>,
     review_positions: std::collections::HashMap<(String, String), crate::code_view::Position>,
     active_review: Option<(String, String)>,
+    review_restore: Option<(Target, [f32; 2])>,
     change_diff: DiffState,
     change_hash: u64,
     change_positions: std::collections::HashMap<Target, crate::code_view::Position>,
@@ -104,7 +107,10 @@ impl Default for Panels {
             archived: false,
             launch_provider: Default::default(),
             documents: Default::default(),
-            review_tab: 1,
+            review_tab: 0,
+            review_nav: None,
+            review_search: TextEdit::new(""),
+            merge_method: 0,
             expanded_threads: Default::default(),
             search: TextEdit::new(""),
             find: TextEdit::new(""),
@@ -124,6 +130,7 @@ impl Default for Panels {
             pending_scroll: None,
             review_positions: Default::default(),
             active_review: None,
+            review_restore: None,
             change_diff: DiffState::new(diff::parse("")),
             change_hash: 0,
             change_positions: Default::default(),
@@ -151,7 +158,9 @@ impl Panels {
     }
     pub fn reveal_line(&mut self, tx: &mut Tx) {
         if let Some((key, offset)) = self.pending_scroll.take() {
-            tx.scroll_to(key, offset[0], offset[1]);
+            // Restoration must be held through the first virtual-row measurements
+            // after a surface remount, rather than gliding from an empty viewport.
+            tx.scroll_to_instant(key, offset[0], offset[1]);
         }
         if let Some((project, path, line)) = &self.pending_line
             && self.active_document.as_ref() == Some(&(project.clone(), path.clone()))
@@ -264,7 +273,17 @@ impl Panels {
                 (&file.path, &file.patch, &file.previous_path, &file.status).hash(&mut hash);
             }
             let revision = hash.finish();
-            if self.diff_hash != revision {
+            if !review.files_loaded
+                && !self.diff.files().is_empty()
+                && self.review_restore.is_none()
+            {
+                self.review_restore = self
+                    .review_positions
+                    .get(key)
+                    .and_then(|p| p.get())
+                    .map(|position| (key.clone(), position));
+            }
+            if review.files_loaded && self.diff_hash != revision {
                 crate::code_view::replace_files(
                     &mut self.diff,
                     crate::code_view::review_files(&review.files),
@@ -275,6 +294,20 @@ impl Panels {
                     self.review_file = review.files.first().map(|f| f.path.clone());
                 }
                 changed = true;
+            }
+            if review.files_loaded
+                && self
+                    .review_restore
+                    .as_ref()
+                    .is_some_and(|(owner, _)| owner == key)
+                && (review.next_page.is_none()
+                    || self
+                        .review_file
+                        .as_ref()
+                        .is_none_or(|path| review.files.iter().any(|f| &f.path == path)))
+            {
+                let (_, offset) = self.review_restore.take().unwrap();
+                self.pending_scroll = Some(("diff/scroll".into(), offset));
             }
             let mut hash = std::collections::hash_map::DefaultHasher::new();
             for thread in &review.threads {
@@ -315,6 +348,11 @@ impl Panels {
             }
         }
         changed
+    }
+
+    pub fn restoring_review(&self) -> Option<&Target> {
+        let (key, _) = self.review_restore.as_ref()?;
+        (self.screen == Screen::Review && self.review.as_ref() == Some(key)).then_some(key)
     }
 }
 
@@ -538,6 +576,7 @@ pub fn open_review(s: &mut Workspace, project: String, url: String) {
     let live = live_mut(s);
     let key = (project.clone(), url.clone());
     if live.panels.review.as_ref() != Some(&key) {
+        live.panels.review_restore = None;
         if let Some(previous) = live.panels.review.take() {
             live.panels.review_cache.insert(
                 previous,
@@ -562,12 +601,9 @@ pub fn open_review(s: &mut Workspace, project: String, url: String) {
 
 pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if live(s).panels.overlay.is_some() {
-        if live(s).panels.overlay == Some(Screen::Models) && matches!(ev.key, Key::Up | Key::Down) {
-            return crate::models::key(s, ev, tx);
-        }
-        if live(s).panels.overlay == Some(Screen::Models) && ev.key == Key::Escape {
-            crate::models::close(s);
-            return true;
+        if live(s).panels.overlay == Some(Screen::Timeline) && matches!(ev.key, Key::Up | Key::Down)
+        {
+            return crate::commands::timeline_key(s, ev, tx);
         }
         if ev.key == Key::Escape {
             live_mut(s).panels.overlay = None;
@@ -626,7 +662,17 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
                 .w_full()
                 .center_y()
                 .justify_between()
-                .child(ui::caption("Pull request", k))
+                .child(ui::caption(
+                    live(s)
+                        .panels
+                        .review
+                        .as_ref()
+                        .map(|(p, _)| {
+                            format!("{} / Pull requests", p.rsplit('/').next().unwrap_or(p))
+                        })
+                        .unwrap_or_else(|| "Pull requests".into()),
+                    k,
+                ))
                 .child(
                     Button::new("Back to session")
                         .variant(ButtonVariant::GhostMuted)
@@ -717,7 +763,7 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         ),
         Screen::Session => (
             "Session actions",
-            "Session history, models and provider defaults.",
+            "Manage this session’s history.",
             scroll(crate::live::session_actions(s, k))
                 .key("session-actions-scroll")
                 .scroll_bar(k),
@@ -737,11 +783,6 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             "Tokens, cost and activity across recorded history.",
             crate::commands::view(s, k, screen),
         ),
-        Screen::Models => (
-            "Models",
-            "Choose a model for the next message.",
-            crate::models::view(s, k),
-        ),
         Screen::Image => (
             "Image preview",
             "Fit, zoom and scroll the image.",
@@ -757,8 +798,9 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     let (width, height) = match screen {
         Screen::Settings => (760.0, 460.0),
         Screen::Launcher => (520.0, 310.0),
-        Screen::Session => (520.0, 390.0),
-        Screen::Models => (640.0, 420.0),
+        Screen::Session => (480.0, 210.0),
+        Screen::Timeline => (580.0, 344.0),
+        Screen::Stats => (720.0, 620.0),
         Screen::Image => (760.0, 480.0),
         _ => (660.0, 420.0),
     };
@@ -767,15 +809,12 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     Dialog::new("workspace", title)
         .description(description)
         .open(true)
+        .click_outside(false)
         .width(width)
         .fit()
         .on_close(|s: &mut Workspace| {
-            if live(s).panels.overlay == Some(Screen::Models) {
-                crate::models::close(s);
-            } else {
-                live_mut(s).panels.overlay = None;
-                live_mut(s).focus();
-            }
+            live_mut(s).panels.overlay = None;
+            live_mut(s).focus();
         })
         .child(
             col()
@@ -1482,8 +1521,12 @@ fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
             .on_visible_file(move |s, index| {
                 if review {
                     let l = s.live.as_mut().unwrap();
-                    l.panels.review_file =
-                        l.panels.diff.files().get(index).map(|f| f.path().into());
+                    // A partial refresh page must not replace the file we are
+                    // restoring with its temporary first visible file.
+                    if l.panels.review_restore.is_none() {
+                        l.panels.review_file =
+                            l.panels.diff.files().get(index).map(|f| f.path().into());
+                    }
                     if index + 3 >= l.panels.diff.files().len()
                         && let Some((project, url)) = l.panels.review.clone()
                         && let Some(r) = l.app.services.reviews.get(&(project.clone(), url.clone()))
@@ -2002,90 +2045,164 @@ fn review(s: &Workspace, k: &Kit) -> El {
     };
     let head = &details.head_ref_oid;
     let mut tabs = row().w_full().gap(6.0);
-    for (tab, name) in ["Overview", "Files", "Discussion"].into_iter().enumerate() {
+    for (tab, name) in ["Overview", "Files changed"].into_iter().enumerate() {
         tabs = tabs.child(
             ui::tab(name, live(s).panels.review_tab == tab, k)
                 .on_press(move |s: &mut Workspace| live_mut(s).panels.review_tab = tab)
                 .key(format!("review-tab-{tab}")),
         );
     }
-    content = content.child(tabs);
     let link = url.clone();
     let refresh_project = project.clone();
     let refresh_url = url.clone();
     content = content
-        .child(ui::section(
-            &format!(
-                "#{} {}{}",
-                details.pull_request.number,
-                details.pull_request.title,
-                if details.pull_request.is_draft {
-                    " · Draft"
-                } else {
-                    ""
-                }
-            ),
-            &format!(
-                "{} → {} · {} · +{} −{} · {} files",
-                details.head_ref_name,
-                details.pull_request.base_ref_name,
-                details.state,
-                details.additions,
-                details.deletions,
-                details.changed_files
-            ),
-            k,
-        ))
         .child(
             row()
-                .gap(6.0)
+                .w_full()
+                .gap(8.0)
+                .center_y()
                 .child(
-                    Button::new("GitHub")
-                        .variant(ButtonVariant::Outline)
+                    ui::caption(
+                        if details.pull_request.is_draft {
+                            "Draft"
+                        } else {
+                            &details.state
+                        },
+                        k,
+                    )
+                    .color(k.c.text_accent)
+                    .px(8.0)
+                    .py(4.0)
+                    .radius(6.0)
+                    .fill(k.alpha(k.c.text_accent, 0.09)),
+                )
+                .child(ui::caption(
+                    format!(
+                        "#{} · opened by {}",
+                        details.pull_request.number,
+                        details
+                            .author
+                            .as_ref()
+                            .map(|a| a.login.as_str())
+                            .unwrap_or("Unknown")
+                    ),
+                    k,
+                ))
+                .child(rune::el().grow(1.0))
+                .child(
+                    Button::new("GitHub ↗")
+                        .variant(ButtonVariant::GhostMuted)
                         .on_press_tx(move |_: &mut Workspace, tx| {
                             let _ = tx.open_url(&link);
                         })
                         .build(k),
                 )
                 .child(
-                    Button::new("Refresh review")
-                        .variant(ButtonVariant::Outline)
+                    quiet_button(&ui::REFRESH, "Refresh review")
                         .on_press(move |s: &mut Workspace| {
-                            let live = live_mut(s);
-                            live.app
+                            let l = live_mut(s);
+                            l.app
                                 .services
                                 .refresh_review(&refresh_project, &refresh_url);
-                            live.app.task(Task::Details {
+                            l.app.task(Task::Details {
                                 project: refresh_project.clone(),
                                 url: refresh_url.clone(),
                             });
                         })
                         .build(k),
                 ),
-        );
+        )
+        .child(
+            text(&details.pull_request.title)
+                .font(rune::TextStyle::new(22.0, 550.0))
+                .color(k.c.text_base)
+                .wrap(),
+        )
+        .child(
+            row()
+                .w_full()
+                .gap(6.0)
+                .center_y()
+                .child(
+                    text(&details.head_ref_name)
+                        .font(k.ty.mono)
+                        .color(k.c.text_accent)
+                        .truncate(),
+                )
+                .child(ui::caption("→", k))
+                .child(
+                    text(&details.pull_request.base_ref_name)
+                        .font(k.ty.mono)
+                        .color(k.c.text_muted)
+                        .truncate(),
+                )
+                .child(rune::el().grow(1.0))
+                .child(ui::caption(
+                    format!("+{}  −{}", details.additions, details.deletions),
+                    k,
+                )),
+        )
+        .child(tabs.child(ui::caption(format!("{} files", details.changed_files), k).self_center()))
+        .child(ui::divider(k));
+    let header = content;
     if live(s).panels.review_tab == 1 {
-        return content
+        return header
             .grow(1.0)
             .min_h(0.0)
-            .child(review_files_view(s, k, project, url, review));
+            .child(review_files_view(s, k, project, url, review))
+            .child(review_actions(s, k, project, url, review));
     }
+    let mut content = col().w_full().gap(16.0);
     if live(s).panels.review_tab == 0 {
         content = content.child(
-            Markdown::new(&details.body)
-                .selectable(true)
-                .render(&theme::markdown(k)),
+            ui::card(k)
+                .child(
+                    text("Description")
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_base),
+                )
+                .child(
+                    Markdown::new(if details.body.trim().is_empty() {
+                        "No description provided."
+                    } else {
+                        &details.body
+                    })
+                    .selectable(true)
+                    .render(&theme::markdown(k)),
+                ),
         );
     }
+    let mut checks = ui::card(k).gap(8.0).child(
+        text("Checks & merge readiness")
+            .font(k.ty.ui_medium)
+            .color(k.c.text_base),
+    );
     if details.status_check_rollup.is_none() {
-        content = content.child(ui::skeleton("Loading checks", 3, k));
+        checks = checks.child(ui::skeleton("Loading checks", 3, k));
     }
-    for check in details.status_check_rollup.iter().flatten() {
-        let check = caelum_core::application::presentation::Check::new(
-            check,
-            caelum_core::application::presentation::now(),
-        );
+    use caelum_core::application::presentation::{Check, Outcome};
+    let group = |outcome| match outcome {
+        Outcome::Failure | Outcome::Interrupted => (0, "Needs attention"),
+        Outcome::Running => (1, "In progress"),
+        Outcome::Success => (2, "Passed"),
+        _ => (3, "Other checks"),
+    };
+    let mut reported: Vec<_> = details
+        .status_check_rollup
+        .iter()
+        .flatten()
+        .map(|check| Check::new(check, caelum_core::application::presentation::now()))
+        .collect();
+    reported.sort_by_key(|check| group(check.outcome).0);
+    let mut previous = None;
+    for check in reported {
+        let (i, name) = group(check.outcome);
+        if previous != Some(i) {
+            checks = checks.child(ui::caption(name, k).pt(6.0));
+            previous = Some(i);
+        }
         let url = check.url.map(str::to_owned);
-        content = content.child(
+        checks = checks.child(
             row()
                 .w_full()
                 .gap(8.0)
@@ -2107,6 +2224,33 @@ fn review(s: &Workspace, k: &Kit) -> El {
                 .child(ui::caption(check.timing, k)),
         );
     }
+    if details
+        .status_check_rollup
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+    {
+        checks = checks.child(ui::caption("No checks configured", k));
+    }
+    checks = checks.child(ui::divider(k)).child(ui::caption(
+        format!(
+            "{} · {}",
+            match details.review_decision.as_deref() {
+                Some("APPROVED") => "Review approved",
+                Some("CHANGES_REQUESTED") => "Changes requested",
+                Some("REVIEW_REQUIRED") => "Review required",
+                _ => "No review decision",
+            },
+            match details.merge_state_status.as_str() {
+                "CLEAN" => "Ready to merge",
+                "BEHIND" => "Branch is behind the base",
+                "DIRTY" => "Resolve conflicts before merging",
+                "BLOCKED" => "Merge requirements are not met",
+                "UNSTABLE" => "Some checks need attention",
+                _ => "Merge readiness pending",
+            }
+        ),
+        k,
+    ));
     if details.state == "OPEN" {
         let mut mutations = row().w_full().scroll_x().gap(6.0).child(action(
             "Update branch",
@@ -2119,30 +2263,40 @@ fn review(s: &Workspace, k: &Kit) -> El {
             k,
         ));
         if !details.pull_request.is_draft {
-            for (name, method) in [
-                ("Squash merge", GitHubMergeMethod::Squash),
+            let methods = [
+                ("Squash", GitHubMergeMethod::Squash),
                 ("Merge", GitHubMergeMethod::Merge),
-                ("Rebase merge", GitHubMergeMethod::Rebase),
-            ] {
-                mutations = mutations.child(action(
-                    name,
-                    Task::Merge {
-                        project: project.clone(),
-                        url: url.clone(),
-                        head: head.clone(),
-                        method,
-                    },
-                    s,
-                    k,
-                ));
+                ("Rebase", GitHubMergeMethod::Rebase),
+            ];
+            let mut selector = row().gap(2.0).center_y();
+            for (i, (name, _)) in methods.iter().enumerate() {
+                selector =
+                    selector
+                        .child(ui::tab(name, live(s).panels.merge_method == i, k).on_press(
+                            move |s: &mut Workspace| live_mut(s).panels.merge_method = i,
+                        ));
             }
+            checks = checks.child(selector);
+            let (name, method) = methods[live(s).panels.merge_method];
+            mutations = mutations.child(action(
+                &format!("{name} pull request"),
+                Task::Merge {
+                    project: project.clone(),
+                    url: url.clone(),
+                    head: head.clone(),
+                    method,
+                },
+                s,
+                k,
+            ));
         }
-        content = content.child(mutations);
+        checks = checks.child(mutations);
     }
-    if live(s).panels.review_tab == 0 {
-        return scroll(content);
-    }
-    content = content.child(label("Feedback", k));
+    content = content.child(checks).child(
+        text("Discussion & reviews")
+            .font(k.ty.ui_medium)
+            .color(k.c.text_base),
+    );
     if review.discussion.is_empty() && review.reviews.is_empty() && review.threads.is_empty() {
         content = content.child(if review.cursors.len() < 3 && review.error.is_none() {
             ui::skeleton("Loading discussion", 3, k)
@@ -2181,44 +2335,90 @@ fn review(s: &Workspace, k: &Kit) -> El {
             ));
         }
     }
-    let key = (project.clone(), url.clone());
-    content = content.child(
-        Button::new(format!(
-            "Address {} selected comments",
-            review.selected_comments.len()
-        ))
-        .variant(ButtonVariant::Outline)
-        .disabled(
-            review.selected_comments.is_empty()
-                || live(s)
-                    .app
-                    .selected
-                    .is_none_or(|i| live(s).app.sessions[i].scope.project != *project),
+    header
+        .grow(1.0)
+        .min_h(0.0)
+        .child(scroll(content).key("review-overview-scroll").scroll_bar(k))
+        .child(review_actions(s, k, project, url, review))
+}
+
+fn review_actions(
+    s: &Workspace,
+    k: &Kit,
+    project: &str,
+    url: &str,
+    review: &caelum_core::application::Review,
+) -> El {
+    let index = live(s).app.selected;
+    let destination = index
+        .map(|i| live(s).app.sessions[i].title.as_str())
+        .unwrap_or("No session selected");
+    let blocker = index.map_or(Some("Choose a session in this checkout"), |i| {
+        live(s).app.review_blocker(i, project)
+    });
+    let project = project.to_owned();
+    let url = url.to_owned();
+    let compact = rune::memo::window_layout("main-pane").is_some_and(|r| r[2] < 620.0);
+    row()
+        .w_full()
+        .gap(8.0)
+        .padding(10.0)
+        .radius(10.0)
+        .fill(k.c.layer_02)
+        .center_y()
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(3.0)
+                .child(ui::caption(format!("Send to {destination}"), k).truncate())
+                .child(
+                    ui::caption(
+                        blocker.unwrap_or("Selected feedback will start a new turn"),
+                        k,
+                    )
+                    .truncate(),
+                ),
         )
-        .on_press(|s: &mut Workspace| {
-            let live = live_mut(s);
-            let Some(index) = live.app.selected else {
-                return;
-            };
-            if let Some(prompt) = live
-                .panels
-                .review
-                .as_ref()
-                .and_then(|key| live.app.services.reviews.get(key))
-                .and_then(|r| r.address_prompt())
-            {
-                if !live.drafts[index].text.is_empty() {
-                    live.drafts[index].text.push_str("\n\n");
+        .child(
+            Button::new(if compact {
+                format!(
+                    "Address {} comment{}",
+                    review.selected_comments.len(),
+                    if review.selected_comments.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                )
+            } else {
+                format!(
+                    "Address {} selected comment{}",
+                    review.selected_comments.len(),
+                    if review.selected_comments.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                )
+            })
+            .variant(ButtonVariant::Contrast)
+            .disabled(blocker.is_some() || review.selected_comments.is_empty())
+            .on_press_tx(move |s: &mut Workspace, tx| {
+                let Some(index) = index else {
+                    return;
+                };
+                let l = live_mut(s);
+                if l.app.address_review(index, &project, &url) {
+                    l.app.select(index);
+                    l.panels.screen = Screen::Conversation;
+                    l.focus();
+                    tx.scroll_to_bottom_instant(format!("live-transcript-{index}"));
                 }
-                live.drafts[index].text.push_str(&prompt);
-                live.panels.screen = Screen::Conversation;
-                live.drafts[index].focused = true;
-            }
-        })
-        .build(k)
-        .key(format!("address-comments-{}", key.1)),
-    );
-    scroll(content)
+            })
+            .build(k)
+            .key("address-comments"),
+        )
 }
 
 fn review_files_view(
@@ -2231,22 +2431,31 @@ fn review_files_view(
     let owner = (project.to_owned(), url.to_owned());
     let lookup = owner.clone();
     let kit = k.clone();
+    let query = live(s).panels.review_search.text.to_lowercase();
+    let indices: Vec<_> = review
+        .files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.path.to_lowercase().contains(&query))
+        .map(|(i, _)| i)
+        .collect();
+    let keys = indices.clone();
     let files = col()
         .w_full()
         .growth(rune::GrowthSpec::default())
         .virtual_rows(
-            review.files.len(),
-            36.0,
+            indices.len(),
+            50.0,
             move |s: &Workspace, i| {
                 format!(
                     "review-file-{}",
-                    live(s).app.services.reviews[&owner].files[i].path
+                    live(s).app.services.reviews[&owner].files[keys[i]].path
                 )
                 .into()
             },
             move |s: &Workspace, i| {
                 let r = &live(s).app.services.reviews[&lookup];
-                let f = &r.files[i];
+                let f = &r.files[indices[i]];
                 let path = f.path.clone();
                 let count = r.threads.iter().filter(|t| t.path == path).count();
                 let detail = format!(
@@ -2265,39 +2474,87 @@ fn review_files_view(
                         ""
                     }
                 );
-                ui::choice(
-                    &path,
-                    &detail,
-                    live(s).panels.review_file.as_ref() == Some(&path),
-                    &kit,
-                )
-                .min_h(44.0)
-                .on_press_tx(move |s: &mut Workspace, tx| {
-                    let p = &mut live_mut(s).panels;
-                    p.review_file = Some(path.clone());
-                    if let Some(index) = p.diff.file_index(&path) {
-                        p.diff.scroll_to_file(index, tx);
-                    }
-                })
-                .h(44.0)
-                .w_full()
+                let mut item = col().w_full().child(
+                    ui::choice(
+                        &path,
+                        &detail,
+                        live(s).panels.review_file.as_ref() == Some(&path),
+                        &kit,
+                    )
+                    .min_h(44.0)
+                    .on_press_tx(move |s: &mut Workspace, tx| {
+                        let p = &mut live_mut(s).panels;
+                        p.review_restore = None;
+                        p.review_file = Some(path.clone());
+                        if let Some(index) = p.diff.file_index(&path) {
+                            p.diff.scroll_to_file(index, tx);
+                        }
+                    })
+                    .h(48.0)
+                    .w_full(),
+                );
+                for thread in r
+                    .threads
+                    .iter()
+                    .filter(|t| t.path == f.path && !t.is_resolved)
+                    .take(3)
+                {
+                    let id = thread.id.clone();
+                    item = item.child(
+                        Button::new(format!(
+                            "↳ Line {} · {}",
+                            thread.line.or(thread.original_line).unwrap_or(0),
+                            thread
+                                .comments
+                                .first()
+                                .and_then(|c| c.author.as_ref())
+                                .map(|a| a.login.as_str())
+                                .unwrap_or("Thread")
+                        ))
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press_tx(move |s: &mut Workspace, tx| jump_thread(s, &id, tx))
+                        .build(&kit)
+                        .key(format!("thread-link-{}", thread.id))
+                        .pl(12.0),
+                    );
+                }
+                item
             },
         );
     let compact = rune::memo::window_layout("main-pane").is_some_and(|r| r[2] < 640.0);
+    let show_nav = live(s).panels.review_nav.unwrap_or(!compact);
     let nav = col()
         .key("review-file-list")
         .min_h(0.0)
         .h_full()
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(files);
+        .gap(8.0)
+        .child(
+            ui::field(
+                &live(s).panels.review_search,
+                "Find changed file",
+                "Find a file…",
+                k,
+            )
+            .key("review-file-search")
+            .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.review_search),
+        )
+        .child(
+            col()
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(files)
+                .scroll_bar(k),
+        );
     let nav = if compact {
-        nav.w_full().h(90.0)
+        nav.w_full().h(126.0)
     } else {
-        nav.w(210.0)
+        nav.w(224.0)
     };
-    let mut code = if !review.files_loaded && review.files.is_empty() {
+    let mut code = if !review.files_loaded {
         ui::skeleton("Loading changed files", 6, k).grow(1.0)
     } else {
         diff_view(s, k, true)
@@ -2344,15 +2601,88 @@ fn review_files_view(
             );
         }
     }
-    let mut body = col().w_full().grow(1.0).min_h(0.0).gap(8.0).child(
-        (if compact { col() } else { row() })
-            .w_full()
+    let mut toolbar = row()
+        .w_full()
+        .center_y()
+        .gap(8.0)
+        .child(
+            quiet_button(&rune_kit::shell::SIDEBAR, "Toggle changed files")
+                .expanded(show_nav)
+                .on_press(move |s: &mut Workspace| {
+                    live_mut(s).panels.review_nav = Some(!show_nav);
+                })
+                .build(k)
+                .key("review-nav-toggle"),
+        )
+        .child(
+            ui::caption(
+                live(s)
+                    .panels
+                    .review_file
+                    .as_deref()
+                    .unwrap_or("Changed files"),
+                k,
+            )
+            .truncate()
             .grow(1.0)
-            .min_h(0.0)
-            .gap(10.0)
-            .child(nav)
-            .child(code.grow(1.0).min_w(0.0)),
-    );
+            .min_w(0.0),
+        );
+    for (label, backwards) in [("Previous thread", true), ("Next thread", false)] {
+        toolbar = toolbar.child(
+            quiet_button(
+                if backwards {
+                    &ui::BACK
+                } else {
+                    &glyphs::CARET_RIGHT
+                },
+                label,
+            )
+            .disabled(review.threads.is_empty())
+            .on_press_tx(move |s: &mut Workspace, tx| {
+                let l = live(s);
+                let Some(r) = l
+                    .panels
+                    .review
+                    .as_ref()
+                    .and_then(|key| l.app.services.reviews.get(key))
+                else {
+                    return;
+                };
+                let current = r.threads.iter().position(|t| {
+                    l.panels
+                        .expanded_threads
+                        .contains(&format!("active:{}", t.id))
+                });
+                let next = if backwards {
+                    current
+                        .unwrap_or(0)
+                        .checked_sub(1)
+                        .unwrap_or(r.threads.len().saturating_sub(1))
+                } else {
+                    current.map_or(0, |i| (i + 1) % r.threads.len().max(1))
+                };
+                if let Some(id) = r.threads.get(next).map(|t| t.id.clone()) {
+                    jump_thread(s, &id, tx);
+                }
+            })
+            .build(k),
+        );
+    }
+    let mut body = col()
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .gap(8.0)
+        .child(toolbar)
+        .child(
+            (if compact { col() } else { row() })
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .gap(10.0)
+                .children(show_nav.then_some(nav))
+                .child(code.grow(1.0).min_w(0.0)),
+        );
     if let (Some(page), Some(head)) = (review.next_page, review.head()) {
         body = body.child(
             action(
@@ -2369,15 +2699,46 @@ fn review_files_view(
             .key("review-more-files"),
         );
     }
-    body.child(
-        Button::new(format!(
-            "Discussion · {} selected comments",
-            review.selected_comments.len()
-        ))
-        .variant(ButtonVariant::GhostMuted)
-        .on_press(|s: &mut Workspace| live_mut(s).panels.review_tab = 2)
-        .build(k),
-    )
+    body
+}
+
+fn jump_thread(s: &mut Workspace, id: &str, tx: &mut Tx) {
+    let l = live_mut(s);
+    let Some(thread) = l
+        .panels
+        .review
+        .as_ref()
+        .and_then(|key| l.app.services.reviews.get(key))
+        .and_then(|r| r.threads.iter().find(|t| t.id == id))
+    else {
+        return;
+    };
+    l.panels.review_tab = 1;
+    l.panels.review_restore = None;
+    l.panels.review_file = Some(thread.path.clone());
+    l.panels
+        .expanded_threads
+        .retain(|t| !t.starts_with("active:"));
+    l.panels.expanded_threads.insert(format!("active:{id}"));
+    l.panels.expanded_threads.insert(id.into());
+    if let Some(i) = l.panels.diff.file_index(&thread.path) {
+        if let Some(line) = thread.line.filter(|_| !thread.is_outdated) {
+            l.panels.diff.scroll_to_line(
+                i,
+                diff::LineRef::new(
+                    if thread.diff_side == "LEFT" {
+                        diff::Side::Old
+                    } else {
+                        diff::Side::New
+                    },
+                    line as u32,
+                ),
+                tx,
+            );
+        } else {
+            l.panels.diff.scroll_to_file(i, tx);
+        }
+    }
 }
 
 fn comment_view(
@@ -2395,6 +2756,7 @@ fn comment_view(
         .reviews
         .get(&key)
         .is_some_and(|r| r.selected_comments.contains(&id));
+    let link = comment.url.clone();
     col()
         .w_full()
         .gap(6.0)
@@ -2403,24 +2765,44 @@ fn comment_view(
         .fill(k.c.layer_02)
         .border(1.0, k.c.border_base)
         .child(
-            Button::new(format!(
-                "{} {} · {}",
-                if selected { "✓" } else { "○" },
-                comment
-                    .author
-                    .as_ref()
-                    .map(|a| a.login.as_str())
-                    .unwrap_or("Unknown"),
-                comment.state.as_deref().unwrap_or("Comment")
-            ))
-            .variant(ButtonVariant::GhostMuted)
-            .on_press(move |s: &mut Workspace| {
-                let review = live_mut(s).app.services.reviews.get_mut(&key).unwrap();
-                if !review.selected_comments.remove(&id) {
-                    review.selected_comments.insert(id.clone());
-                }
-            })
-            .build(k),
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(
+                    rune_kit::Checkbox::new(selected)
+                        .label(format!(
+                            "{} · {}",
+                            comment
+                                .author
+                                .as_ref()
+                                .map(|a| a.login.as_str())
+                                .unwrap_or("Unknown"),
+                            comment.state.as_deref().unwrap_or("Comment")
+                        ))
+                        .on_toggle(move |s: &mut Workspace| {
+                            let review = live_mut(s).app.services.reviews.get_mut(&key).unwrap();
+                            if !review.selected_comments.remove(&id) {
+                                review.selected_comments.insert(id.clone());
+                            }
+                        })
+                        .build(k)
+                        .key(format!("select-comment-{}", comment.id)),
+                )
+                .child(rune::el().grow(1.0))
+                .child(ui::caption(
+                    comment.created_at.split('T').next().unwrap_or_default(),
+                    k,
+                ))
+                .child(
+                    Button::new("↗")
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press_tx(move |_: &mut Workspace, tx| {
+                            let _ = tx.open_url(&link);
+                        })
+                        .build(k)
+                        .label("Open comment on GitHub"),
+                ),
         )
         .child(
             Markdown::new(&comment.body)
@@ -2451,8 +2833,9 @@ fn thread_view(
         .build(k)
         .key(format!("thread-{}", thread.id));
     }
-    let mut content = col().w_full().gap(6.0).child(label(
-        format!(
+    let id = thread.id.clone();
+    let mut content = col().w_full().gap(8.0).child(
+        Button::new(format!(
             "{}:{} · {}{} · {}",
             thread.path,
             thread.line.or(thread.original_line).unwrap_or(0),
@@ -2467,10 +2850,15 @@ fn thread_view(
                 ""
             },
             thread.diff_side
-        ),
-        k,
-    ));
-    if let Some(hunk) = thread.comments.first().and_then(|c| c.diff_hunk.as_ref()) {
+        ))
+        .variant(ButtonVariant::GhostMuted)
+        .on_press_tx(move |s: &mut Workspace, tx| jump_thread(s, &id, tx))
+        .build(k)
+        .key(format!("thread-location-{}", thread.id)),
+    );
+    if live(s).panels.review_tab == 0
+        && let Some(hunk) = thread.comments.first().and_then(|c| c.diff_hunk.as_ref())
+    {
         content = content.child(
             text(hunk)
                 .font(k.ty.mono)
@@ -2481,6 +2869,17 @@ fn thread_view(
     }
     for comment in &thread.comments {
         content = content.child(comment_view(s, k, project, url, comment));
+    }
+    if thread.is_resolved {
+        let id = thread.id.clone();
+        content = content.child(
+            Button::new("Collapse resolved thread")
+                .variant(ButtonVariant::GhostMuted)
+                .on_press(move |s: &mut Workspace| {
+                    live_mut(s).panels.expanded_threads.remove(&id);
+                })
+                .build(k),
+        );
     }
     if let Some(cursor) = &thread.next_cursor
         && let Some(head) = live(s)

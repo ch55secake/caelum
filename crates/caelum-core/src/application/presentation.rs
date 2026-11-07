@@ -15,21 +15,56 @@ fn markdown_images() -> &'static regex::Regex {
 }
 
 pub fn visible_text(text: &str) -> String {
-    markdown_parts(text).0
+    markdown_parts(text, false).0
 }
 
 pub fn markdown_media(text: &str) -> Vec<Media> {
-    markdown_parts(text).1
+    markdown_parts(text, true).1
+}
+
+/// The same presentation is used for transcript, navigation, selection and copying.
+/// Provider records remain intact; incomplete markup is withheld until it is unambiguous.
+pub fn entry_text(entry: &Entry) -> String {
+    let text = if entry.kind == EntryKind::User {
+        super::split_context(&entry.text).0
+    } else {
+        &entry.text
+    };
+    markdown_parts(text, !entry.complete).0
+}
+
+pub fn entry_visible(entry: &Entry) -> bool {
+    entry.kind == EntryKind::Tool
+        || (!entry.text.contains('<') && !entry.text.trim().is_empty())
+        || !entry_text(entry).trim().is_empty()
+        || !entry.media.is_empty()
+        || (entry.kind == EntryKind::User && !super::split_context(&entry.text).1.is_empty())
+}
+
+/// Byte ranges on the original text, including case-folded Unicode matches.
+pub fn search_ranges(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    regex::RegexBuilder::new(&regex::escape(query))
+        .case_insensitive(true)
+        .build()
+        .map(|re| re.find_iter(text).map(|m| m.range()).collect())
+        .unwrap_or_default()
 }
 
 // Keep literal code and whitespace intact. Only presentation markup outside code
 // is hidden; in particular an internal reminder must never trigger an image read.
-fn markdown_parts(text: &str) -> (String, Vec<Media>) {
+fn markdown_parts(text: &str, streaming: bool) -> (String, Vec<Media>) {
     let mut fence: Option<(char, usize)> = None;
     let mut reminder = false;
     let mut output = String::new();
     let mut media = Vec::new();
     for line in text.split_inclusive('\n') {
+        if !reminder && (line.starts_with("    ") || line.starts_with('\t')) {
+            output.push_str(line);
+            continue;
+        }
         let trimmed = line.trim_start();
         let marker = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'));
         let length = marker.map_or(0, |c| trimmed.chars().take_while(|v| *v == c).count());
@@ -64,6 +99,9 @@ fn markdown_parts(text: &str) -> (String, Vec<Media>) {
                 rest = &rest[17..];
                 continue;
             }
+            if streaming && !line.ends_with('\n') && "<system-reminder>".starts_with(rest) {
+                break;
+            }
             if rest.starts_with('`') {
                 let n = rest.bytes().take_while(|b| *b == b'`').count();
                 if let Some(end) = rest[n..].find(&rest[..n]) {
@@ -92,6 +130,81 @@ fn markdown_parts(text: &str) -> (String, Vec<Media>) {
         }
     }
     (output, media)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivityKind {
+    Working,
+    Thinking,
+    Responding,
+    Tool,
+    Retrying,
+    Input,
+    Background,
+    Stopping,
+}
+
+pub struct Activity {
+    pub kind: ActivityKind,
+    pub label: String,
+}
+
+/// Activity belongs to a session, not to the most recently painted output chunk.
+pub fn activity(session: &super::Session, needs_input: bool) -> Option<Activity> {
+    if session.disconnected {
+        return None;
+    }
+    let (kind, label) = if session.stopping {
+        (ActivityKind::Stopping, "Stopping…".into())
+    } else if needs_input {
+        (ActivityKind::Input, "Waiting for input".into())
+    } else if session.submitting {
+        (ActivityKind::Working, "Working…".into())
+    } else if session.conversation.working {
+        if session.conversation.retrying {
+            (ActivityKind::Retrying, "Retrying…".into())
+        } else if let Some(entry) = session
+            .conversation
+            .entries
+            .iter()
+            .rev()
+            .take_while(|e| e.kind != EntryKind::User)
+            .find(|e| !e.complete && !e.background)
+        {
+            match entry.kind {
+                EntryKind::Reasoning => (ActivityKind::Thinking, "Thinking…".into()),
+                EntryKind::Assistant => (ActivityKind::Responding, "Responding…".into()),
+                EntryKind::Tool => {
+                    let tool = Tool::from_entry(entry, 0);
+                    (
+                        ActivityKind::Tool,
+                        if tool.name == "Run" {
+                            "Running a command…".into()
+                        } else {
+                            format!("{}…", tool.name)
+                        },
+                    )
+                }
+                EntryKind::Compaction => (ActivityKind::Working, "Compacting context…".into()),
+                _ => (ActivityKind::Working, "Working…".into()),
+            }
+        } else if !session.shells.is_empty() {
+            (
+                ActivityKind::Background,
+                "Waiting for background commands".into(),
+            )
+        } else {
+            (ActivityKind::Working, "Working…".into())
+        }
+    } else if !session.shells.is_empty() {
+        (
+            ActivityKind::Background,
+            "Waiting for background commands".into(),
+        )
+    } else {
+        return None;
+    };
+    Some(Activity { kind, label })
 }
 
 pub fn media(value: &Value) -> Vec<Media> {
@@ -231,8 +344,7 @@ impl Tool {
         paths.sort();
         paths.dedup();
         let summary = if matches!(entry.kind, EntryKind::Reasoning | EntryKind::Compaction) {
-            entry
-                .text
+            entry_text(entry)
                 .lines()
                 .find(|l| !l.trim().is_empty())
                 .unwrap_or_default()

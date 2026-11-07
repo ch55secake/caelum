@@ -8,21 +8,29 @@ sessions. **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that 
 draft. Each session retains an independent draft and reading position. Hover a
 session to close it with **×**; **Undo** restores it without replacing newer
 navigation. Session actions and native context menus also offer archive/reconnect.
-The sidebar's **Sessions** footer opens explicit session actions; **New session**
-opens the searchable project/provider launcher.
+Use the selected session row’s **…** for session actions and the archive icon beside
+**Sessions** to switch between active and archived sessions. **New session** opens
+the searchable project/provider launcher.
 
 Choose the provider, model, reasoning effort and available agent in the composer.
 Sending creates a provider session when needed. Later selection changes apply
 to the next message. Search models and star favourites in the model picker.
-The picker keeps its original session or Settings target while open. Unavailable
+The anchored popover keeps its original session or Settings target while open. Unavailable
 current models and saved favourites remain visible; arrow keys navigate the
-windowed catalogue, including after Tab moves focus.
+windowed catalogue, including after Tab moves focus. Escape or an outside click
+closes it; its footer can save the current model, effort and agent as provider defaults.
 Responses, thinking, typed Read/Run/Patch rows, compaction and shell activity
-appear in the transcript with status and timing; expand rows for details. **Load earlier messages**
+appear in the transcript with status and timing; expand rows for details. Patch
+previews open automatically, with size and tool-detail controls. Explicitly collapsed
+patches stay collapsed as output arrives. Internal reminders are hidden from rows,
+timeline results and copied responses, while literal code stays intact. **Load earlier messages**
 pages provider history while the visible transcript stays bounded.
 Running OpenCode background commands also remain above the composer. Expand the
 strip for a bounded output tail, refresh and per-command **Stop**; completed
 commands retain their output in the transcript.
+The composer pulse and agent indicator show working, thinking, responding, tools,
+retry, input, background-waiting and stopping states, including between output events.
+These indicators follow reduced-motion preferences.
 
 ## Drafts, queues and requests
 
@@ -65,8 +73,11 @@ Type **/** to discover local and provider commands. `/new`, `/timeline`, `/files
 `/changes` and `/settings` open native workflows. OpenCode also supports `/usage`,
 `/stats`, provider-discovered commands and `/btw question` (`/ask` is an alias).
 Side questions have a separate editor, context, retry and answer-copy actions;
-they preserve the main draft and do not add a conversation turn. Timeline supports
-search and transcript navigation; usage and statistics provide refresh and filters.
+they preserve the main draft and do not add a conversation turn. Timeline groups
+prompts by date, shows excerpts and highlights search matches. Use ↑/↓ and Enter to
+jump back to a prompt; loading older history preserves its identity. Statistics
+presents summary cards, an activity chart, token breakdown and model costs, with
+date-range and project filters.
 
 ## Files, changes and worktrees
 
@@ -86,15 +97,19 @@ Choose a branch/base and parent directory; the default storage is under
 a checkout preserves its branch and commits; active work and dirty/locked Git
 checkouts prevent removal.
 
-PR review keeps file navigation independently scrollable beside the continuous
-patches. Inline and resolved threads, selected-comment prompts, check links and
-timing remain available. Open reviews refresh every 30 seconds and preserve their
-reading position. Missing/binary patches link to GitHub. See
+PR review has **Overview** and **Files changed** tabs. Overview groups the description,
+checks, merge readiness and discussion. Files changed keeps searchable file/thread
+navigation beside the continuous diff; the file list can be collapsed in compact windows.
+Inline feedback, collapsed resolved threads, outdated context and missing/binary
+patches remain available. Open reviews refresh every 30 seconds and preserve their
+reading position across refreshes, pagination and tab changes. The pinned
+**Address selected comments** action starts a new turn in the displayed destination
+session, preserving its independent draft and attachments. See
 [pull requests](pull-requests.md) for feedback and merging.
 
 ## Appearance and window lifecycle
 
-**⌘,** opens Settings. Choose System/Light/Dark, Caelum/Catppuccin/Nord/Tokyo Night,
+The top-toolbar gear or **⌘,** opens Settings. Choose System/Light/Dark, Caelum/Catppuccin/Nord/Tokyo Night,
 and six accents or the theme default. Its five pages are Appearance, Providers,
 Worktrees, Notifications and About. Provider defaults/favourites, notification
 visibility and sounds, worktree storage, legacy settings import and persistence

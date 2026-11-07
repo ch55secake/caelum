@@ -1133,6 +1133,50 @@ impl Workspace {
         accepted
     }
 
+    pub fn review_blocker(&self, index: usize, project: &str) -> Option<&'static str> {
+        let session = self.sessions.get(index)?;
+        if session.scope.project != project {
+            return Some("Choose a session in this checkout");
+        }
+        if session.working() {
+            return Some("Wait for the current turn to finish");
+        }
+        if self.approvals.iter().any(|p| {
+            p.project_path == session.scope.project
+                && p.provider == session.scope.provider.as_str()
+                && (p.session_id.is_none() || p.session_id == session.remote_id)
+        }) || self.questions.iter().any(|p| {
+            p.project_path == session.scope.project
+                && p.provider == session.scope.provider.as_str()
+                && Some(&p.session_id) == session.remote_id.as_ref()
+        }) {
+            return Some("Answer the session’s pending request first");
+        }
+        if !session.can_send() || session.remote_id.is_none() {
+            return Some("Connect an active session to address feedback");
+        }
+        if !session.queue.is_empty() || !session.inbox.items.is_empty() {
+            return Some("Finish queued messages first");
+        }
+        None
+    }
+
+    /// Send review feedback to its captured destination, retaining the independent composer draft.
+    pub fn address_review(&mut self, index: usize, project: &str, url: &str) -> bool {
+        if index >= self.sessions.len() || self.review_blocker(index, project).is_some() {
+            return false;
+        }
+        let Some(prompt) = self
+            .services
+            .reviews
+            .get(&(project.into(), url.into()))
+            .and_then(|r| r.address_prompt())
+        else {
+            return false;
+        };
+        self.send_raw(index, prompt)
+    }
+
     fn send_raw(&mut self, index: usize, prompt: String) -> bool {
         let session = &mut self.sessions[index];
         if prompt.trim().is_empty() || !session.can_send() {

@@ -37,13 +37,17 @@ impl Position {
         self.0.get()
     }
     pub fn capture(&self, key: &str) {
-        if let (Some(view), Some(rows)) = (
+        if let (Some(view), Some(rows), Some(view_origin), Some(rows_origin)) = (
             rune::memo::window_layout(&format!("{key}/scroll")),
             rune::memo::window_layout(&format!("{key}/scroll/rows")),
+            rune::memo::layout(&format!("{key}/scroll")),
+            rune::memo::layout(&format!("{key}/scroll/rows")),
         ) {
+            // A virtual list's mounted rows start after the culled prefix.
+            // Compare scrolled/unscrolled origins, not just the visible gap.
             self.0.set(Some([
-                (view[0] - rows[0]).max(0.0),
-                (view[1] - rows[1]).max(0.0),
+                (rows_origin[0] - rows[0] - (view_origin[0] - view[0])).max(0.0),
+                (rows_origin[1] - rows[1] - (view_origin[1] - view[1])).max(0.0),
             ]));
         }
     }

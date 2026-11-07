@@ -15,11 +15,19 @@ The follow-up captures restore the original 18-point Lucide Orbit mark, keep the
 sidebar toggle beside the brand, and use browser-equivalent unsmoothed system text.
 The inspector sits below the shared toolbar; pane widths adapt to compact windows
 while retaining the user's preferred sizes. The bounded multiline editor and
-composer controls occupy separate rows; Settings and Undo remain in a pinned footer.
+composer controls occupy separate rows. Settings lives in the top toolbar, Undo
+stays in the sidebar footer, archive filtering sits beside Sessions, and session
+actions live on the selected row.
 The final TypeScript tree at `82ca39d`, its regression tests and historical UI
 captures are the parity reference. `388d09e` adds the follow-intent unread repair.
 Shared controls now cover command panels, questions, dialogs and dropdowns, with
 quiet successful-tool indicators and explicit loading, empty and error surfaces.
+Model selection is an anchored searchable popover. Patch previews open by default;
+the composer pulse and active-agent indicator follow session state between output
+events. PR review restores Overview / Files changed, searchable file/thread
+navigation, inline feedback and a pinned action naming its destination session.
+Statistics uses summary/chart/token/model sections; timeline has date groups,
+excerpts, highlighted search and stable prompt jumps.
 
 | | Historical polished reference | Native Caelum |
 | --- | --- | --- |
@@ -62,6 +70,18 @@ quiet successful-tool indicators and explicit loading, empty and error surfaces.
 | --- | --- |
 | ![Native provider error](previews/rune-light-provider-error.png) | ![Native questions](previews/rune-dark-questions-small.png) |
 
+| Populated statistics | Prompt timeline |
+| --- | --- |
+| ![Native statistics](previews/rune-light-stats.png) | ![Native timeline](previews/rune-dark-timeline-small.png) |
+
+| Compact PR workspace | In-session working indicator |
+| --- | --- |
+| ![Native compact review](previews/rune-light-review-small.png) | ![Native working](previews/rune-dark-working-small.png) |
+
+| Compact token/model breakdown | Timeline search |
+| --- | --- |
+| ![Native statistics details](previews/rune-dark-stats-details-small.png) | ![Native prompt search](previews/rune-light-timeline-search-small.png) |
+
 Four theme families and six accent colours (plus the theme default) apply across
 the workspace. Rune follows system reduced-motion preferences. Use the running
 application to judge focus, typing, scrolling, pane motion and OS context menus;
@@ -97,10 +117,11 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **188 states**: 39 scenes and eight headless
+The capture script writes **236 states**: 47 scenes and twelve headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
 includes all five Settings pages, models, launcher, session/worktree dialogs, commands, shells,
-Files/Changes, PR loading/error states, questions, images, hover and keyboard focus.
+Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
+loading/error/empty views, questions, images, hover and keyboard focus.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
 replace the replay's `--at 9 --snap …` with `--video /path/to/replay.mp4 --duration auto`.

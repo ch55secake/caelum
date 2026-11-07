@@ -139,13 +139,45 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         finish_fixture_reads(l);
         return true;
     }
-    if matches!(name, "timeline" | "usage" | "usage-loading" | "stats") {
+    if matches!(
+        name,
+        "timeline"
+            | "timeline-empty"
+            | "usage"
+            | "usage-loading"
+            | "stats"
+            | "stats-loading"
+            | "stats-error"
+            | "stats-empty"
+    ) {
         l.commands.owner = Some(0);
         l.panels.overlay = Some(match name {
-            "timeline" => crate::panels::Screen::Timeline,
+            "timeline" | "timeline-empty" => crate::panels::Screen::Timeline,
             "usage" | "usage-loading" => crate::panels::Screen::Usage,
             _ => crate::panels::Screen::Stats,
         });
+        if name == "timeline" {
+            let session = &mut l.app.sessions[0];
+            session.conversation = Default::default();
+            let prompts = [
+                "Restore the continuous PR workspace",
+                "Keep drafts independent when switching sessions",
+                "Make the model picker open above the composer",
+                "Review the patch and explain the tradeoffs",
+                "Run the workspace checks and address the failures",
+                "Polish keyboard focus and compact layouts",
+            ];
+            let turns: Vec<_> = (0..48).map(|n| json!({"id":format!("turn-{n}"),"createdAt":caelum_core::application::presentation::now().saturating_sub((48-n) * 3_600_000),"status":"completed","items":[
+                {"id":format!("prompt-{n}"),"type":"userMessage","content":[{"text":format!("{}\nPlease preserve reading position and check the populated, empty and loading states.", prompts[n as usize % prompts.len()])}]},
+                {"id":format!("answer-{n}"),"type":"agentMessage","text":"The changes keep session ownership intact. Ready for review."}]})).collect();
+            session.conversation.history(Provider::Codex, &turns, false);
+            l.current_prompt = Some("codex-prompt-0".into());
+            l.commands.timeline_selected = l.current_prompt.clone();
+            l.commands.timeline_current = l.current_prompt.clone();
+        }
+        if name == "timeline-empty" {
+            l.app.sessions[0].conversation = Default::default();
+        }
         if name == "usage" {
             l.app.services.checkouts.get_mut(project).unwrap().usage = Some(
                 json!({"workspace":{"name":"Personal workspace"},"go":{"rolling":{"percent":24},"weekly":{"percent":68},"monthly":{"percent":12}}}),
@@ -156,12 +188,58 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
                 project: project.into(),
             });
         }
-        if name == "stats" {
+        if matches!(name, "stats" | "stats-empty") {
+            let tokens = json!({"input":420000,"output":120000,"reasoning":80000,"cache":{"read":920000,"write":12000}});
             l.app.services.checkouts.get_mut(project).unwrap().stats = Some(serde_json::from_value(json!({
                 "range":{"from":0,"to":1800000000000_u64},"sessions":24,"subagents":8,"prompts":126,"steps":372,
-                "tokens":{"input":42000,"output":12000,"reasoning":8000,"cache":{"read":92000,"write":1200}},
-                "cost":4.28,"activeDays":12,"streak":4,"activity":[],"models":[]
+                "tokens":tokens,
+                "cost":14.28,"activeDays":12,"streak":4,
+                "activity":(1..=30).map(|i| json!({"date":format!("2026-10-{i:02}"),"steps":if i%6==0 {0} else {(i*17)%35+2}})).collect::<Vec<_>>(),
+                "models":[{"model":{"providerID":"openai","id":"gpt-5.3-codex"},"steps":242,"tokens":tokens,"cost":10.14},
+                    {"model":{"providerID":"anthropic","id":"claude-sonnet-4-6"},"steps":130,"tokens":tokens,"cost":4.14}]
             })).unwrap());
+            let checkout = l.app.services.checkouts.get_mut(project).unwrap();
+            checkout.stats_projects = vec![
+                caelum_protocol::OpenCodeStatsProject {
+                    id: "caelum".into(),
+                    name: Some("Caelum".into()),
+                    canonical: project.into(),
+                },
+                caelum_protocol::OpenCodeStatsProject {
+                    id: "website".into(),
+                    name: Some("Website".into()),
+                    canonical: "/projects/website".into(),
+                },
+            ];
+            if name == "stats-empty" {
+                let stats = checkout.stats.as_mut().unwrap();
+                stats.sessions = 0;
+                stats.prompts = 0;
+                stats.cost = 0.0;
+                stats.activity.clear();
+                stats.models.clear();
+                stats.steps = 0;
+                stats.active_days = 0;
+                stats.streak = 0;
+                stats.tokens = serde_json::from_value(
+                    json!({"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}),
+                )
+                .unwrap();
+            }
+        }
+        if matches!(name, "stats-loading" | "stats-error") {
+            l.app.task(caelum_core::application::Task::Stats {
+                project: project.into(),
+                filter: Default::default(),
+            });
+            if name == "stats-error" {
+                for (id, _) in l.app.commands() {
+                    l.app.apply(Event::Completed(
+                        id,
+                        Err("Statistics service is unavailable. Try again in a moment.".into()),
+                    ));
+                }
+            }
         }
         return true;
     }
@@ -213,6 +291,16 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         l.drafts[0].replace_text("/");
         l.drafts[0].set_caret(1);
         l.drafts[0].focused = true;
+        return true;
+    }
+    if matches!(name, "working" | "thinking" | "retrying" | "stopping") {
+        l.app.sessions[0].remote_id = Some("fixture".into());
+        l.app.sessions[0].conversation.working = true;
+        if name == "thinking" {
+            l.app.sessions[0].conversation.apply(Provider::Codex, "item/reasoning/summaryTextDelta", &json!({"itemId":"thinking","delta":"Checking the original interactions before changing the layout."}));
+        }
+        l.app.sessions[0].conversation.retrying = name == "retrying";
+        l.app.sessions[0].stopping = name == "stopping";
         return true;
     }
     if name == "shells" {
@@ -393,6 +481,36 @@ pub fn scene(state: &mut Workspace, name: &str) {
     ];
     review.files_loaded = true;
     review.threads=(0..2).map(|n|serde_json::from_value(json!({"id":format!("thread-{n}"),"path":"src/workspace.rs","line":n+2,"startLine":null,"originalLine":n+2,"diffSide":"RIGHT","isResolved":n==1,"isOutdated":false,"comments":[{"id":format!("comment-{n}"),"body":if n==0 {"Keep newer navigation intact while a restore is pending."} else {"Reading position now survives refresh. Looks good."},"url":url,"author":{"login":"reviewer"},"createdAt":"2026-11-07T10:00:00Z","state":null,"diffHunk":null}],"nextCursor":null})).unwrap()).collect();
+    for n in 0..9 {
+        review.files.push(caelum_protocol::GitHubPullRequestFile {
+            path: format!("crates/core/src/session_{n}.rs"),
+            status: "modified".into(),
+            previous_path: None,
+            additions: 24,
+            deletions: 24,
+            patch: Some(format!(
+                "@@ -1,24 +1,24 @@\n{}",
+                (0..24)
+                    .map(|i| format!(
+                        "-    restore_slot({i});\n+    restore_owned_slot(session, {i});\n"
+                    ))
+                    .collect::<String>()
+            )),
+        });
+    }
+    review.details.as_mut().unwrap().changed_files = review.files.len() as u64;
+    let comments = [
+        "The two-tab review flow is much easier to navigate. Please keep inline feedback visible beside each changed line.",
+        "I checked the compact layout. The destination session should stay visible when selecting feedback.",
+        "The default patch previews are helpful. Collapsing a patch should survive the next output event.",
+        "Keyboard navigation should return to the model search after moving through favourites.",
+    ];
+    review.discussion = comments.iter().enumerate().map(|(n, body)| serde_json::from_value(json!({"id":format!("discussion-{n}"),"body":body,"url":url,"author":{"login":if n%2==0 {"reviewer"} else {"maintainer"}},"createdAt":"2026-11-07T10:00:00Z","state":null,"diffHunk":null})).unwrap()).collect();
+    review.selected_comments.insert("comment-0".into());
+    for kind in ["Discussion", "Reviews", "Threads"] {
+        review.cursors.insert(kind.into(), None);
+    }
+    l.app.sessions[0].remote_id = Some("fixture".into());
     l.app
         .services
         .checkouts
@@ -410,9 +528,12 @@ pub fn scene(state: &mut Workspace, name: &str) {
         if name == "checks" {
             state.live.as_mut().unwrap().panels.review_tab = 0;
         }
-        if name == "discussion" {
-            state.live.as_mut().unwrap().panels.review_tab = 2;
-        }
+        state.live.as_mut().unwrap().panels.review_tab = if name == "checks" || name == "discussion"
+        {
+            0
+        } else {
+            1
+        };
         if name == "review-loading" {
             let l = state.live.as_mut().unwrap();
             let r = l

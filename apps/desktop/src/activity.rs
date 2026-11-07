@@ -11,6 +11,68 @@ use caelum_core::application::{
 use rune::{El, col, icon, row, text};
 use rune_kit::{ButtonVariant, Kit, Markdown, ProgressCircle, glyphs};
 
+pub fn session_activity(
+    s: &Workspace,
+    index: usize,
+) -> Option<caelum_core::application::presentation::Activity> {
+    let app = &live(s).app;
+    let session = &app.sessions[index];
+    let input = app.approvals.iter().any(|p| {
+        p.project_path == session.scope.project
+            && p.provider == session.scope.provider.as_str()
+            && (p.session_id.is_none() || p.session_id == session.remote_id)
+    }) || app.questions.iter().any(|p| {
+        p.project_path == session.scope.project
+            && p.provider == session.scope.provider.as_str()
+            && Some(&p.session_id) == session.remote_id.as_ref()
+    });
+    caelum_core::application::presentation::activity(session, input)
+}
+
+pub fn indicator(
+    activity: &caelum_core::application::presentation::Activity,
+    agent: Option<&str>,
+    k: &Kit,
+) -> El {
+    use caelum_core::application::presentation::ActivityKind;
+    static RING: rune::Icon = rune::Icon {
+        name: "active-agent",
+        view: 16.0,
+        body: r#"<path d="M8 2a6 6 0 1 1-6 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>"#,
+    };
+    let waiting = matches!(
+        activity.kind,
+        ActivityKind::Input | ActivityKind::Background
+    );
+    let glyph = if waiting {
+        rune::el().size(7.0, 7.0).radius(4.0).fill(k.c.text_accent)
+    } else {
+        icon(&RING, 14.0)
+            .color(k.c.text_accent)
+            .looping(rune::LoopSpec::rotation(1.6))
+    };
+    row()
+        .key("session-activity")
+        .role("status")
+        .label(&activity.label)
+        .w_full()
+        .min_h(24.0)
+        .pb(6.0)
+        .gap(8.0)
+        .center_y()
+        .child(glyph)
+        .child(
+            text(&activity.label)
+                .font(k.ty.small_medium)
+                .color(k.c.text_accent),
+        )
+        .child(
+            ui::caption(agent.unwrap_or("Agent"), k)
+                .grow(1.0)
+                .truncate(),
+        )
+}
+
 pub fn shells(s: &Workspace, k: &Kit, index: usize) -> El {
     use caelum_core::application::Task;
     let l = live(s);
@@ -160,13 +222,15 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
     let presentation = Tool::from_entry(entry, now());
     let id = entry.id.clone();
     let expanded = live(s).expanded.contains(&(index, id.clone()));
+    let patch = !presentation.patch.is_empty();
+    let preview = patch && !live(s).collapsed_patches.contains(&(index, id.clone()));
     let mut header = row()
         .w_full()
         .gap(7.0)
         .center_y()
         .child(
             icon(
-                if expanded {
+                if if patch { preview } else { expanded } {
                     &glyphs::CHEVRON_DOWN
                 } else {
                     &glyphs::CARET_RIGHT
@@ -207,11 +271,15 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
         k.interactive(header.py(7.0).px(6.0).radius(7.0))
             .role("button")
             .label(format!("{} {}", presentation.name, presentation.summary))
-            .expanded(expanded)
+            .expanded(if patch { preview } else { expanded })
             .focusable(true)
             .focus_ring(1.5, 0.0, k.c.border_focus)
             .on_press(move |s: &mut Workspace| {
-                let set = &mut live_mut(s).expanded;
+                let set = if patch {
+                    &mut live_mut(s).collapsed_patches
+                } else {
+                    &mut live_mut(s).expanded
+                };
                 if !set.remove(&(index, id.clone())) {
                     set.insert((index, id.clone()));
                 }
@@ -246,11 +314,13 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
     }
     if !presentation.patch.is_empty() {
         let owner = (index, entry.id.clone());
-        if expanded && live(s).patches.contains_key(&owner) {
+        if preview && live(s).patches.contains_key(&owner) {
             let edit = owner.clone();
             let keyboard = owner.clone();
             let copy = presentation.patch.clone();
             let key = crate::code_view::source_key(&index.to_string(), &entry.id);
+            let full_key = format!("{}:patch-full", entry.id);
+            let full = live(s).expanded.contains(&(index, full_key.clone()));
             let height = live(s).patches[&owner]
                 .diff
                 .files()
@@ -263,7 +333,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                         .sum::<f32>()
                 })
                 .sum::<f32>()
-                .clamp(90.0, 300.0);
+                .clamp(90.0, if full { 600.0 } else { 260.0 });
             content = content.child(
                 col()
                     .w_full()
@@ -307,7 +377,42 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                         }),
                     ),
             );
-        } else if !expanded {
+            let details_key = entry.id.clone();
+            content = content.child(
+                row()
+                    .gap(4.0)
+                    .child(
+                        Button::new(if full {
+                            "Compact preview"
+                        } else {
+                            "Expand preview"
+                        })
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press(move |s: &mut Workspace| {
+                            let set = &mut live_mut(s).expanded;
+                            if !set.remove(&(index, full_key.clone())) {
+                                set.insert((index, full_key.clone()));
+                            }
+                        })
+                        .build(k),
+                    )
+                    .child(
+                        Button::new(if expanded {
+                            "Hide tool details"
+                        } else {
+                            "Tool details"
+                        })
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press(move |s: &mut Workspace| {
+                            let set = &mut live_mut(s).expanded;
+                            if !set.remove(&(index, details_key.clone())) {
+                                set.insert((index, details_key.clone()));
+                            }
+                        })
+                        .build(k),
+                    ),
+            );
+        } else if !preview {
             let added = presentation
                 .patch
                 .lines()
@@ -338,7 +443,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
     if expanded {
         if matches!(entry.kind, EntryKind::Reasoning | EntryKind::Compaction) {
             content = content.child(
-                Markdown::new(&entry.text)
+                Markdown::new(caelum_core::application::presentation::entry_text(entry))
                     .selectable(true)
                     .render(&theme::markdown(k))
                     .pl(27.0),
