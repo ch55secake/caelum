@@ -1976,6 +1976,48 @@ fn project_links_wait_for_restore_and_keep_drafts_when_the_app_is_running() {
     live.drafts.clear();
 }
 
+#[test]
+fn project_url_wakes_an_idle_app_to_process_the_open_request() {
+    use caelum_core::application::Store;
+    use std::{
+        fs,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    let directory = std::env::temp_dir().join(format!(
+        "caelum-project-url-wake-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let wake_count = Arc::new(AtomicUsize::new(0));
+    let mut state = Workspace::live(None);
+    state
+        .live
+        .as_mut()
+        .unwrap()
+        .start(Store(directory.join("workspace.json")), {
+            let wake_count = Arc::clone(&wake_count);
+            Arc::new(move || {
+                wake_count.fetch_add(1, Ordering::SeqCst);
+            })
+        });
+    let before = wake_count.load(Ordering::SeqCst);
+    let url = caelum_core::desktop::project_url(std::path::Path::new("/next-project")).unwrap();
+
+    super::lifecycle::open_url(&mut state, &url, &mut rune::Tx::default());
+
+    assert!(wake_count.load(Ordering::SeqCst) > before);
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
 fn live_runtime_size(size: (f32, f32)) -> Runtime<Workspace> {
     use caelum_core::application::{Provider, Scope};
     let mut state = Workspace::live(None);
