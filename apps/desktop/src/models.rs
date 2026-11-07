@@ -61,11 +61,11 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
         Owner::Session(index, l.app.sessions[index].scope.clone())
     };
     let choices_scope = owner.scope().clone();
-    let needs_choices = !l
+    let needs_choices = l
         .app
         .choices
         .get(&choices_scope)
-        .is_some_and(|choices| !choices.models.is_empty());
+        .is_none_or(|choices| choices.models.is_empty());
     l.models.selected = match &owner {
         Owner::Session(i, _) => l.app.sessions[*i].options.model.clone(),
         Owner::Defaults(scope) => l
