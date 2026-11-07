@@ -4,6 +4,15 @@ use rune::{App, MenuItem, Shortcut, Tx};
 pub fn configure(app: App<Workspace>) -> App<Workspace> {
     app.keep_running()
         .standard_menus()
+        .on_focus(|s, focused, _| {
+            if s.live.is_some() {
+                let live = live::live_mut(s);
+                live.app.window_background = !focused;
+                if focused && !live.fixture && !live.evaluation {
+                    live.app.refresh_files();
+                }
+            }
+        })
         .on_open_url(open_url)
         .on_close(|s, tx| {
             if let Some(live) = &mut s.live {

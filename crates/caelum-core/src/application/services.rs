@@ -7,6 +7,30 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub enum Task {
+    Reveal {
+        project: String,
+        path: String,
+    },
+    EncodeImage {
+        project: String,
+        bytes: Vec<u8>,
+    },
+    Updates,
+    Image {
+        project: String,
+        source: String,
+    },
+    Usage {
+        project: String,
+    },
+    Stats {
+        project: String,
+        filter: OpenCodeStatsFilter,
+    },
+    AttachPullRequest {
+        project: String,
+        url: String,
+    },
     Completions {
         project: String,
         query: String,
@@ -86,6 +110,10 @@ pub enum Task {
 
 #[derive(Debug)]
 pub enum TaskReply {
+    Updates(UpdateCheck),
+    Image(String),
+    Usage(serde_json::Value),
+    Stats(OpenCodeStats, Vec<OpenCodeStatsProject>),
     Directory(ProjectDirectoryListing),
     File(ProjectFileContent),
     Search(ProjectSearchResults),
@@ -107,7 +135,13 @@ impl Task {
     }
     pub fn project(&self) -> &str {
         match self {
-            Self::Completions { project, .. } => project,
+            Self::Completions { project, .. }
+            | Self::Image { project, .. }
+            | Self::EncodeImage { project, .. }
+            | Self::Reveal { project, .. } => project,
+            Self::Usage { project }
+            | Self::Stats { project, .. }
+            | Self::AttachPullRequest { project, .. } => project,
             Self::Directory { project, .. }
             | Self::File { project, .. }
             | Self::Search { project, .. }
@@ -122,7 +156,7 @@ impl Task {
             | Self::Feedback { project, .. }
             | Self::Merge { project, .. }
             | Self::UpdateBranch { project, .. } => project,
-            Self::ImportSettings { .. } => "",
+            Self::ImportSettings { .. } | Self::Updates => "",
         }
     }
     pub fn review(&self) -> Option<(&str, Option<&str>)> {
@@ -138,6 +172,13 @@ impl Task {
     fn slot(&self) -> String {
         // JSON tuple encoding keeps delimiters inside paths unambiguous.
         let part = match self {
+            Self::Updates => "updates".into(),
+            Self::Reveal { path, .. } => format!("reveal:{path}"),
+            Self::EncodeImage { .. } => "encode-image".into(),
+            Self::Image { source, .. } => format!("image:{source}"),
+            Self::Usage { .. } => "usage".into(),
+            Self::Stats { .. } => "stats".into(),
+            Self::AttachPullRequest { url, .. } => format!("attach-pr:{url}"),
             Self::Completions { .. } => "completions".into(),
             Self::Directory { path, .. } => format!("directory:{path}"),
             Self::File { path, .. } => format!("file:{path}"),
@@ -167,6 +208,72 @@ impl Task {
             };
         }
         match self {
+            Self::Reveal { project, path } => {
+                let project = crate::projects::Project::open(project).map_err(|e| e.to_string())?;
+                let path = project
+                    .resolve_scoped_path(path)
+                    .map_err(|e| e.to_string())?;
+                let status = std::process::Command::new(if cfg!(target_os = "macos") {
+                    "open"
+                } else {
+                    "xdg-open"
+                })
+                .args(if cfg!(target_os = "macos") {
+                    vec!["-R".as_ref(), path.as_os_str()]
+                } else {
+                    vec![path.as_os_str()]
+                })
+                .status()
+                .map_err(|e| e.to_string())?;
+                if !status.success() {
+                    return Err("Unable to reveal this path".into());
+                }
+                Ok(TaskReply::Done)
+            }
+            Self::EncodeImage { bytes, .. } => {
+                crate::images::data_url(bytes.as_slice()).map(TaskReply::Image)
+            }
+            Self::Image { project, source } => {
+                let data = if source.starts_with("data:image/") {
+                    source.clone()
+                } else if let Some(hash) = source.strip_prefix("opencode-media:") {
+                    runtime
+                        .opencode
+                        .read_image(project, hash)
+                        .map_err(|e| e.to_string())?
+                } else if source.starts_with("https://") || source.starts_with("http://") {
+                    let response = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(20))
+                        .build()
+                        .map_err(|e| e.to_string())?
+                        .get(source)
+                        .send()
+                        .and_then(|r| r.error_for_status())
+                        .map_err(|e| e.to_string())?;
+                    crate::images::data_url(response)?
+                } else {
+                    files::read_image(project, source)?
+                };
+                Ok(TaskReply::Image(data))
+            }
+            Self::Updates => reply!(
+                crate::updates::check_for_updates(env!("CARGO_PKG_VERSION")),
+                Updates
+            ),
+            Self::Usage { project } => reply!(runtime.opencode.usage_limits(project), Usage),
+            Self::Stats { project, filter } => Ok(TaskReply::Stats(
+                runtime
+                    .opencode
+                    .session_stats(project, filter)
+                    .map_err(|e| e.to_string())?,
+                runtime
+                    .opencode
+                    .stats_projects(project)
+                    .map_err(|e| e.to_string())?,
+            )),
+            Self::AttachPullRequest { project, url } => {
+                reply!(github::pull_request_details(project, url), Details)
+            }
             Self::Completions { project, query } => reply!(
                 files::search_project(project, query, ProjectSearchMode::Files, false),
                 Search
@@ -276,6 +383,10 @@ impl Task {
 
 #[derive(Default)]
 pub struct Checkout {
+    pub usage: Option<serde_json::Value>,
+    pub stats: Option<OpenCodeStats>,
+    pub stats_projects: Vec<OpenCodeStatsProject>,
+    pub stats_filter: String,
     pub completions: Option<ProjectSearchResults>,
     pub completion_query: String,
     pub directories: BTreeMap<String, ProjectDirectoryListing>,
@@ -350,6 +461,10 @@ impl Review {
 
 #[derive(Default)]
 pub struct Services {
+    pub images: BTreeMap<(String, String), String>,
+    pub revision: u64,
+    errors: HashMap<String, String>,
+    pub update: Option<UpdateCheck>,
     pub checkouts: BTreeMap<String, Checkout>,
     pub reviews: BTreeMap<(String, String), Review>,
     latest: HashMap<String, u64>,
@@ -361,6 +476,7 @@ pub struct Services {
 
 impl Services {
     pub fn refresh_review(&mut self, project: &str, url: &str) {
+        self.revision += 1;
         let key = (project.into(), url.into());
         let review = self.reviews.entry(key.clone()).or_default();
         review.generation += 1;
@@ -408,7 +524,19 @@ impl Services {
     pub fn busy(&self, task: &Task) -> bool {
         self.loading.contains(&task.slot())
     }
+    pub fn error(&self, task: &Task) -> Option<&str> {
+        self.errors.get(&task.slot()).map(String::as_str)
+    }
     pub(super) fn start(&mut self, task: &Task, id: u64) {
+        self.errors.remove(&task.slot());
+        if let Task::Stats { filter, .. } = task {
+            let checkout = self.checkouts.entry(task.project().into()).or_default();
+            let key = serde_json::to_string(filter).unwrap_or_default();
+            if checkout.stats_filter != key {
+                checkout.stats = None;
+                checkout.stats_filter = key;
+            }
+        }
         self.latest.insert(task.slot(), id);
         self.loading.insert(task.slot());
         self.checkouts
@@ -440,6 +568,7 @@ impl Services {
         let reply = match reply {
             Ok(reply) => reply,
             Err(error) => {
+                self.errors.insert(task.slot(), error.clone());
                 if let Some((url, _)) = task.review() {
                     self.reviews
                         .entry((task.project().into(), url.into()))
@@ -455,8 +584,26 @@ impl Services {
             }
         };
         let mut next = Vec::new();
+        self.revision += 1;
         let checkout = self.checkouts.entry(task.project().into()).or_default();
         match (task, reply) {
+            (Task::Image { project, source }, TaskReply::Image(data)) => {
+                while self.images.len() >= 24
+                    || self.images.values().map(String::len).sum::<usize>() + data.len()
+                        > 40 * 1024 * 1024
+                {
+                    if self.images.pop_first().is_none() {
+                        break;
+                    }
+                }
+                self.images.insert((project.clone(), source.clone()), data);
+            }
+            (Task::Updates, TaskReply::Updates(update)) => self.update = Some(update),
+            (Task::Usage { .. }, TaskReply::Usage(usage)) => checkout.usage = Some(usage),
+            (Task::Stats { .. }, TaskReply::Stats(stats, projects)) => {
+                checkout.stats = Some(stats);
+                checkout.stats_projects = projects;
+            }
             (Task::Completions { query, .. }, TaskReply::Search(results)) => {
                 checkout.completions = Some(results);
                 checkout.completion_query = query.clone();

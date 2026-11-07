@@ -163,20 +163,8 @@ impl Workspace {
     }
 
     pub fn send(&mut self, tx: &mut Tx) {
-        if let Some(live) = &mut self.live
-            && let Some(index) = live.app.selected
-        {
-            let screen = match live.drafts[index].text.trim() {
-                "/files" => Some(crate::panels::Screen::Files),
-                "/changes" => Some(crate::panels::Screen::Changes),
-                "/settings" => Some(crate::panels::Screen::Settings),
-                _ => None,
-            };
-            if let Some(screen) = screen {
-                live.drafts[index].clear();
-                crate::panels::show(self, screen);
-                return;
-            }
+        if self.live.is_some() && crate::commands::dispatch(self, tx) {
+            return;
         }
         if let Some(live) = &mut self.live {
             live.send(tx);

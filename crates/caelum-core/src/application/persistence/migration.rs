@@ -148,8 +148,10 @@ fn saved(scope: Scope, remote_id: Option<String>) -> SavedSession {
         failed_prompt: None,
         pending_submission: None,
         queue: vec![],
+        inbox: vec![],
         archived: false,
         reading: -1.0,
+        unread: false,
     }
 }
 
@@ -241,7 +243,15 @@ mod tests {
         assert_eq!(destination.load().unwrap(), Some(expected));
         let lock = destination.lock().unwrap();
         assert!(destination.lock().is_err());
+        // A duplicate keeps the underlying file description alive, just like a
+        // child forked by a parallel provider test before its close-on-exec.
+        let inherited = lock.0.try_clone().unwrap();
         drop(lock);
+        let replacement = destination.lock().unwrap();
+        assert!(destination.lock().is_err());
+        drop(inherited);
+        assert!(destination.lock().is_err());
+        drop(replacement);
         assert!(destination.lock().is_ok());
     }
 

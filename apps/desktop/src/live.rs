@@ -11,12 +11,18 @@ use rune::{
     El, FileDialogOptions, ScrollPos, ScrollSpec, TextEdit, TextStyle, Tx, Waker, col, icon, row,
     text, text_input,
 };
-use rune_kit::shell::{RowStatus, Sidebar, SidebarHeader, SidebarRow};
-use rune_kit::{Button, ButtonVariant, Kit, Markdown, Placement, Select, glyphs};
+use rune_kit::shell::{RowStatus, SidebarHeader, SidebarRow};
+use rune_kit::{
+    Button, ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, Select, glyphs,
+};
 
 use crate::{PLUS, SEND, STOP, Workspace, on_key, quiet_button, theme, ui};
 
 pub struct Live {
+    pub completion: crate::completion::Menu,
+    pub commands: crate::commands::State,
+    pub models: crate::models::Picker,
+    pub media: crate::media::State,
     pub app: Application,
     pub drafts: Vec<TextEdit>,
     pub panels: crate::panels::Panels,
@@ -25,14 +31,16 @@ pub struct Live {
     pub fixture: bool,
     evaluation_ticks: usize,
     runtime: Option<Runtime>,
-    store_lock: Option<std::fs::File>,
-    expanded: HashSet<(usize, String)>,
+    store_lock: Option<caelum_core::application::StoreLock>,
+    pub(crate) expanded: HashSet<(usize, String)>,
     menu: Option<&'static str>,
     reading: Vec<Rc<Cell<ScrollPos>>>,
     last_selected: Option<usize>,
     history_lengths: Vec<usize>,
     last_screen: crate::panels::Screen,
     last_completion: Option<(String, String)>,
+    review_refresh: Option<((String, String), std::time::Instant)>,
+    wake: Option<Waker>,
 }
 
 impl Live {
@@ -45,6 +53,8 @@ impl Live {
             }
         }
         self.app.enable_store(store.0);
+        self.wake = Some(wake.clone());
+        self.media = crate::media::State::new(wake.clone());
         self.runtime = Some(Runtime::new(move || wake()));
     }
 
@@ -54,6 +64,10 @@ impl Live {
             app.open_project(project);
         }
         Self {
+            completion: Default::default(),
+            commands: Default::default(),
+            models: Default::default(),
+            media: Default::default(),
             app,
             drafts: Vec::new(),
             panels: Default::default(),
@@ -70,13 +84,16 @@ impl Live {
             history_lengths: Vec::new(),
             last_screen: crate::panels::Screen::Conversation,
             last_completion: None,
+            review_refresh: None,
+            wake: None,
         }
     }
 
-    fn sync_editors(&mut self) {
+    pub(crate) fn sync_editors(&mut self) {
         while self.drafts.len() < self.app.sessions.len() {
             let session = &self.app.sessions[self.drafts.len()];
             self.drafts.push(TextEdit::new(&session.draft));
+            self.commands.previous_drafts.push(session.draft.clone());
             let mut position = ScrollPos::default();
             if session.reading >= 0.0 {
                 position.offset[1] = session.reading;
@@ -87,7 +104,9 @@ impl Live {
     }
 
     pub fn new_session(&mut self) {
+        self.schedule();
         let Some(project) = self.app.active_project.clone() else {
+            self.panels.overlay = Some(crate::panels::Screen::Launcher);
             return;
         };
         let provider = self
@@ -95,7 +114,7 @@ impl Live {
             .selected
             .map(|i| self.app.sessions[i].scope.provider)
             .unwrap_or(self.app.preferences.default_provider);
-        let index = self.app.new_session(Scope { project, provider });
+        let index = self.app.project_draft(Scope { project, provider });
         self.sync_editors();
         self.drafts[index].focused = true;
         self.menu = None;
@@ -108,7 +127,7 @@ impl Live {
         }
     }
 
-    fn archive(&mut self, index: usize, archived: bool) {
+    pub(crate) fn archive(&mut self, index: usize, archived: bool) {
         let selected = self.app.selected;
         self.app.archive(index, archived);
         // Local archive can create and select its replacement synchronously. Rune
@@ -128,6 +147,21 @@ impl Live {
         let was_archived = selected.is_some_and(|i| self.app.sessions[i].archived);
         self.app.apply(event);
         self.sync_editors();
+        for (index, session) in self.app.sessions.iter_mut().enumerate() {
+            if let Some(caret) = session.completion_caret.take() {
+                self.completion.pending = None;
+                self.drafts[index].replace_text(&session.draft);
+                self.drafts[index].set_caret(caret);
+                self.drafts[index].focused = self.app.selected == Some(index);
+            }
+            if let Some(caret) = session.side_completion_caret.take()
+                && self.commands.side_owner == Some(index)
+            {
+                self.completion.pending = None;
+                self.commands.side_editor.replace_text(&session.side_draft);
+                self.commands.side_editor.set_caret(caret);
+            }
+        }
         if self.app.selected != selected
             || (was_archived
                 && self
@@ -135,6 +169,12 @@ impl Live {
                     .selected
                     .is_some_and(|i| !self.app.sessions[i].archived))
         {
+            if matches!(
+                self.panels.overlay,
+                Some(crate::panels::Screen::Launcher | crate::panels::Screen::Worktrees)
+            ) {
+                self.panels.overlay = None;
+            }
             self.panels.archived = false;
             self.panels.screen = crate::panels::Screen::Conversation;
             self.focus();
@@ -148,40 +188,17 @@ impl Live {
     }
 
     pub fn stop(&mut self) {
+        self.schedule();
         if let Some(index) = self.app.selected {
             self.app.cancel(index);
         }
     }
 
     pub fn send(&mut self, tx: &mut Tx) {
+        self.schedule();
         let Some(index) = self.app.selected else {
             return;
         };
-        let draft = self.drafts[index].text.trim().to_owned();
-        if let Some(prompt) = draft.strip_prefix("/ask ") {
-            if self.app.ask(index, prompt.into()) {
-                self.drafts[index].clear();
-            }
-            return;
-        }
-        if draft == "/new" {
-            self.drafts[index].clear();
-            self.new_session();
-            return;
-        }
-        if let Some(command) = draft.strip_prefix('/') {
-            let name = command.split_whitespace().next().unwrap_or_default();
-            let session = &self.app.sessions[index];
-            if !self
-                .app
-                .provider_commands
-                .get(&session.scope)
-                .is_some_and(|commands| commands.iter().any(|c| c.name == name))
-            {
-                self.app.sessions[index].error = Some(format!("Unknown command /{name}"));
-                return;
-            }
-        }
         if self.app.send(index, self.drafts[index].text.clone()) {
             self.drafts[index].clear();
             self.drafts[index].focused = true;
@@ -190,7 +207,9 @@ impl Live {
     }
 
     pub fn poll(&mut self, tx: &mut Tx) -> bool {
-        let mut changed = false;
+        self.app.conversation_hidden = self.panels.screen != crate::panels::Screen::Conversation
+            || self.panels.overlay.is_some();
+        let mut changed = self.media.poll();
         if self.evaluation {
             self.evaluation_ticks += 1;
             if self.evaluation_ticks.is_multiple_of(3) {
@@ -208,12 +227,47 @@ impl Live {
                 position.offset[1]
             };
         }
+        if let Some(index) = self.commands.side_owner {
+            if self.app.selected != Some(index) {
+                self.app.dismiss_side_question(index);
+                self.commands.side_owner = None;
+            } else {
+                self.app.sessions[index]
+                    .side_draft
+                    .clone_from(&self.commands.side_editor.text);
+            }
+        }
+        if let Some((index, side, text, anchor, focus)) = &self.completion.pending {
+            let editor = if *side {
+                &self.commands.side_editor
+            } else {
+                &self.drafts[*index]
+            };
+            if self.app.selected != Some(*index)
+                || !editor.focused
+                || self.panels.overlay.is_some()
+                || editor.text != *text
+                || editor.anchor != *anchor
+                || editor.focus != *focus
+            {
+                self.app.cancel_mentions(*index);
+                self.completion.pending = None;
+            }
+        }
         if let Some(index) = self.app.selected {
             let completion = self
-                .drafts
-                .get(index)
-                .and_then(|draft| crate::panels::mention(&draft.text))
-                .map(|(_, query)| (self.app.sessions[index].scope.project.clone(), query.into()));
+                .commands
+                .side_owner
+                .map(|_| &self.commands.side_editor)
+                .or_else(|| self.drafts.get(index))
+                .filter(|draft| {
+                    draft.focused && draft.preedit.is_none() && self.panels.overlay.is_none()
+                })
+                .and_then(|draft| {
+                    caelum_core::application::Completion::at(&draft.text, draft.anchor, draft.focus)
+                })
+                .filter(|token| token.kind == caelum_core::application::CompletionKind::File)
+                .map(|token| (self.app.sessions[index].scope.project.clone(), token.query));
             if completion != self.last_completion {
                 self.last_completion = completion.clone();
                 if let Some((project, query)) = completion {
@@ -227,7 +281,29 @@ impl Live {
         for event in events {
             self.apply(event);
         }
+        changed |= self.app.acknowledge();
         if self.runtime.is_some() {
+            if self.panels.screen == crate::panels::Screen::Review
+                && let Some(key) = self.panels.review.clone()
+            {
+                let now = std::time::Instant::now();
+                match &self.review_refresh {
+                    Some((previous, at))
+                        if previous == &key && now.duration_since(*at).as_secs() >= 30 =>
+                    {
+                        self.app.task(caelum_core::application::Task::Details {
+                            project: key.0.clone(),
+                            url: key.1.clone(),
+                        });
+                        self.review_refresh = Some((key, now));
+                    }
+                    Some((previous, _)) if previous == &key => {}
+                    _ => self.review_refresh = Some((key, now)),
+                }
+                tx.wake_after(std::time::Duration::from_secs(30));
+            } else {
+                self.review_refresh = None;
+            }
             for (id, command) in self.app.commands() {
                 if let Err(error) = self.runtime.as_mut().unwrap().submit(id, command) {
                     self.apply(Event::Completed(id, Err(error)));
@@ -237,7 +313,9 @@ impl Live {
         }
         self.sync_editors();
         self.forms.sync(&self.app.questions);
-        self.panels.sync(&self.app);
+        self.panels.remember(&mut self.app);
+        changed |= self.panels.sync(&self.app);
+        self.panels.reveal_line(tx);
         self.history_lengths.resize(self.app.sessions.len(), 0);
         for (index, session) in self.app.sessions.iter().enumerate() {
             let length = session.conversation.entries.len();
@@ -255,6 +333,11 @@ impl Live {
             || (self.panels.screen == crate::panels::Screen::Conversation
                 && self.last_screen != self.panels.screen)
         {
+            if let Some(previous) = self.last_selected
+                && self.last_selected != self.app.selected
+            {
+                self.app.sessions[previous].completion_generation += 1;
+            }
             self.last_selected = self.app.selected;
             if let Some(index) = self.app.selected {
                 let position = self.reading[index].get();
@@ -268,12 +351,27 @@ impl Live {
             changed = true;
         }
         self.last_screen = self.panels.screen;
+        if self
+            .app
+            .sessions
+            .iter()
+            .any(|s| s.working() || !s.shells.is_empty())
+        {
+            tx.wake_after(std::time::Duration::from_secs(1));
+        }
         changed
+    }
+
+    fn schedule(&self) {
+        if let Some(wake) = &self.wake {
+            wake();
+        }
     }
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
+        self.panels.remember(&mut self.app);
         for (i, editor) in self.drafts.iter().enumerate() {
             self.app.sessions[i].draft.clone_from(&editor.text);
         }
@@ -300,7 +398,11 @@ pub(crate) fn live(s: &Workspace) -> &Live {
     s.live.as_ref().expect("live workspace")
 }
 pub(crate) fn live_mut(s: &mut Workspace) -> &mut Live {
-    s.live.as_mut().expect("live workspace")
+    let live = s.live.as_mut().expect("live workspace");
+    // Rune polls before input handlers. Mutations must schedule the following
+    // poll so commands and derived views also advance in an otherwise idle app.
+    live.schedule();
+    live
 }
 
 pub fn open_project(_: &mut Workspace, tx: &mut Tx) {
@@ -310,9 +412,17 @@ pub fn open_project(_: &mut Workspace, tx: &mut Tx) {
             ..Default::default()
         },
         |s: &mut Workspace, result, _| match result {
-            Ok(Some(path)) => live_mut(s)
-                .app
-                .open_project(path.to_string_lossy().into_owned()),
+            Ok(Some(path)) => {
+                let l = live_mut(s);
+                if l.panels.overlay == Some(crate::panels::Screen::Launcher) {
+                    l.app.launch_project(
+                        path.to_string_lossy().into_owned(),
+                        l.panels.launch_provider,
+                    );
+                } else {
+                    l.app.open_project(path.to_string_lossy().into_owned());
+                }
+            }
             Ok(None) => {}
             Err(error) => live_mut(s).app.error = Some(error.to_string()),
         },
@@ -321,13 +431,14 @@ pub fn open_project(_: &mut Workspace, tx: &mut Tx) {
 
 pub fn sidebar(s: &Workspace, k: &Kit) -> El {
     let app = &live(s).app;
-    let mut sidebar = Sidebar::new()
+    let mut sidebar = col()
+        .w_full()
+        .h_full()
+        .min_h(0.0)
         .label("Projects and sessions")
-        .inset(0.0)
-        .row_gap(3.0)
-        .header_gap(8.0)
-        .header(ui::brand(s, k))
-        .header(
+        .gap(6.0)
+        .child(ui::brand(s, k))
+        .child(
             SidebarHeader::new(if app.opening {
                 "Opening project…"
             } else {
@@ -393,7 +504,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             git.map(|g| format!("{} changed", g.changes.len()))
                 .unwrap_or_default()
         };
-        projects = projects.child(
+        let context_path = path.clone();
+        projects = projects.child(crate::context::project(
             k.interactive(
                 col()
                     .w_full()
@@ -472,19 +584,20 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 live.panels.screen = crate::panels::Screen::Conversation;
             })
             .key(format!("project-{index}")),
-        );
+            context_path,
+        ));
     }
     sidebar = sidebar
-        .header(
+        .child(
             col()
                 .w_full()
-                .max_h(190.0)
+                .max_h(110.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
                 .child(projects),
         )
-        .header(
+        .child(
             row()
                 .w_full()
                 .gap(4.0)
@@ -495,7 +608,6 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     Button::new("New session")
                         .icon(&PLUS)
                         .variant(ButtonVariant::Outline)
-                        .disabled(app.active_project.is_none())
                         .on_press(|s: &mut Workspace| s.new_session())
                         .build(k)
                         .key("new-session")
@@ -504,7 +616,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 )
                 .child(crate::panels::navigation(s, k)),
         )
-        .header(
+        .child(
             SidebarHeader::new(if live(s).panels.archived {
                 "Archived sessions"
             } else {
@@ -542,10 +654,11 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                             .key("refresh-sessions"),
                     ),
             )
-            .build(k),
+            .build(k)
+            .key("sessions-heading"),
         );
     if live(s).panels.searching_sessions {
-        sidebar = sidebar.header(
+        sidebar = sidebar.child(
             text_input(&live(s).panels.sessions, k.ty.ui)
                 .key("session-search")
                 .label("Search sessions")
@@ -558,6 +671,13 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.sessions),
         );
     }
+    let mut sessions = col()
+        .w_full()
+        .gap(3.0)
+        .key("sidebar-list")
+        .role("list")
+        .focus_group()
+        .focus_follows();
     for (index, session) in
         app.sessions.iter().enumerate().filter(|(_, session)| {
             session.archived == live(s).panels.archived
@@ -600,6 +720,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             branch,
             if pending {
                 "Needs an answer"
+            } else if session.archiving {
+                "Archiving…"
             } else if session.stopping {
                 "Stopping…"
             } else if session.working() {
@@ -621,20 +743,38 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             item = item.status(RowStatus::Attention);
         } else if session.working() {
             item = item.status(RowStatus::Busy);
+        } else if session.unread {
+            item = item.status(RowStatus::Unread);
         }
-        if !session.working() && !session.archiving && session.queue.is_empty() {
+        if !pending
+            && !session.working()
+            && !session.archiving
+            && session.queue.is_empty()
+            && session.inbox.items.is_empty()
+        {
             item = item.on_close(move |s: &mut Workspace, _| {
                 let live = live_mut(s);
                 live.archive(index, !live.app.sessions[index].archived);
             });
         }
-        sidebar = sidebar.child(ui::selected_row(
-            item.build(k).key(format!("live-session-{index}")),
+        sessions = sessions.child(ui::selected_row(
+            crate::context::session(item.build(k).key(format!("live-session-{index}")), index),
             app.selected == Some(index),
             k,
         ));
     }
-    let mut footer = col().w_full().gap(6.0);
+    sidebar = sidebar.child(
+        col()
+            .key("sidebar-scroll")
+            .w_full()
+            .grow(1.0)
+            .min_h(40.0)
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .child(sessions),
+    );
+    let mut notices = col().w_full().gap(4.0);
     for provider in Provider::ALL {
         if let Some(path) = &app.active_project
             && let Some(error) = app.notices.get(&Scope {
@@ -642,7 +782,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 project: path.clone(),
             })
         {
-            footer = footer.child(
+            notices = notices.child(
                 text(format!("{}: {error}", provider.as_str()))
                     .font(k.ty.small)
                     .color(k.c.text_muted)
@@ -650,11 +790,16 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             );
         }
     }
-    if let Some(index) = app.last_archived {
+    let mut footer = col().key("sidebar-footer").w_full().gap(6.0);
+    if app.last_archived.is_some() {
         footer = footer.child(
             Button::new("Undo archive")
                 .variant(ButtonVariant::Outline)
-                .on_press(move |s: &mut Workspace| live_mut(s).archive(index, false))
+                .on_press(move |s: &mut Workspace| {
+                    let live = live_mut(s);
+                    live.app.undo_archive();
+                    live.sync_editors();
+                })
                 .build(k)
                 .key("undo-archive"),
         );
@@ -690,17 +835,19 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             );
         }
     }
-    footer = footer
+    sidebar = sidebar
         .child(rune::el().w_full().h(1.0).fill(k.c.border_base))
         .child(
             SidebarHeader::new("Pull requests")
                 .count(seen.len())
-                .build(k),
+                .build(k)
+                .key("requests-heading"),
         )
         .child(
             col()
                 .w_full()
-                .max_h(150.0)
+                .max_h(100.0)
+                .min_h(0.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
@@ -709,6 +856,16 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 } else {
                     requests
                 }),
+        );
+    footer = footer
+        .child(
+            col()
+                .w_full()
+                .max_h(40.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(notices),
         )
         .child(
             row()
@@ -743,11 +900,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                         .key("session-options"),
                 ),
         );
-    sidebar
-        .footer(footer.max_h(240.0).scroll(ScrollSpec {
-            stick_bottom: false,
-        }))
-        .build(k)
+    sidebar.child(footer)
 }
 
 pub fn transcript(s: &Workspace, k: &Kit, reduced: bool, padding: f32) -> El {
@@ -820,7 +973,10 @@ pub fn transcript(s: &Workspace, k: &Kit, reduced: bool, padding: f32) -> El {
                         }
                     },
                     move |s: &Workspace, row| timeline_row(s, &kit, reduced, padding, index, row),
-                ),
+                )
+                .on_visible_rows(move |s: &mut Workspace, range| {
+                    crate::media::request(s, index, range)
+                }),
         )
 }
 
@@ -874,12 +1030,27 @@ fn timeline_row(
         match entry.kind {
             EntryKind::User => {
                 let (message, files) = caelum_core::application::split_context(&entry.text);
-                item = item.child(ui::user_message(message, k));
+                item = item.child(ui::user_message(
+                    &caelum_core::application::presentation::visible_text(message),
+                    k,
+                ));
                 for file in files {
+                    if file.kind == caelum_core::application::AttachmentKind::Image {
+                        item = item.child(crate::media::thumbnail(
+                            s,
+                            k,
+                            &session.scope.project,
+                            &caelum_core::application::presentation::Media {
+                                name: file.path,
+                                source: file.content,
+                            },
+                        ));
+                        continue;
+                    }
                     item = item.child(
                         text(format!(
                             "Attached: {}{}",
-                            file.path,
+                            file.label(),
                             if file.truncated { " · truncated" } else { "" }
                         ))
                         .font(k.ty.small)
@@ -926,85 +1097,20 @@ fn timeline_row(
                             ),
                     )
                     .child(
-                        Markdown::new(&entry.text)
-                            .selectable(true)
-                            .streaming(!entry.complete && session.working())
-                            .reveal(if reduced { 0.0 } else { 0.12 })
-                            .on_link_tx(move |s: &mut Workspace, url, tx| {
-                                crate::panels::open_link(s, index, url, tx)
-                            })
-                            .render(&theme::markdown(k)),
+                        Markdown::new(caelum_core::application::presentation::visible_text(
+                            &entry.text,
+                        ))
+                        .selectable(true)
+                        .streaming(!entry.complete && session.working())
+                        .reveal(if reduced { 0.0 } else { 0.12 })
+                        .on_link_tx(move |s: &mut Workspace, url, tx| {
+                            crate::panels::open_link(s, index, url, tx)
+                        })
+                        .render(&theme::markdown(k)),
                     );
             }
             EntryKind::Tool | EntryKind::Reasoning | EntryKind::Compaction => {
-                let id = entry.id.clone();
-                let expanded = live.expanded.contains(&(index, id.clone()));
-                item = item.child(
-                    Button::new(if entry.kind == EntryKind::Compaction {
-                        format!("Context compaction · {}", entry.status)
-                    } else if entry.kind == EntryKind::Reasoning {
-                        "Thinking".into()
-                    } else if entry.name.is_empty() {
-                        "Tool".into()
-                    } else {
-                        let name = match entry.name.as_str() {
-                            "commandExecution" | "bash" | "shell" => "Run",
-                            "fileChange" | "apply_patch" | "edit" => "Edit files",
-                            "read" | "read_file" => "Read",
-                            "webSearch" | "websearch" => "Search",
-                            other => other,
-                        };
-                        if name == "Run" {
-                            format!(
-                                "Run {}",
-                                entry
-                                    .input
-                                    .lines()
-                                    .next()
-                                    .unwrap_or_default()
-                                    .chars()
-                                    .take(100)
-                                    .collect::<String>()
-                            )
-                        } else {
-                            format!("{name} · {}", entry.status)
-                        }
-                    })
-                    .icon(if expanded {
-                        &glyphs::CHEVRON_DOWN
-                    } else {
-                        &glyphs::CARET_RIGHT
-                    })
-                    .variant(ButtonVariant::GhostMuted)
-                    .on_press(move |s: &mut Workspace| {
-                        let expanded = &mut live_mut(s).expanded;
-                        let key = (index, id.clone());
-                        if !expanded.remove(&key) {
-                            expanded.insert(key);
-                        }
-                    })
-                    .build(k)
-                    .expanded(expanded)
-                    .self_start(),
-                );
-                if expanded {
-                    item = item.child(
-                        text(
-                            if matches!(entry.kind, EntryKind::Reasoning | EntryKind::Compaction) {
-                                entry.text.clone()
-                            } else {
-                                format!("{}\n{}", entry.input, entry.output)
-                            },
-                        )
-                        .font(k.ty.mono)
-                        .color(k.c.text_muted)
-                        .wrap()
-                        .selectable(true)
-                        .padding(12.0)
-                        .radius(8.0)
-                        .fill(k.c.layer_01),
-                    );
-                }
+                item = item.child(crate::activity::tool(s, k, index, entry));
             }
             EntryKind::Status => {
                 item = item.child(
@@ -1015,7 +1121,16 @@ fn timeline_row(
                 );
             }
         }
-        return content.child(item);
+        for media in &entry.media {
+            item = item.child(crate::media::thumbnail(s, k, &session.scope.project, media));
+        }
+        return content.child(crate::context::message(
+            item,
+            caelum_core::application::presentation::visible_text(
+                caelum_core::application::split_context(&entry.text).0,
+            ),
+            index,
+        ));
     }
     if let Some(error) = &session.error {
         content = content.child(
@@ -1025,24 +1140,6 @@ fn timeline_row(
                 .wrap()
                 .selectable(true),
         );
-    }
-    if let Some((question, answer)) = &session.side_question {
-        content = content
-            .child(
-                text(format!("Side question: {question}"))
-                    .font(k.ty.ui_medium)
-                    .color(k.c.text_base)
-                    .wrap(),
-            )
-            .child(
-                Markdown::new(if session.generating {
-                    "Thinking…"
-                } else {
-                    answer
-                })
-                .selectable(true)
-                .render(&theme::markdown(k)),
-            );
     }
     if let Some(prompt) = &session.failed_prompt {
         let prompt = prompt.clone();
@@ -1144,6 +1241,10 @@ fn timeline_row(
 }
 
 pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<El>) -> El {
+    if live(s).commands.side_owner == live(s).app.selected && live(s).commands.side_owner.is_some()
+    {
+        return crate::commands::side_view(s, k, padding);
+    }
     let live = live(s);
     let Some(index) = live.app.selected else {
         return col();
@@ -1157,11 +1258,19 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .color(k.c.text_base)
         .selection_color(k.selection())
         .w_full()
-        .min_h(56.0)
-        .max_h(180.0)
         .on_edit(move |s: &mut Workspace| &mut live_mut(s).drafts[index])
+        .on_input_change(crate::completion::changed)
         .on_input_key(on_key)
         .on_submit(Workspace::send)
+        .on_input_paste(move |s: &mut Workspace, content, _| {
+            let Some(image) = content.image() else {
+                return false;
+            };
+            live_mut(s)
+                .app
+                .attach_image(index, "Pasted image.png".into(), image.png().to_vec());
+            true
+        })
         .on_drop_files(move |s: &mut Workspace, paths, _| {
             let project = live_mut(s).app.sessions[index].scope.project.clone();
             for path in paths {
@@ -1176,9 +1285,8 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
                 }
             }
         });
-    let submit = Button::new("")
-        .icon(if session.working() { &STOP } else { &SEND })
-        .variant(ButtonVariant::Submit)
+    let submit = IconButton::new(if session.working() { &STOP } else { &SEND })
+        .variant(IconButtonVariant::Submit)
         .disabled(
             session.stopping
                 || (!session.working()
@@ -1233,12 +1341,17 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .gap(4.0)
         .center_y()
         .child(pickers.grow(1.0))
-        .child(controls.child(submit).w((if wide { 220.0 } else { 72.0 })
-            + if session.working() && !draft.text.trim().is_empty() {
-                60.0
-            } else {
-                0.0
-            }));
+        .child(
+            controls
+                .child(crate::activity::context(s, k, index, wide))
+                .child(submit)
+                .w((if wide { 320.0 } else { 96.0 })
+                    + if session.working() && !draft.text.trim().is_empty() {
+                        60.0
+                    } else {
+                        0.0
+                    }),
+        );
     ui::composer(
         input,
         controls,
@@ -1316,7 +1429,7 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                 .placement(Placement::TopStart)
                 .open(live.menu == Some("model"))
                 .disabled(session.archived || session.archiving)
-                .on_toggle(|s: &mut Workspace| toggle_menu(s, "model"))
+                .on_toggle(|s: &mut Workspace| crate::models::open(s, None))
                 .on_close(|s: &mut Workspace| live_mut(s).menu = None)
                 .on_choose(move |s: &mut Workspace, value, _| {
                     let live = live_mut(s);
@@ -1436,7 +1549,12 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
             "Archive session"
         })
         .variant(ButtonVariant::GhostMuted)
-        .disabled(session.working() || session.archiving || !session.queue.is_empty())
+        .disabled(
+            session.working()
+                || session.archiving
+                || !session.queue.is_empty()
+                || !session.inbox.items.is_empty(),
+        )
         .on_press(move |s: &mut Workspace| {
             let archived = crate::live::live(s).app.sessions[index].archived;
             live_mut(s).archive(index, !archived);

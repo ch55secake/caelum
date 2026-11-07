@@ -475,12 +475,15 @@ impl OpenCodeProvider {
         let session = self.session(&server, &project, session_id)?;
         select_model(&server, &project, &session, model, effort)?;
         let path = format!("/api/session/{session_id}/prompt");
-        server.request_json(
-            Method::POST,
-            &path,
-            &[],
-            Some(json!({ "text": prompt, "id": message_id })),
-        )?;
+        let (prompt, images) = crate::application::provider_prompt(prompt);
+        let mut body = json!({"text":prompt,"id":message_id});
+        if !images.is_empty() {
+            body["files"] = json!(images
+                .iter()
+                .map(|a| json!({"uri":a.content,"name":a.path}))
+                .collect::<Vec<_>>());
+        }
+        server.request_json(Method::POST, &path, &[], Some(body))?;
         Ok(())
     }
 
@@ -497,11 +500,19 @@ impl OpenCodeProvider {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
         self.session(&server, &project, session_id)?;
+        let (text, images) = crate::application::provider_prompt(prompt);
+        let mut body = json!({ "id": message_id, "text": text, "delivery": "queue" });
+        if !images.is_empty() {
+            body["files"] = json!(images
+                .iter()
+                .map(|a| json!({"uri": a.content,"name":a.path}))
+                .collect::<Vec<_>>());
+        }
         server.request_json(
             Method::POST,
             &format!("/api/session/{session_id}/prompt"),
             &[],
-            Some(json!({ "id": message_id, "text": prompt, "delivery": "queue" })),
+            Some(body),
         )?;
         Ok(())
     }
@@ -1831,6 +1842,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
         elif path == "/api/session/ses_fake/prompt":
+            with open(os.path.join(PROJECT, "prompt-request.json"), "w") as request:
+                json.dump(body, request)
             if body.get("delivery") == "queue":
                 INBOX.setdefault(body["id"], {"id": body["id"], "type": "user", "delivery": "queue", "payload": {"text": body["text"]}})
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
@@ -2047,6 +2060,35 @@ server.serve_forever()
             .unwrap()
             .starts_with("data:image/png;base64,"));
         assert!(provider.read_image(&project_path, "../info").is_err());
+        let image =
+            crate::application::Attachment::image("café.png".into(), b"\x89PNG\r\n\x1a\n").unwrap();
+        let prompt = format!(
+            "Describe this\n\n<caelum-image-context>\n{}\n</caelum-image-context>",
+            json!({"version":1,"images":[image.clone()]})
+        );
+        provider
+            .send_prompt(&project_path, "ses_fake", &prompt)
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&fs::read(project_path.join("prompt-request.json")).unwrap())
+                .unwrap();
+        assert_eq!(body["text"], "Describe this");
+        assert_eq!(
+            body["files"],
+            json!([{"uri":image.content,"name":"café.png"}])
+        );
+        provider
+            .enqueue_prompt(&project_path, "ses_fake", "msg_image", &prompt)
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&fs::read(project_path.join("prompt-request.json")).unwrap())
+                .unwrap();
+        assert_eq!(body["delivery"], "queue");
+        assert_eq!(body["text"], "Describe this");
+        assert_eq!(body["files"][0]["uri"], image.content);
+        provider
+            .cancel_queued_prompt(&project_path, "ses_fake", "msg_image")
+            .unwrap();
         provider
             .enqueue_prompt(&project_path, "ses_fake", "msg_queue", "Next task")
             .unwrap();

@@ -1,5 +1,41 @@
 # Native desktop evaluation record
 
+## Historical parity repair — 7 November 2026
+
+The audit uses the final TypeScript tree at `82ca39d`, its interaction tests and
+historical screenshots. The last follow-intent unread repair is `388d09e` in #94;
+the native implementation remains in the second stacked PR, #95.
+
+- **191 Rust tests passed**: 155 core, 22 native, 6 protocol and 8 CLI. The two
+  external-service tests were then run explicitly and passed. Formatting and
+  workspace Clippy with warnings denied pass; ShellCheck and Actionlint pass.
+  The release/profile Python suites pass **17 + 2 checks**.
+- Coverage includes bounded multiline composition, pinned Settings/Undo, local
+  and provider-owned close/restore, caret-aware Unicode mentions and dismissal,
+  model search/favourites/focus, side-question ownership, command failure, launcher
+  handoff, local queue recovery, OpenCode inbox admission/removal retries and
+  reconciliation, notifications/unread and image payloads for both adapters.
+- The migration-lock regression now deliberately retains a duplicate file
+  description during release. Explicit unlock-on-drop fixes the reproduced race
+  with concurrently forked provider processes; subsequent locks remain exclusive.
+- Files, Changes and PR review share virtualized native code views. Native tests
+  verify source search/refresh and exact continuous-review position across refresh
+  and tab navigation, alongside the 2,000-entry/six-stream and 300-file workloads.
+- **20 light/dark captures** cover workspace, inspector, compact, five-page Settings,
+  typed tools, review, checks, mentions, images and crowded layouts. Ten representative
+  scenes were inspected and checked in. Recognized tools omit redundant raw inputs;
+  unavailable PR patches replace copy actions with an explicit GitHub link. Rune's
+  pinned renderer uses its binary no-content note for GitHub-omitted patches too;
+  the header help explains both cases.
+- Real OpenCode discovery/history passed with **3 sessions and 158 rendered entries**
+  using isolated state. Read-only workspace/GitHub services passed against this
+  checkout and #95: directory/file/search, Git/diff, worktrees, PR discovery/details,
+  **30 changed files** and all feedback categories.
+
+Real Codex remains unavailable locally because its executable is missing. These
+read-only service checks do not establish end-to-end prompt/approval/inbox delivery,
+remote mutation or accessibility acceptance; the remaining scope is listed below.
+
 ## Session-close and visual follow-up — 6 November 2026
 
 The native pointer regression reproduced an out-of-bounds panic when closing the

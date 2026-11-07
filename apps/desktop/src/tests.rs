@@ -38,6 +38,282 @@ fn key(rt: &mut Runtime<Workspace>, key: Key, mods: Mods) {
     rt.frame(1.0 / 60.0);
 }
 
+fn fill(rt: &mut Runtime<Workspace>, field: &str, value: &str) {
+    click(rt, field);
+    key(
+        rt,
+        Key::Command('a'),
+        Mods {
+            cmd: true,
+            ..Default::default()
+        },
+    );
+    rt.paste(value);
+    advance(rt, 0.1);
+}
+
+#[test]
+fn long_drafts_and_crowded_sidebar_keep_controls_in_bounds() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        for n in 0..35 {
+            let i = l.app.new_session(caelum_core::application::Scope {
+                project: "/project".into(),
+                provider: caelum_core::application::Provider::Codex,
+            });
+            l.app.sessions[i].title = format!("Session {n}");
+        }
+        l.app.select(0);
+        l.poll(&mut rune::Tx::default());
+        l.app.archive(2, true);
+    });
+    advance(&mut rt, 0.3);
+    fill(
+        &mut rt,
+        "live-draft-0",
+        &"A long Unicode draft café ☁️\n".repeat(30),
+    );
+    for name in ["nav-settings", "undo-archive", "send", "provider-trigger"] {
+        let e = element(&rt, name);
+        assert!(
+            e.visible[2] > 0.0 && e.visible[3] > 0.0,
+            "{name} is clipped"
+        );
+        assert!(
+            e.rect[1] >= 0.0 && e.rect[1] + e.rect[3] <= 620.1,
+            "{name} outside the window: {:?}",
+            e.rect
+        );
+    }
+    let editor = element(&rt, "composer-editor");
+    let send = element(&rt, "send");
+    assert!(editor.rect[3] <= 180.1);
+    assert!(editor.rect[1] + editor.rect[3] <= send.rect[1] + 1.0);
+    assert!(
+        rt.state.live.as_ref().unwrap().drafts[0]
+            .text
+            .ends_with("café ☁️\n")
+    );
+    click(&mut rt, "nav-settings");
+    advance(&mut rt, 0.2);
+    for page in [
+        "providers",
+        "worktrees",
+        "notifications",
+        "about",
+        "appearance",
+    ] {
+        click(&mut rt, &format!("settings-{page}"));
+        assert!(element(&rt, &format!("settings-{page}")).visible[3] > 0.0);
+    }
+    key(&mut rt, Key::Escape, Mods::default());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0]
+            .text
+            .lines()
+            .count(),
+        30
+    );
+}
+
+#[test]
+fn native_mentions_replace_only_the_caret_token_and_escape_cancels_pending_reads() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let mut rt = live_runtime();
+    fill(&mut rt, "live-draft-0", "Before café @ma after");
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        let at = l.drafts[0].text.find(" after").unwrap();
+        l.drafts[0].set_caret(at);
+    });
+    advance(&mut rt, 0.1);
+    let requests = rt.state.live.as_mut().unwrap().app.commands();
+    let (search, _) = requests
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Task(Task::Completions { .. })))
+        .unwrap();
+    let results=serde_json::from_value(serde_json::json!({"query":"ma","matches":[{"path":"main.rs","line":null,"preview":null}],"truncated":false,"skipped":0})).unwrap();
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().apply(Event::Completed(
+            search,
+            Ok(Reply::Task(TaskReply::Search(results))),
+        ))
+    });
+    advance(&mut rt, 0.2);
+    key(&mut rt, Key::Tab, Mods::default());
+    let (read, _) = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .pop()
+        .unwrap();
+    key(&mut rt, Key::Escape, Mods::default());
+    assert_eq!(rt.state.live.as_ref().unwrap().app.sessions[0].attaching, 0);
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().apply(Event::Completed(
+            read,
+            Ok(Reply::Task(TaskReply::File(
+                caelum_protocol::ProjectFileContent {
+                    path: "main.rs".into(),
+                    content: "snapshot".into(),
+                    size_bytes: 8,
+                    truncated: false,
+                },
+            ))),
+        ))
+    });
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Before café @ma after"
+    );
+    assert!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .attachments
+            .is_empty()
+    );
+}
+
+#[test]
+fn native_side_questions_preserve_main_draft_focus_and_reject_late_answers() {
+    use caelum_core::application::{Command, Event, Reply};
+    let mut rt = live_runtime();
+    click(&mut rt, "live-session-1");
+    rt.update(|s, _| {
+        let session = &mut s.live.as_mut().unwrap().app.sessions[1];
+        session.remote_id = Some("existing".into());
+        session.loaded = true;
+        session.conversation.working = true;
+    });
+    fill(&mut rt, "live-draft-1", "Keep the main draft");
+    fill(&mut rt, "live-draft-1", "/btw Why does this work?");
+    key(&mut rt, Key::Enter, Mods::default());
+    assert!(rt.find("side-question").is_some());
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    let (request, _) = commands
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Generate(..)))
+        .unwrap();
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.2);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[1].text,
+        "Keep the main draft"
+    );
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().apply(Event::Completed(
+            request,
+            Ok(Reply::Generated("Late answer".into())),
+        ))
+    });
+    assert!(rt.find("side-question").is_none());
+    assert!(rt.state.live.as_ref().unwrap().app.sessions[1].working());
+    rt.paste(" plus more");
+    advance(&mut rt, 0.1);
+    assert!(
+        rt.state.live.as_ref().unwrap().drafts[1]
+            .text
+            .contains("plus more")
+    );
+}
+
+#[test]
+fn source_search_navigation_and_refresh_preserve_the_reading_position() {
+    let mut rt = live_runtime();
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        let c = l
+            .app
+            .services
+            .checkouts
+            .entry("/project".into())
+            .or_default();
+        for path in ["a.rs", "b.rs"] {
+            c.tabs.push(path.into());
+            c.files.insert(
+                path.into(),
+                caelum_protocol::ProjectFileContent {
+                    path: path.into(),
+                    content: (1..1000)
+                        .map(|n| format!("let café_{n} = {n};\n"))
+                        .collect(),
+                    size_bytes: 20000,
+                    truncated: false,
+                },
+            );
+        }
+        c.selected_file = Some("a.rs".into());
+        l.app.services.revision += 1;
+        super::panels::show(s, super::panels::Screen::Files);
+    });
+    advance(&mut rt, 0.3);
+    click(&mut rt, "find-in-file");
+    fill(&mut rt, "local-file-search", "café_500");
+    advance(&mut rt, 0.5);
+    assert!(
+        rt.elements().iter().any(
+            |e| e.text.as_deref().is_some_and(|t| t.contains("café_500")) && e.visible[3] > 0.0
+        )
+    );
+    let saved = rt
+        .state
+        .live
+        .as_ref()
+        .unwrap()
+        .app
+        .snapshot()
+        .preferences
+        .files["/project"]
+        .scroll["a.rs"];
+    assert!(
+        saved[1] > 1000.0,
+        "actual code scrolling is persisted: {saved:?}"
+    );
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.open_file("/project".into(), "b.rs".into());
+    });
+    advance(&mut rt, 0.2);
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.open_file("/project".into(), "a.rs".into());
+    });
+    advance(&mut rt, 0.3);
+    let restored = rt
+        .state
+        .live
+        .as_ref()
+        .unwrap()
+        .app
+        .snapshot()
+        .preferences
+        .files["/project"]
+        .scroll["a.rs"];
+    assert!(
+        (saved[1] - restored[1]).abs() < 1.0,
+        "file switching must preserve its pixel offset: {saved:?}, {restored:?}"
+    );
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.services.revision += 1;
+    });
+    advance(&mut rt, 0.2);
+    assert_eq!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .snapshot()
+            .preferences
+            .files["/project"]
+            .scroll["a.rs"],
+        restored
+    );
+}
+
 #[test]
 fn editing_sending_background_streaming_and_stopping_stay_session_scoped() {
     let mut rt = runtime((1280.0, 1000.0));
@@ -206,6 +482,102 @@ fn scrolling_up_during_a_reply_preserves_the_reading_position() {
 
 fn live_runtime() -> Runtime<Workspace> {
     live_runtime_size((1280.0, 1000.0))
+}
+
+#[test]
+fn launcher_reuses_the_selected_project_draft_and_returns_keyboard_focus() {
+    let mut rt = live_runtime();
+    fill(&mut rt, "live-draft-0", "Keep my original draft");
+    key(
+        &mut rt,
+        Key::Command('n'),
+        Mods {
+            cmd: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    advance(&mut rt, 0.3);
+    click(&mut rt, "launch-provider-opencode");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.launch_provider,
+        caelum_core::application::Provider::OpenCode
+    );
+    fill(&mut rt, "launch-search", "project");
+    click(&mut rt, &super::code_view::source_key("/project", "launch"));
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(1));
+    rt.paste("OpenCode draft");
+    advance(&mut rt, 0.1);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[1].text,
+        "OpenCode draft"
+    );
+    key(
+        &mut rt,
+        Key::Command('n'),
+        Mods {
+            cmd: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(rt.state.live.as_ref().unwrap().app.sessions.len(), 2);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep my original draft"
+    );
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[1].text,
+        "OpenCode draft"
+    );
+}
+
+#[test]
+fn review_refresh_and_tab_navigation_preserve_exact_patch_reading_position() {
+    let mut state = super::evaluation::workspace();
+    let l = state.live.as_mut().unwrap();
+    l.evaluation = false;
+    l.fixture = true;
+    super::panels::open_review(
+        &mut state,
+        "/evaluation".into(),
+        "https://github.com/example/evaluation/pull/1".into(),
+    );
+    let app = spec();
+    let mut rt = Runtime::new(state, app.view, (1280.0, 1000.0), Env::new(true, 1.0));
+    rt.poll = app.poll;
+    advance(&mut rt, 0.3);
+    rt.update(|_, tx| tx.scroll_to_y("diff/scroll", 1000.0));
+    advance(&mut rt, 0.3);
+    let offset = |rt: &Runtime<Workspace>| {
+        let elements = rt.elements();
+        let view = elements
+            .iter()
+            .find(|e| e.path.ends_with("/diff/scroll") && !e.exiting)
+            .unwrap();
+        let rows = elements
+            .iter()
+            .find(|e| e.path.ends_with("/diff/scroll/rows") && !e.exiting)
+            .unwrap();
+        view.rect[1] - rows.rect[1]
+    };
+    let before = offset(&rt);
+    assert!(before > 900.0);
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        let r = l.app.services.reviews.values_mut().next().unwrap();
+        r.files[1].patch.as_mut().unwrap().push('\n');
+        l.app.services.revision += 1;
+    });
+    advance(&mut rt, 0.3);
+    assert!((offset(&rt) - before).abs() < 1.0);
+    rt.update(|s, _| s.live.as_mut().unwrap().panels.review_tab = 0);
+    advance(&mut rt, 0.2);
+    rt.update(|s, _| s.live.as_mut().unwrap().panels.review_tab = 1);
+    advance(&mut rt, 0.3);
+    assert!(
+        (offset(&rt) - before).abs() < 1.0,
+        "returning to files restores the continuous patch position"
+    );
 }
 
 #[test]
@@ -406,11 +778,13 @@ fn closing_local_sessions_and_undo_keep_the_workspace_editable() {
         assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(2));
         click(&mut rt, "undo-archive");
         let live = rt.state.live.as_ref().unwrap();
-        assert_eq!(live.app.selected, Some(1));
+        assert_eq!(live.app.selected, Some(2));
         assert!(!live.app.sessions[1].archived);
         assert_eq!(live.drafts[1].text, "Independent background draft");
         assert_eq!(live.drafts[0].text, "Keep the archived draft café ☁️");
         assert_eq!(live.drafts[2].text, "Replacement draft");
+        click(&mut rt, "live-session-1");
+        click(&mut rt, "live-draft-1");
         rt.paste(" after undo");
         rt.frame(1.0 / 60.0);
         assert!(
@@ -507,6 +881,13 @@ fn closing_provider_sessions_handles_completion_failure_and_selection_changes() 
                 .apply(Event::Completed(request, Ok(Reply::Done)));
         });
         advance(&mut rt, 0.4);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(1));
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().drafts[1].text,
+            "Still writing here"
+        );
+        click(&mut rt, "live-session-0");
+        click(&mut rt, "live-draft-0");
         rt.paste(" after restore");
         rt.frame(1.0 / 60.0);
         assert_eq!(
@@ -913,7 +1294,34 @@ fn live_provider_and_model_controls_apply_to_first_send() {
         Provider::OpenCode
     );
     click(&mut rt, "model-trigger");
-    click(&mut rt, "option1");
+    fill(&mut rt, "model-search", "second");
+    click(&mut rt, "model-favorite-0");
+    assert!(element(&rt, "model-search").focused);
+    assert_eq!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .preferences
+            .favorite_models["opencode"],
+        vec!["second"]
+    );
+    key(&mut rt, Key::Enter, Mods::default());
+    assert!(element(&rt, "live-draft-0").focused);
+    click(&mut rt, "model-trigger");
+    fill(&mut rt, "model-search", "first");
+    key(&mut rt, Key::Escape, Mods::default());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .model
+            .as_deref(),
+        Some("second")
+    );
+    click(&mut rt, "model-trigger");
+    fill(&mut rt, "model-search", "second");
+    click(&mut rt, "option0");
     click(&mut rt, "agent-trigger");
     click(&mut rt, "option0");
     click(&mut rt, "live-draft-0");
@@ -933,6 +1341,7 @@ fn live_provider_and_model_controls_apply_to_first_send() {
         && options.model.as_deref() == Some("second") && options.effort.as_deref() == Some("low") && options.agent.as_deref() == Some("build"))
     );
     click(&mut rt, "model-trigger");
+    fill(&mut rt, "model-search", "first");
     click(&mut rt, "option0");
     click(&mut rt, "live-draft-0");
     rt.paste("Queue with a different model");
@@ -1154,7 +1563,8 @@ fn large_review_files_are_windowed_while_streams_continue() {
         })
         .count();
     assert!(
-        count > 0 && count < 60,
+        count > 0
+            && count <= 3 * (element(&rt, "review-file-list").rect[3] / 36.0).ceil() as usize + 6,
         "only nearby file rows should be mounted: {count}"
     );
     click(&mut rt, "review-file-src/file-0.rs");
@@ -1164,6 +1574,12 @@ fn large_review_files_are_windowed_while_streams_continue() {
             .iter()
             .any(|e| e.path.ends_with("/diff/scroll") && e.rect[3] > 200.0),
         "the selected patch must have a usable viewport"
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref().is_some_and(|t| t.contains("let value_0"))),
+        "review must render code, not just the file list"
     );
     assert!(
         rt.state

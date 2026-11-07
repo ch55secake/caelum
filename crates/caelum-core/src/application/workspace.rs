@@ -19,6 +19,7 @@ pub struct Session {
     pub loading: bool,
     pub loaded: bool,
     pub submitting: bool,
+    pub commanding: bool,
     pub stopping: bool,
     pub next_cursor: Option<String>,
     pub error: Option<String>,
@@ -28,20 +29,31 @@ pub struct Session {
     pub draft: String,
     pub attachments: Vec<Attachment>,
     pub attaching: usize,
+    pub completion_caret: Option<usize>,
+    pub completion_generation: u64,
     pub queue: Vec<QueuedPrompt>,
+    pub inbox: super::Inbox,
     pub queue_paused: bool,
     pub archived: bool,
     pub archiving: bool,
     pub reading: f32,
+    pub unread: bool,
     pub shells: Vec<caelum_protocol::OpenCodeBackgroundShell>,
     pub details: Option<caelum_protocol::SessionDetails>,
     pub side_question: Option<(String, String)>,
+    pub side_draft: String,
+    pub side_attachments: Vec<Attachment>,
+    pub side_error: Option<String>,
+    pub side_generation: u64,
+    pub side_completion_caret: Option<usize>,
     pub generating: bool,
     pub disconnected: bool,
     inflight_prompt: Option<String>,
     inflight_options: Options,
+    inflight_queued: bool,
     options_dirty: bool,
     revision: u64,
+    seen_events: std::collections::VecDeque<String>,
 }
 
 impl Session {
@@ -55,6 +67,7 @@ impl Session {
             loading: false,
             loaded: true,
             submitting: false,
+            commanding: false,
             stopping: false,
             next_cursor: None,
             error: None,
@@ -62,20 +75,31 @@ impl Session {
             draft: String::new(),
             attachments: Vec::new(),
             attaching: 0,
+            completion_caret: None,
+            completion_generation: 0,
             queue: Vec::new(),
+            inbox: Default::default(),
             queue_paused: false,
             archived: false,
             archiving: false,
             reading: -1.0,
+            unread: false,
             shells: Vec::new(),
             details: None,
             side_question: None,
+            side_draft: String::new(),
+            side_attachments: Vec::new(),
+            side_error: None,
+            side_generation: 0,
+            side_completion_caret: None,
             generating: false,
             disconnected: false,
             inflight_prompt: None,
             inflight_options: Options::default(),
+            inflight_queued: false,
             options_dirty: false,
             revision: 0,
+            seen_events: Default::default(),
         }
     }
 
@@ -103,17 +127,29 @@ impl Session {
 }
 
 enum Pending {
-    Generate(usize, String),
+    Inbox(usize, u64),
+    Enqueue(usize, String),
+    RemoveQueued(usize, String),
+    Control(usize, String),
+    Generate(usize, String, u64),
     Notify,
     Load,
-    Save(Snapshot, Vec<(u64, Command)>),
+    Save(Box<Snapshot>, Vec<(u64, Command)>),
     Task(Task),
     Commands(Scope),
     Shells(usize),
-    Archive(usize, bool),
-    Attachment(usize),
+    Archive(usize, bool, Option<(usize, u64)>),
+    Attachment(usize, String),
+    Mention {
+        index: usize,
+        side: bool,
+        generation: u64,
+        draft: String,
+        token: super::Completion,
+        replacement: String,
+    },
     Details(usize),
-    Open,
+    Open(Option<Provider>, u64),
     List(Scope),
     Choices(Scope),
     Resume(usize, u64),
@@ -132,6 +168,8 @@ enum Pending {
 /// first-send creation; every pending request carries its original owner.
 #[derive(Default)]
 pub struct Workspace {
+    pub window_background: bool,
+    pub conversation_hidden: bool,
     pub projects: Vec<ProjectInfo>,
     pub project_roots: std::collections::BTreeMap<String, String>,
     pub sessions: Vec<Session>,
@@ -148,6 +186,8 @@ pub struct Workspace {
     pub provider_commands: HashMap<Scope, Vec<caelum_protocol::OpenCodeCommandInfo>>,
     pub persistence_error: Option<String>,
     pub last_archived: Option<usize>,
+    archive_replacement: Option<usize>,
+    navigation: u64,
     store: Option<Store>,
     store_ready: bool,
     saving: bool,
@@ -159,12 +199,19 @@ pub struct Workspace {
     outgoing: Vec<(u64, Command)>,
     next_request: u64,
     latest_open: u64,
+    launches: HashMap<u64, (Provider, u64)>,
     remembered: HashMap<String, usize>,
     deferred_lists: HashMap<Scope, Vec<Summary>>,
 }
 
 impl Workspace {
     fn request(&mut self, command: Command, pending: Pending) -> u64 {
+        if matches!(command, Command::Notify(..)) && self.preferences.sound_volume > 0 {
+            self.request(
+                Command::Sound(self.preferences.sound_volume),
+                Pending::Notify,
+            );
+        }
         self.next_request += 1;
         let id = self.next_request;
         self.pending.insert(id, pending);
@@ -180,7 +227,12 @@ impl Workspace {
         for request in std::mem::take(&mut self.outgoing) {
             if matches!(
                 request.1,
-                Command::Load(_) | Command::Cancel(_) | Command::Approve(..) | Command::Answer(..)
+                Command::Load(_)
+                    | Command::Cancel(_)
+                    | Command::Approve(..)
+                    | Command::Answer(..)
+                    | Command::Notify(..)
+                    | Command::Sound(_)
             ) {
                 immediate.push(request);
             } else {
@@ -196,7 +248,7 @@ impl Workspace {
             let commands = std::mem::take(&mut self.durable_outgoing);
             self.request(
                 Command::Save(store, snapshot.clone()),
-                Pending::Save(snapshot, commands),
+                Pending::Save(Box::new(snapshot), commands),
             );
             immediate.append(&mut self.outgoing);
         } else {
@@ -218,11 +270,20 @@ impl Workspace {
     }
 
     pub fn snapshot(&self) -> Snapshot {
+        let mut preferences = self.preferences.clone();
+        for (project, checkout) in &self.services.checkouts {
+            if project.is_empty() {
+                continue;
+            }
+            let files = preferences.files.entry(project.clone()).or_default();
+            files.tabs = checkout.tabs.clone();
+            files.selected = checkout.selected_file.clone();
+        }
         Snapshot {
             version: 1,
             projects: self.projects.clone(),
             selected: self.selected,
-            preferences: self.preferences.clone(),
+            preferences,
             remembered: self
                 .remembered
                 .iter()
@@ -245,8 +306,10 @@ impl Workspace {
                         options: s.inflight_options.clone(),
                     }),
                     queue: s.queue.clone(),
+                    inbox: s.inbox.items.clone(),
                     archived: s.archived,
                     reading: s.reading,
+                    unread: s.unread,
                 })
                 .collect(),
         }
@@ -286,12 +349,31 @@ impl Workspace {
             }
         }
         if self.services.busy(&task)
-            && !matches!(task, Task::Search { .. } | Task::Completions { .. })
+            && !matches!(
+                task,
+                Task::Search { .. } | Task::Completions { .. } | Task::Stats { .. }
+            )
         {
             return;
         }
         let id = self.request(Command::Task(task.clone()), Pending::Task(task.clone()));
+        if matches!(task, Task::CreateWorktree { .. }) {
+            let provider = self
+                .selected
+                .map(|i| self.sessions[i].scope.provider)
+                .unwrap_or(self.preferences.default_provider);
+            self.launches.insert(id, (provider, self.navigation));
+        }
         self.services.start(&task, id);
+    }
+
+    pub fn launch_worktree(&mut self, task: Task, provider: Provider) {
+        let previous = self.next_request;
+        self.task(task);
+        if self.next_request != previous && self.launches.contains_key(&self.next_request) {
+            self.launches
+                .insert(self.next_request, (provider, self.navigation));
+        }
     }
 
     pub fn open_file(&mut self, project: String, path: String) {
@@ -305,23 +387,76 @@ impl Workspace {
         }
     }
 
+    pub fn refresh_files(&mut self) {
+        if let Some(project) = self.active_project.clone() {
+            if let Some(path) = self
+                .services
+                .checkouts
+                .get(&project)
+                .and_then(|c| c.selected_file.clone())
+            {
+                self.task(Task::File {
+                    project: project.clone(),
+                    path,
+                });
+            }
+            self.task(Task::Directory {
+                project,
+                path: String::new(),
+                offset: 0,
+            });
+        }
+    }
+
     pub fn archive(&mut self, index: usize, archived: bool) {
+        self.set_archived(index, archived, true);
+    }
+
+    pub fn undo_archive(&mut self) {
+        if let Some(index) = self.last_archived {
+            let select =
+                self.archive_replacement.is_some() && self.selected == self.archive_replacement;
+            self.set_archived(index, false, select);
+        }
+    }
+
+    fn set_archived(&mut self, index: usize, archived: bool, select: bool) {
+        let needs_answer = self.approvals.iter().any(|p| {
+            self.sessions[index].remote_id == p.session_id
+                && self.sessions[index].scope.project == p.project_path
+                && self.sessions[index].scope.provider.as_str() == p.provider
+        }) || self.questions.iter().any(|p| {
+            self.sessions[index].remote_id.as_ref() == Some(&p.session_id)
+                && self.sessions[index].scope.project == p.project_path
+                && self.sessions[index].scope.provider.as_str() == p.provider
+        });
         let session = &mut self.sessions[index];
-        if session.working() || session.archiving || !session.queue.is_empty() {
+        if needs_answer
+            || session.working()
+            || session.archiving
+            || !session.queue.is_empty()
+            || !session.inbox.items.is_empty()
+        {
             return;
         }
         if let Some(key) = session.key() {
             session.archiving = true;
             self.request(
                 Command::Archive(key, archived),
-                Pending::Archive(index, archived),
+                Pending::Archive(
+                    index,
+                    archived,
+                    select.then(|| (self.selected.unwrap_or(index), self.navigation)),
+                ),
             );
         } else {
             session.archived = archived;
             self.last_archived = archived.then_some(index);
+            self.archive_replacement = None;
             if archived && self.selected == Some(index) {
                 self.new_session(self.sessions[index].scope.clone());
-            } else if !archived {
+                self.archive_replacement = self.selected;
+            } else if !archived && select {
                 self.select(index);
             }
         }
@@ -336,9 +471,90 @@ impl Workspace {
         self.advance_queue(index);
     }
 
+    pub fn refresh_inbox(&mut self, index: usize) {
+        let session = &self.sessions[index];
+        if session.scope.provider != Provider::OpenCode
+            || self
+                .pending
+                .values()
+                .any(|p| matches!(p, Pending::Inbox(i, _) if *i == index))
+        {
+            return;
+        }
+        if let Some(key) = session.key() {
+            self.request(
+                Command::Inbox(key),
+                Pending::Inbox(index, session.inbox.revision),
+            );
+        }
+    }
+
+    pub fn retry_queued(&mut self, index: usize, id: &str) {
+        if self.sessions[index]
+            .inbox
+            .items
+            .iter()
+            .any(|item| item.id == id && item.removing)
+        {
+            self.remove_queued(index, id);
+            return;
+        }
+        let session = &mut self.sessions[index];
+        let Some(key) = session.key() else {
+            return;
+        };
+        let Some(item) = session
+            .inbox
+            .items
+            .iter_mut()
+            .find(|v| v.id == id && !v.pending)
+        else {
+            return;
+        };
+        item.pending = true;
+        item.error = None;
+        let text = item.text.clone();
+        session.inbox.revision += 1;
+        self.request(
+            Command::Enqueue(key, id.into(), text),
+            Pending::Enqueue(index, id.into()),
+        );
+    }
+
+    pub fn remove_queued(&mut self, index: usize, id: &str) {
+        let session = &mut self.sessions[index];
+        let Some(key) = session.key() else {
+            return;
+        };
+        let Some(item) = session
+            .inbox
+            .items
+            .iter_mut()
+            .find(|v| v.id == id && !v.pending)
+        else {
+            return;
+        };
+        item.pending = true;
+        item.removing = true;
+        item.error = None;
+        session.inbox.revision += 1;
+        self.request(
+            Command::RemoveQueued(key, id.into()),
+            Pending::RemoveQueued(index, id.into()),
+        );
+    }
+
     fn advance_queue(&mut self, index: usize) {
+        if self
+            .pending
+            .values()
+            .any(|p| matches!(p, Pending::Inbox(i, _) if *i == index))
+        {
+            return;
+        }
         let session = &mut self.sessions[index];
         if !session.queue_paused
+            && session.inbox.items.is_empty()
             && session.can_send()
             && !session.queue.is_empty()
             && session.error.is_none()
@@ -347,6 +563,7 @@ impl Workspace {
             let options = std::mem::replace(&mut session.options, queued.options);
             let dirty = session.options_dirty;
             self.send_raw(index, queued.text);
+            self.sessions[index].inflight_queued = true;
             self.sessions[index].options = options;
             self.sessions[index].options_dirty =
                 dirty || self.sessions[index].options != self.sessions[index].inflight_options;
@@ -358,7 +575,23 @@ impl Workspace {
     }
 
     pub fn attach(&mut self, index: usize, attachment: Attachment) -> bool {
-        if self.sessions[index].attachments.len() >= 16 {
+        self.sessions[index].attachments.retain(|f| {
+            !(f.kind == attachment.kind
+                && if f.kind == super::AttachmentKind::Image {
+                    f.content == attachment.content
+                } else {
+                    f.path == attachment.path
+                        && f.start_line == attachment.start_line
+                        && f.end_line == attachment.end_line
+                })
+        });
+        if self.sessions[index]
+            .attachments
+            .iter()
+            .filter(|f| f.kind == attachment.kind)
+            .count()
+            >= 16
+        {
             self.sessions[index].error = Some("Attach at most 16 files per message".into());
             return false;
         }
@@ -372,11 +605,121 @@ impl Workspace {
             return;
         }
         self.sessions[index].attaching += 1;
-        let task = Task::File {
-            project: self.sessions[index].scope.project.clone(),
-            path,
+        let project = self.sessions[index].scope.project.clone();
+        let name = path.clone();
+        let task = if is_image(&path) {
+            Task::Image {
+                project,
+                source: path,
+            }
+        } else {
+            Task::File { project, path }
         };
-        self.request(Command::Task(task), Pending::Attachment(index));
+        self.request(Command::Task(task), Pending::Attachment(index, name));
+    }
+
+    pub fn attach_image(&mut self, index: usize, name: String, bytes: Vec<u8>) {
+        if self.sessions[index].attaching + self.sessions[index].attachments.len() >= 16 {
+            return;
+        }
+        self.sessions[index].attaching += 1;
+        let task = Task::EncodeImage {
+            project: self.sessions[index].scope.project.clone(),
+            bytes,
+        };
+        self.request(Command::Task(task), Pending::Attachment(index, name));
+    }
+
+    pub fn complete_mention(
+        &mut self,
+        index: usize,
+        token: super::Completion,
+        path: String,
+        project: String,
+        replacement: String,
+    ) {
+        self.mention(index, false, token, path, project, replacement);
+    }
+
+    pub fn complete_side_mention(
+        &mut self,
+        index: usize,
+        token: super::Completion,
+        path: String,
+        project: String,
+        replacement: String,
+    ) {
+        self.mention(index, true, token, path, project, replacement);
+    }
+
+    fn mention(
+        &mut self,
+        index: usize,
+        side: bool,
+        token: super::Completion,
+        path: String,
+        project: String,
+        replacement: String,
+    ) {
+        let session = &mut self.sessions[index];
+        if session.attaching > 0 {
+            return;
+        }
+        let draft = if side {
+            &session.side_draft
+        } else {
+            &session.draft
+        };
+        if token.start > token.end || draft.get(token.start..token.end).is_none() {
+            return;
+        }
+        session.attaching += 1;
+        session.error = None;
+        session.completion_generation += 1;
+        let pending = Pending::Mention {
+            index,
+            side,
+            generation: session.completion_generation,
+            draft: draft.clone(),
+            token: token.clone(),
+            replacement,
+        };
+        let task = if token.kind == super::CompletionKind::PullRequest {
+            Task::AttachPullRequest { project, url: path }
+        } else {
+            Task::File { project, path }
+        };
+        self.request(Command::Task(task), pending);
+    }
+
+    pub fn dismiss_side_question(&mut self, index: usize) {
+        self.cancel_mentions(index);
+        let session = &mut self.sessions[index];
+        session.side_generation += 1;
+        session.completion_generation += 1;
+        session.generating = false;
+        session.side_question = None;
+        session.side_error = None;
+        session.side_draft.clear();
+        session.side_attachments.clear();
+    }
+
+    pub fn cancel_mentions(&mut self, index: usize) {
+        let requests: Vec<_> = self
+            .pending
+            .iter()
+            .filter_map(|(id, p)| {
+                matches!(p,Pending::Mention {index:i,..} if *i==index).then_some(*id)
+            })
+            .collect();
+        for id in &requests {
+            self.pending.remove(id);
+        }
+        self.outgoing.retain(|(id, _)| !requests.contains(id));
+        self.sessions[index].attaching = self.sessions[index]
+            .attaching
+            .saturating_sub(requests.len());
+        self.sessions[index].completion_generation += 1;
     }
 
     pub fn ask(&mut self, index: usize, prompt: String) -> bool {
@@ -392,10 +735,15 @@ impl Workspace {
             return false;
         };
         session.generating = true;
+        session.side_error = None;
+        session.side_generation += 1;
+        let generation = session.side_generation;
+        session.side_draft = prompt.clone();
         session.side_question = Some((prompt.clone(), String::new()));
+        let context = super::composer::with_context(&prompt, &session.side_attachments);
         self.request(
-            Command::Generate(key, prompt.clone()),
-            Pending::Generate(index, prompt),
+            Command::Generate(key, context),
+            Pending::Generate(index, prompt, generation),
         );
         true
     }
@@ -403,7 +751,16 @@ impl Workspace {
     pub fn open_project(&mut self, path: String) {
         self.opening = true;
         self.error = None;
-        self.latest_open = self.request(Command::Open(path), Pending::Open);
+        self.latest_open = self.request(Command::Open(path), Pending::Open(None, self.navigation));
+    }
+
+    pub fn launch_project(&mut self, path: String, provider: Provider) {
+        self.opening = true;
+        self.error = None;
+        self.latest_open = self.request(
+            Command::Open(path),
+            Pending::Open(Some(provider), self.navigation),
+        );
     }
 
     pub fn select_project(&mut self, path: &str) {
@@ -468,6 +825,35 @@ impl Workspace {
         }
     }
 
+    pub fn refresh_choices(&mut self, provider: Provider) {
+        let Some(project) = self.active_project.clone() else {
+            return;
+        };
+        let scope = Scope { project, provider };
+        if self
+            .pending
+            .values()
+            .any(|p| matches!(p, Pending::Choices(s) if s == &scope))
+        {
+            return;
+        }
+        self.notices.remove(&scope);
+        self.request(
+            Command::Choices(scope.clone()),
+            Pending::Choices(scope.clone()),
+        );
+        if provider == Provider::OpenCode {
+            self.request(Command::Commands(scope.clone()), Pending::Commands(scope));
+        }
+    }
+
+    pub fn test_sound(&mut self) {
+        self.request(
+            Command::Sound(self.preferences.sound_volume),
+            Pending::Notify,
+        );
+    }
+
     pub fn new_session(&mut self, scope: Scope) -> usize {
         let mut session = Session::new(scope.clone());
         session.options = self
@@ -487,7 +873,43 @@ impl Workspace {
         index
     }
 
+    pub fn project_draft(&mut self, scope: Scope) -> usize {
+        if let Some(i) = self
+            .sessions
+            .iter()
+            .rposition(|s| s.scope == scope && s.remote_id.is_none() && !s.archived && !s.working())
+        {
+            self.select(i);
+            i
+        } else {
+            self.new_session(scope)
+        }
+    }
+
+    pub fn acknowledge(&mut self) -> bool {
+        if let Some(i) = self.selected {
+            if !self.window_background
+                && !self.conversation_hidden
+                && self.sessions[i].loaded
+                && !self.sessions[i].loading
+                && self.sessions[i].reading < 0.0
+            {
+                return std::mem::take(&mut self.sessions[i].unread);
+            }
+        }
+        false
+    }
+
     pub fn select(&mut self, index: usize) {
+        if index >= self.sessions.len() {
+            return;
+        }
+        if self.selected != Some(index) {
+            if let Some(previous) = self.selected {
+                self.dismiss_side_question(previous);
+            }
+            self.navigation += 1;
+        }
         let Some(session) = self.sessions.get(index) else {
             return;
         };
@@ -536,12 +958,89 @@ impl Workspace {
         if prompt.trim().is_empty() && self.sessions[index].attachments.is_empty() {
             return false;
         }
+        let inbox_loading = self
+            .pending
+            .values()
+            .any(|p| matches!(p, Pending::Inbox(i, _) if *i == index));
         let session = &mut self.sessions[index];
-        if session.archived || session.stopping || session.archiving || session.attaching > 0 {
+        if session.archived
+            || session.stopping
+            || session.archiving
+            || session.attaching > 0
+            || session.commanding
+        {
             return false;
         }
+        let native_command = prompt
+            .trim()
+            .strip_prefix('/')
+            .filter(|_| !prompt.trim().starts_with("//"));
+        if let Some(command) = native_command {
+            let name = command.split_whitespace().next().unwrap_or_default();
+            if !self
+                .provider_commands
+                .get(&session.scope)
+                .is_some_and(|commands| commands.iter().any(|c| c.name == name))
+            {
+                session.error =
+                    Some(
+                        if self.pending.values().any(
+                            |p| matches!(p, Pending::Commands(scope) if scope == &session.scope),
+                        ) {
+                            "Commands are loading. Try again when discovery finishes.".into()
+                        } else {
+                            format!("Unknown command /{name}")
+                        },
+                    );
+                return false;
+            }
+        }
         let prompt = super::composer::with_context(&prompt, &session.attachments);
-        if session.working() || session.loading {
+        if let Some(key) = session.key().filter(|_| native_command.is_some()) {
+            session.commanding = true;
+            session.error = None;
+            session.attachments.clear();
+            session.draft.clear();
+            session.options_dirty = false;
+            let command = Command::Send(key, prompt.clone(), session.options.clone());
+            self.request(command, Pending::Control(index, prompt));
+            return true;
+        }
+        if session.working()
+            && session.scope.provider == Provider::OpenCode
+            && !session.options_dirty
+            && session.queue.is_empty()
+            && !session.queue_paused
+        {
+            if let Some(key) = session.key() {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                let id = format!("msg_caelum_{stamp}_{}", self.next_request);
+                session.inbox.items.push(super::InboxPrompt {
+                    id: id.clone(),
+                    text: prompt.clone(),
+                    pending: true,
+                    removing: false,
+                    error: None,
+                });
+                session.inbox.revision += 1;
+                session.attachments.clear();
+                session.draft.clear();
+                self.request(
+                    Command::Enqueue(key, id.clone(), prompt),
+                    Pending::Enqueue(index, id),
+                );
+                return true;
+            }
+        }
+        if session.working()
+            || session.loading
+            || inbox_loading
+            || !session.queue.is_empty()
+            || !session.inbox.items.is_empty()
+        {
             session.queue.push(QueuedPrompt {
                 text: prompt,
                 options: session.options.clone(),
@@ -567,6 +1066,7 @@ impl Workspace {
         session.error = None;
         session.inflight_prompt = Some(prompt.clone());
         session.inflight_options = session.options.clone();
+        session.inflight_queued = false;
         session.options_dirty = false;
         session.revision += 1;
         session
@@ -662,14 +1162,14 @@ impl Workspace {
                 }
             }
             Event::Approvals(prompts) => {
-                if self.preferences.notifications
+                if self.preferences.input_needed
                     && prompts.iter().any(|p| {
                         !self.approvals.contains(p)
-                            && !self.visible_request(
+                            && self.preferences.should_notify(self.visible_request(
                                 &p.provider,
                                 &p.project_path,
                                 p.session_id.as_deref(),
-                            )
+                            ))
                     })
                 {
                     self.request(
@@ -683,14 +1183,14 @@ impl Workspace {
                 self.approvals = prompts;
             }
             Event::Questions(prompts) => {
-                if self.preferences.notifications
+                if self.preferences.input_needed
                     && prompts.iter().any(|p| {
                         !self.questions.contains(p)
-                            && !self.visible_request(
+                            && self.preferences.should_notify(self.visible_request(
                                 &p.provider,
                                 &p.project_path,
                                 Some(&p.session_id),
-                            )
+                            ))
                     })
                 {
                     self.request(
@@ -729,7 +1229,71 @@ impl Workspace {
     }
 
     fn complete(&mut self, request: u64, pending: Pending, result: Result<Reply, String>) {
+        if let Pending::Mention {
+            index,
+            side,
+            generation,
+            draft,
+            token,
+            replacement,
+        } = pending
+        {
+            let session = &mut self.sessions[index];
+            session.attaching = session.attaching.saturating_sub(1);
+            if self.selected != Some(index)
+                || session.archived
+                || generation != session.completion_generation
+                || draft
+                    != (if side {
+                        &session.side_draft
+                    } else {
+                        &session.draft
+                    })
+                    .as_str()
+            {
+                return;
+            }
+            let attachment = match result {
+                Ok(Reply::Task(TaskReply::File(file))) => {
+                    Attachment::new(file.path, file.content, None, file.truncated)
+                }
+                Ok(Reply::Task(TaskReply::Details(details))) => Attachment::pull_request(&details),
+                Err(error) => {
+                    session.error = Some(error);
+                    return;
+                }
+                _ => {
+                    session.error = Some("Unexpected context response".into());
+                    return;
+                }
+            };
+            let attached = if side {
+                let attachments = &mut self.sessions[index].side_attachments;
+                attachments.retain(|a| !(a.kind == attachment.kind && a.path == attachment.path));
+                if attachments.len() < 16 {
+                    attachments.push(attachment);
+                    true
+                } else {
+                    self.sessions[index].side_error = Some("Attach at most 16 items".into());
+                    false
+                }
+            } else {
+                self.attach(index, attachment)
+            };
+            if attached {
+                let (text, caret) = token.replace(&draft, &replacement);
+                if side {
+                    self.sessions[index].side_draft = text;
+                    self.sessions[index].side_completion_caret = Some(caret);
+                } else {
+                    self.sessions[index].draft = text;
+                    self.sessions[index].completion_caret = Some(caret);
+                }
+            }
+            return;
+        }
         if let Pending::Task(task) = pending {
+            let launch = self.launches.remove(&request);
             if !self.services.current(request, &task) {
                 self.services
                     .complete(request, &task, Err("Superseded request".into()));
@@ -752,7 +1316,12 @@ impl Workspace {
             }
             if let Ok(TaskReply::Worktree(worktree)) = &result {
                 if matches!(task, Task::CreateWorktree { .. }) {
-                    self.open_project(worktree.project.path.clone());
+                    if let Some((provider, navigation)) =
+                        launch.filter(|(_, navigation)| *navigation == self.navigation)
+                    {
+                        let _ = navigation;
+                        self.launch_project(worktree.project.path.clone(), provider);
+                    }
                 }
                 if matches!(task, Task::RemoveWorktree { .. }) {
                     let root = self.project_roots.get(&worktree.project.path).cloned();
@@ -833,10 +1402,25 @@ impl Workspace {
             Ok(reply) => reply,
             Err(error) => {
                 match pending {
-                    Pending::Generate(index, prompt) => {
-                        self.sessions[index].generating = false;
-                        self.sessions[index].side_question =
-                            Some((prompt, format!("Request failed: {error}")));
+                    Pending::Inbox(index, _) => self.sessions[index].error = Some(error),
+                    Pending::Enqueue(index, id) | Pending::RemoveQueued(index, id) => {
+                        let inbox = &mut self.sessions[index].inbox;
+                        inbox.revision += 1;
+                        if let Some(item) = inbox.items.iter_mut().find(|v| v.id == id) {
+                            item.pending = false;
+                            item.error = Some(error);
+                        }
+                    }
+                    Pending::Control(index, prompt) => {
+                        self.sessions[index].commanding = false;
+                        self.sessions[index].error = Some(error);
+                        self.sessions[index].failed_prompt = Some(prompt);
+                    }
+                    Pending::Generate(index, _, generation) => {
+                        if self.sessions[index].side_generation == generation {
+                            self.sessions[index].generating = false;
+                            self.sessions[index].side_error = Some(error);
+                        }
                     }
                     Pending::Notify => {}
                     Pending::Load => self.persistence_error = Some(error),
@@ -846,22 +1430,22 @@ impl Workspace {
                         self.durable_outgoing = commands;
                         self.persistence_error = Some(error);
                     }
-                    Pending::Task(_) => unreachable!(),
+                    Pending::Task(_) | Pending::Mention { .. } => unreachable!(),
                     Pending::Commands(scope) => {
                         self.notices.insert(scope, error);
                     }
                     Pending::Shells(index) => self.sessions[index].error = Some(error),
-                    Pending::Archive(index, _) => {
+                    Pending::Archive(index, _, _) => {
                         self.sessions[index].archiving = false;
                         self.sessions[index].error = Some(error);
                     }
-                    Pending::Attachment(index) => {
+                    Pending::Attachment(index, _) => {
                         self.sessions[index].attaching =
                             self.sessions[index].attaching.saturating_sub(1);
                         self.sessions[index].error = Some(error);
                     }
                     Pending::Details(_) => {}
-                    Pending::Open => {
+                    Pending::Open(_, _) => {
                         if request == self.latest_open {
                             self.opening = false;
                             self.error = Some(error);
@@ -883,7 +1467,17 @@ impl Workspace {
                         session.conversation.working = false;
                         session.conversation.remove_optimistic();
                         session.error = Some(error);
-                        session.failed_prompt = Some(prompt);
+                        if session.inflight_queued {
+                            session.queue.insert(
+                                0,
+                                QueuedPrompt {
+                                    text: prompt,
+                                    options: session.inflight_options.clone(),
+                                },
+                            );
+                        } else {
+                            session.failed_prompt = Some(prompt);
+                        }
                     }
                     Pending::Send(index, prompt, revision) => {
                         let session = &mut self.sessions[index];
@@ -901,7 +1495,17 @@ impl Workspace {
                             .any(|entry| entry.optimistic)
                         {
                             session.conversation.remove_optimistic();
-                            session.failed_prompt = Some(prompt);
+                            if session.inflight_queued {
+                                session.queue.insert(
+                                    0,
+                                    QueuedPrompt {
+                                        text: prompt,
+                                        options: session.inflight_options.clone(),
+                                    },
+                                );
+                            } else {
+                                session.failed_prompt = Some(prompt);
+                            }
                         }
                         session.error = Some(error);
                     }
@@ -934,9 +1538,29 @@ impl Workspace {
             }
         };
         match (pending, reply) {
-            (Pending::Generate(index, prompt), Reply::Generated(text)) => {
-                self.sessions[index].generating = false;
-                self.sessions[index].side_question = Some((prompt, text));
+            (Pending::Inbox(index, revision), Reply::Inbox(items)) => {
+                self.sessions[index].inbox.snapshot(revision, &items)
+            }
+            (Pending::Enqueue(index, id), Reply::Done) => {
+                let inbox = &mut self.sessions[index].inbox;
+                inbox.revision += 1;
+                if let Some(item) = inbox.items.iter_mut().find(|v| v.id == id) {
+                    item.pending = false;
+                    item.error = None;
+                }
+            }
+            (Pending::RemoveQueued(index, id), Reply::Done) => {
+                self.sessions[index].inbox.settle(&id);
+            }
+            (Pending::Control(index, _), Reply::Done) => {
+                self.sessions[index].commanding = false;
+                self.refresh(index);
+            }
+            (Pending::Generate(index, prompt, generation), Reply::Generated(text)) => {
+                if self.sessions[index].side_generation == generation {
+                    self.sessions[index].generating = false;
+                    self.sessions[index].side_question = Some((prompt, text));
+                }
             }
             (Pending::Notify, Reply::Done) => {}
             (Pending::Details(index), Reply::Details(details)) => {
@@ -949,18 +1573,46 @@ impl Workspace {
                 }
                 self.sessions[index].details = Some(details);
             }
-            (Pending::Attachment(index), Reply::Task(TaskReply::File(file))) => {
+            (Pending::Attachment(index, _), Reply::Task(TaskReply::File(file))) => {
                 self.sessions[index].attaching = self.sessions[index].attaching.saturating_sub(1);
                 self.attach(
                     index,
                     Attachment::new(file.path, file.content, None, file.truncated),
                 );
             }
+            (Pending::Attachment(index, name), Reply::Task(TaskReply::Image(data))) => {
+                self.sessions[index].attaching = self.sessions[index].attaching.saturating_sub(1);
+                let mut attachment = Attachment::new(name, String::new(), None, false);
+                attachment.kind = super::AttachmentKind::Image;
+                attachment.content = data;
+                self.attach(index, attachment);
+            }
             (Pending::Load, Reply::Snapshot(snapshot)) => {
                 self.store_ready = true;
                 if let Some(snapshot) = snapshot {
                     self.saved = Some(snapshot.clone());
                     self.preferences = snapshot.preferences;
+                    for (project, saved) in &self.preferences.files {
+                        let c = self.services.checkouts.entry(project.clone()).or_default();
+                        c.tabs = saved
+                            .tabs
+                            .iter()
+                            .filter(|p| {
+                                !p.is_empty()
+                                    && !std::path::Path::new(p).is_absolute()
+                                    && !std::path::Path::new(p)
+                                        .components()
+                                        .any(|c| matches!(c, std::path::Component::ParentDir))
+                            })
+                            .take(40)
+                            .cloned()
+                            .collect();
+                        c.selected_file = saved
+                            .selected
+                            .clone()
+                            .filter(|p| c.tabs.contains(p))
+                            .or_else(|| c.tabs.first().cloned());
+                    }
                     self.project_roots = snapshot.project_roots;
                     if self.sessions.is_empty() {
                         self.projects = snapshot.projects;
@@ -978,12 +1630,23 @@ impl Workspace {
                                 session.attachments = saved.attachments;
                                 session.failed_prompt = saved.failed_prompt;
                                 session.queue = saved.queue;
+                                session.inbox.items = saved.inbox;
+                                for item in &mut session.inbox.items {
+                                    if item.pending {
+                                        item.pending = false;
+                                        item.error = Some(
+                                            "Delivery needs reconciliation. Refresh or retry."
+                                                .into(),
+                                        );
+                                    }
+                                }
                                 if let Some(pending) = saved.pending_submission {
                                     session.queue.insert(0, pending);
                                 }
                                 session.queue_paused = true;
                                 session.archived = saved.archived;
                                 session.reading = saved.reading;
+                                session.unread = saved.unread;
                                 session
                             })
                             .collect();
@@ -1014,7 +1677,7 @@ impl Workspace {
                 }
             }
             (Pending::Save(snapshot, mut commands), Reply::Done) => {
-                self.saved = Some(snapshot);
+                self.saved = Some(*snapshot);
                 self.saving = false;
                 self.ready_outgoing.append(&mut commands);
             }
@@ -1022,27 +1685,41 @@ impl Workspace {
                 self.provider_commands.insert(scope, commands);
             }
             (Pending::Shells(index), Reply::Shells(shells)) => self.sessions[index].shells = shells,
-            (Pending::Archive(index, archived), Reply::Done) => {
+            (Pending::Archive(index, archived, select), Reply::Done) => {
                 self.sessions[index].archiving = false;
                 self.sessions[index].archived = archived;
                 if archived {
                     self.last_archived = Some(index);
+                    self.archive_replacement = None;
                     if self.selected == Some(index) {
                         self.new_session(self.sessions[index].scope.clone());
+                        self.archive_replacement = self.selected;
                     }
                 } else {
                     self.last_archived = None;
-                    self.select(index);
+                    if select.is_some_and(|(selected, navigation)| {
+                        self.selected == Some(selected) && self.navigation == navigation
+                    }) {
+                        self.select(index);
+                    }
                 }
             }
-            (Pending::Open, Reply::Project(project)) => {
+            (Pending::Open(provider, navigation), Reply::Project(project)) => {
                 if !self.projects.iter().any(|p| p.path == project.path) {
                     self.projects.push(project.clone());
                 }
                 if request == self.latest_open {
                     self.opening = false;
-                    self.select_project(&project.path);
-                    self.refresh_project();
+                    if provider.is_none() || navigation == self.navigation {
+                        self.select_project(&project.path);
+                        if let Some(provider) = provider {
+                            self.project_draft(Scope {
+                                project: project.path.clone(),
+                                provider,
+                            });
+                        }
+                        self.refresh_project();
+                    }
                 }
             }
             (Pending::List(scope), Reply::Sessions(summaries)) => {
@@ -1081,6 +1758,7 @@ impl Workspace {
                 let key = session.key().expect("resumed session");
                 if key.scope.provider == Provider::OpenCode {
                     self.request(Command::Shells(key.clone()), Pending::Shells(index));
+                    self.refresh_inbox(index);
                 }
                 self.request(
                     Command::History(key, None),
@@ -1094,6 +1772,15 @@ impl Workspace {
                     &page.data,
                     older || !session.loaded,
                 );
+                if session.scope.provider == Provider::OpenCode {
+                    for message in &page.data {
+                        if message["type"] == "user" {
+                            if let Some(id) = message["id"].as_str() {
+                                session.inbox.settle(id);
+                            }
+                        }
+                    }
+                }
                 if !older && session.revision == revision {
                     if let Some(working) = page.is_working {
                         session.conversation.working = working;
@@ -1226,15 +1913,22 @@ impl Workspace {
     }
 
     fn visible_request(&self, provider: &str, project: &str, id: Option<&str>) -> bool {
-        self.selected.is_some_and(|i| {
-            let session = &self.sessions[i];
-            session.scope.project == project
-                && session.scope.provider.as_str() == provider
-                && id.is_none_or(|id| session.remote_id.as_deref() == Some(id))
-        })
+        !self.window_background
+            && !self.conversation_hidden
+            && self.selected.is_some_and(|i| {
+                let session = &self.sessions[i];
+                session.scope.project == project
+                    && session.scope.provider.as_str() == provider
+                    && session.reading < 0.0
+                    && id.is_none_or(|id| session.remote_id.as_deref() == Some(id))
+            })
     }
 
     fn provider_event(&mut self, path: &str, provider: Provider, method: &str, data: &Value) {
+        if method == "filesystem.changed" && self.active_project.as_deref() == Some(path) {
+            self.refresh_files();
+            return;
+        }
         let disconnected = matches!(method, "codex/processExited" | "server.disconnected");
         let id = match provider {
             Provider::Codex => data["threadId"].as_str().or(data["thread"]["id"].as_str()),
@@ -1243,6 +1937,7 @@ impl Workspace {
                 .or(data["session"]["id"].as_str()),
         };
         let mut completed = Vec::new();
+        let mut shells_completed = Vec::new();
         for (index, session) in self.sessions.iter_mut().enumerate() {
             if session.scope.project != path || session.scope.provider != provider {
                 continue;
@@ -1266,9 +1961,43 @@ impl Workspace {
             if id.is_none() || session.remote_id.as_deref() != id {
                 continue;
             }
+            if let Some(id) = data["_event_id"].as_str() {
+                if session.seen_events.iter().any(|seen| seen == id) {
+                    continue;
+                }
+                session.seen_events.push_back(id.into());
+                if session.seen_events.len() > 512 {
+                    session.seen_events.pop_front();
+                }
+            }
             let was_working = session.working();
+            let activity = session.conversation.activity;
+            if method.starts_with("session.inbox.") {
+                if let Some(item) = session.inbox.event(method, data) {
+                    session.conversation.history(
+                        provider,
+                        &[serde_json::json!({"id": item.id, "type":"user", "text":item.text})],
+                        false,
+                    );
+                }
+            }
+            if method == "session.shell.ended" {
+                let shell = data["shell"]["id"].as_str().unwrap_or_default();
+                let entry_id = format!("opencode-shell-{shell}");
+                if session
+                    .conversation
+                    .entries
+                    .iter()
+                    .any(|e| e.id == entry_id && !e.complete)
+                    || session.shells.iter().any(|s| s.id == shell)
+                {
+                    shells_completed.push(index);
+                }
+                session.shells.retain(|s| s.id != shell);
+            }
             session.revision += 1;
             session.conversation.apply(provider, method, data);
+            session.unread |= activity != session.conversation.activity;
             if matches!(
                 method,
                 "session.execution.failed" | "session.execution.interrupted"
@@ -1308,9 +2037,12 @@ impl Workspace {
             }
         }
         for index in completed {
-            if self.preferences.notifications
-                && self.selected != Some(index)
-                && !self.sessions[index].disconnected
+            if self.preferences.should_notify(
+                self.selected == Some(index)
+                    && !self.window_background
+                    && !self.conversation_hidden
+                    && self.sessions[index].reading < 0.0,
+            ) && !self.sessions[index].disconnected
             {
                 self.request(
                     Command::Notify(
@@ -1321,6 +2053,23 @@ impl Workspace {
                 );
             }
             self.refresh(index);
+        }
+        for index in shells_completed {
+            if self.preferences.background_shells
+                && self.preferences.should_notify(self.visible_request(
+                    provider.as_str(),
+                    path,
+                    self.sessions[index].remote_id.as_deref(),
+                ))
+            {
+                self.request(
+                    Command::Notify(
+                        "Caelum · Background command finished".into(),
+                        self.sessions[index].title.clone(),
+                    ),
+                    Pending::Notify,
+                );
+            }
         }
     }
 }
@@ -1336,4 +2085,15 @@ fn update_summary(session: &mut Session, summary: Summary) {
     if summary.options.agent.is_some() && !session.options_dirty {
         session.options.agent = summary.options.agent;
     }
+}
+
+fn is_image(path: &str) -> bool {
+    matches!(
+        std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp" | "ico")
+    )
 }

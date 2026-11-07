@@ -1,17 +1,24 @@
 //! Framework-independent application boundary. Blocking provider work belongs to
 //! `Runtime`; `Workspace` owns scoped requests and conversation reconciliation.
 
+pub mod commands;
 mod composer;
 mod conversation;
 pub mod forms;
+mod inbox;
 mod persistence;
+pub mod presentation;
 mod runtime;
 mod services;
 mod workspace;
 
-pub use composer::{split_context, Attachment, QueuedPrompt};
+pub(crate) use composer::provider_prompt;
+pub use composer::{
+    split_context, Attachment, AttachmentKind, Completion, CompletionKind, QueuedPrompt,
+};
 pub use conversation::{Conversation, Entry, EntryKind};
-pub use persistence::{Preferences, SavedSession, Snapshot, Store};
+pub use inbox::{Inbox, InboxPrompt};
+pub use persistence::{Preferences, SavedSession, Snapshot, Store, StoreLock};
 pub use runtime::{Command, Event, ProviderRuntime, Reply, Runtime};
 pub use services::{Checkout, Review, Services, Task, TaskReply};
 pub use workspace::{Session, Workspace};
@@ -65,5 +72,7 @@ pub struct Summary {
     pub options: Options,
 }
 
+#[cfg(test)]
+mod parity_tests;
 #[cfg(test)]
 mod tests;

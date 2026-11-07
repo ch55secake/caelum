@@ -10,9 +10,10 @@ use std::{
 
 mod migration;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
+    pub files: BTreeMap<String, FileWorkspace>,
     pub theme: String,
     pub theme_family: String,
     pub accent_color: String,
@@ -21,11 +22,16 @@ pub struct Preferences {
     pub providers: BTreeMap<String, Options>,
     pub favorite_models: BTreeMap<String, Vec<String>>,
     pub notifications: bool,
+    pub notification_mode: String,
+    pub sound_volume: u8,
+    pub background_shells: bool,
+    pub input_needed: bool,
 }
 
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            files: BTreeMap::new(),
             theme: "system".into(),
             theme_family: "caelum".into(),
             accent_color: "violet".into(),
@@ -34,11 +40,30 @@ impl Default for Preferences {
             providers: BTreeMap::new(),
             favorite_models: BTreeMap::new(),
             notifications: true,
+            notification_mode: "background".into(),
+            sound_volume: 50,
+            background_shells: true,
+            input_needed: true,
         }
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct FileWorkspace {
+    pub scroll: BTreeMap<String, [f32; 2]>,
+    pub tabs: Vec<String>,
+    pub selected: Option<String>,
+    pub expanded: std::collections::BTreeSet<String>,
+    pub line: BTreeMap<String, usize>,
+}
+
 impl Preferences {
+    pub fn should_notify(&self, visible: bool) -> bool {
+        self.notifications
+            && self.notification_mode != "off"
+            && (self.notification_mode == "always" || !visible)
+    }
     /// Import the explicitly exported v1 localStorage value, never a browser DB.
     pub fn import_tauri(text: &str) -> Result<Self, String> {
         let mut value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
@@ -77,6 +102,21 @@ impl Preferences {
             .unwrap_or_default()
             .into();
         settings.notifications = value["notifications"]["mode"] != "off";
+        if let Some(mode @ ("off" | "background" | "always")) =
+            value["notifications"]["mode"].as_str()
+        {
+            settings.notification_mode = mode.into();
+        }
+        settings.sound_volume = value["notifications"]["volume"]
+            .as_u64()
+            .unwrap_or(50)
+            .min(100) as u8;
+        settings.background_shells = value["notifications"]["backgroundShells"]
+            .as_bool()
+            .unwrap_or(true);
+        settings.input_needed = value["notifications"]["inputNeeded"]
+            .as_bool()
+            .unwrap_or(true);
         for provider in Provider::ALL {
             let key = provider.as_str();
             let options = &value["providers"][key];
@@ -120,8 +160,12 @@ pub struct SavedSession {
     #[serde(default)]
     pub pending_submission: Option<QueuedPrompt>,
     pub queue: Vec<QueuedPrompt>,
+    #[serde(default)]
+    pub inbox: Vec<super::InboxPrompt>,
     pub archived: bool,
     pub reading: f32,
+    #[serde(default)]
+    pub unread: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -142,6 +186,16 @@ pub struct Snapshot {
 #[derive(Debug, Clone)]
 pub struct Store(pub PathBuf);
 
+/// Explicitly unlock before closing: a concurrently forked child can briefly
+/// retain the same file description until exec closes its inherited descriptor.
+pub struct StoreLock(fs::File);
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 impl Store {
     pub fn default_path() -> PathBuf {
         std::env::var_os("CAELUM_STATE")
@@ -153,7 +207,7 @@ impl Store {
             })
     }
     /// Held by the desktop for its lifetime, including while its window is hidden.
-    pub fn lock(&self) -> Result<fs::File, String> {
+    pub fn lock(&self) -> Result<StoreLock, String> {
         let parent = self
             .0
             .parent()
@@ -172,7 +226,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         file.try_lock()
             .map_err(|e| format!("This workspace is already open, or cannot be locked: {e}"))?;
-        Ok(file)
+        Ok(StoreLock(file))
     }
     pub fn load(&self) -> Result<Option<Snapshot>, String> {
         let bytes = match fs::read(&self.0) {

@@ -69,12 +69,43 @@ impl ProviderRuntime {
 
     fn execute(&self, command: &Command) -> Result<Reply, String> {
         let result = match command {
+            Command::Inbox(key) => {
+                return self
+                    .opencode
+                    .inbox(&key.scope.project, &key.id)
+                    .map(Reply::Inbox)
+                    .map_err(|e| e.to_string())
+            }
+            Command::Enqueue(key, id, text) => self
+                .opencode
+                .enqueue_prompt(&key.scope.project, &key.id, id, text)
+                .map_err(|e| e.to_string()),
+            Command::RemoveQueued(key, id) => self
+                .opencode
+                .cancel_queued_prompt(&key.scope.project, &key.id, id)
+                .map_err(|e| e.to_string()),
             Command::Generate(key, prompt) => {
                 return self
                     .opencode
                     .generate_from_context(&key.scope.project, &key.id, prompt)
                     .map(Reply::Generated)
                     .map_err(|e| e.to_string())
+            }
+            Command::Sound(volume) => {
+                #[cfg(target_os = "macos")]
+                if *volume > 0 {
+                    std::process::Command::new("/usr/bin/afplay")
+                        .args([
+                            "-v",
+                            &(f32::from(*volume).min(100.0) / 100.0).to_string(),
+                            "/System/Library/Sounds/Glass.aiff",
+                        ])
+                        .status()
+                        .map_err(|e| e.to_string())?;
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = volume;
+                Ok(())
             }
             Command::Notify(title, body) => {
                 #[cfg(target_os = "macos")]
@@ -312,7 +343,11 @@ impl ProviderRuntime {
                             .select_agent(&key.scope.project, &key.id, agent)
                             .map_err(|e| e.to_string())?;
                     }
-                    if let Some(input) = prompt.strip_prefix('/') {
+                    let command_text = super::composer::command_text(prompt);
+                    if let Some(input) = command_text
+                        .strip_prefix('/')
+                        .filter(|_| !prompt.starts_with("//"))
+                    {
                         let (name, text) =
                             input.split_once(char::is_whitespace).unwrap_or((input, ""));
                         return self
@@ -323,7 +358,7 @@ impl ProviderRuntime {
                                 &caelum_protocol::OpenCodeCommandInput {
                                     name: name.into(),
                                     text: text.into(),
-                                    files: Vec::new(),
+                                    files: super::composer::command_files(prompt),
                                 },
                                 options.model.as_deref(),
                                 options.effort.as_deref(),
@@ -376,8 +411,12 @@ impl ProviderRuntime {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Inbox(SessionKey),
+    Enqueue(SessionKey, String, String),
+    RemoveQueued(SessionKey, String),
     Generate(SessionKey, String),
     Notify(String, String),
+    Sound(u8),
     Task(Task),
     Load(Store),
     Save(Store, Snapshot),
@@ -399,6 +438,7 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Reply {
+    Inbox(Vec<serde_json::Value>),
     Generated(String),
     Task(TaskReply),
     Snapshot(Option<Snapshot>),

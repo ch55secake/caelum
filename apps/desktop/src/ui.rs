@@ -2,6 +2,48 @@
 use rune::{El, Icon, TextStyle, col, icon, row, text};
 use rune_kit::{Kit, shell::SidebarRow};
 
+pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) -> El {
+    use caelum_core::application::presentation::Outcome;
+    static CHECK: Icon = Icon {
+        name: "success",
+        view: 16.0,
+        body: r#"<path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>"#,
+    };
+    static FAIL: Icon = Icon {
+        name: "failure",
+        view: 16.0,
+        body: r#"<path d="m4 4 8 8m0-8-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>"#,
+    };
+    static MINUS: Icon = Icon {
+        name: "neutral",
+        view: 16.0,
+        body: r#"<path d="M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>"#,
+    };
+    static HELP: Icon = Icon {
+        name: "unknown",
+        view: 16.0,
+        body: r#"<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor"/><path d="M6 6a2 2 0 1 1 3 1.7L8 9m0 2v.5" fill="none" stroke="currentColor" stroke-width="1.2"/>"#,
+    };
+    let (glyph, color, label) = match value {
+        Outcome::Running => {
+            return rune_kit::Spinner::new()
+                .size(14.0)
+                .build(k)
+                .label("Running")
+                .key("status-running");
+        }
+        Outcome::Success => (&CHECK, k.c.success.fg, "Succeeded"),
+        Outcome::Failure => (&FAIL, k.c.danger.fg, "Failed"),
+        Outcome::Interrupted => (&MINUS, k.c.warning.fg, "Interrupted"),
+        Outcome::Neutral => (&MINUS, k.c.text_muted, "Neutral"),
+        Outcome::Unknown => (&HELP, k.c.text_muted, "Unknown"),
+    };
+    icon(glyph, 14.0)
+        .color(color)
+        .label(label)
+        .key(format!("status-{}", glyph.name))
+}
+
 pub static FOLDER: Icon = Icon {
     name: "folder",
     view: 16.0,
@@ -151,8 +193,13 @@ pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f3
                 },
             )
             .child(context)
-            .child(input)
-            .child(controls),
+            .child(
+                rune::auto_grow(input, 2, 8)
+                    .key("composer-editor")
+                    .min_h(56.0)
+                    .max_h(180.0),
+            )
+            .child(controls.min_h(32.0).mt(8.0)),
     )
 }
 

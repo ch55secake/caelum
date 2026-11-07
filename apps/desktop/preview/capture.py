@@ -10,12 +10,12 @@ output.mkdir(parents=True, exist_ok=True)
 subprocess.run(["cargo", "build", "--locked", "-p", "caelum-desktop"], check=True, cwd=root)
 binary = root / "target/debug/caelum-desktop"
 for theme in ("dark", "light"):
-    for scene in ("", "inspector", "compact", "settings"):
+    for scene in ("", "inspector", "compact", "settings", "tools", "review", "checks", "mentions", "images", "crowded"):
         name = f"rune-{theme}" + (f"-{scene}" if scene else "")
         subprocess.run([
             str(binary), "--design-fixture", "--theme", theme,
             "--scale", "1", "--at", "1", "--size",
-            "800x620" if scene == "compact" else "1280x1000",
+            "800x620" if scene in ("compact", "crowded") else "1280x1000",
             *(["--scene", scene] if scene else []),
             "--snap", str(output / f"{name}.png"),
             "--tree", str(output / f"{name}.json"),

@@ -1,8 +1,16 @@
+mod activity;
+mod code_view;
+mod commands;
+mod completion;
+mod context;
 mod evaluation;
 mod lifecycle;
 mod live;
+mod media;
+mod models;
 mod panels;
 mod questions;
+mod settings;
 mod state;
 mod theme;
 mod ui;
@@ -272,15 +280,12 @@ fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<E
         .color(k.c.text_base)
         .selection_color(k.selection())
         .w_full()
-        .min_h(56.0)
-        .max_h(180.0)
         .on_edit(|s: &mut Workspace| &mut s.active_mut().draft)
         // Workspace shortcuts run before the editor's Escape-to-blur handling.
         .on_input_key(on_key)
         .on_submit(Workspace::send);
-    let submit = Button::new("")
-        .icon(if session.working() { &STOP } else { &SEND })
-        .variant(ButtonVariant::Submit)
+    let submit = IconButton::new(if session.working() { &STOP } else { &SEND })
+        .variant(IconButtonVariant::Submit)
         .disabled(!session.working() && session.draft.text.trim().is_empty())
         .on_press_tx(|s: &mut Workspace, tx| {
             if s.active().working() {
@@ -418,8 +423,16 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         .min_h(0.0)
         .items_center()
         .child(rune::el().w_full().h(1.0).fill(k.c.border_base))
-        .child(transcript(s, &k, cx.is_reduced_motion(), padding))
-        .child(composer(s, &k, padding, width > 560.0, &mut layers));
+        .child(transcript(s, &k, cx.is_reduced_motion(), padding));
+    let main = if s
+        .live
+        .as_ref()
+        .is_some_and(|live| live.panels.screen == panels::Screen::Review)
+    {
+        main
+    } else {
+        main.child(composer(s, &k, padding, width > 560.0, &mut layers))
+    };
     let toolbar = Toolbar::new()
         .leading(
             row()
@@ -523,12 +536,21 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
-    if s.live.is_some() && panels::on_key(s, ev, tx) {
+    if s.live.is_some() && live::live(s).panels.overlay.is_some() {
+        return panels::on_key(s, ev, tx);
+    }
+    if s.live.is_some()
+        && (completion::on_key(s, ev, tx)
+            || panels::on_key(s, ev, tx)
+            || commands::side_key(s, ev, tx))
+    {
         return true;
     } else if shell::is_sidebar_toggle(ev) {
         s.sidebar.toggle();
     } else if ev.is_command('i') && ev.mods.alt {
         s.inspector.toggle();
+    } else if ev.is_command('n') && ev.mods.shift && s.live.is_some() {
+        panels::open_launcher(s);
     } else if ev.is_command('n') {
         s.new_session();
     } else if ev.is_command('o') && s.live.is_some() {
@@ -551,6 +573,12 @@ fn spec() -> AppSpec<Workspace> {
         setup: Some(live::setup),
         on_key: Some(on_key),
         scenes: &[
+            ("tools", |s| evaluation::scene(s, "tools")),
+            ("review", |s| evaluation::scene(s, "review")),
+            ("checks", |s| evaluation::scene(s, "checks")),
+            ("mentions", |s| evaluation::scene(s, "mentions")),
+            ("images", |s| evaluation::scene(s, "images")),
+            ("crowded", |s| evaluation::scene(s, "crowded")),
             ("inspector", |s| s.inspector.set_open(true)),
             ("compact", |s| {
                 s.sidebar.set_open(false);

@@ -27,6 +27,9 @@ pub struct Entry {
     pub status: String,
     pub started_at: Option<u64>,
     pub background: bool,
+    pub metadata: Value,
+    pub error: String,
+    pub media: Vec<super::presentation::Media>,
     history: String,
     stream: String,
     history_output: String,
@@ -36,7 +39,9 @@ pub struct Entry {
 
 impl Entry {
     fn new(id: String, kind: EntryKind, text: String, complete: bool) -> Self {
+        let media = super::presentation::markdown_media(&text);
         Self {
+            media,
             id,
             kind,
             text,
@@ -48,6 +53,8 @@ impl Entry {
             status: if complete { "completed" } else { "running" }.into(),
             started_at: None,
             background: false,
+            metadata: Value::Null,
+            error: String::new(),
             history: String::new(),
             stream: String::new(),
             history_output: String::new(),
@@ -59,12 +66,15 @@ impl Entry {
 
 #[derive(Debug, Default)]
 pub struct Conversation {
+    pub activity: u64,
     pub entries: Vec<Entry>,
     pub working: bool,
     pub used_tokens: Option<u64>,
     pub context_window: Option<u64>,
+    pub usage_model: Option<String>,
     usage_at: u64,
     step_started: Option<(String, u64)>,
+    step_model: Option<String>,
 }
 
 impl Conversation {
@@ -80,7 +90,7 @@ impl Conversation {
     }
 
     pub fn history(&mut self, provider: Provider, data: &[Value], older: bool) {
-        if provider == Provider::OpenCode && !older {
+        if provider == Provider::OpenCode && (!older || self.usage_at == 0) {
             for message in data.iter().rev() {
                 let at = message["time"]["created"].as_u64().unwrap_or(0);
                 if at < self.usage_at {
@@ -92,6 +102,7 @@ impl Conversation {
                     break;
                 }
                 if message["type"] == "assistant" && self.usage(&message["tokens"], at) {
+                    self.usage_model = model_id(message);
                     break;
                 }
             }
@@ -164,6 +175,18 @@ impl Conversation {
     }
 
     fn put(&mut self, entry: Entry) {
+        if entry.kind != EntryKind::User
+            && !self.entries.iter().any(|old| {
+                old.id == entry.id
+                    && old.text == entry.text
+                    && old.input == entry.input
+                    && old.output == entry.output
+                    && old.complete == entry.complete
+                    && old.status == entry.status
+            })
+        {
+            self.activity += 1;
+        }
         self.merge(vec![entry], false);
     }
 
@@ -184,6 +207,7 @@ impl Conversation {
         if entry.complete {
             return;
         }
+        self.activity += 1;
         if output {
             entry.stream_output.push_str(delta);
             entry.output = reconcile(&entry.history_output, &entry.stream_output);
@@ -216,11 +240,26 @@ impl Conversation {
     fn codex(&mut self, method: &str, data: &Value) {
         match method {
             "thread/tokenUsage/updated" => {
-                self.used_tokens = data["tokenUsage"]["last"]["totalTokens"].as_u64();
-                self.context_window = data["tokenUsage"]["modelContextWindow"].as_u64();
+                if let Some(used) = data["tokenUsage"]["last"]["totalTokens"].as_u64() {
+                    self.used_tokens = Some(used);
+                    self.context_window = data["tokenUsage"]["modelContextWindow"]
+                        .as_u64()
+                        .filter(|n| *n > 0);
+                }
             }
             "item/started" | "item/completed" => {
-                if let Some(entry) = codex_item(&data["item"], method == "item/completed") {
+                if let Some(mut entry) = codex_item(&data["item"], method == "item/completed") {
+                    let at = data["_created"]
+                        .as_u64()
+                        .unwrap_or_else(super::presentation::now);
+                    if !entry.complete {
+                        entry.started_at = Some(at);
+                    } else {
+                        if !entry.metadata.is_object() {
+                            entry.metadata = serde_json::json!({});
+                        }
+                        entry.metadata["ended"] = at.into();
+                    }
                     let already_complete =
                         self.entries.iter().any(|e| e.id == entry.id && e.complete);
                     if !already_complete || entry.complete {
@@ -382,6 +421,7 @@ impl Conversation {
             }
         }
         if method == "session.step.started" {
+            self.step_model = model_id(data);
             self.step_started = data["assistantMessageID"].as_str().map(|id| {
                 (
                     id.into(),
@@ -400,7 +440,9 @@ impl Conversation {
                 .map(|(_, at)| *at)
                 .or(data["_created"].as_u64())
                 .unwrap_or(0);
-            self.usage(&data["tokens"], at);
+            if self.usage(&data["tokens"], at) {
+                self.usage_model = model_id(data).or_else(|| self.step_model.clone());
+            }
         }
         if let Some(rest) = method.strip_prefix("session.") {
             if let Some((kind, phase)) = rest.split_once('.') {
@@ -436,10 +478,18 @@ impl Conversation {
                                         .map(|entry| entry.text.clone())
                                         .unwrap_or_default()
                                 });
-                            self.put(Entry::new(id, kind, text, true));
+                            let mut entry = Entry::new(id, kind, text, true);
+                            entry.metadata = serde_json::json!({"ended":data["_created"].as_u64().unwrap_or_else(super::presentation::now)});
+                            self.put(entry);
                         }
                         "started" if !self.entries.iter().any(|entry| entry.id == id) => {
-                            self.put(Entry::new(id, kind, String::new(), false));
+                            let mut entry = Entry::new(id, kind, String::new(), false);
+                            entry.started_at = Some(
+                                data["_created"]
+                                    .as_u64()
+                                    .unwrap_or_else(super::presentation::now),
+                            );
+                            self.put(entry);
                             self.working = true;
                         }
                         _ => {}
@@ -479,13 +529,28 @@ impl Conversation {
                 }
                 if !data["content"].is_null() {
                     entry.output = text_content(&data["content"]);
+                    entry.media = super::presentation::media(&data["content"]);
                 } else if !data["output"].is_null() {
                     entry.output = display(&data["output"]);
                 } else if let Some(output) = data["metadata"]["output"].as_str() {
                     entry.output = output.into();
                 }
                 if !data["error"].is_null() {
-                    entry.output = display(&data["error"]);
+                    entry.error = display(&data["error"]);
+                }
+                if !data["metadata"].is_null() {
+                    entry.metadata = data["metadata"].clone();
+                }
+                entry.started_at = entry
+                    .started_at
+                    .or(data["started"].as_u64())
+                    .or(data["_created"].as_u64())
+                    .or_else(|| Some(super::presentation::now()));
+                if let Some(ended) = data["_created"].as_u64().filter(|_| complete) {
+                    if !entry.metadata.is_object() {
+                        entry.metadata = serde_json::json!({});
+                    }
+                    entry.metadata["ended"] = ended.into();
                 }
                 if !complete {
                     self.working = true;
@@ -558,6 +623,10 @@ fn snapshot_entry(mut entry: Entry) -> Entry {
 }
 
 fn merge_entry(mut snapshot: Entry, mut current: Entry) -> Entry {
+    snapshot.started_at = snapshot.started_at.or(current.started_at);
+    if snapshot.metadata.is_null() {
+        snapshot.metadata = current.metadata.clone();
+    }
     if snapshot.complete {
         if snapshot.kind == EntryKind::Tool && snapshot.output.is_empty() {
             snapshot.output = current.output;
@@ -610,6 +679,9 @@ fn codex_item(item: &Value, complete: bool) -> Option<Entry> {
         _ => display(&item["text"]),
     };
     let mut entry = Entry::new(id, kind, text, complete || kind == EntryKind::User);
+    entry
+        .media
+        .extend(super::presentation::media(&item["content"]));
     entry.status = item["status"]
         .as_str()
         .unwrap_or(if complete { "completed" } else { "running" })
@@ -618,6 +690,8 @@ fn codex_item(item: &Value, complete: bool) -> Option<Entry> {
         entry.status = format!("failed (exit {})", item["exitCode"]);
     }
     if kind == EntryKind::Tool {
+        entry.metadata = serde_json::json!({"cwd":item["cwd"],"exitCode":item["exitCode"],"durationMs":item["durationMs"],"signal":item["signal"]});
+        entry.error = display(&item["error"]);
         entry.name = item["tool"]
             .as_str()
             .unwrap_or(string(&item["type"]))
@@ -641,12 +715,12 @@ fn opencode_message(message: &Value) -> Vec<Entry> {
         return Vec::new();
     };
     match string(&message["type"]) {
-        "user" => vec![Entry::new(
+        "user" => { let mut entry = Entry::new(
             format!("opencode-{id}"),
             EntryKind::User,
             display(&message["text"]),
             true,
-        )],
+        ); entry.media.extend(super::presentation::media(&message["files"])); vec![entry] },
         "assistant" => {
             let mut text_ordinal = 0;
             let mut reasoning_ordinal = 0;
@@ -686,7 +760,16 @@ fn opencode_message(message: &Value) -> Vec<Entry> {
                             ),
                         );
                         entry.name = display(&part["name"]);
+                        entry.status = if !state["error"].is_null() { "failed" } else { state["status"].as_str().unwrap_or(if entry.complete { "completed" } else { "running" }) }.into();
+                        entry.error = display(&state["error"]);
+                        entry.metadata = state["metadata"].clone();
+                        entry.started_at = state["time"]["start"].as_u64().or(part["time"]["created"].as_u64());
+                        if let Some(ended) = state["time"]["end"].as_u64().or(part["time"]["completed"].as_u64()) {
+                            if !entry.metadata.is_object() { entry.metadata = serde_json::json!({}); }
+                            entry.metadata["ended"] = ended.into();
+                        }
                         entry.input = display(&state["input"]);
+                        entry.media = super::presentation::media(&state["content"]);
                         entry.output = if state["error"].is_null() {
                             text_content(&state["content"])
                         } else {
@@ -727,6 +810,8 @@ fn shell_entry(shell: &Value, output: &Value) -> Option<Entry> {
     );
     entry.name = "Background shell".into();
     entry.background = true;
+    entry.started_at = shell["started"].as_u64().or(shell["startedAt"].as_u64());
+    entry.metadata = serde_json::json!({"exit":shell["exit"],"signal":shell["signal"],"ended":shell["ended"],"cwd":shell["cwd"]});
     entry.input = display(&shell["command"]);
     entry.output = if output.is_object() {
         display(&output["output"])
@@ -749,6 +834,22 @@ fn part_id(message: &str, kind: &str, ordinal: u64) -> String {
     }
 }
 
+fn model_id(value: &Value) -> Option<String> {
+    let model = value["model"]["id"]
+        .as_str()
+        .or(value["modelID"].as_str())?;
+    let provider = value["model"]["providerID"]
+        .as_str()
+        .or(value["providerID"].as_str());
+    Some(if model.contains('/') {
+        model.into()
+    } else if let Some(provider) = provider {
+        format!("{provider}/{model}")
+    } else {
+        model.into()
+    })
+}
+
 fn string(value: &Value) -> &str {
     value.as_str().unwrap_or("")
 }
@@ -766,6 +867,12 @@ fn text_content(value: &Value) -> String {
     match value.as_array() {
         Some(parts) => parts
             .iter()
+            .filter(|part| {
+                !matches!(
+                    part["type"].as_str(),
+                    Some("file" | "image" | "localImage" | "input_image")
+                )
+            })
             .map(|part| {
                 part.get("text")
                     .map(display)

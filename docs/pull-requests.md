@@ -12,16 +12,23 @@ independent.
 
 Select a PR to open the main review screen. **Back to session** restores the
 conversation and draft. The review shows its description, branches, head commit,
-checks, merge state and a link to GitHub. **Refresh review** reloads its metadata.
+checks, merge state and a link to GitHub. Check icons, timing and links distinguish
+running, successful, failed and unknown results. **Refresh review** reloads metadata;
+open reviews also refresh every 30 seconds.
 
 ## Files and feedback
 
-Load changed files in pages and choose a file to inspect its native unified/split
-diff. Large patches remain windowed. Local changes and remote review diffs keep
-separate selection/scroll state.
+Changed files form one continuous native unified/split diff. The independently
+scrollable file list navigates within it; further pages load near the end or with
+**Load more files**. Large patches remain windowed. Reading position survives
+refresh and review-tab navigation. Local and remote diffs keep separate state.
+Patch headers offer copy/selection context actions. Binary or GitHub-omitted
+patches are marked unavailable and link to GitHub.
 
 Discussions, review summaries, threads and replies retain author, file/line,
-resolution/outdated status and available diff context. **More** loads additional
+resolution/outdated status and available diff context. Current threads appear
+inline, resolved threads expand on demand, and unavailable-line/outdated comments
+remain accessible. **More** loads additional
 pages/replies. Select comments and choose **Address selected comments** to append
 the selected feedback and PR context to the current draft. Review/edit the prompt
 before sending it with either provider.
@@ -37,6 +44,6 @@ squash or rebase to merge. Both actions pin the displayed head; GitHub checks
 permissions and repository rules. In-flight mutations remain locked across
 navigation and refresh, and errors remain available for retry.
 
-The native client currently uses selected-feedback context rather than composer
-`#` PR completion. The [migration record](design/rune-migration.md) tracks the
-remaining interaction differences.
+Type **#** at the composer caret to attach session-related PR context without
+leaving the draft. The [migration record](design/rune-migration.md) tracks the
+remaining real-workflow acceptance.

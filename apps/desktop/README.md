@@ -36,6 +36,9 @@ Append one of these modes to `cargo run --locked -p caelum-desktop --`:
 These modes do not start providers or write workspace state. Capture previews
 with `python3 apps/desktop/preview/capture.py`; see [design](../../docs/design/README.md)
 and [performance](../../docs/performance/README.md) for native replay commands.
+The 20 light/dark captures include populated tools, continuous review/checks,
+mentions, images and a crowded 800 × 620 workspace. Use `--scene tools` (or
+`review`, `checks`, `mentions`, `images`, `crowded`) with `--design-fixture` to inspect one.
 
 ## State and migration
 
@@ -60,7 +63,7 @@ CAELUM_RUNE_SMOKE_PROVIDER=opencode \
 cargo test --locked -p caelum-desktop real_provider_discovery_and_history_smoke -- --ignored --nocapture
 
 CAELUM_RUNE_SMOKE_PROJECT=/path/to/caelum \
-CAELUM_RUNE_SMOKE_PR=https://github.com/ch55secake/caelum/pull/92 \
+CAELUM_RUNE_SMOKE_PR=https://github.com/ch55secake/caelum/pull/95 \
 cargo test --locked -p caelum-desktop real_workspace_services_smoke -- --ignored --nocapture
 ```
 

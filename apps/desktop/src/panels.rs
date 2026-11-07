@@ -29,30 +29,57 @@ pub enum Screen {
     Review,
     Settings,
     Session,
+    Timeline,
+    Usage,
+    Stats,
+    Models,
+    Image,
+    Launcher,
 }
 
+type Target = (String, String);
+type Revision = (u64, Option<Target>, Option<Target>, Option<Target>);
+type CachedReview = (DiffState, u64, u64, Option<String>);
+
 pub struct Panels {
+    pub settings_page: crate::settings::Page,
+    pub settings_provider: caelum_core::application::Provider,
+    pub settings_menu: Option<&'static str>,
     pub screen: Screen,
     pub inspector: Screen,
     pub overlay: Option<Screen>,
     pub searching_sessions: bool,
     pub sessions: TextEdit,
     pub archived: bool,
+    pub launch_provider: caelum_core::application::Provider,
+    documents: std::collections::BTreeMap<(String, String), crate::code_view::Document>,
+    pub review_tab: usize,
+    expanded_threads: HashSet<String>,
     search: TextEdit,
+    find: TextEdit,
+    finding: bool,
+    find_index: usize,
     content_search: bool,
-    expanded: HashSet<(String, String)>,
     pub review: Option<(String, String)>,
     review_file: Option<String>,
     change_file: Option<(String, String)>,
     diff: DiffState,
     diff_hash: u64,
+    annotations_hash: u64,
+    synced: Option<Revision>,
+    review_cache: std::collections::HashMap<Target, CachedReview>,
+    pub pending_line: Option<(String, String, usize)>,
+    active_document: Option<(String, String)>,
+    pending_scroll: Option<(String, [f32; 2])>,
+    review_positions: std::collections::HashMap<(String, String), crate::code_view::Position>,
+    active_review: Option<(String, String)>,
     change_diff: DiffState,
     change_hash: u64,
     selection: Option<Selection>,
     preview_page: usize,
     branch: TextEdit,
     base: TextEdit,
-    directory: TextEdit,
+    pub(crate) directory: TextEdit,
     directory_loaded: bool,
 }
 
@@ -66,20 +93,37 @@ struct Selection {
 impl Default for Panels {
     fn default() -> Self {
         Self {
+            settings_page: Default::default(),
+            settings_provider: Default::default(),
+            settings_menu: None,
             screen: Screen::Conversation,
             inspector: Screen::Files,
             overlay: None,
             searching_sessions: false,
             sessions: TextEdit::new(""),
             archived: false,
+            launch_provider: Default::default(),
+            documents: Default::default(),
+            review_tab: 1,
+            expanded_threads: Default::default(),
             search: TextEdit::new(""),
+            find: TextEdit::new(""),
+            finding: false,
+            find_index: 0,
             content_search: false,
-            expanded: HashSet::new(),
             review: None,
             review_file: None,
             change_file: None,
             diff: DiffState::new(diff::parse("")),
             diff_hash: 0,
+            annotations_hash: 0,
+            synced: None,
+            review_cache: Default::default(),
+            pending_line: None,
+            active_document: None,
+            pending_scroll: None,
+            review_positions: Default::default(),
+            active_review: None,
             change_diff: DiffState::new(diff::parse("")),
             change_hash: 0,
             selection: None,
@@ -93,51 +137,185 @@ impl Default for Panels {
 }
 
 impl Panels {
-    pub fn sync(&mut self, app: &Application) {
+    pub fn remember(&self, app: &mut Application) {
+        for ((project, path), document) in &self.documents {
+            if let Some(offset) = document.position.get() {
+                let saved = app.preferences.files.entry(project.clone()).or_default();
+                saved.scroll.insert(path.clone(), offset);
+                saved
+                    .line
+                    .insert(path.clone(), (offset[1] / 22.0) as usize + 1);
+            }
+        }
+    }
+    pub fn reveal_line(&mut self, tx: &mut Tx) {
+        if let Some((key, offset)) = self.pending_scroll.take() {
+            tx.scroll_to(key, offset[0], offset[1]);
+        }
+        if let Some((project, path, line)) = &self.pending_line
+            && self.active_document.as_ref() == Some(&(project.clone(), path.clone()))
+            && let Some(document) = self.documents.get_mut(&(project.clone(), path.clone()))
+        {
+            document.diff.scroll_to_line(
+                0,
+                diff::LineRef::new(diff::Side::New, (*line).max(1) as u32),
+                tx,
+            );
+            self.pending_line = None;
+        }
+    }
+    pub fn sync(&mut self, app: &Application) -> bool {
+        let document = app.active_project.as_ref().and_then(|p| {
+            app.services
+                .checkouts
+                .get(p)?
+                .selected_file
+                .as_ref()
+                .map(|f| (p.clone(), f.clone()))
+        });
+        if document != self.active_document {
+            self.active_document = document.clone();
+            if let Some((p, f)) = &document {
+                let saved = app.preferences.files.get(p);
+                if self.pending_line.is_none() {
+                    if let Some(offset) = saved
+                        .and_then(|s| s.scroll.get(f))
+                        .copied()
+                        .filter(|offset| offset.iter().all(|n| n.is_finite() && *n >= 0.0))
+                    {
+                        self.pending_scroll = Some((
+                            format!("{}/scroll", crate::code_view::source_key(p, f)),
+                            offset,
+                        ));
+                    } else if let Some(line) = saved.and_then(|s| s.line.get(f)) {
+                        self.pending_line = Some((p.clone(), f.clone(), *line));
+                    }
+                }
+            }
+        }
+        let review = (self.screen == Screen::Review && self.review_tab == 1)
+            .then(|| self.review.clone())
+            .flatten();
+        if review != self.active_review {
+            self.active_review = review.clone();
+            if let Some(key) = review {
+                let pos = self.review_positions.entry(key).or_default();
+                if let Some(offset) = pos.get() {
+                    self.pending_scroll = Some(("diff/scroll".into(), offset));
+                }
+            }
+        }
+        let signature = (
+            app.services.revision,
+            document,
+            self.change_file.clone(),
+            (self.screen == Screen::Review)
+                .then(|| self.review.clone())
+                .flatten(),
+        );
+        if self.synced.as_ref() == Some(&signature) {
+            return false;
+        }
+        self.synced = Some(signature);
+        let mut changed = false;
+        if let Some((project, checkout)) = app
+            .active_project
+            .as_ref()
+            .and_then(|p| app.services.checkouts.get(p).map(|c| (p, c)))
+            && let Some(path) = &checkout.selected_file
+            && let Some(file) = checkout.files.get(path)
+        {
+            changed |= self
+                .documents
+                .entry((project.clone(), path.clone()))
+                .or_default()
+                .sync(path, &file.content);
+        }
         if let Some(patch) = self
             .change_file
             .as_ref()
             .and_then(|(p, f)| app.services.checkouts.get(p)?.diffs.get(f))
             .map(|d| format!("{}{}{}", d.staged, d.unstaged, d.untracked))
         {
-            update_diff(&mut self.change_diff, &mut self.change_hash, &patch);
+            changed |= update_diff(&mut self.change_diff, &mut self.change_hash, &patch);
         }
-        let patch = if self.screen == Screen::Review {
-            self.review
+        if self.screen == Screen::Review
+            && let Some((key, review)) = self
+                .review
                 .as_ref()
-                .and_then(|key| app.services.reviews.get(key))
-                .and_then(|r| {
-                    r.files
-                        .iter()
-                        .find(|f| Some(&f.path) == self.review_file.as_ref())
-                })
-                .and_then(|f| {
-                    f.patch.as_ref().map(|patch| {
-                        format!(
-                            "diff --git a/{0} b/{0}\n--- a/{0}\n+++ b/{0}\n{patch}\n",
-                            f.path
-                        )
+                .and_then(|key| app.services.reviews.get(key).map(|r| (key, r)))
+        {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut hash);
+            review.head().hash(&mut hash);
+            for file in &review.files {
+                (&file.path, &file.patch, &file.previous_path, &file.status).hash(&mut hash);
+            }
+            let revision = hash.finish();
+            if self.diff_hash != revision {
+                crate::code_view::replace_files(
+                    &mut self.diff,
+                    crate::code_view::review_files(&review.files),
+                );
+                self.diff_hash = revision;
+                self.annotations_hash = 0;
+                if self.review_file.is_none() {
+                    self.review_file = review.files.first().map(|f| f.path.clone());
+                }
+                changed = true;
+            }
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            for thread in &review.threads {
+                (
+                    &thread.id,
+                    thread.line,
+                    &thread.diff_side,
+                    thread.is_resolved,
+                    thread.is_outdated,
+                    thread.comments.len(),
+                )
+                    .hash(&mut hash);
+            }
+            let revision = hash.finish();
+            if self.annotations_hash != revision {
+                let notes = review
+                    .threads
+                    .iter()
+                    .filter(|t| !t.is_outdated)
+                    .filter_map(|t| {
+                        Some(diff::Annotation::new(
+                            self.diff.file_index(&t.path)?,
+                            diff::LineRef::new(
+                                if t.diff_side == "LEFT" {
+                                    diff::Side::Old
+                                } else {
+                                    diff::Side::New
+                                },
+                                t.line?.try_into().ok()?,
+                            ),
+                            &t.id,
+                        ))
                     })
-                })
-        } else {
-            None
-        };
-        if let Some(patch) = patch {
-            update_diff(&mut self.diff, &mut self.diff_hash, &patch);
+                    .collect();
+                self.diff.set_annotations(notes);
+                self.annotations_hash = revision;
+                changed = true;
+            }
         }
+        changed
     }
 }
 
-fn update_diff(diff: &mut DiffState, revision: &mut u64, patch: &str) {
+fn update_diff(diff: &mut DiffState, revision: &mut u64, patch: &str) -> bool {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     patch.hash(&mut hash);
     let hash = hash.finish();
     if *revision != hash {
-        let mode = diff.mode();
-        *diff = DiffState::new(diff::parse(patch));
-        diff.set_mode(mode);
+        crate::code_view::replace_files(diff, diff::parse(patch));
         *revision = hash;
+        return true;
     }
+    false
 }
 
 fn label(value: impl Into<String>, k: &Kit) -> El {
@@ -168,9 +346,12 @@ pub fn show(s: &mut Workspace, screen: Screen) {
     let live = live_mut(s);
     match screen {
         Screen::Files | Screen::Changes => live.panels.inspector = screen,
-        Screen::Settings | Screen::Worktrees | Screen::Session => {
-            live.panels.overlay = Some(screen)
-        }
+        Screen::Settings
+        | Screen::Worktrees
+        | Screen::Session
+        | Screen::Timeline
+        | Screen::Usage
+        | Screen::Stats => live.panels.overlay = Some(screen),
         _ => live.panels.screen = screen,
     }
     if screen == Screen::Settings && !live.panels.directory_loaded {
@@ -181,11 +362,25 @@ pub fn show(s: &mut Workspace, screen: Screen) {
         return;
     };
     match screen {
-        Screen::Files => live.app.task(Task::Directory {
-            project,
-            path: String::new(),
-            offset: 0,
-        }),
+        Screen::Files => {
+            live.app.refresh_files();
+            if let Some(saved) = live.app.preferences.files.get(&project).cloned() {
+                for path in saved.expanded {
+                    live.app.task(Task::Directory {
+                        project: project.clone(),
+                        path,
+                        offset: 0,
+                    });
+                }
+                if let Some(path) = saved
+                    .selected
+                    .filter(|path| !saved.scroll.contains_key(path))
+                    && let Some(line) = saved.line.get(&path)
+                {
+                    live.panels.pending_line = Some((project, path, *line));
+                }
+            }
+        }
         Screen::Changes => live.app.task(Task::Git { project }),
         Screen::Worktrees => live.app.task(Task::Worktrees {
             project,
@@ -226,8 +421,9 @@ pub fn open_link(s: &mut Workspace, index: usize, url: &str, tx: &mut Tx) {
     }) {
         let live = live_mut(s);
         live.app.select(index);
-        live.app
-            .open_file(project, path.to_string_lossy().into_owned());
+        let path = path.to_string_lossy().into_owned();
+        live.panels.pending_line = line.map(|line| (project.clone(), path.clone(), line));
+        live.app.open_file(project, path);
         live.panels.inspector = Screen::Files;
         live.panels.preview_page = line.unwrap_or(1).saturating_sub(1) / 200;
         s.inspector.set_open(true);
@@ -235,22 +431,144 @@ pub fn open_link(s: &mut Workspace, index: usize, url: &str, tx: &mut Tx) {
 }
 
 pub fn navigation(_: &Workspace, k: &Kit) -> El {
-    quiet_button(&ui::BRANCH, "Worktrees")
-        .on_press(|s: &mut Workspace| show(s, Screen::Worktrees))
+    quiet_button(&glyphs::CHEVRON_DOWN, "Set up a session")
+        .on_press(open_launcher)
         .build(k)
         .key("nav-worktrees")
 }
 
+pub fn open_launcher(s: &mut Workspace) {
+    let l = live_mut(s);
+    l.panels.launch_provider = l
+        .app
+        .selected
+        .map(|i| l.app.sessions[i].scope.provider)
+        .unwrap_or(l.app.preferences.default_provider);
+    l.panels.overlay = Some(Screen::Launcher);
+    l.commands.search.clear();
+    l.commands.search.focused = true;
+}
+fn launcher(s: &Workspace, k: &Kit) -> El {
+    let l = live(s);
+    let mut body = col().w_full().h_full().min_h(0.0).gap(12.0);
+    let mut providers = row().gap(8.0);
+    for provider in caelum_core::application::Provider::ALL {
+        providers = providers.child(
+            Button::new(ui::provider_name(provider))
+                .variant(if l.panels.launch_provider == provider {
+                    ButtonVariant::Outline
+                } else {
+                    ButtonVariant::GhostMuted
+                })
+                .on_press(move |s: &mut Workspace| live_mut(s).panels.launch_provider = provider)
+                .build(k)
+                .key(format!("launch-provider-{}", provider.as_str())),
+        );
+    }
+    body = body.child(providers).child(
+        text_input(&l.commands.search, k.ty.ui)
+            .single_line()
+            .w_full()
+            .label("Find project")
+            .key("launch-search")
+            .placeholder("Search projects and checkouts…", k.c.text_muted)
+            .color(k.c.text_base)
+            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+    );
+    let query = l.commands.search.text.to_lowercase();
+    let mut projects = col().w_full().gap(5.0);
+    for project in l.app.projects.iter().filter(|p| {
+        format!("{} {}", p.name, p.path)
+            .to_lowercase()
+            .contains(&query)
+    }) {
+        let path = project.path.clone();
+        projects = projects.child(
+            Button::new(format!("{} · {}", project.name, project.path))
+                .variant(ButtonVariant::GhostMuted)
+                .on_press(move |s: &mut Workspace| {
+                    let l = live_mut(s);
+                    l.app.select_project(&path);
+                    let scope = caelum_core::application::Scope {
+                        project: path.clone(),
+                        provider: l.panels.launch_provider,
+                    };
+                    l.app.project_draft(scope);
+                    l.sync_editors();
+                    l.panels.overlay = None;
+                    l.panels.screen = Screen::Conversation;
+                    l.focus();
+                })
+                .build(k)
+                .w_full()
+                .key(crate::code_view::source_key(&project.path, "launch")),
+        );
+    }
+    body.child(scroll(projects)).child(
+        row()
+            .gap(8.0)
+            .child(
+                Button::new("Open folder…")
+                    .on_press_tx(crate::live::open_project)
+                    .build(k),
+            )
+            .child(
+                Button::new("Create worktree…")
+                    .disabled(l.app.active_project.is_none())
+                    .on_press(|s: &mut Workspace| show(s, Screen::Worktrees))
+                    .build(k),
+            ),
+    )
+}
+
 pub fn open_review(s: &mut Workspace, project: String, url: String) {
     let live = live_mut(s);
+    let key = (project.clone(), url.clone());
+    if live.panels.review.as_ref() != Some(&key) {
+        if let Some(previous) = live.panels.review.take() {
+            live.panels.review_cache.insert(
+                previous,
+                (
+                    std::mem::take(&mut live.panels.diff),
+                    live.panels.diff_hash,
+                    live.panels.annotations_hash,
+                    live.panels.review_file.take(),
+                ),
+            );
+        }
+        let (diff, hash, notes, file) = live.panels.review_cache.remove(&key).unwrap_or_default();
+        live.panels.diff = diff;
+        live.panels.diff_hash = hash;
+        live.panels.annotations_hash = notes;
+        live.panels.review_file = file;
+    }
     live.panels.screen = Screen::Review;
     live.panels.review = Some((project.clone(), url.clone()));
-    live.panels.review_file = None;
     live.app.task(Task::Details { project, url });
 }
 
-pub fn on_key(s: &mut Workspace, ev: &KeyEvent, _: &mut Tx) -> bool {
-    if ev.is_command('k') {
+pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if live(s).panels.overlay.is_some() {
+        if live(s).panels.overlay == Some(Screen::Models) && ev.key == Key::Escape {
+            crate::models::close(s);
+            return true;
+        }
+        if ev.key == Key::Escape {
+            live_mut(s).panels.overlay = None;
+            live_mut(s).focus();
+        }
+        return ['n', 'p', 'o', 'l', 'k', ',', 'i']
+            .iter()
+            .any(|c| ev.is_command(*c))
+            || ev.key == Key::Escape;
+    }
+    if ev.is_command('f') && s.inspector.is_open() && live(s).panels.inspector == Screen::Files {
+        let l = live_mut(s);
+        l.panels.finding = true;
+        l.panels.find.focused = true;
+    } else if ev.is_command('g') && live(s).panels.finding {
+        find_next(s, ev.mods.shift, tx);
+    } else if ev.is_command('k') {
         s.sidebar.set_open(true);
         live_mut(s).panels.searching_sessions = true;
         live_mut(s).panels.sessions.focused = true;
@@ -365,7 +683,11 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         return;
     };
     let (title, description, body) = match screen {
-        Screen::Settings => ("Settings", "Make Caelum feel like home.", settings(s, k)),
+        Screen::Settings => (
+            "Settings",
+            "Make Caelum feel like home.",
+            crate::settings::view(s, k, layers),
+        ),
         Screen::Worktrees => (
             "Worktrees",
             "Independent checkouts for parallel work.",
@@ -376,14 +698,51 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             "Manage this session and your provider defaults.",
             scroll(crate::live::session_actions(s, k)),
         ),
+        Screen::Timeline => (
+            "Timeline",
+            "Find and reveal an earlier prompt.",
+            crate::commands::view(s, k, screen),
+        ),
+        Screen::Usage => (
+            "OpenCode Go usage",
+            "Subscription allowances.",
+            crate::commands::view(s, k, screen),
+        ),
+        Screen::Stats => (
+            "Statistics",
+            "Tokens, cost and activity across recorded history.",
+            crate::commands::view(s, k, screen),
+        ),
+        Screen::Models => (
+            "Models",
+            "Choose a model for the next message.",
+            crate::models::view(s, k),
+        ),
+        Screen::Image => (
+            "Image preview",
+            "Fit, zoom and scroll the image.",
+            crate::media::view(s, k),
+        ),
+        Screen::Launcher => (
+            "New session",
+            "Choose a project and provider.",
+            launcher(s, k),
+        ),
         _ => return,
     };
     Dialog::new("workspace", title)
         .description(description)
         .open(true)
-        .width(640.0)
+        .width(720.0)
         .fit()
-        .on_close(|s: &mut Workspace| live_mut(s).panels.overlay = None)
+        .on_close(|s: &mut Workspace| {
+            if live(s).panels.overlay == Some(Screen::Models) {
+                crate::models::close(s);
+            } else {
+                live_mut(s).panels.overlay = None;
+                live_mut(s).focus();
+            }
+        })
         .child(
             col()
                 .w_full()
@@ -476,8 +835,7 @@ fn files(s: &Workspace, k: &Kit) -> El {
                     .variant(ButtonVariant::GhostMuted)
                     .on_press(move |s: &mut Workspace| {
                         let live = live_mut(s);
-                        live.panels.preview_page =
-                            line.map(|l| (l.saturating_sub(1)) / 200).unwrap_or(0);
+                        live.panels.pending_line = line.map(|l| (project.clone(), path.clone(), l));
                         live.panels.selection = None;
                         live.app.open_file(project.clone(), path.clone());
                     })
@@ -590,54 +948,9 @@ fn files(s: &Workspace, k: &Kit) -> El {
         .build(k)
         .key("attach-preview"),
     );
-    let page = live.panels.preview_page;
-    let lines: Vec<_> = file.content.lines().collect();
-    let start = (page * 200).min(lines.len());
-    let end = (start + 200).min(lines.len());
-    actions = actions
-        .child(
-            Button::new("Previous")
-                .variant(ButtonVariant::GhostMuted)
-                .disabled(page == 0)
-                .on_press(|s: &mut Workspace| {
-                    let panels = &mut live_mut(s).panels;
-                    panels.preview_page = panels.preview_page.saturating_sub(1);
-                    panels.selection = None;
-                })
-                .build(k),
-        )
-        .child(label(
-            format!(
-                "Lines {}–{}{}",
-                start + 1,
-                end,
-                if file.truncated { " · truncated" } else { "" }
-            ),
-            k,
-        ))
-        .child(
-            Button::new("Next")
-                .variant(ButtonVariant::GhostMuted)
-                .disabled(end == lines.len())
-                .on_press(|s: &mut Workspace| {
-                    let panels = &mut live_mut(s).panels;
-                    panels.preview_page += 1;
-                    panels.selection = None;
-                })
-                .build(k),
-        );
-    let language = path.rsplit('.').next().unwrap_or_default();
-    let preview = lines[start..end].join("\n");
-    let fence = "`".repeat(
-        preview
-            .lines()
-            .map(|line| line.trim_start().chars().take_while(|c| *c == '`').count())
-            .max()
-            .unwrap_or(0)
-            .max(3)
-            + 1,
-    );
-    let code = format!("{fence}{language}\n{preview}\n{fence}");
+    if file.truncated {
+        actions = actions.child(ui::caption("Partial file · preview size limit reached", k));
+    }
     browser = browser.child(
         action(
             "Refresh preview",
@@ -650,42 +963,166 @@ fn files(s: &Workspace, k: &Kit) -> El {
         )
         .self_start(),
     );
-    let project = project.clone();
-    let path = path.clone();
-    browser
-        .child(actions)
-        .child(scroll(
-            Markdown::new(&code)
-                .selectable(true)
-                .render(&theme::markdown(k))
-                .on_selection_change(move |s: &mut Workspace, change, _| {
-                    live_mut(s).panels.selection = change.selection().map(|selection| {
-                        let range = selection.texts().first().map(|text| text.range());
-                        let lines = range
-                            .filter(|range| preview.get(range.clone()) == Some(selection.text()))
-                            .map(|range| {
-                                let first = start
-                                    + 1
-                                    + preview[..range.start]
-                                        .bytes()
-                                        .filter(|b| *b == b'\n')
-                                        .count();
-                                (
-                                    first,
-                                    first + selection.text().lines().count().saturating_sub(1),
-                                )
-                            });
-                        Selection {
-                            project: project.clone(),
-                            path: path.clone(),
-                            text: selection.text().to_owned(),
-                            lines,
-                        }
-                    });
-                }),
-        ))
-        .grow(1.0)
-        .min_h(0.0)
+    let owner = (project.clone(), path.clone());
+    if !live.panels.documents.contains_key(&owner) {
+        return browser.child(label("Preparing file…", k)).grow(1.0);
+    }
+    actions = actions.child(
+        Button::new("Find in file · ⌘F")
+            .variant(ButtonVariant::GhostMuted)
+            .on_press(|s: &mut Workspace| {
+                let p = &mut live_mut(s).panels;
+                p.finding = true;
+                p.find.focused = true;
+            })
+            .build(k)
+            .key("find-in-file"),
+    );
+    if live.panels.finding {
+        actions = actions.child(
+            row()
+                .w_full()
+                .gap(4.0)
+                .child(
+                    text_input(&live.panels.find, k.ty.ui)
+                        .key("local-file-search")
+                        .label("Find in file")
+                        .placeholder("Find in file…", k.c.text_muted)
+                        .color(k.c.text_base)
+                        .single_line()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.find)
+                        .on_input_change(|s: &mut Workspace, tx| {
+                            live_mut(s).panels.find_index = usize::MAX;
+                            find_next(s, false, tx);
+                        })
+                        .on_submit(|s: &mut Workspace, tx| find_next(s, false, tx)),
+                )
+                .child(
+                    quiet_button(&glyphs::CHEVRON_UP, "Previous match")
+                        .on_press_tx(|s: &mut Workspace, tx| find_next(s, true, tx))
+                        .build(k),
+                )
+                .child(
+                    quiet_button(&glyphs::CHEVRON_DOWN, "Next match")
+                        .on_press_tx(|s: &mut Workspace, tx| find_next(s, false, tx))
+                        .build(k),
+                ),
+        );
+    }
+    let get = owner.clone();
+    let edit = owner.clone();
+    let selected = owner.clone();
+    let viewer = DiffView::new(
+        move |s: &Workspace| &crate::live::live(s).panels.documents[&get].diff,
+        move |s: &mut Workspace| {
+            &mut s
+                .live
+                .as_mut()
+                .unwrap()
+                .panels
+                .documents
+                .get_mut(&edit)
+                .unwrap()
+                .diff
+        },
+    )
+    .key(crate::code_view::source_key(project, path))
+    .on_select(move |s: &mut Workspace, range, _| {
+        let l = live_mut(s);
+        l.panels.selection = range.map(|r| {
+            let first = r.start.line.min(r.end.line) as usize;
+            let last = r.start.line.max(r.end.line) as usize;
+            let source = &l.app.services.checkouts[&selected.0].files[&selected.1].content;
+            Selection {
+                project: selected.0.clone(),
+                path: selected.1.clone(),
+                text: source
+                    .split_inclusive('\n')
+                    .skip(first.saturating_sub(1))
+                    .take(last - first + 1)
+                    .collect(),
+                lines: Some((first, last)),
+            }
+        });
+    })
+    .build(s, k)
+    .on_selection_change(move |s: &mut Workspace, change, _| {
+        if let Some(selection) = change.selection() {
+            live_mut(s).panels.selection = Some(Selection {
+                project: owner.0.clone(),
+                path: owner.1.clone(),
+                text: selection.text().into(),
+                lines: None,
+            });
+        } else {
+            live_mut(s).panels.selection = None;
+        }
+    });
+    let selection = live
+        .panels
+        .selection
+        .as_ref()
+        .filter(|s| &s.project == project && &s.path == path);
+    let viewer = crate::context::file(
+        viewer,
+        project.clone(),
+        path.clone(),
+        selection
+            .map(|s| s.text.clone())
+            .unwrap_or_else(|| file.content.clone()),
+        selection.and_then(|s| s.lines),
+    );
+    live.panels.documents[&(project.clone(), path.clone())]
+        .position
+        .capture(&crate::code_view::source_key(project, path));
+    browser.child(actions).child(viewer).grow(1.0).min_h(0.0)
+}
+
+fn find_next(s: &mut Workspace, backwards: bool, tx: &mut Tx) {
+    let l = live_mut(s);
+    let Some(project) = l.app.active_project.clone() else {
+        return;
+    };
+    let Some(checkout) = l.app.services.checkouts.get(&project) else {
+        return;
+    };
+    let Some(path) = checkout.selected_file.clone() else {
+        return;
+    };
+    let Some(file) = checkout.files.get(&path) else {
+        return;
+    };
+    let query = l.panels.find.text.to_lowercase();
+    if query.is_empty() {
+        return;
+    }
+    let lines: Vec<_> = file
+        .content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.to_lowercase().contains(&query))
+        .map(|(i, _)| i + 1)
+        .collect();
+    if lines.is_empty() {
+        return;
+    }
+    let next = if l.panels.find_index == usize::MAX {
+        0
+    } else if backwards {
+        (l.panels.find_index + lines.len() - 1) % lines.len()
+    } else {
+        (l.panels.find_index + 1) % lines.len()
+    };
+    l.panels.find_index = next;
+    if let Some(document) = l.panels.documents.get_mut(&(project, path)) {
+        let line = diff::LineRef::new(diff::Side::New, lines[next] as u32);
+        document
+            .diff
+            .set_selection(Some(diff::LineRange::line(0, line)));
+        document.diff.scroll_to_line(0, line, tx);
+    }
 }
 
 fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) -> El {
@@ -703,7 +1140,12 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
         let dir = entry.kind == ProjectEntryKind::Directory;
         let p = project.to_owned();
         let f = entry.path.clone();
-        let expanded = live(s).panels.expanded.contains(&(p.clone(), f.clone()));
+        let expanded = live(s)
+            .app
+            .preferences
+            .files
+            .get(&p)
+            .is_some_and(|saved| saved.expanded.contains(&f));
         tree = tree.child(
             Button::new(format!(
                 "{}{} {}",
@@ -720,8 +1162,9 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
             .on_press(move |s: &mut Workspace| {
                 let live = live_mut(s);
                 if dir {
-                    if !live.panels.expanded.remove(&(p.clone(), f.clone())) {
-                        live.panels.expanded.insert((p.clone(), f.clone()));
+                    let saved = live.app.preferences.files.entry(p.clone()).or_default();
+                    if !saved.expanded.remove(&f) {
+                        saved.expanded.insert(f.clone());
                         live.app.task(Task::Directory {
                             project: p.clone(),
                             path: f.clone(),
@@ -757,6 +1200,14 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
 }
 
 fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
+    if review
+        && let Some(key) = &live(s).panels.review
+        && let Some(position) = live(s).panels.review_positions.get(key)
+    {
+        position.capture("diff");
+    }
+    let kit = k.clone();
+    let action_kit = k.clone();
     col()
         .w_full()
         .grow(1.0)
@@ -804,12 +1255,131 @@ fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                 },
                 move |s: &mut Workspace| {
                     if review {
-                        &mut live_mut(s).panels.diff
+                        &mut s.live.as_mut().unwrap().panels.diff
                     } else {
-                        &mut live_mut(s).panels.change_diff
+                        &mut s.live.as_mut().unwrap().panels.change_diff
                     }
                 },
             )
+            .header_actions(move |s, i| {
+                let l = live(s);
+                let state = if review {
+                    &l.panels.diff
+                } else {
+                    &l.panels.change_diff
+                };
+                let file = &state.files()[i];
+                let path = file.path().to_owned();
+                let Some(project) = (if review {
+                    l.panels.review.as_ref().map(|v| v.0.clone())
+                } else {
+                    l.panels.change_file.as_ref().map(|v| v.0.clone())
+                }) else {
+                    return col();
+                };
+                if review
+                    && let Some((key, file)) = l.panels.review.as_ref().and_then(|key| {
+                        l.app
+                            .services
+                            .reviews
+                            .get(key)?
+                            .files
+                            .iter()
+                            .find(|f| f.path == path)
+                            .map(|file| (key, file))
+                    })
+                    && file.patch.is_none()
+                {
+                    let url = format!("{}/files", key.1);
+                    return Button::new("Patch unavailable ↗")
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press_tx(move |_: &mut Workspace, tx| {
+                            let _ = tx.open_url(&url);
+                        })
+                        .build(&action_kit)
+                        .help("Binary or omitted by GitHub. Open GitHub for the full file.")
+                        .key(format!("unavailable-patch-{path}"));
+                }
+                let selected = state.selection().filter(|selection| selection.file == i);
+                let content = selected
+                    .and_then(|_| state.selected_text())
+                    .unwrap_or_else(|| {
+                        if review {
+                            l.panels
+                                .review
+                                .as_ref()
+                                .and_then(|key| l.app.services.reviews.get(key))
+                                .and_then(|r| r.files.iter().find(|f| f.path == path))
+                                .and_then(|f| f.patch.clone())
+                                .unwrap_or_default()
+                        } else {
+                            l.app
+                                .services
+                                .checkouts
+                                .get(&project)
+                                .and_then(|c| c.diffs.get(&path))
+                                .map(|d| format!("{}{}{}", d.staged, d.unstaged, d.untracked))
+                                .unwrap_or_default()
+                        }
+                    });
+                let copy = content.clone();
+                if content.is_empty() {
+                    return col();
+                }
+                crate::context::file(
+                    Button::new(if selected.is_some() {
+                        "Copy selection"
+                    } else {
+                        "Copy patch"
+                    })
+                    .variant(ButtonVariant::GhostMuted)
+                    .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
+                    .build(&action_kit),
+                    project,
+                    path,
+                    content,
+                    selected.map(|s| {
+                        (
+                            s.start.line.min(s.end.line) as usize,
+                            s.start.line.max(s.end.line) as usize,
+                        )
+                    }),
+                )
+            })
+            .annotation(move |s, annotation| {
+                let Some((project, url)) = &live(s).panels.review else {
+                    return col();
+                };
+                let Some(thread) = live(s)
+                    .app
+                    .services
+                    .reviews
+                    .get(&(project.clone(), url.clone()))
+                    .and_then(|r| r.threads.iter().find(|t| t.id == annotation.id))
+                else {
+                    return col();
+                };
+                thread_view(s, &kit, project, url, thread)
+            })
+            .on_visible_file(move |s, index| {
+                if review {
+                    let l = s.live.as_mut().unwrap();
+                    l.panels.review_file =
+                        l.panels.diff.files().get(index).map(|f| f.path().into());
+                    if index + 3 >= l.panels.diff.files().len()
+                        && let Some((project, url)) = l.panels.review.clone()
+                        && let Some(r) = l.app.services.reviews.get(&(project.clone(), url.clone()))
+                        && let (Some(page), Some(head)) = (r.next_page, r.head())
+                    {
+                        l.app.task(Task::ReviewFiles {
+                            project,
+                            url,
+                            head: head.into(),
+                            page,
+                        });
+                    }
+                }
+            })
             .build(s, k),
         )
 }
@@ -950,13 +1520,6 @@ pub fn select_change(s: &mut Workspace, project: String, path: String) {
     live.app.task(Task::Diff { project, path });
 }
 
-impl crate::live::Live {
-    fn diff_reset(&mut self) {
-        self.panels.diff = DiffState::new(diff::parse(""));
-        self.panels.diff_hash = 0;
-    }
-}
-
 fn worktrees(s: &Workspace, k: &Kit) -> El {
     let live = live(s);
     let Some(project) = &live.app.active_project else {
@@ -1035,16 +1598,19 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
                 .disabled(live.panels.branch.text.trim().is_empty())
                 .on_press(move |s: &mut Workspace| {
                     let live = live_mut(s);
-                    live.app.task(Task::CreateWorktree {
-                        project: project.clone(),
-                        branch: live.panels.branch.text.clone(),
-                        base: if live.panels.base.text.trim().is_empty() {
-                            default.clone()
-                        } else {
-                            live.panels.base.text.clone()
+                    live.app.launch_worktree(
+                        Task::CreateWorktree {
+                            project: project.clone(),
+                            branch: live.panels.branch.text.clone(),
+                            base: if live.panels.base.text.trim().is_empty() {
+                                default.clone()
+                            } else {
+                                live.panels.base.text.clone()
+                            },
+                            directory: live.app.preferences.worktree_directory.clone(),
                         },
-                        directory: live.app.preferences.worktree_directory.clone(),
-                    });
+                        live.panels.launch_provider,
+                    );
                 })
                 .build(k)
                 .key("create-worktree"),
@@ -1055,7 +1621,7 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
     scroll(content)
 }
 
-fn settings(s: &Workspace, k: &Kit) -> El {
+pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
     let preferences = &live(s).app.preferences;
     let mut content = col().w_full().gap(16.0).child(ui::section(
         "Appearance",
@@ -1159,48 +1725,7 @@ fn settings(s: &Workspace, k: &Kit) -> El {
             .key(format!("accent-{accent}")),
         );
     }
-    content = content
-        .child(accents)
-        .child(ui::section(
-            "Workspace",
-            "Defaults are saved on this Mac.",
-            k,
-        ))
-        .child(
-            Button::new(if live(s).app.preferences.notifications {
-                "Notifications: on"
-            } else {
-                "Notifications: off"
-            })
-            .variant(ButtonVariant::Outline)
-            .on_press(|s: &mut Workspace| {
-                let preferences = &mut live_mut(s).app.preferences;
-                preferences.notifications = !preferences.notifications;
-            })
-            .build(k),
-        );
-    content = content.child(label("Worktree storage directory", k)).child(text_input(&live(s).panels.directory, k.ty.ui).label("Worktree storage directory").placeholder("~/.caelum/worktrees", k.c.text_muted).color(k.c.text_base).w_full().padding(8.0).radius(6.0).border(1.0, k.c.border_base).on_edit(|s: &mut Workspace| &mut live_mut(s).panels.directory))
-        .child(Button::new("Save directory").variant(ButtonVariant::Outline).on_press(|s: &mut Workspace| { let live = live_mut(s); live.app.preferences.worktree_directory = live.panels.directory.text.clone(); }).build(k))
-        .child(Button::new("Import legacy v1 settings JSON").variant(ButtonVariant::Outline).on_press_tx(|_: &mut Workspace, tx| { tx.open_file(FileDialogOptions { title: "Import exported caelum.settings.v1 JSON".into(), ..Default::default() }, |s: &mut Workspace, result, _| { match result { Ok(Some(path)) => live_mut(s).app.task(Task::ImportSettings { path: path.to_string_lossy().into_owned() }), Ok(None) => {}, Err(error) => live_mut(s).app.error = Some(error.to_string()) } }); }).build(k).key("import-settings"))
-        .child(label("Export in Tauri’s Web Inspector: copy(localStorage.getItem('caelum.settings.v1')), save as JSON, then import here. Provider defaults and favourites can also be saved from Session options.", k));
-    if let Some(error) = live(s)
-        .app
-        .services
-        .checkouts
-        .get("")
-        .and_then(|c| c.error.as_ref())
-    {
-        content = content.child(label(error, k));
-    }
-    if let Some(error) = &live(s).app.persistence_error {
-        content = content.child(label(error, k)).child(
-            Button::new("Retry save")
-                .variant(ButtonVariant::Outline)
-                .on_press(|s: &mut Workspace| live_mut(s).app.retry_save())
-                .build(k),
-        );
-    }
-    scroll(content)
+    content.child(accents)
 }
 
 fn review(s: &Workspace, k: &Kit) -> El {
@@ -1226,6 +1751,21 @@ fn review(s: &Workspace, k: &Kit) -> El {
         return scroll(content.child(label("Loading overview…", k)));
     };
     let head = &details.head_ref_oid;
+    let mut tabs = row().w_full().gap(6.0);
+    for (tab, name) in ["Overview", "Files", "Discussion"].into_iter().enumerate() {
+        tabs = tabs.child(
+            Button::new(name)
+                .variant(if live(s).panels.review_tab == tab {
+                    ButtonVariant::Outline
+                } else {
+                    ButtonVariant::GhostMuted
+                })
+                .on_press(move |s: &mut Workspace| live_mut(s).panels.review_tab = tab)
+                .build(k)
+                .key(format!("review-tab-{tab}")),
+        );
+    }
+    content = content.child(tabs);
     let link = url.clone();
     let refresh_project = project.clone();
     let refresh_url = url.clone();
@@ -1278,38 +1818,46 @@ fn review(s: &Workspace, k: &Kit) -> El {
                         })
                         .build(k),
                 ),
-        )
-        .child(
+        );
+    if live(s).panels.review_tab == 1 {
+        return content
+            .grow(1.0)
+            .min_h(0.0)
+            .child(review_files_view(s, k, project, url, review));
+    }
+    if live(s).panels.review_tab == 0 {
+        content = content.child(
             Markdown::new(&details.body)
                 .selectable(true)
                 .render(&theme::markdown(k)),
         );
+    }
     for check in details.status_check_rollup.iter().flatten() {
-        let (name, status) = match check {
-            caelum_protocol::GitHubStatusCheck::CheckRun {
-                name,
-                status,
-                conclusion,
-                ..
-            } => (name, conclusion.as_ref().unwrap_or(status)),
-            caelum_protocol::GitHubStatusCheck::StatusContext { context, state, .. } => {
-                (context, state)
-            }
-        };
-        let color = match status.as_str() {
-            "SUCCESS" | "success" => k.c.success.fg,
-            "FAILURE" | "failure" | "ERROR" | "error" => k.c.danger.fg,
-            _ => k.c.text_muted,
-        };
+        let check = caelum_core::application::presentation::Check::new(
+            check,
+            caelum_core::application::presentation::now(),
+        );
+        let url = check.url.map(str::to_owned);
         content = content.child(
             row()
                 .w_full()
                 .gap(8.0)
                 .center_y()
                 .py(4.0)
-                .child(rune::el().size(6.0, 6.0).radius(3.0).fill(color))
-                .child(label(name, k).grow(1.0))
-                .child(ui::caption(status, k).color(color)),
+                .child(ui::outcome(check.outcome, k))
+                .child(
+                    Button::new(check.name)
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press_tx(move |_: &mut Workspace, tx| {
+                            if let Some(url) = &url {
+                                let _ = tx.open_url(url);
+                            }
+                        })
+                        .build(k)
+                        .grow(1.0),
+                )
+                .child(ui::caption(check.label, k))
+                .child(ui::caption(check.timing, k)),
         );
     }
     if details.state == "OPEN" {
@@ -1344,90 +1892,15 @@ fn review(s: &Workspace, k: &Kit) -> El {
         }
         content = content.child(mutations);
     }
-    content = content.child(ui::section(
-        "Changed files",
-        "Select a file to review its patch and feedback.",
-        k,
-    ));
-    let owner = (project.clone(), url.clone());
-    let lookup = owner.clone();
-    let kit = k.clone();
-    content = content.child(
-        col()
-            .key("review-file-list")
-            .w_full()
-            .h(180.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(
-                col()
-                    .w_full()
-                    .growth(rune::GrowthSpec::default())
-                    .virtual_rows(
-                        review.files.len(),
-                        32.0,
-                        move |s: &Workspace, i| {
-                            format!(
-                                "review-file-{}",
-                                live(s).app.services.reviews[&owner].files[i].path
-                            )
-                            .into()
-                        },
-                        move |s: &Workspace, i| {
-                            let file = &live(s).app.services.reviews[&lookup].files[i];
-                            let path = file.path.clone();
-                            Button::new(format!(
-                                "{} +{} −{}",
-                                file.path, file.additions, file.deletions
-                            ))
-                            .variant(ButtonVariant::GhostMuted)
-                            .on_press(move |s: &mut Workspace| {
-                                live_mut(s).panels.review_file = Some(path.clone());
-                                live_mut(s).diff_reset();
-                            })
-                            .build(&kit)
-                            .w_full()
-                        },
-                    ),
-            ),
-    );
-    if let Some(file) = review
-        .files
-        .iter()
-        .find(|file| live(s).panels.review_file.as_ref() == Some(&file.path))
-    {
-        content = content.child(label(&file.path, k));
-        if file.patch.is_none() {
-            content = content.child(label("Patch unavailable (binary, truncated or too large). Open GitHub for the complete file.", k));
-        } else {
-            content = content.child(diff_view(s, k, true).h(400.0).min_h(400.0));
-        }
-        for thread in review.threads.iter().filter(|t| t.path == file.path) {
-            content = content.child(thread_view(s, k, project, url, thread));
-        }
-    }
-    if let Some(page) = review.next_page {
-        content = content.child(action(
-            "Load more files",
-            Task::ReviewFiles {
-                project: project.clone(),
-                url: url.clone(),
-                head: head.clone(),
-                page,
-            },
-            s,
-            k,
-        ));
+    if live(s).panels.review_tab == 0 {
+        return scroll(content);
     }
     content = content.child(label("Feedback", k));
     for comment in review.discussion.iter().chain(&review.reviews) {
         content = content.child(comment_view(s, k, project, url, comment));
     }
     for thread in &review.threads {
-        if live(s).panels.review_file.as_ref() != Some(&thread.path) {
-            content = content.child(thread_view(s, k, project, url, thread));
-        }
+        content = content.child(thread_view(s, k, project, url, thread));
     }
     for kind in [
         GitHubFeedbackKind::Discussion,
@@ -1490,6 +1963,154 @@ fn review(s: &Workspace, k: &Kit) -> El {
     scroll(content)
 }
 
+fn review_files_view(
+    s: &Workspace,
+    k: &Kit,
+    project: &str,
+    url: &str,
+    review: &caelum_core::application::Review,
+) -> El {
+    let owner = (project.to_owned(), url.to_owned());
+    let lookup = owner.clone();
+    let kit = k.clone();
+    let files = col()
+        .w_full()
+        .growth(rune::GrowthSpec::default())
+        .virtual_rows(
+            review.files.len(),
+            36.0,
+            move |s: &Workspace, i| {
+                format!(
+                    "review-file-{}",
+                    live(s).app.services.reviews[&owner].files[i].path
+                )
+                .into()
+            },
+            move |s: &Workspace, i| {
+                let r = &live(s).app.services.reviews[&lookup];
+                let f = &r.files[i];
+                let path = f.path.clone();
+                let count = r.threads.iter().filter(|t| t.path == path).count();
+                let detail = format!(
+                    "{} · +{} −{}{}{}",
+                    f.status,
+                    f.additions,
+                    f.deletions,
+                    if count > 0 {
+                        format!(" · {count} comments")
+                    } else {
+                        String::new()
+                    },
+                    if f.patch.is_none() {
+                        " · Patch unavailable"
+                    } else {
+                        ""
+                    }
+                );
+                Button::new(&path)
+                    .variant(if live(s).panels.review_file.as_ref() == Some(&path) {
+                        ButtonVariant::Outline
+                    } else {
+                        ButtonVariant::GhostMuted
+                    })
+                    .label_with({
+                        let path = path.clone();
+                        move |font, ink| {
+                            col()
+                                .w_full()
+                                .child(text(path).font(font).color(ink).truncate())
+                                .child(text(&detail).font(font).color(ink).truncate())
+                        }
+                    })
+                    .on_press_tx(move |s: &mut Workspace, tx| {
+                        let p = &mut live_mut(s).panels;
+                        p.review_file = Some(path.clone());
+                        if let Some(index) = p.diff.file_index(&path) {
+                            p.diff.scroll_to_file(index, tx);
+                        }
+                    })
+                    .build(&kit)
+                    .h(36.0)
+                    .w_full()
+            },
+        );
+    let nav = col()
+        .key("review-file-list")
+        .w(190.0)
+        .min_h(0.0)
+        .h_full()
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(files);
+    let mut code = diff_view(s, k, true);
+    if !review.files_loaded {
+        code = code.child(ui::caption("Loading changed files…", k));
+    }
+    if let Some(file) = review
+        .files
+        .iter()
+        .find(|f| live(s).panels.review_file.as_ref() == Some(&f.path))
+    {
+        if file.patch.is_none() {
+            code = code.child(ui::caption(
+                "Patch unavailable: binary or omitted by GitHub. Open GitHub for the full file.",
+                k,
+            ));
+        }
+        for thread in review.threads.iter().filter(|t| {
+            t.path == file.path
+                && (t.is_outdated
+                    || t.line.is_none_or(|line| {
+                        let side = if t.diff_side == "LEFT" {
+                            diff::Side::Old
+                        } else {
+                            diff::Side::New
+                        };
+                        live(s).panels.diff.file_index(&file.path).is_none_or(|i| {
+                            !crate::code_view::has_line(&live(s).panels.diff.files()[i], side, line)
+                        })
+                    }))
+        }) {
+            code = code.child(thread_view(s, k, project, url, thread));
+        }
+    }
+    let mut body = col().w_full().grow(1.0).min_h(0.0).gap(8.0).child(
+        row()
+            .w_full()
+            .grow(1.0)
+            .min_h(0.0)
+            .gap(10.0)
+            .child(nav)
+            .child(code.grow(1.0).min_w(0.0)),
+    );
+    if let (Some(page), Some(head)) = (review.next_page, review.head()) {
+        body = body.child(
+            action(
+                "Load more files",
+                Task::ReviewFiles {
+                    project: project.into(),
+                    url: url.into(),
+                    head: head.into(),
+                    page,
+                },
+                s,
+                k,
+            )
+            .key("review-more-files"),
+        );
+    }
+    body.child(
+        Button::new(format!(
+            "Discussion · {} selected comments",
+            review.selected_comments.len()
+        ))
+        .variant(ButtonVariant::GhostMuted)
+        .on_press(|s: &mut Workspace| live_mut(s).panels.review_tab = 2)
+        .build(k),
+    )
+}
+
 fn comment_view(
     s: &Workspace,
     k: &Kit,
@@ -1545,6 +2166,22 @@ fn thread_view(
     url: &str,
     thread: &caelum_protocol::GitHubReviewThread,
 ) -> El {
+    let open = !thread.is_resolved || live(s).panels.expanded_threads.contains(&thread.id);
+    if !open {
+        let id = thread.id.clone();
+        return Button::new(format!(
+            "▸ Resolved · {}:{} · {} replies",
+            thread.path,
+            thread.line.or(thread.original_line).unwrap_or(0),
+            thread.comments.len()
+        ))
+        .variant(ButtonVariant::GhostMuted)
+        .on_press(move |s: &mut Workspace| {
+            live_mut(s).panels.expanded_threads.insert(id.clone());
+        })
+        .build(k)
+        .key(format!("thread-{}", thread.id));
+    }
     let mut content = col().w_full().gap(6.0).child(label(
         format!(
             "{}:{} · {}{} · {}",
@@ -1640,7 +2277,7 @@ pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {
         context = context.child(
             Button::new(format!(
                 "{}{} ×",
-                attachment.path,
+                attachment.label(),
                 if attachment.truncated {
                     " (truncated)"
                 } else {
@@ -1656,6 +2293,59 @@ pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {
             .build(k),
         );
     }
+    if !session.queue.is_empty() || !session.inbox.items.is_empty() {
+        context = context.child(ui::caption("Queued messages", k));
+    }
+    for item in &session.inbox.items {
+        let id = item.id.clone();
+        let retry = id.clone();
+        let mut entry = row()
+            .w_full()
+            .gap(4.0)
+            .center_y()
+            .child(
+                label(
+                    format!(
+                        "{}{}",
+                        if item.pending {
+                            "Saving… "
+                        } else {
+                            "Queued: "
+                        },
+                        caelum_core::application::split_context(&item.text)
+                            .0
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                    ),
+                    k,
+                )
+                .grow(1.0)
+                .min_w(0.0),
+            )
+            .child(
+                Button::new("Remove")
+                    .variant(ButtonVariant::GhostMuted)
+                    .disabled(item.pending)
+                    .on_press(move |s: &mut Workspace| live_mut(s).app.remove_queued(index, &id))
+                    .build(k)
+                    .key(format!("remove-queued-{}", item.id)),
+            );
+        if let Some(error) = &item.error {
+            entry = entry.child(label(error, k)).child(
+                Button::new("Retry")
+                    .disabled(item.pending)
+                    .on_press(move |s: &mut Workspace| live_mut(s).app.retry_queued(index, &retry))
+                    .build(k),
+            );
+        }
+        context = context.child(entry);
+    }
+    if !session.queue.is_empty()
+        && let Some(error) = &session.error
+    {
+        context = context.child(label(error, k).color(k.c.danger.fg));
+    }
     for (position, queued) in session.queue.iter().enumerate() {
         context = context.child(
             row()
@@ -1664,6 +2354,17 @@ pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {
                     format!("Queued: {}", queued.text.lines().next().unwrap_or_default()),
                     k,
                 ))
+                .child(
+                    quiet_button(&glyphs::CHEVRON_UP, "Move queued message earlier")
+                        .disabled(position == 0)
+                        .on_press(move |s: &mut Workspace| {
+                            let queue = &mut live_mut(s).app.sessions[index].queue;
+                            if position > 0 && position < queue.len() {
+                                queue.swap(position, position - 1);
+                            }
+                        })
+                        .build(k),
+                )
                 .child(
                     Button::new("Edit")
                         .variant(ButtonVariant::GhostMuted)
@@ -1730,79 +2431,9 @@ pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {
             k,
         ));
     }
-    if let Some(used) = session.conversation.used_tokens {
-        let limit = session.conversation.context_window.or_else(|| {
-            live(s)
-                .app
-                .choices
-                .get(&session.scope)?
-                .models
-                .iter()
-                .find(|m| Some(&m.id) == session.options.model.as_ref())?
-                .context_window
-        });
-        context = context.child(label(
-            format!(
-                "Context: {used}{} tokens",
-                limit.map(|max| format!(" / {max}")).unwrap_or_default()
-            ),
-            k,
-        ));
-    }
-    let draft = &live(s).drafts[index].text;
-    if let Some((start, query)) = mention(draft)
-        && let Some(checkout) = live(s).app.services.checkouts.get(&session.scope.project)
-        && checkout.completion_query == query
-        && let Some(results) = &checkout.completions
-    {
-        for hit in results.matches.iter().take(8) {
-            let path = hit.path.clone();
-            let expected = draft.clone();
-            context = context.child(
-                Button::new(format!("Attach @{}", path))
-                    .variant(ButtonVariant::GhostMuted)
-                    .on_press(move |s: &mut Workspace| {
-                        let live = live_mut(s);
-                        if live.drafts[index].text == expected {
-                            live.drafts[index].text.truncate(start);
-                            live.app.attach_file(index, path.clone());
-                            live.drafts[index].focused = true;
-                        }
-                    })
-                    .build(k),
-            );
-        }
-    }
-    if draft.starts_with('/') && !draft.contains(char::is_whitespace) {
-        let mut commands: Vec<String> = ["new", "files", "changes", "settings", "ask"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-        if let Some(provider) = live(s).app.provider_commands.get(&session.scope) {
-            commands.extend(provider.iter().map(|c| c.name.clone()));
-        }
-        for command in commands
-            .into_iter()
-            .filter(|c| c.starts_with(&draft[1..]))
-            .take(8)
-        {
-            context = context.child(
-                Button::new(format!("/{command}"))
-                    .variant(ButtonVariant::GhostMuted)
-                    .on_press(move |s: &mut Workspace| {
-                        live_mut(s).drafts[index] = TextEdit::new(format!("/{command} "));
-                        live_mut(s).drafts[index].focused = true;
-                    })
-                    .build(k),
-            );
-        }
-    }
-    context
-}
-
-pub fn mention(text: &str) -> Option<(usize, &str)> {
-    let start = text
-        .rfind(char::is_whitespace)
-        .map_or(0, |i| i + text[i..].chars().next().unwrap().len_utf8());
-    text[start..].strip_prefix('@').map(|query| (start, query))
+    col()
+        .w_full()
+        .gap(4.0)
+        .child(context)
+        .child(crate::completion::view(s, k))
 }

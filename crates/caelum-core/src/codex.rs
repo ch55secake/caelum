@@ -413,13 +413,23 @@ impl CodexProvider {
         let project = Project::open(project_path)?;
         let connection = self.connection_for_thread(&project, thread_id)?;
         connection.queue_turn(thread_id);
+        let (prompt, images) = crate::application::provider_prompt(prompt);
+        let mut input = Vec::new();
+        if !prompt.is_empty() {
+            input.push(json!({"type":"text","text":prompt}));
+        }
+        input.extend(
+            images
+                .iter()
+                .map(|a| json!({"type":"image","url":a.content})),
+        );
         match connection.request(
             "turn/start",
             json!({
                 "threadId": thread_id,
                 "model": model,
                 "effort": effort,
-                "input": [{ "type": "text", "text": prompt }]
+                "input": input
             }),
         ) {
             Ok(result) => connection.complete_turn_start(thread_id, &result),
@@ -1259,6 +1269,8 @@ for raw in sys.stdin:
             assert params['limit'] == 30
             result = {'data': [{'id': 'turn-b', 'items': [{'id': 'cmd', 'type': 'commandExecution', 'command': 'git status', 'aggregatedOutput': 'clean', 'status': 'completed'}]}, {'id': 'turn-a', 'items': []}], 'nextCursor': 'older-cursor'}
     elif method == 'turn/start':
+        with open('turn-request.json', 'w') as request:
+            json.dump(params, request)
         prompt = params['input'][0]['text']
         if prompt == 'rpc-error':
             print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'fake request error'}}), flush=True)
@@ -1463,6 +1475,23 @@ for raw in sys.stdin:
         assert_eq!(resumed.thread.name.as_deref(), Some("Resumed"));
         assert_eq!(resumed.model.as_deref(), Some("saved-model"));
         assert_eq!(resumed.effort.as_deref(), Some("low"));
+        let image =
+            crate::application::Attachment::image("café.png".into(), b"\x89PNG\r\n\x1a\n").unwrap();
+        let prompt = format!(
+            "Describe this\n\n<caelum-image-context>\n{}\n</caelum-image-context>",
+            json!({"version":1,"images":[image.clone()]})
+        );
+        provider
+            .send_prompt(&project_path, "thread-existing", &prompt)
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(&fs::read(project_path.join("turn-request.json")).unwrap())
+                .unwrap();
+        assert_eq!(body["input"][0]["text"], "Describe this");
+        assert_eq!(
+            body["input"][1],
+            json!({"type":"image","url":image.content})
+        );
         let choices = provider.choices(&project_path).unwrap();
         assert_eq!(choices.models[0].id, "test-model");
         assert_eq!(
