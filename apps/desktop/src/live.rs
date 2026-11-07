@@ -1577,7 +1577,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .key(format!("live-draft-{index}"))
         .label("Message")
         .placeholder(
-            "Message… Use / for commands, @ for files, # for PRs.",
+            "Use / for commands, @ for files, # for PRs.",
             k.c.text_muted,
         )
         .help("Enter to send · Shift+Enter for a new line")
