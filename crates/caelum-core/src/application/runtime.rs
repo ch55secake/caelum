@@ -20,6 +20,9 @@ use crate::{
 
 use super::{Options, Provider, Scope, SessionKey, Snapshot, Store, Summary, Task, TaskReply};
 
+#[path = "checkout_watch.rs"]
+mod checkout_watch;
+
 /// Shared by desktop adapters; constructing this does not start a provider.
 #[derive(Clone)]
 pub struct ProviderRuntime {
@@ -455,6 +458,7 @@ pub enum Reply {
 
 #[derive(Debug)]
 pub enum Event {
+    Checkout(String),
     Completed(u64, Result<Reply, String>),
     Codex(CodexEvent),
     OpenCode(OpenCodeEvent),
@@ -468,6 +472,8 @@ type Execute = Arc<dyn Fn(&Command) -> Result<Reply, String> + Send + Sync>;
 /// Background I/O with a bounded UI inbox. The UI drains a batch once per frame;
 /// event arrival wakes it, so idle windows need no polling timer.
 pub struct Runtime {
+    checkout_watch: Option<mpsc::Sender<Vec<String>>>,
+    watched_projects: Vec<String>,
     providers: Option<ProviderRuntime>,
     requests: SyncSender<(u64, Command)>,
     control: SyncSender<(u64, Command)>,
@@ -520,6 +526,44 @@ impl Runtime {
             vec![Event::Questions(value)]
         });
         runtime.providers = Some(providers);
+        {
+            let (updates, receiver) = mpsc::channel::<Vec<String>>();
+            let closed = runtime.closed.clone();
+            let sender = runtime.sender.clone();
+            let wake = runtime.wake.clone();
+            runtime.forwarders.push(thread::spawn(move || {
+                let Ok(mut watch) = checkout_watch::CheckoutWatch::new() else {
+                    return;
+                };
+                while !closed.load(Ordering::Acquire) {
+                    match receiver.recv_timeout(Duration::from_millis(350)) {
+                        Ok(mut projects) => {
+                            for latest in receiver.try_iter() {
+                                projects = latest;
+                            }
+                            watch.sync(projects.iter().cloned());
+                            // Reconcile edits made while native registration was pending.
+                            watch
+                                .dirty
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .extend(projects);
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                    let projects =
+                        std::mem::take(&mut *watch.dirty.lock().unwrap_or_else(|e| e.into_inner()));
+                    for project in projects {
+                        if sender.send(Event::Checkout(project)).is_err() {
+                            return;
+                        }
+                        wake();
+                    }
+                }
+            }));
+            runtime.checkout_watch = Some(updates);
+        }
         runtime
     }
 
@@ -559,6 +603,8 @@ impl Runtime {
             }
         }
         Self {
+            checkout_watch: None,
+            watched_projects: Vec::new(),
             providers: None,
             requests,
             control,
@@ -604,6 +650,7 @@ impl Runtime {
         let queue = if matches!(
             command,
             Command::Cancel(_)
+                | Command::Task(Task::Shell { stop: true, .. })
                 | Command::Approve(..)
                 | Command::Answer(..)
                 | Command::Save(..)
@@ -616,6 +663,17 @@ impl Runtime {
         queue
             .try_send((id, command))
             .map_err(|_| "Too many pending requests; try again shortly".into())
+    }
+
+    pub fn watch_checkouts(&mut self, mut projects: Vec<String>) {
+        projects.sort();
+        projects.dedup();
+        if projects != self.watched_projects {
+            if let Some(watch) = &self.checkout_watch {
+                let _ = watch.send(projects.clone());
+            }
+            self.watched_projects = projects;
+        }
     }
 
     pub fn drain(&self) -> Vec<Event> {
@@ -635,6 +693,7 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         self.closed.store(true, Ordering::Release);
+        self.checkout_watch.take();
         self.inbox.take(); // Release any producers waiting on a full inbox.
         if let Some(providers) = &self.providers {
             providers.shutdown();

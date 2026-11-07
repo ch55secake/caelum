@@ -5,6 +5,7 @@ pub mod approvals;
 pub mod codex;
 pub mod database;
 pub mod desktop;
+mod executable;
 pub mod files;
 pub mod git;
 pub mod github;

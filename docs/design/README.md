@@ -18,6 +18,8 @@ while retaining the user's preferred sizes. The bounded multiline editor and
 composer controls occupy separate rows; Settings and Undo remain in a pinned footer.
 The final TypeScript tree at `82ca39d`, its regression tests and historical UI
 captures are the parity reference. `388d09e` adds the follow-intent unread repair.
+Shared controls now cover command panels, questions, dialogs and dropdowns, with
+quiet successful-tool indicators and explicit loading, empty and error surfaces.
 
 | | Historical polished reference | Native Caelum |
 | --- | --- | --- |
@@ -39,6 +41,26 @@ captures are the parity reference. `388d09e` adds the follow-intent unread repai
 | Caret-aware PR mentions | Check status and timing |
 | --- | --- |
 | ![Native mentions](previews/rune-dark-mentions.png) | ![Native checks](previews/rune-dark-checks.png) |
+
+| Searchable models | Compact session actions |
+| --- | --- |
+| ![Native models](previews/rune-light-models-small.png) | ![Native session actions](previews/rune-dark-session-small.png) |
+
+| Project/provider launcher | Background commands |
+| --- | --- |
+| ![Native launcher](previews/rune-light-launcher-small.png) | ![Native shells](previews/rune-dark-shells-small.png) |
+
+| Worktree creation | Provider dropdown |
+| --- | --- |
+| ![Native worktree form](previews/rune-dark-worktrees-form-small.png) | ![Native dropdown](previews/rune-light-provider-dropdown-small.png) |
+
+| Files loading | Pull request loading |
+| --- | --- |
+| ![Native file loading](previews/rune-light-files-loading-small.png) | ![Native PR loading](previews/rune-dark-review-loading-small.png) |
+
+| Provider connection error | Question choices |
+| --- | --- |
+| ![Native provider error](previews/rune-light-provider-error.png) | ![Native questions](previews/rune-dark-questions-small.png) |
 
 Four theme families and six accent colours (plus the theme default) apply across
 the workspace. Rune follows system reduced-motion preferences. Use native replay
@@ -64,9 +86,11 @@ cargo run --locked -p caelum-desktop -- \
   --native --fps 120 --frames 780
 ```
 
-The capture script writes 20 dark/light workspace, inspector, compact, settings,
-tools, review, checks, mentions, images and crowded PNGs and element-tree JSON to
-ignored `apps/desktop/preview-results/`. An optional output
+The capture script writes **188 states**: 39 scenes and eight pointer/keyboard
+replays, each in light/dark and normal/compact layouts. Coverage includes all five
+Settings pages, models, launcher, session/worktree dialogs, commands, shells,
+Files/Changes, PR loading/error states, questions, images, hover and keyboard focus.
+PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
 replace the replay's `--at 9 --snap …` with `--video /path/to/replay.mp4 --duration auto`.
 Rune's `--help` lists tooling options.

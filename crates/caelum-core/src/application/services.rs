@@ -7,6 +7,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub enum Task {
+    Shell {
+        project: String,
+        session: String,
+        id: String,
+        stop: bool,
+    },
     Reveal {
         project: String,
         path: String,
@@ -110,6 +116,7 @@ pub enum Task {
 
 #[derive(Debug)]
 pub enum TaskReply {
+    Shell(String),
     Updates(UpdateCheck),
     Image(String),
     Usage(serde_json::Value),
@@ -135,6 +142,7 @@ impl Task {
     }
     pub fn project(&self) -> &str {
         match self {
+            Self::Shell { project, .. } => project,
             Self::Completions { project, .. }
             | Self::Image { project, .. }
             | Self::EncodeImage { project, .. }
@@ -169,9 +177,12 @@ impl Task {
             _ => None,
         }
     }
-    fn slot(&self) -> String {
+    pub(super) fn slot(&self) -> String {
         // JSON tuple encoding keeps delimiters inside paths unambiguous.
         let part = match self {
+            Self::Shell {
+                session, id, stop, ..
+            } => format!("shell:{session}:{id}:{stop}"),
             Self::Updates => "updates".into(),
             Self::Reveal { path, .. } => format!("reveal:{path}"),
             Self::EncodeImage { .. } => "encode-image".into(),
@@ -208,6 +219,15 @@ impl Task {
             };
         }
         match self {
+            Self::Shell {
+                project,
+                session,
+                id,
+                stop,
+            } => reply!(
+                runtime.opencode.shell_action(project, session, id, *stop),
+                Shell
+            ),
             Self::Reveal { project, path } => {
                 let project = crate::projects::Project::open(project).map_err(|e| e.to_string())?;
                 let path = project
@@ -383,6 +403,7 @@ impl Task {
 
 #[derive(Default)]
 pub struct Checkout {
+    pub shell_output: BTreeMap<(String, String), String>,
     pub usage: Option<serde_json::Value>,
     pub stats: Option<OpenCodeStats>,
     pub stats_projects: Vec<OpenCodeStatsProject>,
@@ -574,7 +595,7 @@ impl Services {
                         .entry((task.project().into(), url.into()))
                         .or_default()
                         .error = Some(error);
-                } else {
+                } else if !matches!(task, Task::Shell { .. }) {
                     self.checkouts
                         .entry(task.project().into())
                         .or_default()
@@ -587,6 +608,38 @@ impl Services {
         self.revision += 1;
         let checkout = self.checkouts.entry(task.project().into()).or_default();
         match (task, reply) {
+            (
+                Task::Shell {
+                    session,
+                    id,
+                    stop: false,
+                    ..
+                },
+                TaskReply::Shell(output),
+            ) => {
+                // Long-running workspaces can observe many short-lived shells.
+                if checkout.shell_output.len() >= 64
+                    && !checkout
+                        .shell_output
+                        .contains_key(&(session.clone(), id.clone()))
+                {
+                    checkout.shell_output.pop_first();
+                }
+                checkout
+                    .shell_output
+                    .insert((session.clone(), id.clone()), output);
+            }
+            (
+                Task::Shell {
+                    session,
+                    id,
+                    stop: true,
+                    ..
+                },
+                TaskReply::Shell(_),
+            ) => {
+                checkout.shell_output.remove(&(session.clone(), id.clone()));
+            }
             (Task::Image { project, source }, TaskReply::Image(data)) => {
                 while self.images.len() >= 24
                     || self.images.values().map(String::len).sum::<usize>() + data.len()
@@ -626,7 +679,14 @@ impl Services {
                 checkout.search_query = query.clone();
             }
             (Task::Git { project }, TaskReply::Git(status, _)) => {
-                if let Some(branch) = &status.branch {
+                checkout
+                    .diffs
+                    .retain(|path, _| status.changes.iter().any(|c| &c.path == path));
+                if let Some(branch) = status
+                    .branch
+                    .as_ref()
+                    .filter(|b| checkout.git.as_ref().and_then(|g| g.branch.as_ref()) != Some(*b))
+                {
                     next.push(Task::Discover {
                         project: project.clone(),
                         branch: branch.clone(),
@@ -634,7 +694,12 @@ impl Services {
                 }
                 checkout.git = Some(status);
             }
-            (Task::Diff { path, .. }, TaskReply::Diff(diff)) => {
+            (Task::Diff { path, .. }, TaskReply::Diff(diff))
+                if checkout
+                    .git
+                    .as_ref()
+                    .is_none_or(|g| g.changes.iter().any(|c| &c.path == path)) =>
+            {
                 checkout.diffs.insert(path.clone(), diff);
             }
             (_, TaskReply::Worktrees(listing)) => checkout.worktrees = listing,

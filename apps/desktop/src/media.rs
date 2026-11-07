@@ -1,3 +1,4 @@
+use crate::ui::Button;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -6,7 +7,7 @@ use crate::{
 };
 use caelum_core::application::{Attachment, Task, presentation::Media};
 use rune::{El, Image, ImageCache, ScrollSpec, SurfaceFit, Waker, col, row};
-use rune_kit::{Button, ButtonVariant, Kit};
+use rune_kit::{ButtonVariant, Kit};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -152,8 +153,8 @@ pub fn thumbnail(s: &Workspace, k: &Kit, project: &str, media: &Media) -> El {
     };
     let image = match live(s).media.image(data, live(s).fixture) {
         Ok(Some(image)) => image,
-        Ok(None) => return ui::caption("Loading image…", k),
-        Err(error) => return ui::caption(error, k),
+        Ok(None) => return ui::skeleton("Loading image", 2, k),
+        Err(error) => return ui::notice("Image unavailable", &error, k),
     };
     if live(s).fixture {
         let _ = image.wait();
@@ -167,6 +168,9 @@ pub fn thumbnail(s: &Workspace, k: &Kit, project: &str, media: &Media) -> El {
         .w_full()
         .h(170.0)
         .max_w(420.0)
+        .radius(8.0)
+        .border(1.0, k.c.border_base)
+        .focus_ring(1.5, 0.0, k.c.border_focus)
         .pixels_fit(image.pixels(), SurfaceFit::Fit)
         .label(&media.name)
         .role("img")
@@ -187,13 +191,16 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
     };
     let image = match live(s).media.image(data, live(s).fixture) {
         Ok(Some(image)) => image,
-        Ok(None) => return ui::caption("Loading image…", k),
-        Err(error) => return ui::caption(error, k),
+        Ok(None) => return ui::skeleton("Loading image", 3, k),
+        Err(error) => return ui::notice("Image unavailable", &error, k),
     };
     let [width, height] = image.size().unwrap_or([640, 400]);
-    let fit = (640.0 / width as f32).min(340.0 / height as f32).min(1.0);
+    let canvas = rune::memo::window_layout("image-canvas").unwrap_or([0.0, 0.0, 640.0, 340.0]);
+    let fit = (canvas[2] / width as f32)
+        .min(canvas[3] / height as f32)
+        .min(1.0);
     let zoom = live(s).media.zoom.unwrap_or(fit);
-    let mut actions = row().gap(6.0);
+    let mut actions = row().w_full().center_y().gap(6.0);
     for (name, value) in [
         ("Fit", None),
         ("Actual size", Some(1.0)),
@@ -213,7 +220,11 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
         .h_full()
         .min_h(0.0)
         .gap(8.0)
-        .child(actions)
+        .child(ui::caption(&media.name, k).truncate())
+        .child(actions.child(ui::caption(
+            format!("{:.0}% · {width} × {height}", zoom * 100.0),
+            k,
+        )))
         .child(
             col()
                 .key("image-canvas")
@@ -221,6 +232,9 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)
+                .radius(8.0)
+                .fill(k.c.bg_deep)
+                .border(1.0, k.c.border_base)
                 .scroll_xy()
                 .scroll(ScrollSpec {
                     stick_bottom: false,

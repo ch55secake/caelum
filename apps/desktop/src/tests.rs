@@ -53,6 +53,155 @@ fn fill(rt: &mut Runtime<Workspace>, field: &str, value: &str) {
 }
 
 #[test]
+fn native_shortcuts_and_large_model_catalogue_keep_the_captured_owner() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        let scope = l.app.sessions[1].scope.clone();
+        l.app.choices.insert(scope, serde_json::from_value(serde_json::json!({
+            "models": (0..160).map(|i| serde_json::json!({"id":format!("model-{i:03}"),"name":format!("Model {i:03}"),"efforts":[],"defaultEffort":null})).collect::<Vec<_>>(),
+            "agents":[{"id":"build","name":"Build"},{"id":"plan","name":"Plan"}],"defaultModel":"model-000"
+        })).unwrap());
+        l.app.sessions[1].options.model = Some("model-000".into());
+        l.app.sessions[1].options.agent = Some("build".into());
+        l.app.select(1);
+    });
+    advance(&mut rt, 0.3);
+    fill(&mut rt, "live-draft-1", "Preserve café and the caret");
+    key(
+        &mut rt,
+        Key::Tab,
+        Mods {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[1]
+            .options
+            .agent
+            .as_deref(),
+        Some("plan")
+    );
+    assert!(element(&rt, "live-draft-1").focused);
+    click(&mut rt, "model-trigger");
+    advance(&mut rt, 0.3);
+    for _ in 0..105 {
+        key(&mut rt, Key::Down, Mods::default());
+    }
+    advance(&mut rt, 0.2);
+    assert!(element(&rt, "option106").visible[3] > 0.0);
+    assert!(rt.elements().len() < 1000, "catalogue must be windowed");
+    key(&mut rt, Key::Tab, Mods::default());
+    assert!(!element(&rt, "model-search").focused);
+    key(&mut rt, Key::Down, Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(element(&rt, "model-search").focused);
+    assert!(element(&rt, "option107").visible[3] > 0.0);
+    fill(&mut rt, "model-search", "159");
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(0));
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.3);
+    let l = rt.state.live.as_ref().unwrap();
+    assert_eq!(l.app.selected, Some(0));
+    assert_eq!(
+        l.app.sessions[1].options.model.as_deref(),
+        Some("model-159")
+    );
+    assert_eq!(l.drafts[1].text, "Preserve café and the caret");
+    assert_ne!(
+        l.app.sessions[0].options.model.as_deref(),
+        Some("model-159")
+    );
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.sessions[0].remote_id = Some("thread".into());
+        l.app.sessions[0].conversation.working = true;
+    });
+    key(
+        &mut rt,
+        Key::Command(','),
+        Mods {
+            cmd: true,
+            ..Default::default()
+        },
+    );
+    advance(&mut rt, 0.3);
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.3);
+    assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+    key(&mut rt, Key::Escape, Mods::default());
+    assert!(rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+}
+
+#[test]
+fn tool_patches_share_the_source_renderer_for_fragments_and_multiple_files() {
+    let files = crate::code_view::tool_files("file.rs", "@@ -1 +1 @@\n-old();\n+new();");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path(), "file.rs");
+    assert_eq!(files[0].hunks[0].lines.len(), 2);
+    let at = crate::code_view::tool_files("file.rs", "@@ -40 +40 @@\n-old();\n+new();");
+    assert_eq!(
+        at[0].hunks[0].lines[1].number(rune_kit::diff::Side::New),
+        Some(40)
+    );
+    let files = crate::code_view::tool_files(
+        "Patch",
+        "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-old\n+new\n*** Add File: src/b.rs\n+created\n*** End Patch",
+    );
+    assert_eq!(
+        files.iter().map(|f| f.path()).collect::<Vec<_>>(),
+        ["src/a.rs", "src/b.rs"]
+    );
+}
+
+#[test]
+fn settings_dropdown_escape_dismisses_only_the_foremost_surface() {
+    for dark in [false, true] {
+        let app = spec();
+        let mut state = crate::evaluation::design();
+        crate::evaluation::scene(&mut state, "providers");
+        state.live.as_mut().unwrap().app.sessions[0]
+            .conversation
+            .working = true;
+        let mut rt = Runtime::new(state, app.view, (800.0, 620.0), Env::new(dark, 1.0));
+        rt.poll = app.poll;
+        rt.on_key = app.on_key;
+        advance(&mut rt, 0.4);
+        click(&mut rt, "Default effort-trigger");
+        advance(&mut rt, 0.3);
+        assert!(element(&rt, "option1").visible[3] > 20.0);
+        click(&mut rt, "option1");
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().app.preferences.providers["codex"]
+                .effort
+                .as_deref(),
+            Some("Medium")
+        );
+        click(&mut rt, "Default effort-trigger");
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .panels
+                .settings_menu
+                .is_none()
+        );
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().panels.overlay,
+            Some(crate::panels::Screen::Settings)
+        );
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(rt.state.live.as_ref().unwrap().panels.overlay.is_none());
+        assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+    }
+}
+
+#[test]
 fn long_drafts_and_crowded_sidebar_keep_controls_in_bounds() {
     let mut rt = live_runtime_size((800.0, 620.0));
     rt.update(|s, _| {
@@ -1509,7 +1658,18 @@ fn native_file_preview_attaches_an_immutable_snapshot_to_the_originating_draft()
         ))
     });
     advance(&mut rt, 0.3);
+    let file_row = element(&rt, "file-tree-main.rs");
+    assert!(
+        file_row.visible[2] > 100.0 && file_row.visible[3] >= 28.0,
+        "file row: {file_row:?}"
+    );
     click(&mut rt, "file-tree-main.rs");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts["/project"]
+            .selected_file
+            .as_deref(),
+        Some("main.rs")
+    );
     let (file, _) = rt
         .state
         .live
@@ -1533,6 +1693,40 @@ fn native_file_preview_attaches_an_immutable_snapshot_to_the_originating_draft()
         ))
     });
     advance(&mut rt, 0.3);
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    let gutter = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.path.contains("source-") && e.path.ends_with("/df0.c1/gutter/nn"))
+        .unwrap();
+    let [x, y, w, h] = gutter.rect;
+    rt.pointer_down(x + w / 2.0, y + h / 2.0);
+    rt.pointer_up(x + w / 2.0, y + h / 2.0);
+    advance(&mut rt, 0.2);
+    key(
+        &mut rt,
+        Key::Command('c'),
+        Mods {
+            cmd: true,
+            ..Default::default()
+        },
+    );
+    assert!(clipboard.text().unwrap().contains("fn main() {}"));
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.sessions[0]
+            .conversation
+            .working = true
+    });
+    key(&mut rt, Key::Escape, Mods::default());
+    assert!(
+        !rt.state.live.as_ref().unwrap().app.sessions[0].stopping,
+        "Escape clears the file selection before cancelling work"
+    );
+    assert_eq!(
+        element(&rt, "attach-preview").label.as_deref(),
+        Some("Attach file")
+    );
     click(&mut rt, "attach-preview");
     click(&mut rt, "close-inspector");
     click(&mut rt, "live-session-1");

@@ -8,13 +8,21 @@ sessions. **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that 
 draft. Each session retains an independent draft and reading position. Hover a
 session to close it with **×**; **Undo** restores it without replacing newer
 navigation. Session actions and native context menus also offer archive/reconnect.
+The sidebar's **Sessions** footer opens explicit session actions; **New session**
+opens the searchable project/provider launcher.
 
 Choose the provider, model, reasoning effort and available agent in the composer.
 Sending creates a provider session when needed. Later selection changes apply
 to the next message. Search models and star favourites in the model picker.
+The picker keeps its original session or Settings target while open. Unavailable
+current models and saved favourites remain visible; arrow keys navigate the
+windowed catalogue, including after Tab moves focus.
 Responses, thinking, typed Read/Run/Patch rows, compaction and shell activity
 appear in the transcript with status and timing; expand rows for details. **Load earlier messages**
 pages provider history while the visible transcript stays bounded.
+Running OpenCode background commands also remain above the composer. Expand the
+strip for a bounded output tail, refresh and per-command **Stop**; completed
+commands retain their output in the transcript.
 
 ## Drafts, queues and requests
 
@@ -24,11 +32,12 @@ Local queue entries capture their own settings and context; edit, reorder, remov
 pause or resume them. Failed entries return to the front with their original options.
 OpenCode uses its provider-owned inbox during execution when settings are unchanged.
 Those entries restore by message ID and support removal and admission/removal retry.
-**Stop** or Escape interrupts the active turn and pauses its queue; open dialogs,
-session search and review navigation consume Escape first.
+**Stop** or Escape interrupts the active turn and pauses its queue. Dropdowns,
+dialogs, mentions, focused code selections and search surfaces consume Escape
+before it reaches session cancellation.
 
 Failed submissions stay separate from newer typing. Recovery retries once;
-**Refresh / reconnect session** explicitly retries again. Approvals and question
+**Refresh session** explicitly retries again. Approvals and question
 forms belong to the requesting session, including when another session is selected.
 Permission choices are **Allow once** and **Deny**.
 
@@ -64,8 +73,10 @@ search and transcript navigation; usage and statistics provide refresh and filte
 **Files** and **Changes** share the resizable side inspector. **⌘P** opens file
 search; choose filename or content search. Directories and results are paged,
 previews are read-only with syntax highlighting, virtualized lines and **⌘F**
-source search. Tabs, folders and reading positions persist. **Refresh**, foreground
-activation and provider filesystem events reload files while preserving position.
+source search. Tabs, folders and reading positions persist. Native checkout watches,
+provider/tool events, **Refresh** and foreground activation reload files and Changes
+while preserving position. Repeated edits and staging coalesce; an edit during an
+in-flight refresh schedules another read. Linked-worktree Git metadata is watched too.
 Select lines to attach them to the prompt. Files, local staged/unstaged/untracked
 changes and continuous PR review share the same native code/diff surfaces.
 
@@ -102,9 +113,10 @@ a project through the CLI brings it back. **⌘Q** quits and saves the latest dr
 | ⇧⌘N | Project/provider launcher |
 | ⌘K | Search sessions |
 | ⌘L | Focus composer |
-| ⇧⌘B | Toggle sidebar |
+| ⌘\\ / ⇧⌘B | Toggle sidebar |
 | ⌥⌘I | Toggle inspector |
 | ⌘P | Files/search |
+| ⇧⌘F | Content search |
 | ⌘F | Search the open source file |
 | Shift+Tab | Cycle OpenCode agent in the composer |
 | ⌘, | Settings |

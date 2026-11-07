@@ -5,8 +5,8 @@ use crate::{
     ui,
 };
 use caelum_core::application::{Completion, CompletionKind, Provider, Task};
-use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, row};
-use rune_kit::{Button, ButtonVariant, Kit};
+use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col};
+use rune_kit::Kit;
 
 #[derive(Default)]
 pub struct Menu {
@@ -268,10 +268,12 @@ pub fn on_key(s: &mut Workspace, event: &KeyEvent, tx: &mut Tx) -> bool {
             }
             Key::Down => {
                 live_mut(s).completion.active = (selected + 1).min(items.len().saturating_sub(1));
+                tx.scroll_into_view(format!("completion-{}", live(s).completion.active));
                 return true;
             }
             Key::Up => {
                 live_mut(s).completion.active = selected.saturating_sub(1);
+                tx.scroll_into_view(format!("completion-{}", live(s).completion.active));
                 return true;
             }
             Key::Enter | Key::Tab => {
@@ -321,6 +323,8 @@ pub fn on_key(s: &mut Workspace, event: &KeyEvent, tx: &mut Tx) -> bool {
         let l = live_mut(s);
         let session = &mut l.app.sessions[index];
         if session.scope.provider == Provider::OpenCode
+            && !session.archived
+            && !session.archiving
             && let Some(choices) = l.app.choices.get(&session.scope)
             && !choices.agents.is_empty()
         {
@@ -331,6 +335,7 @@ pub fn on_key(s: &mut Workspace, event: &KeyEvent, tx: &mut Tx) -> bool {
                 .map_or(0, |i| (i + 1) % choices.agents.len());
             session.options.agent = Some(choices.agents[next].id.clone());
             l.app.options_changed(index);
+            l.focus();
             return true;
         }
     }
@@ -361,7 +366,7 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
                 query: token.query.clone(),
             });
     if busy {
-        content = content.child(ui::caption("Loading context…", k));
+        content = content.child(ui::skeleton("Loading context", 1, k));
     }
     if let Some(error) = l.app.sessions[index].error.as_ref().or_else(|| {
         l.app
@@ -373,35 +378,19 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
         content = content.child(ui::caption(error, k).color(k.c.danger.fg));
     }
     let mut options = col().w_full().gap(2.0);
-    let start = selected.saturating_sub(6);
-    for (i, item) in items.into_iter().enumerate().skip(start).take(8) {
+    if items.is_empty() && !busy {
+        content = content
+            .child(ui::caption("No matches. Keep typing to refine your search.", k).padding(10.0));
+    }
+    for (i, item) in items.into_iter().enumerate() {
         let t = token.clone();
         let choice = item.clone();
         options = options.child(
-            Button::new(&item.title)
-                .label_with(move |font, ink| {
-                    row()
-                        .w_full()
-                        .gap(10.0)
-                        .child(rune::text(&item.title).font(font).color(ink))
-                        .child(
-                            rune::text(&item.detail)
-                                .font(font)
-                                .color(ink)
-                                .truncate()
-                                .grow(1.0),
-                        )
-                })
-                .variant(if i == selected {
-                    ButtonVariant::Outline
-                } else {
-                    ButtonVariant::GhostMuted
-                })
+            ui::choice(&item.title, &item.detail, i == selected, k)
                 .disabled(busy)
                 .on_press_tx(move |s: &mut Workspace, tx| {
                     choose(s, choice.clone(), t.clone(), false, tx)
                 })
-                .build(k)
                 .w_full()
                 .key(format!("completion-{i}")),
         );

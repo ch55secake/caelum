@@ -1,5 +1,53 @@
 # Native desktop evaluation record
 
+## Whole-workspace polish — 7 November 2026
+
+The follow-up remains in #95, stacked on #94. It uses the same historical
+`82ca39d` reference and pinned Rune/toolchain as the earlier parity pass.
+
+- **199 Rust tests passed**: 160 core, 25 native, 6 protocol and 8 CLI.
+  `nix develop -c make check` passes formatting, workspace Clippy with warnings
+  denied, the complete Rust suite and **17 release + 2 profile Python checks**.
+- New regressions exercise Escape before cancellation, Shift+Tab agent switching,
+  nested Settings dropdowns, a 160-model virtual catalogue, arrow navigation after
+  Tab, captured model ownership, file-row hit bounds, line selection/copy and
+  immutable attachment ownership. Existing queue, approval, six-stream/history,
+  300-file review and exact reading-position checks continue to pass.
+- Real filesystem tests cover external edits, repeated modifications, staging,
+  `Cargo.lock`, linked-worktree metadata and deferred in-flight refreshes. Watch
+  registration now runs off the UI thread; the live smoke rerun no longer reported
+  the earlier 820 ms blocked-poll warning.
+- Shell regressions cover stale-list rejection, captured Stop ownership, bounded
+  tails, output-read failure during Stop and late reads after completion. The
+  opt-in real OpenCode lifecycle smoke passed isolated start/list/output/Stop,
+  cleanup and archival without model inference.
+- **188 captures** rendered successfully: 39 scenes plus eight interaction replays,
+  each in both themes and both window sizes. Contact sheets and individual renders
+  were inspected; **20 representative images** are checked in. The pass covers
+  shared controls, command panels, five Settings pages, dropdowns, models, launcher,
+  session/worktree dialogs, shells, code/patches, PRs, questions and images, including
+  populated/empty/loading/error, hover/focus and disabled states. Populated fixtures
+  release pending reads so refresh/retry actions have the correct enabled state.
+- Real OpenCode discovery/history passed with **3 sessions / 158 rendered entries**.
+  The isolated real workspace smoke loaded directories, files/search, Git/diffs,
+  worktrees, PR discovery/overview, **30 changed files** and all feedback categories.
+- Apple Silicon app/DMG/CLI packaging passed architecture, ad-hoc signatures,
+  versions, bundle identity, URL registration, image verification and mounted-bundle
+  equality. The isolated packaged launch smoke passed cold/warm URLs, hidden-app
+  reopening, draft preservation, restart and graceful quit.
+- The packaged native close/undo/typing replay completed **780 presents**, with no
+  acquisition failures. Its presentation trace reported p50/p95 **8.33/8.33 ms**,
+  maximum **16.67 ms**, and no intervals above 25 ms. This scripted window run is
+  separate from OS context-menu acceptance.
+
+**Acceptance still open:** Codex is absent from PATH and the supported GUI discovery
+locations, so its real authenticated workflow remains unverified. Intel packaging
+was not run locally. macOS screen capture permission is unavailable, and the
+external native-menu driver could not obtain foreground focus; actual OS context
+menu appearance/selection is not signed off. Native runtime interaction tests and
+fixture captures do not close that gap. Both PRs remain unmerged pending the
+remaining visual and real-provider acceptance in [the migration record](rune-migration.md).
+
 ## Historical parity repair — 7 November 2026
 
 The audit uses the final TypeScript tree at `82ca39d`, its interaction tests and

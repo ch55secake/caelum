@@ -6,6 +6,71 @@ use serde_json::json;
 use std::path::Path;
 
 impl OpenCodeProvider {
+    /// Read or stop only a shell belonging to the captured session and checkout.
+    pub fn shell_action(
+        &self,
+        project_path: &str,
+        session_id: &str,
+        id: &str,
+        stop: bool,
+    ) -> Result<String, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        self.session(&server, &project, session_id)?;
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        {
+            return Err(OpenCodeError::Protocol("Invalid shell ID".into()));
+        }
+        let path = format!("/api/shell/{id}");
+        let query = [(
+            "location[directory]",
+            project.path().to_string_lossy().into_owned(),
+        )];
+        let info = server.request_json(Method::GET, &path, &query, None)?;
+        if info["data"]["metadata"]["sessionID"].as_str() != Some(session_id) {
+            return Err(OpenCodeError::Protocol(
+                "Shell belongs to another session".into(),
+            ));
+        }
+        let read = || {
+            let mut output = server.request_json(
+                Method::GET,
+                &format!("{path}/output"),
+                &[query[0].clone(), ("limit", "12000".into())],
+                None,
+            )?;
+            if let Some(size) = output["data"]["size"].as_u64().filter(|n| *n > 12000) {
+                output = server.request_json(
+                    Method::GET,
+                    &format!("{path}/output"),
+                    &[
+                        query[0].clone(),
+                        ("cursor", (size - 12000).to_string()),
+                        ("limit", "12000".into()),
+                    ],
+                    None,
+                )?;
+            }
+            let output = output["data"]["output"]
+                .as_str()
+                .ok_or_else(|| OpenCodeError::Protocol("shell output has no text".into()))?;
+            let start = output.ceil_char_boundary(output.len().saturating_sub(12000));
+            Ok(output[start..].to_owned())
+        };
+        if stop {
+            // DELETE also removes retained output. Keep the final visible tail,
+            // but an output failure must never prevent stopping a command.
+            let output = read().unwrap_or_default();
+            server.request_json(Method::DELETE, &path, &query, None)?;
+            Ok(output)
+        } else {
+            read()
+        }
+    }
+
     pub fn background_shells(
         &self,
         project_path: impl AsRef<Path>,

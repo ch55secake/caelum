@@ -8,6 +8,7 @@ rust-version.workspace = true
 base64 = "0.22"
 caelum-protocol = { path = "../caelum-protocol" }
 ignore = "0.4"
+notify = "8.2"
 regex = "1"
 reqwest = { workspace = true, features = ["rustls-tls"] }
 rusqlite.workspace = true

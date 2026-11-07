@@ -15,8 +15,7 @@ use reqwest::{blocking::Client, Method, Url};
 use serde_json::Value;
 
 use super::{
-    find_opencode_executable, is_executable_file, reserve_local_port, spawn_event_listener,
-    sync_questions,
+    find_opencode_executable, reserve_local_port, spawn_event_listener, sync_questions,
     transport::{api_url, capture_server_password, decode_json_response},
     OpenCodeError, OpenCodeProvider, OpenCodeServer, SERVER_START_TIMEOUT,
 };
@@ -58,7 +57,7 @@ impl OpenCodeProvider {
         }
 
         let executable = match self.inner.executable.as_deref() {
-            Some(path) if is_executable_file(path) => path.to_path_buf(),
+            Some(path) if crate::executable::executable(path) => path.to_path_buf(),
             Some(path) => return Err(OpenCodeError::ExecutableNotFound(path.to_path_buf())),
             None => find_opencode_executable()?,
         };
@@ -70,6 +69,7 @@ impl OpenCodeProvider {
             .filter(|password| !password.is_empty());
         let mut command = Command::new(&executable);
         command
+            .env("PATH", crate::executable::path(&executable))
             .args(["serve", "--hostname", "127.0.0.1", "--port", &port_string])
             .current_dir(project.path())
             .stdin(Stdio::null())

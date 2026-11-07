@@ -83,6 +83,7 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     k.c.layer_01 = panel;
     k.c.layer_02 = panel;
     k.c.layer_03 = hover;
+    k.c.layer_04 = border;
     k.c.hover = k.alpha(text, 0.05);
     k.c.pressed = k.alpha(accent, 0.12);
     k.c.bg_button_neutral = panel;
@@ -118,6 +119,12 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     k.c.surface_raised_hover = hover;
     k.c.surface_float = panel;
     k.c.border_hover = accent;
+    k.c.surface_disabled = sidebar;
+    k.c.border_disabled = border;
+    k.c.std_border = border;
+    k.c.std_text = text;
+    k.c.std_icon = muted;
+    k.c.std_icon_strong = accent;
     k.c.text_weak = muted;
     k.c.success.icon = success;
     k.c.success.fg = success;
@@ -131,9 +138,13 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     k.ty.body_medium = TextStyle::new(15.0, 550.0).lh(26.0);
     k.ty.ui = TextStyle::new(12.0, 400.0).lh(20.0);
     k.ty.ui_medium = TextStyle::new(12.0, 500.0).lh(20.0);
+    k.ty.ui_compact = TextStyle::new(12.0, 400.0).lh(16.0);
     k.ty.small = TextStyle::new(11.0, 400.0).lh(16.0);
     k.ty.small_medium = TextStyle::new(11.0, 550.0).lh(16.0);
     k.ty.text_xsmall_medium = k.ty.small_medium;
+    k.ty.text_small = k.ty.ui;
+    k.ty.text_small_medium = k.ty.ui_medium;
+    k.ty.text_xsmall = k.ty.small;
     k.elevation.button_neutral.clear();
     k
 }

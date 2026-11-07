@@ -1,11 +1,13 @@
+use crate::ui::Button;
 use crate::{
     Workspace,
     live::{live, live_mut},
+    ui,
 };
 use caelum_core::application::forms;
 use caelum_protocol::QuestionPrompt;
 use rune::{El, TextEdit, col, row, text, text_input};
-use rune_kit::{Button, ButtonVariant, Kit};
+use rune_kit::{ButtonVariant, Kit};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -215,49 +217,57 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                     .unwrap_or("Answer");
                 let element_key = format!("question-{}-{name}-{i}", prompt.request_id);
                 choices = choices.child(
-                    Button::new(format!("{} {label}", if selected { "✓" } else { "○" }))
-                        .variant(ButtonVariant::Outline)
-                        .on_press(move |s: &mut Workspace| {
-                            let draft = live_mut(s)
-                                .forms
-                                .drafts
-                                .get_mut(&owner)
-                                .expect("active question");
-                            if multiple {
-                                let mut values = draft
-                                    .values
-                                    .get(&name)
-                                    .and_then(Value::as_array)
-                                    .cloned()
-                                    .unwrap_or_default();
-                                if values.contains(&value) {
-                                    values.retain(|v| v != &value);
-                                } else {
-                                    values.push(value.clone());
-                                }
-                                draft.values.insert(name.clone(), Value::Array(values));
-                            } else {
-                                draft.values.insert(name.clone(), value.clone());
-                                draft.editors.get_mut(&name).unwrap().clear();
-                            }
-                        })
-                        .build(k)
-                        .key(element_key)
-                        .w_full()
-                        .radius(8.0)
-                        .fill(if selected {
-                            k.alpha(k.c.text_accent, 0.10)
+                    ui::choice(
+                        label,
+                        option["description"].as_str().unwrap_or(if multiple {
+                            "Select any that apply"
                         } else {
-                            k.c.bg_base
-                        })
-                        .border(
-                            1.0,
-                            if selected {
-                                k.c.border_focus
+                            "Choose this answer"
+                        }),
+                        selected,
+                        k,
+                    )
+                    .role(if multiple { "checkbox" } else { "radio" })
+                    .on_press(move |s: &mut Workspace| {
+                        let draft = live_mut(s)
+                            .forms
+                            .drafts
+                            .get_mut(&owner)
+                            .expect("active question");
+                        if multiple {
+                            let mut values = draft
+                                .values
+                                .get(&name)
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_default();
+                            if values.contains(&value) {
+                                values.retain(|v| v != &value);
                             } else {
-                                k.c.border_base
-                            },
-                        ),
+                                values.push(value.clone());
+                            }
+                            draft.values.insert(name.clone(), Value::Array(values));
+                        } else {
+                            draft.values.insert(name.clone(), value.clone());
+                            draft.editors.get_mut(&name).unwrap().clear();
+                        }
+                    })
+                    .key(element_key)
+                    .w_full()
+                    .radius(8.0)
+                    .fill(if selected {
+                        k.alpha(k.c.text_accent, 0.10)
+                    } else {
+                        k.c.bg_base
+                    })
+                    .border(
+                        1.0,
+                        if selected {
+                            k.c.border_focus
+                        } else {
+                            k.c.border_base
+                        },
+                    ),
                 );
             }
             form = form.child(choices);
@@ -297,10 +307,19 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                         )
                         .color(k.c.text_base)
                         .w_full()
+                        .selection_color(k.selection())
                         .min_h(32.0)
                         .padding(8.0)
-                        .radius(6.0)
-                        .border(1.0, k.c.border_base)
+                        .radius(7.0)
+                        .fill(k.c.bg_base)
+                        .border(
+                            1.0,
+                            if draft.editors[&name].focused {
+                                k.c.border_focus
+                            } else {
+                                k.c.border_base
+                            },
+                        )
                         .on_edit(move |s: &mut Workspace| {
                             live_mut(s)
                                 .forms
@@ -316,7 +335,13 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
             if draft.attempted
                 && let Some(error) = checked.errors.get(name)
             {
-                form = form.child(text(error).font(k.ty.small).color(k.c.text_accent));
+                form = form.child(
+                    text(error)
+                        .font(k.ty.small)
+                        .color(k.c.danger.fg)
+                        .wrap()
+                        .role("alert"),
+                );
             }
         }
         let submit = prompt.clone();

@@ -11,6 +11,8 @@ Delivery order: workspace polish/fixtures (#91), shared runtime/real sessions
 (#92), functional candidate (#93), design parity (#94), then native cutover (#95).
 The cutover removes the Tauri/web application and its Node/TypeScript build/test
 stack, promotes native CI and replaces packaging with Rust-built app/DMG assets.
+The whole-workspace polish continues in #95; the two PRs stay unmerged while the
+remaining native-menu and real-provider acceptance work is open.
 
 The original target was roughly 90% of daily workflows. Cutover approval does not
 turn that target into a measured result; [evaluation evidence](rune-evaluation.md)
@@ -73,6 +75,11 @@ File and review results remain scoped after navigation. Review reads are guarded
 by request generation and head; refresh invalidates even same-head responses.
 In-flight mutations stay locked across refresh. Linked-checkout removal respects
 provider activity and Git's dirty/locked checks.
+Native checkout registration runs on a worker. Coalesced filesystem notifications
+and provider/tool invalidations refresh Git, open directories, files and selected
+diffs; an in-flight read retains a deferred refresh. Background-shell reads and Stop
+capture their session, bound retained output and reject stale lifecycle snapshots.
+Model pickers likewise capture their session/defaults owner until dismissal.
 
 ## Production state migration
 

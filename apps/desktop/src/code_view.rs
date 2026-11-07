@@ -2,6 +2,27 @@
 use rune_kit::diff::{self, DiffState, FileDiff};
 use std::hash::{Hash, Hasher};
 
+/// Routed only by the focused code surface, so two visible diffs cannot consume
+/// each other's selection or steal copy/navigation from the composer.
+pub fn key(state: &mut DiffState, ev: &rune::KeyEvent, tx: &mut rune::Tx) -> bool {
+    match &ev.key {
+        rune::Key::Text(value) if !ev.mods.cmd && !ev.mods.ctrl && !ev.mods.alt => {
+            match value.as_str() {
+                "j" => state.next_hunk(true, tx),
+                "k" => state.next_hunk(false, tx),
+                "]" => state.next_file(true, tx),
+                "[" => state.next_file(false, tx),
+                _ => false,
+            }
+        }
+        rune::Key::Escape if state.selection().is_some() => {
+            state.set_selection(None);
+            true
+        }
+        _ => state.key(ev, tx),
+    }
+}
+
 #[derive(Default)]
 pub struct Document {
     pub diff: DiffState,
@@ -35,6 +56,17 @@ pub fn source_key(project: &str, path: &str) -> String {
 }
 
 impl Document {
+    pub fn patch(&mut self, path: &str, patch: &str) -> bool {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        (path, patch).hash(&mut hash);
+        let revision = hash.finish();
+        if self.revision == revision {
+            return false;
+        }
+        replace_files(&mut self.diff, tool_files(path, patch));
+        self.revision = revision;
+        true
+    }
     pub fn sync(&mut self, path: &str, content: &str) -> bool {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (path, content).hash(&mut h);
@@ -62,6 +94,56 @@ impl Document {
         self.revision = revision;
         true
     }
+}
+
+/// Tools also emit apply_patch syntax and old/new fragments without a unified
+/// header. Normalize those once before handing them to the shared code surface.
+pub fn tool_files(path: &str, patch: &str) -> Vec<FileDiff> {
+    let parsed = diff::parse(patch);
+    if !parsed.is_empty() {
+        return parsed;
+    }
+    if patch.lines().any(|line| line.starts_with("@@ -")) && !patch.contains("*** Begin Patch") {
+        return diff::parse(&format!(
+            "--- {}\n+++ {}\n{patch}\n",
+            quoted("a", path),
+            quoted("b", path)
+        ));
+    }
+    let mut files = Vec::new();
+    let mut path = path.to_owned();
+    let mut lines = Vec::new();
+    let flush = |path: &str, lines: &mut Vec<String>, files: &mut Vec<FileDiff>| {
+        if lines.is_empty() {
+            return;
+        }
+        let old = lines.iter().filter(|l| !l.starts_with('+')).count();
+        let new = lines.iter().filter(|l| !l.starts_with('-')).count();
+        files.extend(diff::parse(&format!(
+            "--- {}\n+++ {}\n@@ -1,{old} +1,{new} @@\n{}\n",
+            quoted("a", path),
+            quoted("b", path),
+            lines.join("\n")
+        )));
+        lines.clear();
+    };
+    for line in patch.lines() {
+        if let Some(name) = line
+            .strip_prefix("*** Update File: ")
+            .or_else(|| line.strip_prefix("*** Add File: "))
+            .or_else(|| line.strip_prefix("*** Delete File: "))
+        {
+            flush(&path, &mut lines, &mut files);
+            path = name.into();
+        } else if !line.starts_with("***")
+            && !line.starts_with("@@")
+            && matches!(line.as_bytes().first(), Some(b'+' | b'-' | b' '))
+        {
+            lines.push(line.into());
+        }
+    }
+    flush(&path, &mut lines, &mut files);
+    files
 }
 
 fn quoted(prefix: &str, path: &str) -> String {

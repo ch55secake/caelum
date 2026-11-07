@@ -1,3 +1,4 @@
+use crate::ui::Button;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -8,7 +9,152 @@ use caelum_core::application::{
     presentation::{Outcome, Tool, now},
 };
 use rune::{El, col, icon, row, text};
-use rune_kit::{Button, ButtonVariant, Kit, Markdown, ProgressCircle, glyphs};
+use rune_kit::{ButtonVariant, Kit, Markdown, ProgressCircle, glyphs};
+
+pub fn shells(s: &Workspace, k: &Kit, index: usize) -> El {
+    use caelum_core::application::Task;
+    let l = live(s);
+    let session = &l.app.sessions[index];
+    if session.shells.is_empty() {
+        return col();
+    }
+    let expanded = l.expanded.contains(&(index, "background-shells".into()));
+    let mut body = col().w_full().gap(6.0).child(
+        ui::tab(
+            &format!(
+                "{} background command{} {}",
+                session.shells.len(),
+                if session.shells.len() == 1 { "" } else { "s" },
+                if expanded { "⌃" } else { "⌄" }
+            ),
+            expanded,
+            k,
+        )
+        .key("background-shells")
+        .expanded(expanded)
+        .w_full()
+        .on_press(move |s: &mut Workspace| {
+            let l = live_mut(s);
+            if !l.expanded.remove(&(index, "background-shells".into())) {
+                l.expanded.insert((index, "background-shells".into()));
+                let session = &l.app.sessions[index];
+                let tasks: Vec<_> = session
+                    .shells
+                    .iter()
+                    .filter_map(|shell| {
+                        Some(Task::Shell {
+                            project: session.scope.project.clone(),
+                            session: session.remote_id.clone()?,
+                            id: shell.id.clone(),
+                            stop: false,
+                        })
+                    })
+                    .collect();
+                for task in tasks {
+                    l.app.task(task);
+                }
+            }
+        }),
+    );
+    if expanded {
+        let mut list = col().w_full().gap(8.0);
+        for shell in &session.shells {
+            let Some(remote) = &session.remote_id else {
+                continue;
+            };
+            let task = Task::Shell {
+                project: session.scope.project.clone(),
+                session: remote.clone(),
+                id: shell.id.clone(),
+                stop: true,
+            };
+            let read = Task::Shell {
+                project: session.scope.project.clone(),
+                session: remote.clone(),
+                id: shell.id.clone(),
+                stop: false,
+            };
+            let stop = task.clone();
+            let refresh = read.clone();
+            let mut command = ui::card(k).padding(8.0).gap(4.0).child(
+                row()
+                    .w_full()
+                    .center_y()
+                    .gap(6.0)
+                    .child(ui::outcome(Outcome::Running, k))
+                    .child(
+                        text(&shell.command)
+                            .font(k.ty.mono)
+                            .color(k.c.text_base)
+                            .truncate()
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .help(&shell.command),
+                    )
+                    .child(ui::caption(
+                        caelum_core::application::presentation::duration(
+                            now().saturating_sub(shell.started_at),
+                        ),
+                        k,
+                    ))
+                    .child(
+                        quiet_button(&ui::REFRESH, "Refresh command output")
+                            .disabled(l.app.services.busy(&read))
+                            .on_press(move |s: &mut Workspace| {
+                                live_mut(s).app.task(refresh.clone())
+                            })
+                            .build(k),
+                    )
+                    .child(
+                        Button::new("Stop")
+                            .variant(ButtonVariant::GhostMuted)
+                            .disabled(l.app.services.busy(&task))
+                            .on_press(move |s: &mut Workspace| live_mut(s).app.task(stop.clone()))
+                            .build(k)
+                            .key(format!("stop-shell-{}", shell.id)),
+                    ),
+            );
+            if let Some(output) = l
+                .app
+                .services
+                .checkouts
+                .get(&session.scope.project)
+                .and_then(|c| c.shell_output.get(&(remote.clone(), shell.id.clone())))
+            {
+                command = command.child(
+                    text(if output.is_empty() {
+                        "Waiting for output…"
+                    } else {
+                        output
+                    })
+                    .font(k.ty.mono)
+                    .color(k.c.text_muted)
+                    .wrap()
+                    .selectable(true),
+                );
+            }
+            if let Some(error) = l
+                .app
+                .services
+                .error(&task)
+                .or_else(|| l.app.services.error(&read))
+            {
+                command = command.child(ui::caption(error, k).color(k.c.danger.fg));
+            }
+            list = list.child(command);
+        }
+        body = body.child(
+            col()
+                .w_full()
+                .max_h(140.0)
+                .scroll(rune::ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(list),
+        );
+    }
+    body
+}
 
 pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
     let presentation = Tool::from_entry(entry, now());
@@ -58,11 +204,12 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
         k,
     ));
     let mut content = col().w_full().gap(6.0).child(
-        k.interactive(header.py(5.0))
+        k.interactive(header.py(7.0).px(6.0).radius(7.0))
             .role("button")
             .label(format!("{} {}", presentation.name, presentation.summary))
             .expanded(expanded)
             .focusable(true)
+            .focus_ring(1.5, 0.0, k.c.border_focus)
             .on_press(move |s: &mut Workspace| {
                 let set = &mut live_mut(s).expanded;
                 if !set.remove(&(index, id.clone())) {
@@ -98,58 +245,95 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
         );
     }
     if !presentation.patch.is_empty() {
-        let full_id = format!("{}:patch", entry.id);
-        let full = expanded && live(s).expanded.contains(&(index, full_id.clone()));
-        let mut patch = col()
-            .w_full()
-            .gap(0.0)
-            .padding(8.0)
-            .radius(6.0)
-            .fill(k.c.layer_01);
-        for line in presentation.patch.lines().take(if full {
-            usize::MAX
-        } else if expanded {
-            80
-        } else {
-            6
-        }) {
-            patch = patch.child(
-                text(line)
-                    .font(k.ty.mono)
-                    .color(if line.starts_with('+') {
-                        k.c.success.fg
-                    } else if line.starts_with('-') {
-                        k.c.danger.fg
-                    } else {
-                        k.c.text_muted
-                    })
-                    .selectable(true)
-                    .truncate(),
-            );
-        }
-        if expanded {
+        let owner = (index, entry.id.clone());
+        if expanded && live(s).patches.contains_key(&owner) {
+            let edit = owner.clone();
+            let keyboard = owner.clone();
             let copy = presentation.patch.clone();
-            let mut actions = row().gap(6.0).child(
-                quiet_button(&glyphs::COPY, "Copy patch")
-                    .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
-                    .build(k),
-            );
-            if presentation.patch.lines().count() > 80 {
-                actions = actions.child(
-                    Button::new(if full { "Show less" } else { "Show full patch" })
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(move |s: &mut Workspace| {
-                            let set = &mut live_mut(s).expanded;
-                            if !set.remove(&(index, full_id.clone())) {
-                                set.insert((index, full_id.clone()));
+            let key = crate::code_view::source_key(&index.to_string(), &entry.id);
+            let height = live(s).patches[&owner]
+                .diff
+                .files()
+                .iter()
+                .map(|f| {
+                    44.0 + f
+                        .hunks
+                        .iter()
+                        .map(|h| 24.0 + h.lines.len() as f32 * 22.0)
+                        .sum::<f32>()
+                })
+                .sum::<f32>()
+                .clamp(90.0, 300.0);
+            content = content.child(
+                col()
+                    .w_full()
+                    .h(height)
+                    .min_h(0.0)
+                    .radius(8.0)
+                    .clip_rounded(8.0)
+                    .border(1.0, k.c.border_base)
+                    .child(
+                        rune_kit::diff::DiffView::new(
+                            move |s: &Workspace| &live(s).patches[&owner].diff,
+                            move |s: &mut Workspace| {
+                                &mut s
+                                    .live
+                                    .as_mut()
+                                    .unwrap()
+                                    .patches
+                                    .get_mut(&edit)
+                                    .unwrap()
+                                    .diff
+                            },
+                        )
+                        .key(format!("tool-{key}"))
+                        .header_actions({
+                            let kit = k.clone();
+                            move |_, _| {
+                                let copy = copy.clone();
+                                quiet_button(&glyphs::COPY, "Copy patch")
+                                    .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
+                                    .build(&kit)
                             }
                         })
-                        .build(k),
-                );
-            }
-            patch = patch.child(actions);
+                        .build(s, k)
+                        .focusable(true)
+                        .on_key(move |s: &mut Workspace, ev, tx| {
+                            crate::code_view::key(
+                                &mut live_mut(s).patches.get_mut(&keyboard).unwrap().diff,
+                                ev,
+                                tx,
+                            )
+                        }),
+                    ),
+            );
+        } else if !expanded {
+            let added = presentation
+                .patch
+                .lines()
+                .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+                .count();
+            let removed = presentation
+                .patch
+                .lines()
+                .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+                .count();
+            content = content.child(
+                row()
+                    .gap(8.0)
+                    .pl(27.0)
+                    .center_y()
+                    .child(icon(&ui::FILE, 13.0).color(k.c.icon_muted))
+                    .child(
+                        ui::caption(
+                            format!("{} · +{added} −{removed}", presentation.paths.join(", ")),
+                            k,
+                        )
+                        .truncate()
+                        .grow(1.0),
+                    ),
+            );
         }
-        content = content.child(patch);
     }
     if expanded {
         if matches!(entry.kind, EntryKind::Reasoning | EntryKind::Compaction) {
@@ -160,7 +344,8 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                     .pl(27.0),
             );
         } else {
-            let mut paths = row().w_full().scroll_x().gap(6.0);
+            let mut paths = row().gap(6.0);
+            let has_paths = !presentation.paths.is_empty();
             for path in presentation.paths {
                 paths = paths.child(
                     Button::new(&path)
@@ -171,7 +356,9 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                         .build(k),
                 );
             }
-            content = content.child(paths);
+            if has_paths {
+                content = content.child(col().w_full().scroll_x().child(paths.self_start()));
+            }
             for (name, value) in [
                 ("Input", &presentation.input),
                 ("Output", &entry.output),
@@ -206,18 +393,26 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                             ),
                     )
                     .child(
-                        text(displayed)
-                            .font(k.ty.mono)
-                            .color(if name == "Error" {
-                                k.c.danger.fg
-                            } else {
-                                k.c.text_muted
+                        col()
+                            .w_full()
+                            .max_h(260.0)
+                            .scroll(rune::ScrollSpec {
+                                stick_bottom: false,
                             })
-                            .wrap()
-                            .selectable(true)
-                            .padding(10.0)
-                            .radius(6.0)
-                            .fill(k.c.layer_01),
+                            .child(
+                                text(displayed)
+                                    .font(k.ty.mono)
+                                    .color(if name == "Error" {
+                                        k.c.danger.fg
+                                    } else {
+                                        k.c.text_muted
+                                    })
+                                    .wrap()
+                                    .selectable(true)
+                                    .padding(10.0)
+                                    .radius(6.0)
+                                    .fill(k.c.layer_01),
+                            ),
                     );
                 if value.chars().count() > 12000 {
                     section = section.child(

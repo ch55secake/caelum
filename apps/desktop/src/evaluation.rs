@@ -68,7 +68,204 @@ pub fn tick(app: &mut caelum_core::application::Workspace) {
     }
 }
 
-/// The polished reference content through the actual live view, with no workers or disk writes.
+fn polish_scene(state: &mut Workspace, name: &str) -> bool {
+    let Some(l) = state.live.as_mut().filter(|l| l.fixture) else {
+        return false;
+    };
+    let project = "/projects/caelum";
+    if matches!(
+        name,
+        "providers" | "provider-error" | "notifications" | "storage" | "about"
+    ) {
+        l.panels.settings_page = match name {
+            "providers" | "provider-error" => crate::settings::Page::Providers,
+            "notifications" => crate::settings::Page::Notifications,
+            "storage" => crate::settings::Page::Worktrees,
+            _ => crate::settings::Page::About,
+        };
+        if name == "provider-error" {
+            l.app.notices.insert(
+                l.app.sessions[0].scope.clone(),
+                "Codex CLI was not found. Install Codex CLI, then refresh provider status.".into(),
+            );
+        }
+        crate::panels::show(state, crate::panels::Screen::Settings);
+        return true;
+    }
+    if matches!(name, "models" | "models-empty") {
+        l.app.sessions[0].options.model = Some("provider/model-000".into());
+        let scope = l.app.sessions[0].scope.clone();
+        l.app.choices.insert(scope, serde_json::from_value(json!({"models": (0..160).map(|i| json!({"id":format!("provider/model-{i:03}"),"name":format!("Model {i:03}"),"contextWindow":200000,"efforts":[]})).collect::<Vec<_>>(),"agents":[],"defaultModel":"provider/model-000"})).unwrap());
+        crate::models::open(state, None);
+        if name == "models-empty" {
+            state
+                .live
+                .as_mut()
+                .unwrap()
+                .models
+                .query
+                .replace_text("no matching models");
+        }
+        return true;
+    }
+    if name == "launcher" {
+        crate::panels::open_launcher(state);
+        return true;
+    }
+    if name == "session" {
+        crate::panels::show(state, crate::panels::Screen::Session);
+        return true;
+    }
+    if matches!(name, "worktrees" | "worktrees-loading" | "worktrees-error") {
+        crate::panels::show(state, crate::panels::Screen::Worktrees);
+        let l = state.live.as_mut().unwrap();
+        if name == "worktrees-loading" {
+            return true;
+        }
+        let checkout = l.app.services.checkouts.get_mut(project).unwrap();
+        if name == "worktrees-error" {
+            checkout.error = Some(
+                "This checkout has uncommitted changes. Commit or move them before removing it."
+                    .into(),
+            );
+        }
+        checkout.worktrees = Some(serde_json::from_value(json!({
+            "project":{"path":project,"name":"Caelum"},"storageDirectory":"/Users/oscar/.caelum/worktrees","branches":["main","feat/native"],"defaultBase":"main",
+            "worktrees":[
+                {"path":project,"project":{"path":project,"name":"Caelum"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
+                {"path":"/projects/caelum-native","project":{"path":"/projects/caelum-native","name":"Caelum native"},"branch":"feat/native","main":false,"locked":null,"prunable":null,"available":true}
+            ]
+        })).unwrap());
+        finish_fixture_reads(l);
+        return true;
+    }
+    if matches!(name, "timeline" | "usage" | "usage-loading" | "stats") {
+        l.commands.owner = Some(0);
+        l.panels.overlay = Some(match name {
+            "timeline" => crate::panels::Screen::Timeline,
+            "usage" | "usage-loading" => crate::panels::Screen::Usage,
+            _ => crate::panels::Screen::Stats,
+        });
+        if name == "usage" {
+            l.app.services.checkouts.get_mut(project).unwrap().usage = Some(
+                json!({"workspace":{"name":"Personal workspace"},"go":{"rolling":{"percent":24},"weekly":{"percent":68},"monthly":{"percent":12}}}),
+            );
+        }
+        if name == "usage-loading" {
+            l.app.task(caelum_core::application::Task::Usage {
+                project: project.into(),
+            });
+        }
+        if name == "stats" {
+            l.app.services.checkouts.get_mut(project).unwrap().stats = Some(serde_json::from_value(json!({
+                "range":{"from":0,"to":1800000000000_u64},"sessions":24,"subagents":8,"prompts":126,"steps":372,
+                "tokens":{"input":42000,"output":12000,"reasoning":8000,"cache":{"read":92000,"write":1200}},
+                "cost":4.28,"activeDays":12,"streak":4,"activity":[],"models":[]
+            })).unwrap());
+        }
+        return true;
+    }
+    if matches!(name, "files" | "files-loading" | "changes-empty") {
+        let checkout = l.app.services.checkouts.get_mut(project).unwrap();
+        if name == "changes-empty" {
+            checkout.git.as_mut().unwrap().changes.clear();
+            checkout.diffs.clear();
+            state.inspector.set_open(true);
+            return true;
+        }
+        if name == "files" {
+            checkout.directories.insert(String::new(), serde_json::from_value(json!({
+                "path":"","entries":[{"name":"src","path":"src","kind":"directory","sizeBytes":null},{"name":"Cargo.toml","path":"Cargo.toml","kind":"file","sizeBytes":245}],"total":2,"nextOffset":null
+            })).unwrap());
+            checkout.files.insert("Cargo.toml".into(), caelum_protocol::ProjectFileContent {
+                path:"Cargo.toml".into(),content:"[package]\nname = \"caelum-desktop\"\nversion = \"0.1.13\"\nedition = \"2024\"\n\n[dependencies]\ncaelum-core = { path = \"../../crates/caelum-core\" }\n".into(),size_bytes:245,truncated:false
+            });
+            checkout.tabs = vec!["Cargo.toml".into()];
+            checkout.selected_file = Some("Cargo.toml".into());
+        }
+        l.app.services.revision += 1;
+        crate::panels::show(state, crate::panels::Screen::Files);
+        if name == "files" {
+            finish_fixture_reads(state.live.as_mut().unwrap());
+        }
+        return true;
+    }
+    if matches!(name, "approval" | "questions") {
+        l.app.sessions[0].remote_id = Some("thread-fixture".into());
+        l.app.sessions[0].conversation = Default::default();
+        if name == "approval" {
+            l.app
+                .apply(Event::Approvals(vec![caelum_protocol::ApprovalPrompt {
+                    provider: "codex".into(),
+                    project_path: project.into(),
+                    session_id: Some("thread-fixture".into()),
+                    request_id: "fixture".into(),
+                    summary: "Run the workspace checks?".into(),
+                    description: "cargo test --workspace --locked".into(),
+                }]));
+        } else {
+            l.app.apply(Event::Questions(vec![caelum_protocol::QuestionPrompt {provider:"codex".into(),project_path:project.into(),session_id:"thread-fixture".into(),request_id:"fixture".into(),title:"Choose the implementation scope".into(),fields:vec![json!({"key":"target","type":"multiselect","title":"Platforms","required":true,"options":[{"value":"macos","label":"macOS","description":"Native desktop experience"},{"value":"linux","label":"Linux","description":"Shared core and CLI"}],"default":["macos"],"custom":true})] }]));
+        }
+        return true;
+    }
+    if name == "commands" {
+        l.sync_editors();
+        l.drafts[0].replace_text("/");
+        l.drafts[0].set_caret(1);
+        l.drafts[0].focused = true;
+        return true;
+    }
+    if name == "shells" {
+        let session = &mut l.app.sessions[0];
+        session.scope.provider = Provider::OpenCode;
+        session.remote_id = Some("ses_fixture".into());
+        session.shells = vec![caelum_protocol::OpenCodeBackgroundShell {
+            id: "shell_fixture".into(),
+            command: "cargo test --workspace".into(),
+            started_at: caelum_core::application::presentation::now() - 12_000,
+        }];
+        l.expanded.insert((0, "background-shells".into()));
+        l.app
+            .services
+            .checkouts
+            .get_mut(project)
+            .unwrap()
+            .shell_output
+            .insert(
+                ("ses_fixture".into(), "shell_fixture".into()),
+                "Running 162 tests…\ntest application::queue_recovery ... ok".into(),
+            );
+        return true;
+    }
+    if matches!(name, "empty" | "error") {
+        l.app.sessions[0].conversation = Default::default();
+        l.app.sessions[0].draft.clear();
+        l.sync_editors();
+        l.drafts[0].clear();
+        if name == "error" {
+            l.app.notices.insert(
+                l.app.sessions[0].scope.clone(),
+                "Codex CLI was not found. Install Codex CLI, then refresh provider status.".into(),
+            );
+        }
+        return true;
+    }
+    false
+}
+
+// Populated scenes seed their read results above. Release the corresponding
+// loading slots too, so refresh/retry controls reflect a settled response.
+fn finish_fixture_reads(live: &mut crate::live::Live) {
+    use caelum_core::application::{Command, Reply, TaskReply};
+    for (id, command) in live.app.commands() {
+        if matches!(command, Command::Task(_)) {
+            live.app
+                .apply(Event::Completed(id, Ok(Reply::Task(TaskReply::Done))));
+        }
+    }
+}
+
+/// Reference content through the actual live view, with no workers or disk writes.
 pub fn design() -> Workspace {
     let mut state = Workspace::live(None);
     let live = state.live.as_mut().unwrap();
@@ -115,11 +312,15 @@ pub fn design() -> Workspace {
     live.app.select(0);
     crate::panels::select_change(&mut state, project.into(), "src/workspace.css".into());
     state.live.as_mut().unwrap().panels.inspector = crate::panels::Screen::Changes;
+    finish_fixture_reads(state.live.as_mut().unwrap());
     state
 }
 
 /// Populated regression scenes share the production renderer and use no services.
 pub fn scene(state: &mut Workspace, name: &str) {
+    if polish_scene(state, name) {
+        return;
+    }
     let Some(l) = state.live.as_mut().filter(|l| l.fixture) else {
         return;
     };
@@ -156,7 +357,7 @@ pub fn scene(state: &mut Workspace, name: &str) {
         }
         return;
     }
-    if name == "images" {
+    if matches!(name, "images" | "image-preview") {
         let attachment = caelum_core::application::Attachment::image(
             "Caelum.png".into(),
             include_bytes!("../assets/icon.png"),
@@ -164,6 +365,17 @@ pub fn scene(state: &mut Workspace, name: &str) {
         .unwrap();
         l.app.attach(0, attachment.clone());
         l.app.sessions[0].conversation.history(Provider::OpenCode,&[json!({"id":"image","type":"user","text":"Use this icon in the native app.","files":[{"mime":"image/png","uri":attachment.content,"name":"Caelum.png"}]})],false);
+        if name == "image-preview" {
+            let media = l.app.sessions[0]
+                .conversation
+                .entries
+                .iter()
+                .find_map(|e| e.media.first())
+                .unwrap()
+                .clone();
+            l.media.selected = Some((project.into(), media));
+            l.panels.overlay = Some(crate::panels::Screen::Image);
+        }
         return;
     }
     let url = "https://github.com/ch55secake/caelum/pull/95";
@@ -197,6 +409,37 @@ pub fn scene(state: &mut Workspace, name: &str) {
         crate::panels::open_review(state, project.into(), url.into());
         if name == "checks" {
             state.live.as_mut().unwrap().panels.review_tab = 0;
+        }
+        if name == "discussion" {
+            state.live.as_mut().unwrap().panels.review_tab = 2;
+        }
+        if name == "review-loading" {
+            let l = state.live.as_mut().unwrap();
+            let r = l
+                .app
+                .services
+                .reviews
+                .get_mut(&(project.into(), url.into()))
+                .unwrap();
+            r.details = None;
+            r.files.clear();
+            r.files_loaded = false;
+            l.app.services.revision += 1;
+        }
+        if name == "review-error" {
+            let l = state.live.as_mut().unwrap();
+            let r = l
+                .app
+                .services
+                .reviews
+                .get_mut(&(project.into(), url.into()))
+                .unwrap();
+            r.details = None;
+            r.error = Some("GitHub is unavailable. Check your connection and try again.".into());
+            l.app.services.revision += 1;
+        }
+        if name != "review-loading" {
+            finish_fixture_reads(state.live.as_mut().unwrap());
         }
     }
 }

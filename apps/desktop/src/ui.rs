@@ -2,6 +2,190 @@
 use rune::{El, Icon, TextStyle, col, icon, row, text};
 use rune_kit::{Kit, shell::SidebarRow};
 
+/// App-sized controls, including the same keyboard and disabled treatment everywhere.
+pub struct Button(rune_kit::Button);
+impl Button {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self(rune_kit::Button::new(label).control_size(rune_kit::ControlSize::Large))
+    }
+    pub fn variant(mut self, value: rune_kit::ButtonVariant) -> Self {
+        self.0 = self.0.variant(value);
+        self
+    }
+    pub fn disabled(mut self, value: bool) -> Self {
+        self.0 = self.0.disabled(value);
+        self
+    }
+    pub fn icon(mut self, value: &'static Icon) -> Self {
+        self.0 = self.0.icon(value);
+        self
+    }
+    pub fn on_press<S: 'static>(mut self, f: impl Fn(&mut S) + 'static) -> Self {
+        self.0 = self.0.on_press(f);
+        self
+    }
+    pub fn on_press_tx<S: 'static>(mut self, f: impl Fn(&mut S, &mut rune::Tx) + 'static) -> Self {
+        self.0 = self.0.on_press_tx(f);
+        self
+    }
+    pub fn build(self, k: &Kit) -> El {
+        self.0
+            .build(k)
+            .radius(7.0)
+            .focus_ring(1.5, 1.0, k.c.border_focus)
+            .self_start()
+    }
+}
+
+pub fn field(editor: &rune::TextEdit, label: &str, placeholder: &str, k: &Kit) -> El {
+    rune::text_input(editor, k.ty.ui)
+        .single_line()
+        .label(label)
+        .placeholder(placeholder, k.c.text_muted)
+        .color(k.c.text_base)
+        .selection_color(k.selection())
+        .w_full()
+        .min_h(34.0)
+        .px(10.0)
+        .py(6.0)
+        .radius(7.0)
+        .fill(k.c.bg_base)
+        .border(
+            1.0,
+            if editor.focused {
+                k.c.border_focus
+            } else {
+                k.c.border_base
+            },
+        )
+}
+
+pub fn card(k: &Kit) -> El {
+    col()
+        .w_full()
+        .gap(12.0)
+        .padding(14.0)
+        .radius(10.0)
+        .fill(k.c.layer_01)
+        .border(1.0, k.c.border_base)
+}
+
+pub fn divider(k: &Kit) -> El {
+    rune::el().w_full().h(1.0).fill(k.c.border_base)
+}
+
+pub fn choice(title: &str, detail: &str, selected: bool, k: &Kit) -> El {
+    k.interactive(
+        row()
+            .w_full()
+            .min_h(46.0)
+            .px(10.0)
+            .py(8.0)
+            .gap(10.0)
+            .center_y()
+            .radius(7.0)
+            .fill(if selected {
+                k.alpha(k.c.text_accent, 0.10)
+            } else {
+                rune::Color::TRANSPARENT
+            })
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(2.0)
+                    .child(
+                        text(title)
+                            .font(k.ty.ui_medium)
+                            .color(k.c.text_base)
+                            .truncate(),
+                    )
+                    .child(caption(detail, k).truncate()),
+            )
+            .child(
+                icon(k.glyph.check_small, 14.0)
+                    .color(k.c.text_accent)
+                    .opacity(if selected { 1.0 } else { 0.0 }),
+            ),
+    )
+    .role("button")
+    .label(title)
+    .description(detail)
+    .focusable(true)
+    .focus_ring(1.5, 0.0, k.c.border_focus)
+}
+
+pub fn tab(title: &str, selected: bool, k: &Kit) -> El {
+    k.interactive(
+        row()
+            .h(30.0)
+            .px(10.0)
+            .center_y()
+            .radius(7.0)
+            .fill(if selected {
+                k.alpha(k.c.text_accent, 0.10)
+            } else {
+                rune::Color::TRANSPARENT
+            })
+            .child(text(title).font(k.ty.ui_medium).color(if selected {
+                k.c.text_accent
+            } else {
+                k.c.text_muted
+            })),
+    )
+    .role("tab")
+    .label(title)
+    .focusable(true)
+    .focus_selected(selected)
+    .focus_ring(1.5, 0.0, k.c.border_focus)
+}
+
+pub fn notice(title: &str, detail: &str, k: &Kit) -> El {
+    card(k)
+        .gap(4.0)
+        .child(text(title).font(k.ty.ui_medium).color(k.c.danger.fg))
+        .child(caption(detail, k).selectable(true))
+}
+
+pub fn skeleton(label: &str, lines: usize, k: &Kit) -> El {
+    let mut body = col()
+        .w_full()
+        .gap(12.0)
+        .py(12.0)
+        .role("status")
+        .label(label);
+    for i in 0..lines {
+        body = body.child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .child(rune::el().size(18.0, 18.0).radius(5.0).fill(k.c.layer_03))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .gap(7.0)
+                        .child(
+                            rune::el()
+                                .w_full()
+                                .max_w(if i % 2 == 0 { 260.0 } else { 190.0 })
+                                .h(9.0)
+                                .radius(4.0)
+                                .fill(k.c.layer_03),
+                        )
+                        .child(
+                            rune::el()
+                                .w_full()
+                                .max_w(130.0)
+                                .h(7.0)
+                                .radius(3.0)
+                                .fill(k.c.layer_03),
+                        ),
+                ),
+        );
+    }
+    body
+}
+
 pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) -> El {
     use caelum_core::application::presentation::Outcome;
     static CHECK: Icon = Icon {
@@ -32,7 +216,7 @@ pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) 
                 .label("Running")
                 .key("status-running");
         }
-        Outcome::Success => (&CHECK, k.c.success.fg, "Succeeded"),
+        Outcome::Success => (&CHECK, k.c.text_muted, "Succeeded"),
         Outcome::Failure => (&FAIL, k.c.danger.fg, "Failed"),
         Outcome::Interrupted => (&MINUS, k.c.warning.fg, "Interrupted"),
         Outcome::Neutral => (&MINUS, k.c.text_muted, "Neutral"),
@@ -68,11 +252,6 @@ pub static REFRESH: Icon = Icon {
     name: "refresh",
     view: 16.0,
     body: r#"<path d="M13 6a5 5 0 0 0-8-3L2 6m0-4v4h4M3 10a5 5 0 0 0 8 3l3-3m0 4v-4h-4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
-};
-pub static MORE: Icon = Icon {
-    name: "more",
-    view: 16.0,
-    body: r#"<circle cx="3" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="13" cy="8" r="1" fill="currentColor"/>"#,
 };
 pub static ATTACH: Icon = Icon {
     name: "attach",
@@ -130,7 +309,8 @@ pub fn section(title: &str, description: &str, k: &Kit) -> El {
         .child(
             text(title)
                 .font(TextStyle::new(16.0, 600.0))
-                .color(k.c.text_base),
+                .color(k.c.text_base)
+                .wrap(),
         )
         .child(caption(description, k))
 }

@@ -810,8 +810,11 @@ fn shell_entry(shell: &Value, output: &Value) -> Option<Entry> {
     );
     entry.name = "Background shell".into();
     entry.background = true;
-    entry.started_at = shell["started"].as_u64().or(shell["startedAt"].as_u64());
-    entry.metadata = serde_json::json!({"exit":shell["exit"],"signal":shell["signal"],"ended":shell["ended"],"cwd":shell["cwd"]});
+    entry.started_at = shell["time"]["started"]
+        .as_u64()
+        .or(shell["started"].as_u64())
+        .or(shell["startedAt"].as_u64());
+    entry.metadata = serde_json::json!({"exit":shell["exit"],"signal":shell["signal"],"ended":shell["time"]["completed"].as_u64().or(shell["ended"].as_u64()),"cwd":shell["cwd"]});
     entry.input = display(&shell["command"]);
     entry.output = if output.is_object() {
         display(&output["output"])

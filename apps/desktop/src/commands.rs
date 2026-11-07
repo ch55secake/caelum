@@ -1,4 +1,5 @@
 //! Native surfaces for local commands; provider requests and results stay in core.
+use crate::ui::Button;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -8,7 +9,7 @@ use crate::{
 use caelum_core::application::{EntryKind, Task, commands::LocalCommand};
 use caelum_protocol::OpenCodeStatsFilter;
 use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col, row, text, text_input};
-use rune_kit::{Button, ButtonVariant, Kit, Markdown, Progress, glyphs};
+use rune_kit::{ButtonVariant, Kit, Markdown, Progress, glyphs};
 
 pub struct State {
     pub owner: Option<usize>,
@@ -297,24 +298,31 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
             move |s: &Workspace, i| {
                 let position = matches[i];
                 let entry = &live(s).app.sessions[index].conversation.entries[position];
-                Button::new(caelum_core::application::split_context(&entry.text).0)
-                    .variant(ButtonVariant::GhostMuted)
-                    .on_press_tx(move |s: &mut Workspace, tx| {
-                        let l = live_mut(s);
-                        l.app.select(index);
-                        l.panels.overlay = None;
-                        l.panels.screen = Screen::Conversation;
-                        tx.scroll_center_in_instant(
-                            format!("live-rows-{index}"),
-                            format!(
-                                "live-entry-{index}-{}",
-                                l.app.sessions[index].conversation.entries[position].id
-                            ),
-                        );
-                    })
-                    .build(&kit)
-                    .h(54.0)
-                    .w_full()
+                ui::choice(
+                    caelum_core::application::split_context(&entry.text)
+                        .0
+                        .lines()
+                        .next()
+                        .unwrap_or("Prompt"),
+                    &format!("Prompt {} · Reveal in conversation", i + 1),
+                    false,
+                    &kit,
+                )
+                .on_press_tx(move |s: &mut Workspace, tx| {
+                    let l = live_mut(s);
+                    l.app.select(index);
+                    l.panels.overlay = None;
+                    l.panels.screen = Screen::Conversation;
+                    tx.scroll_center_in_instant(
+                        format!("live-rows-{index}"),
+                        format!(
+                            "live-entry-{index}-{}",
+                            l.app.sessions[index].conversation.entries[position].id
+                        ),
+                    );
+                })
+                .h(54.0)
+                .w_full()
             },
         );
     let mut body = col()
@@ -323,14 +331,19 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
         .gap(10.0)
         .min_h(0.0)
         .child(
-            text_input(&l.commands.search, k.ty.ui)
-                .key("timeline-search")
-                .label("Find a prompt")
-                .placeholder("Find a prompt…", k.c.text_muted)
-                .color(k.c.text_base)
-                .w_full()
-                .single_line()
-                .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+            ui::field(
+                &l.commands.search,
+                "Find a prompt",
+                "Search your prompts…",
+                k,
+            )
+            .key("timeline-search")
+            .label("Find a prompt")
+            .placeholder("Find a prompt…", k.c.text_muted)
+            .color(k.c.text_base)
+            .w_full()
+            .single_line()
+            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
         )
         .child(
             col()
@@ -342,6 +355,13 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
                 })
                 .child(rows),
         );
+    if count == 0 {
+        body = body.child(ui::empty(
+            "No matching prompts",
+            "Try another search or load earlier history.",
+            k,
+        ));
+    }
     if let Some(error) = &session.error {
         body = body.child(ui::caption(error, k).color(k.c.danger.fg));
     }
@@ -373,10 +393,7 @@ fn usage(s: &Workspace, k: &Kit, index: usize) -> El {
         .checkouts
         .get(project)
         .and_then(|c| c.usage.as_ref());
-    let mut body = col()
-        .w_full()
-        .gap(12.0)
-        .child(crate::activity::context(s, k, index, true));
+    let mut body = ui::card(k).child(crate::activity::context(s, k, index, true));
     if let Some(value) = value {
         body = body.child(ui::caption(
             value["workspace"]["name"].as_str().unwrap_or("OpenCode Go"),
@@ -444,14 +461,15 @@ fn usage(s: &Workspace, k: &Kit, index: usize) -> El {
             );
         }
     } else {
-        body = body.child(ui::caption(
-            if busy {
-                "Loading OpenCode Go usage…"
-            } else {
-                "No usage reported"
-            },
-            k,
-        ));
+        body = body.child(if busy {
+            ui::skeleton("Loading OpenCode Go usage", 3, k)
+        } else {
+            ui::empty(
+                "No usage reported",
+                "Refresh to check your subscription allowances.",
+                k,
+            )
+        });
     }
     service_status(body, s, k, task, value.is_some())
 }
@@ -489,28 +507,26 @@ fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
         ("7 days", Some(7)),
         ("30 days", Some(30)),
     ] {
-        ranges = ranges.child(
-            Button::new(name)
-                .variant(if l.commands.stats_days == days {
-                    ButtonVariant::Outline
-                } else {
-                    ButtonVariant::GhostMuted
-                })
-                .on_press(move |s: &mut Workspace| {
-                    live_mut(s).commands.stats_days = days;
-                    refresh_stats(s);
-                })
-                .build(k),
-        );
+        ranges = ranges.child(ui::tab(name, l.commands.stats_days == days, k).on_press(
+            move |s: &mut Workspace| {
+                live_mut(s).commands.stats_days = days;
+                refresh_stats(s);
+            },
+        ));
     }
     let mut body = col().w_full().gap(10.0).child(ranges).child(
-        text_input(&l.commands.search, k.ty.ui)
-            .single_line()
-            .label("Find statistics project")
-            .placeholder("Search projects by name or path…", k.c.text_muted)
-            .color(k.c.text_base)
-            .w_full()
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+        ui::field(
+            &l.commands.search,
+            "Find statistics project",
+            "Search projects by name or path…",
+            k,
+        )
+        .single_line()
+        .label("Find statistics project")
+        .placeholder("Search projects by name or path…", k.c.text_muted)
+        .color(k.c.text_base)
+        .w_full()
+        .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
     );
     let query = l.commands.search.text.to_lowercase();
     let mut projects = col().w_full().gap(3.0).child(
@@ -562,20 +578,32 @@ fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
             .child(projects),
     );
     if let Some(stats) = checkout.and_then(|c| c.stats.as_ref()) {
-        body = body.child(
-            text(format!(
-                "{} sessions · {} prompts · {} steps\n${:.2} · {} active days · {} day streak",
-                stats.sessions,
-                stats.prompts,
-                stats.steps,
-                stats.cost,
-                stats.active_days,
-                stats.streak
-            ))
-            .font(k.ty.ui_medium)
-            .color(k.c.text_base)
-            .wrap(),
-        );
+        let mut totals = row().w_full().gap(8.0);
+        for (name, value) in [
+            ("Sessions", stats.sessions.to_string()),
+            ("Prompts", stats.prompts.to_string()),
+            ("Cost", format!("${:.2}", stats.cost)),
+        ] {
+            totals = totals.child(
+                ui::card(k)
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(4.0)
+                    .child(
+                        text(value)
+                            .font(rune::TextStyle::new(22.0, 550.0))
+                            .color(k.c.text_base),
+                    )
+                    .child(ui::caption(name, k)),
+            );
+        }
+        body = body.child(totals).child(ui::caption(
+            format!(
+                "{} steps · {} active days · {} day streak",
+                stats.steps, stats.active_days, stats.streak
+            ),
+            k,
+        ));
         for (name, n) in [
             ("Input", stats.tokens.input),
             ("Output", stats.tokens.output),
@@ -603,6 +631,9 @@ fn stats(s: &Workspace, k: &Kit, index: usize) -> El {
                 k,
             ));
         }
+    }
+    if checkout.is_none_or(|c| c.stats.is_none()) && l.app.services.busy(&stats_task(s).unwrap()) {
+        body = body.child(ui::skeleton("Loading statistics", 3, k));
     }
     service_status(
         body,

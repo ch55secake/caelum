@@ -431,7 +431,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     {
         main
     } else {
-        main.child(composer(s, &k, padding, width > 560.0, &mut layers))
+        main.child(composer(s, &k, padding, width > 760.0, &mut layers))
     };
     let toolbar = Toolbar::new()
         .leading(
@@ -532,7 +532,12 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     if s.live.is_some() {
         panels::overlays(s, &k, &mut layers);
     }
-    col().w_full().h_full().child(shell).children(layers)
+    col()
+        .w_full()
+        .h_full()
+        .on_key(on_key)
+        .child(shell)
+        .children(layers)
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
@@ -545,7 +550,7 @@ fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
             || commands::side_key(s, ev, tx))
     {
         return true;
-    } else if shell::is_sidebar_toggle(ev) {
+    } else if shell::is_sidebar_toggle(ev) || ev.is_command('\\') {
         s.sidebar.toggle();
     } else if ev.is_command('i') && ev.mods.alt {
         s.inspector.toggle();
@@ -573,6 +578,39 @@ fn spec() -> AppSpec<Workspace> {
         setup: Some(live::setup),
         on_key: Some(on_key),
         scenes: &[
+            ("worktrees", |s| evaluation::scene(s, "worktrees")),
+            ("worktrees-loading", |s| {
+                evaluation::scene(s, "worktrees-loading")
+            }),
+            ("worktrees-error", |s| {
+                evaluation::scene(s, "worktrees-error")
+            }),
+            ("provider-error", |s| evaluation::scene(s, "provider-error")),
+            ("models-empty", |s| evaluation::scene(s, "models-empty")),
+            ("usage-loading", |s| evaluation::scene(s, "usage-loading")),
+            ("files", |s| evaluation::scene(s, "files")),
+            ("files-loading", |s| evaluation::scene(s, "files-loading")),
+            ("changes-empty", |s| evaluation::scene(s, "changes-empty")),
+            ("approval", |s| evaluation::scene(s, "approval")),
+            ("questions", |s| evaluation::scene(s, "questions")),
+            ("image-preview", |s| evaluation::scene(s, "image-preview")),
+            ("review-error", |s| evaluation::scene(s, "review-error")),
+            ("providers", |s| evaluation::scene(s, "providers")),
+            ("notifications", |s| evaluation::scene(s, "notifications")),
+            ("storage", |s| evaluation::scene(s, "storage")),
+            ("about", |s| evaluation::scene(s, "about")),
+            ("models", |s| evaluation::scene(s, "models")),
+            ("launcher", |s| evaluation::scene(s, "launcher")),
+            ("session", |s| evaluation::scene(s, "session")),
+            ("timeline", |s| evaluation::scene(s, "timeline")),
+            ("usage", |s| evaluation::scene(s, "usage")),
+            ("stats", |s| evaluation::scene(s, "stats")),
+            ("commands", |s| evaluation::scene(s, "commands")),
+            ("shells", |s| evaluation::scene(s, "shells")),
+            ("empty", |s| evaluation::scene(s, "empty")),
+            ("error", |s| evaluation::scene(s, "error")),
+            ("discussion", |s| evaluation::scene(s, "discussion")),
+            ("review-loading", |s| evaluation::scene(s, "review-loading")),
             ("tools", |s| evaluation::scene(s, "tools")),
             ("review", |s| evaluation::scene(s, "review")),
             ("checks", |s| evaluation::scene(s, "checks")),

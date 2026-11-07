@@ -39,6 +39,7 @@ pub struct Session {
     pub reading: f32,
     pub unread: bool,
     pub shells: Vec<caelum_protocol::OpenCodeBackgroundShell>,
+    shell_revision: u64,
     pub details: Option<caelum_protocol::SessionDetails>,
     pub side_question: Option<(String, String)>,
     pub side_draft: String,
@@ -85,6 +86,7 @@ impl Session {
             reading: -1.0,
             unread: false,
             shells: Vec::new(),
+            shell_revision: 0,
             details: None,
             side_question: None,
             side_draft: String::new(),
@@ -137,7 +139,7 @@ enum Pending {
     Save(Box<Snapshot>, Vec<(u64, Command)>),
     Task(Task),
     Commands(Scope),
-    Shells(usize),
+    Shells(usize, u64),
     Archive(usize, bool, Option<(usize, u64)>),
     Attachment(usize, String),
     Mention {
@@ -177,6 +179,8 @@ pub struct Workspace {
     pub active_project: Option<String>,
     pub choices: HashMap<Scope, ProviderChoices>,
     pub notices: HashMap<Scope, String>,
+    dirty_checkouts: std::collections::HashSet<String>,
+    refresh_after: HashMap<String, Task>,
     pub approvals: Vec<ApprovalPrompt>,
     pub questions: Vec<QuestionPrompt>,
     pub error: Option<String>,
@@ -229,6 +233,13 @@ impl Workspace {
                 request.1,
                 Command::Load(_)
                     | Command::Cancel(_)
+                    | Command::Task(
+                        Task::Shell { .. }
+                            | Task::Git { .. }
+                            | Task::Diff { .. }
+                            | Task::File { .. }
+                            | Task::Directory { .. }
+                    )
                     | Command::Approve(..)
                     | Command::Answer(..)
                     | Command::Notify(..)
@@ -354,6 +365,12 @@ impl Workspace {
                 Task::Search { .. } | Task::Completions { .. } | Task::Stats { .. }
             )
         {
+            if matches!(
+                task,
+                Task::Diff { .. } | Task::File { .. } | Task::Directory { .. }
+            ) {
+                self.refresh_after.insert(task.slot(), task);
+            }
             return;
         }
         let id = self.request(Command::Task(task.clone()), Pending::Task(task.clone()));
@@ -365,6 +382,53 @@ impl Workspace {
             self.launches.insert(id, (provider, self.navigation));
         }
         self.services.start(&task, id);
+    }
+
+    /// Retain a follow-up invalidation while Git is in flight. A tool ending or
+    /// an external edit must not be lost behind an older snapshot.
+    pub fn checkout_changed(&mut self, project: &str) {
+        if !self.projects.iter().any(|p| p.path == project) {
+            return;
+        }
+        let git = Task::Git {
+            project: project.into(),
+        };
+        if self.services.busy(&git) {
+            self.dirty_checkouts.insert(project.into());
+            return;
+        }
+        self.dirty_checkouts.remove(project);
+        self.task(git);
+        let Some(checkout) = self.services.checkouts.get(project) else {
+            return;
+        };
+        let mut tasks = vec![Task::Directory {
+            project: project.into(),
+            path: String::new(),
+            offset: 0,
+        }];
+        for path in checkout.diffs.keys() {
+            tasks.push(Task::Diff {
+                project: project.into(),
+                path: path.clone(),
+            });
+        }
+        for path in &checkout.tabs {
+            tasks.push(Task::File {
+                project: project.into(),
+                path: path.clone(),
+            });
+        }
+        for path in checkout.directories.keys().filter(|p| !p.is_empty()) {
+            tasks.push(Task::Directory {
+                project: project.into(),
+                path: path.clone(),
+                offset: 0,
+            });
+        }
+        for task in tasks {
+            self.task(task);
+        }
     }
 
     pub fn launch_worktree(&mut self, task: Task, provider: Provider) {
@@ -799,6 +863,18 @@ impl Workspace {
                 project: path.clone(),
                 directory: self.preferences.worktree_directory.clone(),
             });
+            if let Some(branch) = self
+                .services
+                .checkouts
+                .get(&path)
+                .and_then(|c| c.git.as_ref())
+                .and_then(|g| g.branch.clone())
+            {
+                self.task(Task::Discover {
+                    project: path.clone(),
+                    branch,
+                });
+            }
             for provider in Provider::ALL {
                 let scope = Scope {
                     project: path.clone(),
@@ -1141,6 +1217,7 @@ impl Workspace {
     pub fn apply(&mut self, event: Event) {
         match event {
             Event::Branch(update) => self.branch_update(update),
+            Event::Checkout(project) => self.checkout_changed(&project),
             Event::Completed(id, result) => {
                 if let Some(pending) = self.pending.remove(&id) {
                     self.complete(id, pending, result);
@@ -1309,6 +1386,41 @@ impl Workspace {
             if let Ok(TaskReply::Preferences(settings)) = &result {
                 self.preferences = settings.clone();
             }
+            if let (
+                Task::Shell {
+                    project,
+                    session,
+                    id,
+                    stop: true,
+                },
+                Ok(TaskReply::Shell(output)),
+            ) = (&task, &result)
+            {
+                let output = if output.is_empty() {
+                    self.services
+                        .checkouts
+                        .get(project)
+                        .and_then(|c| c.shell_output.get(&(session.clone(), id.clone())))
+                        .unwrap_or(output)
+                } else {
+                    output
+                };
+                for owner in self.sessions.iter_mut().filter(|s| {
+                    s.scope.provider == Provider::OpenCode
+                        && s.scope.project == *project
+                        && s.remote_id.as_deref() == Some(session)
+                }) {
+                    if let Some(shell) = owner.shells.iter().find(|s| s.id == *id) {
+                        owner.conversation.apply(Provider::OpenCode, "session.shell.ended", &serde_json::json!({
+                            "shell": {"id":id,"command":shell.command,"status":"killed","time":{"started":shell.started_at,"completed":super::presentation::now()}},
+                            "output":{"output":output}
+                        }));
+                    }
+                    owner.shells.retain(|s| s.id != *id);
+                    owner.shell_revision += 1;
+                    owner.revision += 1;
+                }
+            }
             if let Ok(TaskReply::Git(_, updates)) = &result {
                 for update in updates {
                     self.branch_update(update.clone());
@@ -1396,6 +1508,33 @@ impl Workspace {
                 }
                 self.task(next);
             }
+            if let Task::Shell {
+                project,
+                session,
+                id,
+                stop: false,
+            } = &task
+            {
+                let running = self.sessions.iter().any(|owner| {
+                    owner.scope.provider == Provider::OpenCode
+                        && owner.scope.project == *project
+                        && owner.remote_id.as_ref() == Some(session)
+                        && owner.shells.iter().any(|shell| shell.id == *id)
+                });
+                if !running {
+                    if let Some(checkout) = self.services.checkouts.get_mut(project) {
+                        checkout.shell_output.remove(&(session.clone(), id.clone()));
+                    }
+                }
+            }
+            if let Some(next) = self.refresh_after.remove(&task.slot()) {
+                self.task(next);
+            }
+            if let Task::Git { project } = &task {
+                if self.dirty_checkouts.remove(project) {
+                    self.checkout_changed(project);
+                }
+            }
             return;
         }
         let reply = match result {
@@ -1434,7 +1573,7 @@ impl Workspace {
                     Pending::Commands(scope) => {
                         self.notices.insert(scope, error);
                     }
-                    Pending::Shells(index) => self.sessions[index].error = Some(error),
+                    Pending::Shells(index, _) => self.sessions[index].error = Some(error),
                     Pending::Archive(index, _, _) => {
                         self.sessions[index].archiving = false;
                         self.sessions[index].error = Some(error);
@@ -1684,7 +1823,33 @@ impl Workspace {
             (Pending::Commands(scope), Reply::Commands(commands)) => {
                 self.provider_commands.insert(scope, commands);
             }
-            (Pending::Shells(index), Reply::Shells(shells)) => self.sessions[index].shells = shells,
+            (Pending::Shells(index, revision), Reply::Shells(shells)) => {
+                let session = &mut self.sessions[index];
+                if revision != session.shell_revision {
+                    if let Some(key) = session.key() {
+                        let revision = session.shell_revision;
+                        self.request(Command::Shells(key), Pending::Shells(index, revision));
+                    }
+                    return;
+                }
+                session.shells =
+                    shells
+                        .into_iter()
+                        .filter(|shell| {
+                            !session.conversation.entries.iter().any(|e| {
+                                e.id == format!("opencode-shell-{}", shell.id) && e.complete
+                            })
+                        })
+                        .collect();
+                if let (Some(remote), Some(checkout)) = (
+                    &session.remote_id,
+                    self.services.checkouts.get_mut(&session.scope.project),
+                ) {
+                    checkout.shell_output.retain(|(owner, id), _| {
+                        owner != remote || session.shells.iter().any(|shell| &shell.id == id)
+                    });
+                }
+            }
             (Pending::Archive(index, archived, select), Reply::Done) => {
                 self.sessions[index].archiving = false;
                 self.sessions[index].archived = archived;
@@ -1757,7 +1922,10 @@ impl Workspace {
                 update_summary(session, summary);
                 let key = session.key().expect("resumed session");
                 if key.scope.provider == Provider::OpenCode {
-                    self.request(Command::Shells(key.clone()), Pending::Shells(index));
+                    self.request(
+                        Command::Shells(key.clone()),
+                        Pending::Shells(index, self.sessions[index].shell_revision),
+                    );
                     self.refresh_inbox(index);
                 }
                 self.request(
@@ -1981,7 +2149,32 @@ impl Workspace {
                     );
                 }
             }
+            if method == "session.shell.started" {
+                session.shell_revision += 1;
+                if let (Some(id), Some(command), Some(started_at)) = (
+                    data["shell"]["id"].as_str(),
+                    data["shell"]["command"].as_str(),
+                    data["shell"]["time"]["started"].as_u64(),
+                ) {
+                    if !session.shells.iter().any(|s| s.id == id)
+                        && !session
+                            .conversation
+                            .entries
+                            .iter()
+                            .any(|e| e.id == format!("opencode-shell-{id}") && e.complete)
+                    {
+                        session
+                            .shells
+                            .push(caelum_protocol::OpenCodeBackgroundShell {
+                                id: id.into(),
+                                command: command.into(),
+                                started_at,
+                            });
+                    }
+                }
+            }
             if method == "session.shell.ended" {
+                session.shell_revision += 1;
                 let shell = data["shell"]["id"].as_str().unwrap_or_default();
                 let entry_id = format!("opencode-shell-{shell}");
                 if session
@@ -1994,6 +2187,14 @@ impl Workspace {
                     shells_completed.push(index);
                 }
                 session.shells.retain(|s| s.id != shell);
+                if let (Some(checkout), Some(remote)) = (
+                    self.services.checkouts.get_mut(&session.scope.project),
+                    &session.remote_id,
+                ) {
+                    checkout
+                        .shell_output
+                        .remove(&(remote.clone(), shell.to_owned()));
+                }
             }
             session.revision += 1;
             session.conversation.apply(provider, method, data);
@@ -2070,6 +2271,20 @@ impl Workspace {
                     Pending::Notify,
                 );
             }
+        }
+        if matches!(
+            method,
+            "item/completed"
+                | "turn/completed"
+                | "session.shell.ended"
+                | "session.execution.succeeded"
+                | "session.tool.success"
+                | "session.tool.failed"
+                | "session.execution.failed"
+                | "session.execution.interrupted"
+                | "filesystem.changed"
+        ) {
+            self.checkout_changed(path);
         }
     }
 }

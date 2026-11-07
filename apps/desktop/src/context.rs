@@ -49,6 +49,7 @@ pub fn file(
             PopupMenu::new()
                 .item(PopupItem::new("copy", "Copy content"))
                 .item(PopupItem::new("path", "Copy path"))
+                .separator()
                 .item(PopupItem::new("attach", "Add to prompt").enabled(
                     owner.is_some_and(|i| live(s).app.sessions[i].scope.project == project),
                 ))
@@ -79,6 +80,7 @@ pub fn project(el: El, project: String) -> El {
         tx.popup_menu(
             PopupMenu::new()
                 .item(PopupItem::new("new", "New session"))
+                .separator()
                 .item(PopupItem::new("copy", "Copy project path"))
                 .item(PopupItem::new("reveal", "Reveal in Finder")),
             at,
@@ -111,6 +113,7 @@ pub fn session(el: El, index: usize) -> El {
                     PopupItem::new("refresh", "Refresh session")
                         .enabled(session.remote_id.is_some() && !session.loading),
                 )
+                .separator()
                 .item(
                     PopupItem::new(
                         "archive",

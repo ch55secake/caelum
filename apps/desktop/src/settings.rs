@@ -1,4 +1,5 @@
 //! Settings navigation and native controls. Preferences and async work live in core.
+use crate::ui::Button;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -8,8 +9,8 @@ use caelum_core::{
     application::{Provider, Scope, Task},
     updates,
 };
-use rune::{El, FileDialogOptions, ScrollSpec, col, row, text, text_input};
-use rune_kit::{Button, ButtonVariant, Kit, Select};
+use rune::{El, FileDialogOptions, ScrollSpec, col, row, text};
+use rune_kit::{ButtonVariant, Kit, ScrollBar, Select, SelectAppearance, Switch};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Page {
@@ -23,7 +24,7 @@ pub enum Page {
 
 pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let page = live(s).panels.settings_page;
-    let mut nav = col().w(124.0).gap(4.0);
+    let mut nav = col().w(132.0).h_full().gap(4.0).pr(12.0);
     for (name, target) in [
         ("Appearance", Page::Appearance),
         ("Providers", Page::Providers),
@@ -32,18 +33,12 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         ("About", Page::About),
     ] {
         nav = nav.child(
-            Button::new(name)
-                .variant(if page == target {
-                    ButtonVariant::Outline
-                } else {
-                    ButtonVariant::GhostMuted
-                })
+            ui::tab(name, page == target, k)
                 .on_press(move |s: &mut Workspace| {
                     let p = &mut live_mut(s).panels;
                     p.settings_page = target;
                     p.settings_menu = None;
                 })
-                .build(k)
                 .w_full()
                 .key(format!("settings-{}", name.to_lowercase())),
         );
@@ -69,8 +64,9 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .w_full()
         .h_full()
         .min_h(0.0)
-        .gap(20.0)
+        .gap(16.0)
         .child(nav)
+        .child(rune::el().w(1.0).h_full().fill(k.c.border_base))
         .child(
             col()
                 .grow(1.0)
@@ -79,7 +75,9 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(content),
+                .child(content)
+                .key("settings-scroll")
+                .scroll_bar(k),
         )
 }
 
@@ -93,6 +91,8 @@ fn picker(
     change: impl Fn(&mut Workspace, &str) + Clone + 'static,
 ) -> El {
     Select::new(id, values)
+        .appearance(SelectAppearance::Field)
+        .width(260.0)
         .current(Some(current))
         .label(id)
         .open(live(s).panels.settings_menu == Some(id))
@@ -120,35 +120,32 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         "Defaults for new sessions. Change individual sessions in the composer.",
         k,
     ));
-    body = body.child(ui::caption("Default provider", k)).child(picker(
-        s,
-        k,
-        layers,
-        "Default provider",
-        &["Codex".into(), "OpenCode".into()],
-        ui::provider_name(app.preferences.default_provider),
-        |s, value| {
-            live_mut(s).app.preferences.default_provider = if value == "Codex" {
-                Provider::Codex
-            } else {
-                Provider::OpenCode
-            };
-        },
-    ));
+    let mut defaults = row().gap(4.0);
+    for p in Provider::ALL {
+        defaults = defaults.child(
+            ui::tab(
+                ui::provider_name(p),
+                app.preferences.default_provider == p,
+                k,
+            )
+            .on_press(move |s: &mut Workspace| live_mut(s).app.preferences.default_provider = p),
+        );
+    }
+    body = body.child(
+        ui::card(k)
+            .gap(8.0)
+            .child(ui::caption("Start new sessions with", k))
+            .child(defaults),
+    );
     let mut tabs = row().gap(6.0);
     for p in Provider::ALL {
         tabs = tabs.child(
-            Button::new(ui::provider_name(p))
-                .variant(if p == provider {
-                    ButtonVariant::Outline
-                } else {
-                    ButtonVariant::GhostMuted
-                })
+            ui::tab(ui::provider_name(p), p == provider, k)
                 .on_press(move |s: &mut Workspace| {
                     live_mut(s).panels.settings_provider = p;
                     live_mut(s).app.refresh_choices(p);
                 })
-                .build(k),
+                .key(format!("settings-provider-{}", p.as_str())),
         );
     }
     body = body.child(tabs);
@@ -169,7 +166,9 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .center_y()
             .child(
                 ui::caption(
-                    if choices.is_some() {
+                    if app.notices.contains_key(&scope) {
+                        "Unavailable"
+                    } else if choices.is_some() {
                         "Available"
                     } else {
                         "Not connected"
@@ -186,7 +185,7 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             ),
     );
     if let Some(error) = app.notices.get(&scope) {
-        body = body.child(ui::caption(error, k).color(k.c.danger.fg));
+        body = body.child(ui::notice("Connection unavailable", error, k));
     }
     let options = app
         .preferences
@@ -194,38 +193,15 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .get(provider.as_str())
         .cloned()
         .unwrap_or_default();
-    let mut models = vec!["Provider default".to_owned()];
-    if let Some(choices) = choices {
-        models.extend(choices.models.iter().map(|m| m.id.clone()));
-    }
-    if let Some(saved) = &options.model
-        && !models.contains(saved)
-    {
-        models.push(saved.clone());
-    }
-    body = body.child(ui::caption("Default model", k)).child(picker(
-        s,
-        k,
-        layers,
-        "Default model",
-        &models,
-        options.model.as_deref().unwrap_or("Provider default"),
-        move |s, value| {
-            let defaults = live_mut(s)
-                .app
-                .preferences
-                .providers
-                .entry(provider.as_str().into())
-                .or_default();
-            defaults.model = (value != "Provider default").then(|| value.into());
-            defaults.effort = None;
-        },
-    ));
-    body = body.child(
-        Button::new("Search models and favourites…")
-            .variant(ButtonVariant::GhostMuted)
-            .on_press(move |s: &mut Workspace| crate::models::open(s, Some(provider)))
-            .build(k),
+    body = body.child(ui::caption("Default model", k)).child(
+        Select::new::<&str>("settings-model", &[])
+            .appearance(SelectAppearance::Field)
+            .width(260.0)
+            .current(options.model.as_deref())
+            .placeholder("Provider default")
+            .label("Default model")
+            .on_toggle(move |s: &mut Workspace| crate::models::open(s, Some(provider)))
+            .trigger(k),
     );
     let model = choices.and_then(|c| {
         c.models.iter().find(|m| {
@@ -335,15 +311,13 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
             k,
         ))
         .child(
-            text_input(&live(s).panels.directory, k.ty.ui)
-                .single_line()
-                .label("Worktree storage directory")
-                .placeholder("~/.caelum/worktrees", k.c.text_muted)
-                .color(k.c.text_base)
-                .w_full()
-                .padding(8.0)
-                .border(1.0, k.c.border_base)
-                .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.directory),
+            ui::field(
+                &live(s).panels.directory,
+                "Worktree storage directory",
+                "~/.caelum/worktrees",
+                k,
+            )
+            .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.directory),
         )
         .child(
             row()
@@ -369,6 +343,10 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
                 .child(
                     Button::new("Save directory")
                         .variant(ButtonVariant::Outline)
+                        .disabled(
+                            live(s).panels.directory.text
+                                == live(s).app.preferences.worktree_directory,
+                        )
                         .on_press(|s: &mut Workspace| {
                             let l = live_mut(s);
                             l.app.preferences.worktree_directory = l.panels.directory.text.clone();
@@ -395,29 +373,29 @@ fn notifications(s: &Workspace, k: &Kit) -> El {
         "A gentle sound when work finishes or needs your input.",
         k,
     ));
-    for (name, mode) in [
-        ("Off", "off"),
-        ("Background only", "background"),
-        ("Always", "always"),
+    for (name, detail, mode) in [
+        ("Off", "Keep the workspace quiet", "off"),
+        (
+            "Background only",
+            "Notify when the response isn’t visible",
+            "background",
+        ),
+        ("Always", "Notify whenever work finishes", "always"),
     ] {
         body = body.child(
-            Button::new(name)
-                .variant(
-                    if (p.notifications && p.notification_mode == mode)
-                        || (!p.notifications && mode == "off")
-                    {
-                        ButtonVariant::Outline
-                    } else {
-                        ButtonVariant::GhostMuted
-                    },
-                )
-                .on_press(move |s: &mut Workspace| {
-                    let p = &mut live_mut(s).app.preferences;
-                    p.notification_mode = mode.into();
-                    p.notifications = mode != "off";
-                })
-                .build(k)
-                .key(format!("notification-{mode}")),
+            ui::choice(
+                name,
+                detail,
+                (p.notifications && p.notification_mode == mode)
+                    || (!p.notifications && mode == "off"),
+                k,
+            )
+            .on_press(move |s: &mut Workspace| {
+                let p = &mut live_mut(s).app.preferences;
+                p.notification_mode = mode.into();
+                p.notifications = mode != "off";
+            })
+            .key(format!("notification-{mode}")),
         );
     }
     body = body.child(ui::caption(
@@ -430,6 +408,12 @@ fn notifications(s: &Workspace, k: &Kit) -> El {
     for (name, delta) in [("−", -10i16), ("+", 10)] {
         volume = volume.child(
             Button::new(name)
+                .variant(ButtonVariant::Outline)
+                .disabled(if delta < 0 {
+                    p.sound_volume == 0
+                } else {
+                    p.sound_volume == 100
+                })
                 .on_press(move |s: &mut Workspace| {
                     let p = &mut live_mut(s).app.preferences;
                     p.sound_volume = (p.sound_volume as i16 + delta).clamp(0, 100) as u8;
@@ -453,17 +437,26 @@ fn notifications(s: &Workspace, k: &Kit) -> El {
             p.input_needed
         };
         body = body.child(
-            Button::new(format!("{} {name}", if enabled { "✓" } else { "○" }))
-                .variant(ButtonVariant::GhostMuted)
-                .on_press(move |s: &mut Workspace| {
-                    let p = &mut live_mut(s).app.preferences;
-                    if shell {
-                        p.background_shells = !p.background_shells;
-                    } else {
-                        p.input_needed = !p.input_needed;
-                    }
-                })
-                .build(k),
+            row()
+                .w_full()
+                .gap(12.0)
+                .py(8.0)
+                .center_y()
+                .child(ui::caption(name, k).grow(1.0))
+                .child(
+                    Switch::new(enabled)
+                        .label(name)
+                        .hide_label()
+                        .on_toggle(move |s: &mut Workspace| {
+                            let p = &mut live_mut(s).app.preferences;
+                            if shell {
+                                p.background_shells = !p.background_shells;
+                            } else {
+                                p.input_needed = !p.input_needed;
+                            }
+                        })
+                        .build(k),
+                ),
         );
     }
     body
