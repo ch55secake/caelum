@@ -270,8 +270,14 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
 
 #[test]
 fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
-    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+    for (size, inspector) in [
+        ((800.0, 620.0), false),
+        ((800.0, 620.0), true),
+        ((1280.0, 1000.0), false),
+        ((1280.0, 1000.0), true),
+    ] {
         let mut rt = design_runtime("composer-options", size);
+        rt.update(|s, _| s.inspector.set_open(inspector));
         for working in [false, true] {
             rt.update(|s, _| {
                 s.live.as_mut().unwrap().app.sessions[0]
@@ -298,6 +304,15 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                 assert!(e.rect[1] + e.rect[3] <= size.1, "{name} below window");
             }
             assert!(element(&rt, "composer-editor").visible[3] >= 46.0);
+            let composer = element(&rt, "message-composer").rect;
+            let send = element(&rt, "send").rect;
+            for axis in [0, 1] {
+                let inset = composer[axis] + composer[axis + 2] - send[axis] - send[axis + 2];
+                assert!(
+                    (inset - 12.0).abs() < 0.5,
+                    "Send/Stop inset: {inset}; size={size:?}, inspector={inspector}, working={working}"
+                );
+            }
             if working {
                 assert!(element(&rt, "queue-message").visible[2] >= 50.0);
                 assert_eq!(

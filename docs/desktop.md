@@ -25,6 +25,8 @@ Choose the model, provider, reasoning effort and available agent in the composer
 The model is the primary setting; borderless labels with small chevrons wrap into
 rows in narrow panes while Send/Stop stays aligned at the lower right. Shortcut
 hints and full setting values appear in tooltips.
+Send/Stop keeps equal 12-point right and bottom insets as Queue, context usage
+and wrapped settings change; the action row takes only the space it needs.
 Sending creates a provider session when needed. Later selection changes apply
 to the next message. Search models and star favourites in the model picker.
 The anchored popover keeps its original session or Settings target while open. Unavailable

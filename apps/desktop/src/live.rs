@@ -1639,7 +1639,11 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
             "Send message · Enter\nShift+Enter for a new line"
         })
         .size(32.0, 32.0);
-    let mut controls = row().center_y().gap(6.0);
+    let mut controls = row()
+        .key("composer-actions")
+        .center_y()
+        .justify_end()
+        .gap(6.0);
     if session.working() && !draft.text.trim().is_empty() {
         controls = controls.child(
             Button::new("Queue")
@@ -1660,13 +1664,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .child(
             controls
                 .child(crate::activity::context(s, k, index, wide))
-                .child(submit)
-                .w((if wide { 148.0 } else { 60.0 })
-                    + if session.working() && !draft.text.trim().is_empty() {
-                        60.0
-                    } else {
-                        0.0
-                    }),
+                .child(submit),
         );
     let activity = crate::activity::session_activity(s, index);
     ui::composer_activity(
