@@ -32,6 +32,15 @@ def application(pid, action):
     ], text=True).strip()
 
 
+def create_projects(root):
+    projects = [root / "first café #1", root / "second & 2%+?"]
+    for project in projects:
+        project.mkdir()
+    # Match the canonical paths saved by Project::open. Filesystems can return
+    # a different Unicode normalization than the string used to create a path.
+    return [project.resolve(strict=True) for project in projects]
+
+
 def run(app, cli, root):
     executable = app / "Contents/MacOS/caelum-desktop"
     if pids(executable):
@@ -42,9 +51,7 @@ def run(app, cli, root):
     bin_dir.mkdir()
     state = home / "workspace.json"
     log = root / "app.log"
-    projects = [root / "first café #1", root / "second & 2%+?"]
-    for project in projects:
-        project.mkdir()
+    projects = create_projects(root)
     # Keep this check offline, including on a developer's authenticated machine.
     for provider in ("codex", "opencode"):
         path = bin_dir / provider
