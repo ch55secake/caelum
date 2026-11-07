@@ -135,7 +135,7 @@ while comments are selected. See
 
 ## Appearance and window lifecycle
 
-The top-toolbar gear or **⌘,** opens Settings. Choose System/Light/Dark, Caelum/Catppuccin/Nord/Tokyo Night,
+The top-toolbar gear or **⌘,** opens Settings. Choose System/Light/Dark, Caelum/Vercel/Catppuccin/Nord/Tokyo Night,
 and six accents or the theme default. Its five pages are Appearance, Providers,
 Worktrees, Notifications and About. Provider defaults/favourites, notification
 visibility and sounds, worktree storage, legacy settings import and persistence
@@ -143,9 +143,11 @@ retry live here. Unread state persists and clears only when the loaded conversat
 is visible and following the latest messages.
 The default Caelum palette keeps surfaces neutral, with colour in selection markers,
 tab underlines, focus borders, status icons, links and primary actions.
-Enable **Black backgrounds** under Appearance for a black workspace/sidebar and
-near-black panels. This saved preference applies to dark appearance, including
-System when macOS is dark, and retains the selected theme family and accent.
+Choose **Vercel** for a monochrome theme with a pure-black workspace and sidebar,
+subtly raised panels, and a soft hairline sidebar divider with fading ends. Its light
+variant follows Light/System appearance. Selecting Vercel starts with the theme's
+monochrome accent; other accents remain available. The former **Black backgrounds**
+setting migrates to Vercel.
 
 Closing the window keeps sessions running. Clicking the Dock icon or opening
 a project through the CLI brings it back. **⌘Q** quits and saves the latest drafts.
