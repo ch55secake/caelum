@@ -2006,46 +2006,15 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
                 .grow(1.0),
         );
     }
-    content = content.child(themes).child(
-        row()
-            .w_full()
-            .center_y()
-            .gap(12.0)
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .gap(2.0)
-                    .child(
-                        text("Black backgrounds")
-                            .font(k.ty.ui_medium)
-                            .color(k.c.text_base),
-                    )
-                    .child(ui::caption(
-                        "A darker workspace when using a dark appearance.",
-                        k,
-                    )),
-            )
-            .child(
-                rune_kit::Switch::new(preferences.black_backgrounds)
-                    .label("Black backgrounds")
-                    .hide_label()
-                    .on_toggle(|s: &mut Workspace| {
-                        let p = &mut live_mut(s).app.preferences;
-                        p.black_backgrounds = !p.black_backgrounds;
-                    })
-                    .build(k)
-                    .key("black-backgrounds"),
-            ),
-    );
-    let mut families = row().w_full().gap(8.0);
+    content = content.child(themes);
+    let mut families = row().w_full().flex_wrap().gap(8.0);
     for (id, name) in theme::FAMILIES {
-        let palette = theme::appearance(true, id, "theme", preferences.black_backgrounds);
+        let palette = theme::appearance(k.dark, id, "theme");
         families = families.child(
             k.interactive(
                 col()
                     .grow(1.0)
-                    .min_w(0.0)
+                    .min_w(100.0)
                     .gap(8.0)
                     .padding(10.0)
                     .radius(8.0)
@@ -2081,7 +2050,13 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
             .label(name)
             .focusable(true)
             .focus_ring(1.0, 0.0, k.c.border_focus)
-            .on_press(move |s: &mut Workspace| live_mut(s).app.preferences.theme_family = id.into())
+            .on_press(move |s: &mut Workspace| {
+                let p = &mut live_mut(s).app.preferences;
+                if id == "vercel" && p.theme_family != id {
+                    p.accent_color = "theme".into();
+                }
+                p.theme_family = id.into();
+            })
             .key(format!("family-{id}")),
         );
     }
@@ -2090,12 +2065,7 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
         .child(ui::caption("Accent colour", k));
     let mut accents = row().gap(8.0);
     for accent in theme::ACCENTS {
-        let palette = theme::appearance(
-            true,
-            &preferences.theme_family,
-            accent,
-            preferences.black_backgrounds,
-        );
+        let palette = theme::appearance(k.dark, &preferences.theme_family, accent);
         accents = accents.child(
             k.interactive(
                 rune::el()

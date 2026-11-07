@@ -128,9 +128,10 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         l.app.select(0);
         return true;
     }
-    if matches!(name, "black" | "black-settings") {
-        l.app.preferences.black_backgrounds = true;
-        if name == "black-settings" {
+    if matches!(name, "vercel" | "vercel-settings") {
+        l.app.preferences.theme_family = "vercel".into();
+        l.app.preferences.accent_color = "theme".into();
+        if name == "vercel-settings" {
             crate::panels::show(state, crate::panels::Screen::Settings);
         }
         return true;
