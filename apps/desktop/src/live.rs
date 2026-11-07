@@ -636,9 +636,9 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             .map(|i| &app.sessions[i])
             .filter(|s| app.group_path(&s.scope.project) == path)
             .or_else(|| {
-                app.sessions
-                    .iter()
-                    .find(|s| app.group_path(&s.scope.project) == path && !s.archived)
+                app.sessions.iter().find(|s| {
+                    app.group_path(&s.scope.project) == path && !s.archived && !s.forgotten
+                })
             });
         let checkout = active.map(|s| &s.scope.project).unwrap_or(&path);
         let git = app
@@ -808,7 +808,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 app.sessions
                     .iter()
                     .filter(|session| {
-                        session.archived == live(s).panels.archived
+                        !session.forgotten
+                            && session.archived == live(s).panels.archived
                             && app.active_project.as_ref().is_some_and(|p| {
                                 app.group_path(&session.scope.project) == app.group_path(p)
                             })
@@ -879,7 +880,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         .focus_follows();
     for (index, session) in
         app.sessions.iter().enumerate().filter(|(_, session)| {
-            session.archived == live(s).panels.archived
+            !session.forgotten
+                && session.archived == live(s).panels.archived
                 && app.project_is_open(&session.scope.project)
                 && (app.active_project.as_ref().is_some_and(|path| {
                     app.group_path(&session.scope.project) == app.group_path(path)
