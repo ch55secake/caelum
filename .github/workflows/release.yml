@@ -32,7 +32,7 @@ jobs:
       should_release: ${{ steps.tag.outputs.should_release }}
       published: ${{ steps.release.outputs.published }}
     steps:
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         id: release-app-token
         with:
@@ -41,7 +41,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: caelum
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ steps.release-app-token.outputs.token || github.token }}
@@ -87,7 +87,7 @@ jobs:
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.release_commit }}
 
@@ -124,7 +124,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: '13.0'
         run: bash scripts/release/package_macos_assets.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.arch }}
           path: ${{ runner.temp }}/release/*
@@ -142,12 +142,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: ${{ needs.prepare.outputs.published != 'true' }}
         with:
           pattern: release-*
@@ -177,7 +177,7 @@ jobs:
             --pattern SHA256SUMS \
             --dir "$RUNNER_TEMP/release"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ch55secake/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -193,7 +193,7 @@ jobs:
             "$RUNNER_TEMP/release/SHA256SUMS" \
             .
 
-      - uses: peter-evans/create-pull-request@v7
+      - uses: peter-evans/create-pull-request@v8
         with:
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
