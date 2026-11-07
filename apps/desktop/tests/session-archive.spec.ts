@@ -88,6 +88,33 @@ for (const provider of ["codex", "opencode"]) {
   });
 }
 
+test("OpenCode sessions no longer owned by a project can be forgotten locally", async ({
+  page,
+}) => {
+  await desktop(page, null);
+  await choose(page, "Provider", "OpenCode");
+  await page
+    .getByRole("button", { name: "OpenCode session", exact: true })
+    .click();
+  const row = sessionRow(page, "OpenCode session");
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.setCheckoutSessions("/work/caelum", "opencode", []);
+    fixture.setCommandError(
+      "set_session_archived",
+      "OpenCode session does not belong to this project",
+    );
+  });
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await expect(row).toHaveCount(1);
+  await row.hover();
+  await row.getByRole("button", { name: "Archive session" }).click();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText(
+    "It was removed from Caelum, but was not archived in OpenCode",
+  );
+});
+
 test("late listings, history and metadata cannot overwrite an archived and restored session", async ({
   page,
 }) => {

@@ -1378,7 +1378,51 @@ export function useWorkspace(settings: AppSettings) {
         sessionId: thread.id,
       });
     } catch (reason) {
-      setError(`Could not archive session: ${String(reason)}`);
+      if (
+        kind === "opencode" &&
+        String(reason).includes(
+          "OpenCode session does not belong to this project",
+        )
+      ) {
+        // A cached session can outlive its OpenCode project association (for
+        // example, after a checkout is moved or removed). Do not bypass the
+        // provider ownership check; let the user remove this stale local entry.
+        invalidateSession(target.path, kind, thread.id);
+        mutateProvider(target.path, kind, (value) => {
+          const staleSession = value.sessionsById[thread.id];
+          const wasSelected = value.selectedSessionId === thread.id;
+          const sessionsById = { ...value.sessionsById };
+          const sessionDetails = { ...value.sessionDetails };
+          delete sessionsById[thread.id];
+          delete sessionDetails[thread.id];
+          return {
+            ...value,
+            draft: wasSelected
+              ? (staleSession?.draft ?? value.draft)
+              : value.draft,
+            fileContext: wasSelected
+              ? (staleSession?.fileContext ?? value.fileContext)
+              : value.fileContext,
+            pullRequestContext: wasSelected
+              ? (staleSession?.pullRequestContext ?? value.pullRequestContext)
+              : value.pullRequestContext,
+            sessionsById,
+            sessionDetails,
+            sessions: value.sessions.filter((item) => item.id !== thread.id),
+            selectedSessionId: wasSelected ? null : value.selectedSessionId,
+          };
+        });
+        void persist("forget_project_session", {
+          projectPath: target.path,
+          provider: kind,
+          sessionId: thread.id,
+        });
+        setError(
+          "This OpenCode session no longer belongs to this project. It was removed from Caelum, but was not archived in OpenCode.",
+        );
+      } else {
+        setError(`Could not archive session: ${String(reason)}`);
+      }
     } finally {
       mutateProvider(target.path, kind, (value) => ({
         ...value,

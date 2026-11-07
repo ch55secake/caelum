@@ -710,6 +710,8 @@ export async function desktop(
             }
             if (command === "set_session_archived") {
               await gates.get(command)?.promise;
+              const error = commandErrors.get(command);
+              if (error) throw new Error(error);
               if (failNextArchive) {
                 failNextArchive = false;
                 throw new Error("Archive unavailable");
