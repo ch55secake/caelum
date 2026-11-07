@@ -1018,7 +1018,10 @@ impl Workspace {
         let Some(project) = self.active_project.clone() else {
             return;
         };
-        let scope = Scope { project, provider };
+        self.refresh_choices_for(Scope { project, provider });
+    }
+
+    pub fn refresh_choices_for(&mut self, scope: Scope) {
         if self
             .pending
             .values()
@@ -1031,7 +1034,7 @@ impl Workspace {
             Command::Choices(scope.clone()),
             Pending::Choices(scope.clone()),
         );
-        if provider == Provider::OpenCode {
+        if scope.provider == Provider::OpenCode {
             self.request(Command::Commands(scope.clone()), Pending::Commands(scope));
         }
     }
@@ -1644,7 +1647,11 @@ impl Workspace {
                                     project: worktree.project.path.clone(),
                                     provider,
                                 };
-                                self.request(Command::List(scope.clone()), Pending::List(scope));
+                                self.request(
+                                    Command::List(scope.clone()),
+                                    Pending::List(scope.clone()),
+                                );
+                                self.refresh_choices_for(scope);
                             }
                         }
                         if let Some(branch) = &worktree.branch {

@@ -568,6 +568,51 @@ fn removing_the_active_linked_checkout_returns_to_the_surviving_project() {
 }
 
 #[test]
+fn discovering_worktrees_loads_their_provider_choices() {
+    let mut app = Workspace::default();
+    app.projects.push(ProjectInfo {
+        name: "Main".into(),
+        path: "/main".into(),
+    });
+    app.new_session(scope(Provider::Codex, "/main"));
+    app.task(Task::Worktrees {
+        project: "/main".into(),
+        directory: String::new(),
+    });
+    let listing = app
+        .commands()
+        .into_iter()
+        .find(|(_, command)| matches!(command, Command::Task(Task::Worktrees { .. })))
+        .unwrap()
+        .0;
+
+    app.apply(Event::Completed(
+        listing,
+        Ok(Reply::Task(TaskReply::Worktrees(Some(
+            serde_json::from_value(json!({
+                "project":{"path":"/main","name":"Main"},
+                "storageDirectory":"/worktrees",
+                "branches":["main","feature"],
+                "defaultBase":"main",
+                "worktrees":[
+                    {"path":"/main","project":{"path":"/main","name":"Main"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
+                    {"path":"/linked","project":{"path":"/linked","name":"Linked"},"branch":"feature","main":false,"locked":null,"prunable":null,"available":true}
+                ]
+            }))
+            .unwrap(),
+        )))),
+    ));
+
+    let commands = app.commands();
+    for provider in Provider::ALL {
+        let scope = scope(provider, "/linked");
+        assert!(commands.iter().any(|(_, command)| {
+            matches!(command, Command::Choices(requested) if requested == &scope)
+        }));
+    }
+}
+
+#[test]
 fn closing_project_groups_keeps_sessions_work_and_drafts_through_reopen_and_restore() {
     let mut app = Workspace::default();
     for path in ["/main", "/linked", "/other"] {
