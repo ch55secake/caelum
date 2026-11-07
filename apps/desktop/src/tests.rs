@@ -1106,6 +1106,24 @@ fn model_popover_stays_anchored_and_returns_focus_without_cancelling_work() {
 }
 
 #[test]
+fn models_slash_command_opens_the_picker_for_the_current_session() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    fill(&mut rt, "live-draft-0", "/models");
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.3);
+
+    let live = rt.state.live.as_ref().unwrap();
+    assert!(live.models.is_open());
+    assert!(live.app.sessions[0].draft.is_empty());
+    assert!(!live.app.sessions[0].submitting);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|element| { !element.exiting && element.key.as_deref() == Some("model-popover") })
+    );
+}
+
+#[test]
 fn reminders_are_absent_from_transcript_copy_and_timeline_with_stable_jumps() {
     let app = spec();
     let mut state = crate::evaluation::design();
