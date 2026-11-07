@@ -1,4 +1,5 @@
 //! Settings navigation and native controls. Preferences and async work live in core.
+use crate::context::EditMenu;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -319,7 +320,9 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
                 "~/.caelum/worktrees",
                 k,
             )
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.directory),
+            .edit_menu("worktree-directory", |s| {
+                Some(&mut live_mut(s).panels.directory)
+            }),
         )
         .child(
             row()

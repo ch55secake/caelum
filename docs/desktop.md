@@ -16,11 +16,17 @@ independent draft and reading position. Hover a
 session to close it with **×**. A temporary notice names the archived session and
 offers **Undo**; it expires after eight unengaged seconds and pauses while hovered,
 keyboard-focused or restoring. Undo preserves newer navigation. Session actions and
-native context menus also offer archive/reconnect. Hover any session row for its
+custom context menus also offer archive/reconnect. Hover any session row for its
 **…** popover; actions belong to that row, including background sessions. Escape
 returns focus to its button. Use the archive icon beside
 **Sessions** to switch between active and archived sessions. **New session** uses
 the default provider chosen in Settings → Providers.
+
+Right-click projects, sessions, messages, files, tabs and pull requests for themed
+context menus. Actions apply to the item you clicked, including background sessions
+and files. Text fields offer Undo, Redo, Cut, Copy, Paste and Select all, preserving
+their selection and editing history. **⇧F10** or the Menu key opens the focused
+item's menu; arrows navigate, Enter chooses, and Escape or Tab dismisses it.
 
 Choose the model, reasoning effort and available agent in the composer. Effort
 and agent controls have distinct icons and labelled popouts with readable names,

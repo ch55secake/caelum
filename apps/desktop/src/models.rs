@@ -1,4 +1,5 @@
 //! Searchable model catalogue. The picker owns its target until it closes.
+use crate::context::EditMenu;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -371,12 +372,14 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
             "Search models, providers or context capacity…",
             k,
         )
-        .key("model-search")
-        .on_edit(|s: &mut Workspace| &mut live_mut(s).models.query)
-        .on_input_change(|s: &mut Workspace, tx| {
-            live_mut(s).models.selected = None;
-            tx.scroll_to_y("model-scroll", 0.0);
-        })
+        .edit_menu_changed(
+            "model-search",
+            |s| Some(&mut live_mut(s).models.query),
+            |s, tx| {
+                live_mut(s).models.selected = None;
+                tx.scroll_to_y("model-scroll", 0.0);
+            },
+        )
         .on_input_key(key),
     );
     if let Some(error) = l.app.notices.get(scope) {
