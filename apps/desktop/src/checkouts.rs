@@ -60,6 +60,21 @@ pub fn manage(s: &mut Workspace, project: String) {
     l.panels.overlay = Some(Screen::Worktrees);
 }
 
+pub fn removal(app: &Application, project: &str, path: &str) -> Option<Task> {
+    if !app.project_is_open(project)
+        || !app
+            .managed_worktrees(project)
+            .any(|tree| tree.path == path && tree.locked.is_none())
+    {
+        return None;
+    }
+    let task = Task::RemoveWorktree {
+        project: project.into(),
+        path: path.into(),
+    };
+    (!app.services.busy(&task)).then_some(task)
+}
+
 pub fn select(s: &mut Workspace, path: &str) {
     let l = live_mut(s);
     if !l.app.select_checkout(path) {
@@ -156,11 +171,11 @@ fn owner(s: &Workspace) -> Option<&str> {
 pub fn manager_height(s: &Workspace) -> f32 {
     let app = &live(s).app;
     let count = owner(s).map_or(0, |project| app.managed_worktrees(project).count());
-    let error = owner(s).is_some_and(|project| manager_error(app, project).is_some());
-    (132.0 + count as f32 * 65.0 + if error { 96.0 } else { 0.0 }).clamp(240.0, 400.0)
+    let has_error = owner(s).is_some_and(|project| error(app, project).is_some());
+    (132.0 + count as f32 * 65.0 + if has_error { 96.0 } else { 0.0 }).clamp(240.0, 400.0)
 }
 
-fn manager_error<'a>(app: &'a Application, project: &str) -> Option<&'a str> {
+pub fn error<'a>(app: &'a Application, project: &str) -> Option<&'a str> {
     app.services
         .error(&Task::CreateWorktree {
             project: project.into(),
@@ -220,7 +235,7 @@ pub fn manager(s: &Workspace, k: &Kit) -> El {
                     .key("manager-refresh-worktrees"),
             ),
     );
-    if let Some(error) = manager_error(app, project) {
+    if let Some(error) = error(app, project) {
         body = body.child(ui::notice("Couldn't update worktrees", error, k));
     }
     let mut rows = col()
@@ -247,7 +262,7 @@ pub fn manager(s: &Workspace, k: &Kit) -> El {
                 .gap(4.0)
                 .center_y()
                 .py(3.0)
-                .child(
+                .child(crate::context::worktree(
                     ui::choice(name(tree), &detail, current, k)
                         .grow(1.0)
                         .min_w(0.0)
@@ -260,17 +275,23 @@ pub fn manager(s: &Workspace, k: &Kit) -> El {
                             "manage-checkout",
                         ))
                         .on_press(move |s: &mut Workspace| select(s, &path)),
-                )
+                    project.into(),
+                    tree.path.clone(),
+                    crate::code_view::source_key(&tree.project.path, "manage-checkout"),
+                ))
                 .child(
                     ui::Button::new("Remove")
                         .variant(ButtonVariant::GhostMuted)
-                        .disabled(busy || tree.locked.is_some())
+                        .disabled(removal(app, project, &tree.path).is_none())
                         .on_press({
-                            let task = Task::RemoveWorktree {
-                                project: project.into(),
-                                path: tree.path.clone(),
-                            };
-                            move |s: &mut Workspace| live_mut(s).app.task(task.clone())
+                            let project = project.to_owned();
+                            let path = tree.path.clone();
+                            move |s: &mut Workspace| {
+                                let app = &mut live_mut(s).app;
+                                if let Some(task) = removal(app, &project, &path) {
+                                    app.task(task);
+                                }
+                            }
                         })
                         .build(k)
                         .px(8.0)
@@ -376,7 +397,7 @@ pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
     }
     let task = refresh_task(app, project);
     let busy = app.services.busy(&task);
-    let error = app.services.error(&task);
+    let error = error(app, project);
     let parent = project_name(app, project);
     let active = app
         .active_project
@@ -490,7 +511,7 @@ pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
             if let Some(reason) = &tree.locked {
                 help.push_str(&format!("\nLocked: {reason}"));
             }
-            body = body.child(
+            body = body.child(crate::context::worktree(
                 k.interactive(
                     row()
                         .w_full()
@@ -547,13 +568,16 @@ pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
                 .disabled(!tree.available)
                 .opacity(if tree.available { 1.0 } else { 0.5 })
                 .on_press(move |s: &mut Workspace| select(s, &path)),
-            );
+                project.into(),
+                tree.path.clone(),
+                crate::code_view::source_key(&tree.project.path, "checkout"),
+            ));
             height += 44.0;
         }
     }
     if let Some(error) = error {
         body = body.child(
-            ui::caption("Worktrees unavailable", k)
+            ui::caption("Couldn't update worktrees", k)
                 .color(k.c.danger.fg)
                 .truncate()
                 .help(error)

@@ -629,7 +629,7 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
                 .child(ui::caption("Worktrees", k).px(10.0).py(3.0));
             for tree in trees {
                 let path = tree.project.path.clone();
-                children = children.child(
+                children = children.child(crate::context::worktree(
                     ui::choice(
                         crate::checkouts::name(tree),
                         tree.branch.as_deref().unwrap_or("Detached HEAD"),
@@ -646,9 +646,15 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
                     .help(&tree.project.path)
                     .on_press(move |s: &mut Workspace| launch(s, &path))
                     .key(crate::code_view::source_key(&tree.project.path, "launch")),
-                );
+                    project.path.clone(),
+                    tree.path.clone(),
+                    crate::code_view::source_key(&tree.project.path, "launch"),
+                ));
             }
             group = group.child(children);
+        }
+        if let Some(error) = crate::checkouts::error(&l.app, &project.path) {
+            group = group.child(ui::caption(error, k).wrap().color(k.c.danger.fg).px(10.0));
         }
         projects = projects.child(group);
     }

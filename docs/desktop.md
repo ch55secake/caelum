@@ -132,6 +132,8 @@ owns each worktree. Rows show the current worktree and working, queued or unread
 activity; hover for the branch and full path. Click the project card to return to
 its original folder, or a worktree to restore its session, draft and reading position.
 Arrow keys and Enter also navigate the list. Disclosure choices persist.
+Right-click a worktree in the sidebar, manager or new-session launcher and choose
+**Delete worktree** to remove it.
 Caelum remembers created worktrees across restarts and storage-directory changes,
 and recognises older worktrees in that project's Caelum storage folder.
 Use **Refresh worktrees** to update the list, or **… → Manage worktrees** for a

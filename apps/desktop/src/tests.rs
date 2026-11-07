@@ -728,6 +728,230 @@ fn worktree_management_keeps_its_project_and_missing_rows_cannot_navigate() {
 }
 
 #[test]
+fn context_worktrees_delete_the_clicked_checkout_and_surface_failures() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let parent = "/projects/rune";
+    let path = "/worktrees/rune/key-navigation";
+    let directory = format!("{path}/app");
+    for surface in ["checkout", "manage-checkout", "launch"] {
+        let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
+        fill(&mut rt, "live-draft-0", "Keep the other project's draft");
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            // A subproject's navigation path differs from the Git worktree root.
+            app.projects
+                .iter_mut()
+                .find(|p| p.path == path)
+                .unwrap()
+                .path = directory.clone();
+            app.project_roots.insert(directory.clone(), parent.into());
+            app.services
+                .checkouts
+                .get_mut(parent)
+                .unwrap()
+                .worktrees
+                .as_mut()
+                .unwrap()
+                .worktrees
+                .iter_mut()
+                .find(|tree| tree.path == path)
+                .unwrap()
+                .project
+                .path = directory.clone();
+            app.commands();
+        });
+        match surface {
+            "manage-checkout" => rt.update(|s, _| crate::checkouts::manage(s, parent.into())),
+            "launch" => {
+                rt.update(|s, _| crate::panels::open_launcher(s));
+                advance(&mut rt, 0.2);
+                fill(&mut rt, "launch-search", "key-navigation");
+            }
+            _ => rt.update(|_, tx| tx.scroll_to_y("projects-scroll", 1000.0)),
+        }
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            for (request, command) in app.commands() {
+                if let Command::Task(Task::Worktrees { project, .. }) = command {
+                    let listing = app.services.worktrees(&project).cloned();
+                    app.apply(Event::Completed(
+                        request,
+                        Ok(Reply::Task(TaskReply::Worktrees(listing))),
+                    ));
+                }
+            }
+        });
+        advance(&mut rt, 0.3);
+        let row = crate::code_view::source_key(&directory, surface);
+        secondary(&mut rt, &row);
+        let menu = element(&rt, "context-menu");
+        assert!(
+            menu.rect
+                .iter()
+                .zip(menu.visible)
+                .all(|(a, b)| (*a - b).abs() < 1.0)
+        );
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(element(&rt, &row).focused);
+        key(
+            &mut rt,
+            Key::Function(10),
+            Mods {
+                shift: true,
+                ..Default::default()
+            },
+        );
+        advance(&mut rt, 0.2);
+        key(&mut rt, Key::End, Mods::default());
+        assert!(context_item(&rt, "Delete worktree").focused);
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(!crate::context::is_open(&rt.state));
+        let remove = |rt: &mut Runtime<Workspace>| {
+            let commands = rt.state.live.as_mut().unwrap().app.commands();
+            let removals: Vec<_> = commands
+                .into_iter()
+                .filter(|(_, c)| matches!(c, Command::Task(Task::RemoveWorktree { .. })))
+                .collect();
+            assert_eq!(removals.len(), 1);
+            assert!(
+                matches!(&removals[0].1, Command::Task(Task::RemoveWorktree { project, path: target })
+                if project == parent && target == path)
+            );
+            removals[0].0
+        };
+        let request = remove(&mut rt);
+        let failure = "Worktree contains modified or untracked files";
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .app
+                .apply(Event::Completed(request, Err(failure.into())))
+        });
+        advance(&mut rt, 0.3);
+        assert!(rt.find(&row).is_some());
+        assert!(rt.elements().iter().any(|e| !e.exiting
+            && e.text.as_deref()
+                == Some(if surface == "checkout" {
+                    "Couldn't update worktrees"
+                } else {
+                    failure
+                })));
+        secondary(&mut rt, &row);
+        choose_context(&mut rt, "Delete worktree");
+        let request = remove(&mut rt);
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            let tree = app
+                .managed_worktrees(parent)
+                .find(|tree| tree.path == path)
+                .unwrap()
+                .clone();
+            app.apply(Event::Completed(
+                request,
+                Ok(Reply::Task(TaskReply::Worktree(tree))),
+            ));
+        });
+        advance(&mut rt, 0.3);
+        assert!(rt.find(&row).is_none());
+        assert!(
+            rt.find(&crate::code_view::source_key(parent, "worktree-group"))
+                .is_none()
+        );
+        let l = rt.state.live.as_mut().unwrap();
+        assert_eq!(l.app.active_project.as_deref(), Some("/projects/caelum"));
+        assert_eq!(l.app.selected, Some(0));
+        assert_eq!(l.drafts[0].text, "Keep the other project's draft");
+        assert_eq!(l.app.managed_worktrees("/projects/caelum").count(), 2);
+        assert!(l.app.commands().iter().any(|(_, c)| matches!(c,
+            Command::Task(Task::Worktrees { project, .. }) if project == parent)));
+    }
+}
+
+#[test]
+fn context_worktree_deletion_rechecks_locks_mutations_and_catalog_changes() {
+    use caelum_core::application::{Command, Task};
+    let parent = "/projects/rune";
+    let path = "/worktrees/rune/key-navigation";
+    let row = crate::code_view::source_key(path, "checkout");
+    for changed in ["locked", "busy", "removed"] {
+        let mut rt = design_runtime("sidebar-worktrees-projects", (1280.0, 1000.0));
+        secondary(&mut rt, &row);
+        assert!(context_item(&rt, "Delete worktree").focusable);
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            if changed == "busy" {
+                app.task(Task::RemoveWorktree {
+                    project: parent.into(),
+                    path: path.into(),
+                });
+            } else {
+                let trees = &mut app
+                    .services
+                    .checkouts
+                    .get_mut(parent)
+                    .unwrap()
+                    .worktrees
+                    .as_mut()
+                    .unwrap()
+                    .worktrees;
+                if changed == "locked" {
+                    trees.iter_mut().find(|t| t.path == path).unwrap().locked =
+                        Some("Keep this worktree".into());
+                } else {
+                    trees.retain(|t| t.path != path);
+                }
+            }
+            app.commands();
+        });
+        choose_context(&mut rt, "Delete worktree");
+        assert!(
+            !rt.state
+                .live
+                .as_mut()
+                .unwrap()
+                .app
+                .commands()
+                .iter()
+                .any(|(_, c)| matches!(c, Command::Task(Task::RemoveWorktree { .. })))
+        );
+        if changed != "removed" {
+            secondary(&mut rt, &row);
+            assert!(!context_item(&rt, "Delete worktree").focusable);
+        }
+    }
+    let mut rt = design_runtime("sidebar-worktrees", (800.0, 620.0));
+    secondary(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum-native", "checkout"),
+    );
+    choose_context(&mut rt, "Delete worktree");
+    assert!(
+        !rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, c)| matches!(c, Command::Task(Task::RemoveWorktree { .. })))
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.text.as_deref() == Some("Couldn't update worktrees"))
+    );
+    assert!(rt.state.live.as_ref().unwrap().app.sessions.iter().any(
+        |session| session.scope.project == "/projects/caelum-native"
+            && session.working()
+            && !session.draft.is_empty()
+    ));
+}
+
+#[test]
 fn worktree_discovery_loads_background_projects_once_and_refreshes_without_navigation() {
     use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
     let mut rt = design_runtime("sidebar-projects", (1280.0, 1000.0));
