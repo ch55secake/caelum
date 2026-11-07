@@ -75,8 +75,15 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
     let project = "/projects/caelum";
     if matches!(
         name,
-        "sidebar-worktrees" | "sidebar-worktrees-many" | "sidebar-worktrees-projects"
+        "sidebar-worktrees"
+            | "sidebar-worktrees-many"
+            | "sidebar-worktrees-projects"
+            | "sidebar-worktrees-vercel"
     ) {
+        if name == "sidebar-worktrees-vercel" {
+            l.app.preferences.theme_family = "vercel".into();
+            l.app.preferences.accent_color = "theme".into();
+        }
         let mut trees = vec![
             json!({"path":project,"project":{"path":project,"name":"caelum"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true}),
             json!({"path":"/projects/caelum-native","project":{"path":"/projects/caelum-native","name":"caelum-native"},"branch":"feat/native-workspace","main":false,"locked":null,"prunable":null,"available":true}),
@@ -122,7 +129,10 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
                 session.queue_paused = true;
             }
         }
-        if name == "sidebar-worktrees-projects" {
+        if matches!(
+            name,
+            "sidebar-worktrees-projects" | "sidebar-worktrees-vercel"
+        ) {
             l.app.projects.push(caelum_protocol::ProjectInfo {
                 path: "/projects/rune".into(),
                 name: "rune".into(),

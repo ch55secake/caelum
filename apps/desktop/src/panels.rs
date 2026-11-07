@@ -626,7 +626,7 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
                 .w_full()
                 .pl(24.0)
                 .gap(2.0)
-                .child(ui::caption("Caelum worktrees", k).px(10.0).py(3.0));
+                .child(ui::caption("Worktrees", k).px(10.0).py(3.0));
             for tree in trees {
                 let path = tree.project.path.clone();
                 children = children.child(

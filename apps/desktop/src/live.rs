@@ -689,11 +689,9 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         let worktree_provider = active
             .map(|s| s.scope.provider)
             .unwrap_or(app.preferences.default_provider);
-        let mut group = col().w_full().radius(10.0)
+        let mut group = col().w_full()
             .key(crate::code_view::source_key(&project.path, "project-group"))
             .role("group").label(format!("{} project and worktrees", project.name))
-            .fill(if selected { k.c.layer_01 } else { rune::Color::TRANSPARENT })
-            .border(1.0, if selected { k.c.border_muted } else { rune::Color::TRANSPARENT })
             .child(crate::context::project(
             k.interactive(
                 col()
@@ -707,7 +705,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                         row()
                             .gap(7.0)
                             .center_y()
-                            .child(icon(&ui::FOLDER, 14.0).color(k.c.icon_muted))
+                            .child(icon(&ui::FOLDER, 14.0).color(if selected { k.c.icon_accent } else { k.c.icon_muted }))
                             .child(
                                 text(&project.name)
                                     .font(k.ty.ui_medium)

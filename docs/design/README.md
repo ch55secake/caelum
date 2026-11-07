@@ -132,6 +132,10 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Worktree ownership across projects](previews/rune-dark-sidebar-worktrees-projects.png) | ![Compact Caelum worktree manager](previews/rune-light-worktree-manager-small.png) |
 
+| Vercel worktrees | Compact Vercel worktrees |
+| --- | --- |
+| ![Flat Vercel worktree hierarchy](previews/rune-dark-sidebar-worktrees-vercel.png) | ![Light Vercel worktrees](previews/rune-light-sidebar-worktrees-vercel-small.png) |
+
 | Compact file tabs | Tool icons and details |
 | --- | --- |
 | ![Native compact files](previews/rune-dark-files-tabs-small.png) | ![Native collapsed tools](previews/rune-dark-tools-collapsed.png) |

@@ -433,7 +433,7 @@ pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
                                 .color(k.c.icon_muted),
                             )
                             .child(
-                                text("Caelum worktrees")
+                                text("Worktrees")
                                     .font(k.ty.small)
                                     .color(k.c.text_muted)
                                     .truncate(),
