@@ -96,16 +96,6 @@ jobs:
         with:
           name: caelum-macos
           path: ${{ runner.temp }}/release/*
-  desktop-required-check:
-    # Retain the existing branch-protection context through the stacked cutover.
-    name: desktop-frontend-build
-    needs: native-desktop
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: test "$NATIVE_RESULT" = success
-        env:
-          NATIVE_RESULT: ${{ needs.native-desktop.result }}
   release-package:
     name: release-package
     runs-on: ubuntu-latest
