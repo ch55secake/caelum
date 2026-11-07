@@ -3,6 +3,7 @@ use super::Provider;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalCommand {
     New,
+    Models,
     Timeline,
     Files,
     Changes,
@@ -14,6 +15,11 @@ pub enum LocalCommand {
 
 pub const COMMANDS: &[(&str, &str, LocalCommand)] = &[
     ("new", "Start a new session", LocalCommand::New),
+    (
+        "models",
+        "Choose a model for this session",
+        LocalCommand::Models,
+    ),
     ("timeline", "Find an earlier prompt", LocalCommand::Timeline),
     ("files", "Browse project files", LocalCommand::Files),
     ("changes", "Review local changes", LocalCommand::Changes),
@@ -52,5 +58,21 @@ impl LocalCommand {
             return Err(format!("/{name} does not take arguments."));
         }
         Ok(Some((*command, args.trim())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn models_command_opens_the_picker_for_both_providers() {
+        for provider in [Provider::Codex, Provider::OpenCode] {
+            assert_eq!(
+                LocalCommand::parse("/models", provider),
+                Ok(Some((LocalCommand::Models, "")))
+            );
+            assert!(LocalCommand::parse("/models fast", provider).is_err());
+        }
     }
 }

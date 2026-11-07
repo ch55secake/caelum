@@ -88,8 +88,9 @@ provide copy, reuse and attachment actions. Up in an empty composer recalls the
 last prompt; Shift+Tab cycles available OpenCode agents. The context meter shows
 reported token usage and model capacity when available.
 
-Type **/** to discover local and provider commands. `/new`, `/timeline`, `/files`,
-`/changes` and `/settings` open native workflows. OpenCode also supports `/usage`,
+Type **/** to discover local and provider commands. `/new`, `/models`, `/timeline`,
+`/files`, `/changes` and `/settings` open native workflows. `/models` opens the
+searchable model picker for the current session. OpenCode also supports `/usage`,
 `/stats`, provider-discovered commands and `/btw question` (`/ask` is an alias).
 Side questions have a separate editor, context, retry and answer-copy actions;
 they preserve the main draft and do not add a conversation turn. Timeline groups
