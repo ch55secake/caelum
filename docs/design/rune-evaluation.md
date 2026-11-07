@@ -21,6 +21,8 @@ the native implementation remains in the second stacked PR, #95.
 - Files, Changes and PR review share virtualized native code views. Native tests
   verify source search/refresh and exact continuous-review position across refresh
   and tab navigation, alongside the 2,000-entry/six-stream and 300-file workloads.
+  Outdated/unavailable-line comments scroll separately so a long feedback list
+  leaves the patch viewport usable.
 - **20 light/dark captures** cover workspace, inspector, compact, five-page Settings,
   typed tools, review, checks, mentions, images and crowded layouts. Ten representative
   scenes were inspected and checked in. Recognized tools omit redundant raw inputs;
@@ -31,6 +33,10 @@ the native implementation remains in the second stacked PR, #95.
   using isolated state. Read-only workspace/GitHub services passed against this
   checkout and #95: directory/file/search, Git/diff, worktrees, PR discovery/details,
   **30 changed files** and all feedback categories.
+- Apple Silicon app/DMG/CLI packaging passed architecture, ad-hoc signature,
+  version, bundle identity, URL registration, image verification and mounted-bundle
+  equality checks. The packaged CLI smoke passed cold/warm URL delivery, hidden-app
+  reopening, preserved drafts, restart and graceful quit using isolated fake providers.
 
 Real Codex remains unavailable locally because its executable is missing. These
 read-only service checks do not establish end-to-end prompt/approval/inbox delivery,

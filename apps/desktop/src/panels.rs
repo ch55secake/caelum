@@ -2052,8 +2052,11 @@ fn review_files_view(
         .iter()
         .find(|f| live(s).panels.review_file.as_ref() == Some(&f.path))
     {
+        let mut fallback = col().w_full().gap(6.0);
+        let mut has_fallback = false;
         if file.patch.is_none() {
-            code = code.child(ui::caption(
+            has_fallback = true;
+            fallback = fallback.child(ui::caption(
                 "Patch unavailable: binary or omitted by GitHub. Open GitHub for the full file.",
                 k,
             ));
@@ -2072,7 +2075,18 @@ fn review_files_view(
                         })
                     }))
         }) {
-            code = code.child(thread_view(s, k, project, url, thread));
+            has_fallback = true;
+            fallback = fallback.child(thread_view(s, k, project, url, thread));
+        }
+        if has_fallback {
+            code = code.child(
+                fallback
+                    .max_h(220.0)
+                    .scroll(ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .key("review-file-notes"),
+            );
         }
     }
     let mut body = col().w_full().grow(1.0).min_h(0.0).gap(8.0).child(

@@ -1545,6 +1545,18 @@ fn native_file_preview_attaches_an_immutable_snapshot_to_the_originating_draft()
 fn large_review_files_are_windowed_while_streams_continue() {
     let app = spec();
     let mut state = crate::evaluation::workspace();
+    let services = &mut state.live.as_mut().unwrap().app.services;
+    services.reviews.values_mut().next().unwrap().threads = (0..12).map(|i| {
+        serde_json::from_value(serde_json::json!({
+            "id":format!("outdated-{i}"), "path":"src/file-0.rs", "line":null,
+            "startLine":null, "originalLine":2, "diffSide":"RIGHT",
+            "isResolved":false, "isOutdated":true, "nextCursor":null,
+            "comments":[{"id":format!("comment-{i}"), "body":"Keep this earlier review feedback accessible.",
+                "url":"https://github.com/example/evaluation/pull/1", "author":null,
+                "createdAt":"2026-11-07T10:00:00Z", "state":null, "diffHunk":null}]
+        })).unwrap()
+    }).collect();
+    services.revision += 1;
     crate::panels::open_review(
         &mut state,
         "/evaluation".into(),
@@ -1574,6 +1586,11 @@ fn large_review_files_are_windowed_while_streams_continue() {
             .iter()
             .any(|e| e.path.ends_with("/diff/scroll") && e.rect[3] > 200.0),
         "the selected patch must have a usable viewport"
+    );
+    let notes = element(&rt, "review-file-notes");
+    assert!(
+        notes.visible[3] > 0.0 && notes.rect[1] + notes.rect[3] <= 1000.0,
+        "outdated threads remain accessible alongside the patch"
     );
     assert!(
         rt.elements()
