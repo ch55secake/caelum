@@ -328,6 +328,7 @@ pub fn on_key(s: &mut Workspace, event: &KeyEvent, tx: &mut Tx) -> bool {
         let session = &mut l.app.sessions[index];
         if session.scope.provider == Provider::OpenCode
             && !session.archived
+            && !session.forgotten
             && !session.archiving
             && let Some(choices) = l.app.choices.get(&session.scope)
             && !choices.agents.is_empty()
