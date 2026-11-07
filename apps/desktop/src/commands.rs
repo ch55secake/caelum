@@ -1,4 +1,5 @@
 //! Native surfaces for local commands; provider requests and results stay in core.
+use crate::context::EditMenu;
 use crate::ui::Button;
 use crate::{
     Workspace,
@@ -240,13 +241,15 @@ pub fn side_view(s: &Workspace, k: &Kit, padding: f32) -> El {
             .child(crate::completion::view(s, k))
             .child(rune::auto_grow(
                 text_input(&l.commands.side_editor, k.ty.ui)
-                    .key("side-question-input")
                     .label("Question")
                     .placeholder("Ask about this session…", k.c.text_muted)
                     .color(k.c.text_base)
                     .w_full()
-                    .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.side_editor)
-                    .on_input_change(crate::completion::changed)
+                    .edit_menu_changed(
+                        "side-question-input",
+                        |s| Some(&mut live_mut(s).commands.side_editor),
+                        crate::completion::changed,
+                    )
                     .on_input_key(crate::on_key)
                     .on_submit(ask),
                 2,
@@ -457,17 +460,19 @@ fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {
                 "Search your prompts…",
                 k,
             )
-            .key("timeline-search")
             .label("Find a prompt")
             .placeholder("Find a prompt…", k.c.text_muted)
             .color(k.c.text_base)
             .w_full()
             .single_line()
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search)
-            .on_input_change(|s: &mut Workspace, tx| {
-                live_mut(s).commands.timeline_selected = None;
-                tx.scroll_to_y("timeline-scroll", 0.0);
-            })
+            .edit_menu_changed(
+                "timeline-search",
+                |s| Some(&mut live_mut(s).commands.search),
+                |s, tx| {
+                    live_mut(s).commands.timeline_selected = None;
+                    tx.scroll_to_y("timeline-scroll", 0.0);
+                },
+            )
             .on_input_key(timeline_key),
         )
         .child(
@@ -777,8 +782,9 @@ fn stats(s: &Workspace, k: &Kit, index: usize, layers: &mut Vec<El>) -> El {
                     "Search projects…",
                     k,
                 )
-                .key("stats-project-search")
-                .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+                .edit_menu("stats-project-search", |s| {
+                    Some(&mut live_mut(s).commands.search)
+                }),
             )
             .build(k, layers),
     );

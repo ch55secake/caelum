@@ -1,4 +1,5 @@
 //! Native workspace views; all reads, mutations and response ownership are in core.
+use crate::context::EditMenu;
 use crate::ui::Button;
 use crate::{
     Workspace,
@@ -529,8 +530,7 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
             "Find a project or checkout…",
             k,
         )
-        .key("launch-search")
-        .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+        .edit_menu("launch-search", |s| Some(&mut live_mut(s).commands.search)),
     );
     let query = l.commands.search.text.to_lowercase();
     let mut projects = col().w_full().gap(5.0);
@@ -907,10 +907,9 @@ fn files(s: &Workspace, k: &Kit) -> El {
                     "Search files or text…",
                     k,
                 )
-                .key("file-search")
                 .grow(1.0)
                 .min_w(0.0)
-                .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.search)
+                .edit_menu("file-search", |s| Some(&mut live_mut(s).panels.search))
                 .on_submit(run_search),
             )
             .child(
@@ -951,7 +950,9 @@ fn files(s: &Workspace, k: &Kit) -> El {
                 let project = project.clone();
                 let path = hit.path.clone();
                 let line = hit.line;
-                listing = listing.child(
+                let context_project = project.clone();
+                let context_path = path.clone();
+                listing = listing.child(crate::context::path(
                     ui::choice(
                         &format!(
                             "{}{}",
@@ -968,7 +969,11 @@ fn files(s: &Workspace, k: &Kit) -> El {
                         live.panels.selection = None;
                         live.app.open_file(project.clone(), path.clone());
                     }),
-                );
+                    context_project,
+                    context_path,
+                    false,
+                    format!("file-result-{}-{}", hit.path, line.unwrap_or_default()),
+                ));
             }
             if results.truncated || results.skipped > 0 {
                 listing = listing.child(label(
@@ -1007,6 +1012,9 @@ fn files(s: &Workspace, k: &Kit) -> El {
         let selected = checkout.selected_file.as_ref() == Some(&path);
         let key = format!("file-tab-{}", crate::code_view::source_key(&project, &path));
         let close_key = format!("close-{key}");
+        let context_project = project.clone();
+        let context_path = path.clone();
+        let context_key = key.clone();
         let focused = live
             .focus_key
             .as_ref()
@@ -1031,7 +1039,7 @@ fn files(s: &Workspace, k: &Kit) -> El {
             .label(format!("Close {path}"))
             .size(22.0, 24.0)
             .group_opacity(if focused { 1.0 } else { 0.0 }, 1.0);
-        tabs = tabs.child(
+        tabs = tabs.child(crate::context::path(
             k.interactive(
                 row()
                     .h(34.0)
@@ -1091,7 +1099,11 @@ fn files(s: &Workspace, k: &Kit) -> El {
                 l.panels.selection = None;
                 l.app.open_file(project.clone(), path.clone());
             }),
-        );
+            context_project,
+            context_path,
+            false,
+            context_key,
+        ));
     }
     if !checkout.tabs.is_empty() {
         browser = browser.child(tabs).child(ui::divider(k));
@@ -1211,18 +1223,20 @@ fn files(s: &Workspace, k: &Kit) -> El {
                 .gap(4.0)
                 .child(
                     ui::field(&live.panels.find, "Find in file", "Find in file…", k)
-                        .key("local-file-search")
                         .label("Find in file")
                         .placeholder("Find in file…", k.c.text_muted)
                         .color(k.c.text_base)
                         .single_line()
                         .grow(1.0)
                         .min_w(0.0)
-                        .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.find)
-                        .on_input_change(|s: &mut Workspace, tx| {
-                            live_mut(s).panels.find_index = usize::MAX;
-                            find_next(s, false, tx);
-                        })
+                        .edit_menu_changed(
+                            "local-file-search",
+                            |s| Some(&mut live_mut(s).panels.find),
+                            |s, tx| {
+                                live_mut(s).panels.find_index = usize::MAX;
+                                find_next(s, false, tx);
+                            },
+                        )
                         .on_submit(|s: &mut Workspace, tx| find_next(s, false, tx)),
                 )
                 .child(
@@ -1310,6 +1324,7 @@ fn files(s: &Workspace, k: &Kit) -> El {
             .map(|s| s.text.clone())
             .unwrap_or_else(|| file.content.clone()),
         selection.and_then(|s| s.lines),
+        crate::code_view::source_key(project, path),
     );
     live.panels.documents[&(project.clone(), path.clone())]
         .position
@@ -1391,7 +1406,7 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
             .files
             .get(&p)
             .is_some_and(|saved| saved.expanded.contains(&f));
-        tree = tree.child(
+        tree = tree.child(crate::context::path(
             k.interactive(
                 row()
                     .w_full()
@@ -1447,7 +1462,11 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
                 }
             })
             .key(format!("file-tree-{}", entry.path)),
-        );
+            project.to_owned(),
+            entry.path.clone(),
+            dir,
+            format!("file-tree-{}", entry.path),
+        ));
         if dir && expanded && depth < 30 {
             tree = tree.child(directory(s, k, project, &entry.path, depth + 1));
         }
@@ -1613,9 +1632,10 @@ fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                     })
                     .variant(ButtonVariant::GhostMuted)
                     .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
-                    .build(&action_kit),
-                    project,
-                    path,
+                    .build(&action_kit)
+                    .key(format!("patch-context-{path}")),
+                    project.clone(),
+                    path.clone(),
                     content,
                     selected.map(|s| {
                         (
@@ -1623,6 +1643,7 @@ fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                             s.start.line.max(s.end.line) as usize,
                         )
                     }),
+                    format!("patch-context-{path}"),
                 )
             })
             .annotation(move |s, annotation| {
@@ -2534,8 +2555,9 @@ fn review_files_view(
                 "Find a file…",
                 k,
             )
-            .key("review-file-search")
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.review_search),
+            .edit_menu("review-file-search", |s| {
+                Some(&mut live_mut(s).panels.review_search)
+            }),
         )
         .child(
             col()

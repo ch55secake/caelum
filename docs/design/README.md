@@ -120,6 +120,10 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native effort choices](previews/rune-dark-composer-effort.png) | ![Native agent choices](previews/rune-light-composer-agent-small.png) |
 
+| Session context menu | Composer editing menu |
+| --- | --- |
+| ![Custom session actions](previews/rune-dark-context-session.png) | ![Custom editing actions](previews/rune-light-context-editor-small.png) |
+
 | Compact file tabs | Tool icons and details |
 | --- | --- |
 | ![Native compact files](previews/rune-dark-files-tabs-small.png) | ![Native collapsed tools](previews/rune-dark-tools-collapsed.png) |

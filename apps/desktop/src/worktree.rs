@@ -1,4 +1,5 @@
 //! A creation form owns its checkout and provider across navigation and async reads.
+use crate::context::EditMenu;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -156,9 +157,8 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             })
             .search(
                 ui::field(&form.search, "Find base branch", "Search branches…", k)
-                    .key("worktree-base-search")
-                    .on_edit(|s: &mut Workspace| {
-                        &mut live_mut(s).panels.worktree.as_mut().unwrap().search
+                    .edit_menu("worktree-base-search", |s| {
+                        Some(&mut live_mut(s).panels.worktree.as_mut()?.search)
                     }),
             )
             .build(k, layers)
@@ -167,10 +167,9 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .child(ui::caption("New branch", k))
             .child(
                 ui::field(&form.branch, "New branch", "work/my-change", k)
-                    .key("worktree-branch")
                     .disabled(busy)
-                    .on_edit(|s: &mut Workspace| {
-                        &mut live_mut(s).panels.worktree.as_mut().unwrap().branch
+                    .edit_menu("worktree-branch", |s| {
+                        Some(&mut live_mut(s).panels.worktree.as_mut()?.branch)
                     })
                     .on_input_key(|s: &mut Workspace, ev, _| {
                         if ev.key != Key::Enter {

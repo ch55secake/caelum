@@ -585,16 +585,21 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         live::overlays(s, &k, &mut layers);
         panels::overlays(s, &k, &mut layers);
         models::overlay(s, &k, &mut layers);
+        context::overlay(s, &k, &mut layers);
     }
     col()
         .w_full()
         .h_full()
         .on_key(on_key)
+        .on_secondary_press(context::workspace)
         .child(shell)
         .children(layers)
 }
 
 fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    if context::is_open(s) {
+        return context::key(s, ev);
+    }
     if s.live.as_ref().is_some_and(|l| l.session_menu.is_some()) {
         if ev.key == Key::Escape {
             live::close_session_menu(s);
