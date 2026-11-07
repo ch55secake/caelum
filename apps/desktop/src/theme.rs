@@ -21,7 +21,7 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     // Background, sidebar, panel, hover, border, text, muted, accent, solid, success, danger.
     let values = match (family, dark) {
         ("vercel", true) => [
-            "#000000", "#0a0a0a", "#141414", "#1f1f1f", "#2e2e2e", "#ededed", "#a1a1a1", "#ededed",
+            "#000000", "#000000", "#141414", "#1f1f1f", "#2e2e2e", "#ededed", "#a1a1a1", "#ededed",
             "#ededed", "#46c983", "#ff6369",
         ],
         ("vercel", false) => [

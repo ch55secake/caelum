@@ -757,7 +757,6 @@ fn vercel_theme_is_keyboard_selectable_and_retains_mode_and_accent_on_restore() 
             assert_eq!(p.theme, mode);
             assert_eq!(p.theme_family, "vercel");
             assert_eq!(p.accent_color, "teal");
-            assert_ne!(element(&rt, "main-pane").fill, element(&rt, "shell").fill);
         }
         let snapshot: Snapshot = serde_json::from_slice(
             &serde_json::to_vec(&rt.state.live.as_ref().unwrap().app.snapshot()).unwrap(),

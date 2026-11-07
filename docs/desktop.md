@@ -143,8 +143,8 @@ retry live here. Unread state persists and clears only when the loaded conversat
 is visible and following the latest messages.
 The default Caelum palette keeps surfaces neutral, with colour in selection markers,
 tab underlines, focus borders, status icons, links and primary actions.
-Choose **Vercel** for a monochrome theme with a black workspace, subtly raised
-sidebar and panels, and visible pane borders. Its light variant follows Light/System
+Choose **Vercel** for a monochrome theme with a pure-black workspace and sidebar,
+subtly raised panels, and visible pane borders. Its light variant follows Light/System
 appearance. Selecting Vercel starts with the theme's monochrome accent; other accents
 remain available. The former **Black backgrounds** setting migrates to Vercel.
 

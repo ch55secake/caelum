@@ -149,7 +149,7 @@ records the previous composer, Files inspector, merge panel and tool-header pass
 using matching fixture content.
 
 Five theme families and six accent colours (plus the theme default) apply across
-the workspace. **Vercel** uses a black workspace, subtly raised sidebar/panels,
+the workspace. **Vercel** uses a pure-black workspace and sidebar, subtly raised panels,
 visible pane borders and monochrome controls, with a corresponding light palette.
 Existing Black backgrounds preferences migrate to Vercel. Theme cards wrap in
 compact Settings and preview the current light/dark appearance.
