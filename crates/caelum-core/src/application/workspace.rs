@@ -209,6 +209,9 @@ pub struct Workspace {
     launches: HashMap<u64, (Provider, u64)>,
     remembered: HashMap<String, usize>,
     deferred_lists: HashMap<Scope, Vec<Summary>>,
+    /// Closing only removes open navigation. Reject earlier discovery/open replies
+    /// without invalidating the stable sessions or their in-flight work.
+    closed_projects: HashMap<String, u64>,
 }
 
 impl Workspace {
@@ -514,6 +517,12 @@ impl Workspace {
     }
 
     fn archived_notice(&mut self, index: usize, revision: u64) -> bool {
+        let project = &self.sessions[index].scope.project;
+        if self.closed_projects.contains_key(self.group_path(project))
+            && !self.project_is_open(project)
+        {
+            return false;
+        }
         if revision < self.archive_notice_revision {
             return false;
         }
@@ -891,6 +900,64 @@ impl Workspace {
                 provider: self.preferences.default_provider,
             });
         }
+    }
+
+    pub fn project_is_open(&self, path: &str) -> bool {
+        let root = self.group_path(path);
+        self.projects
+            .iter()
+            .any(|p| self.group_path(&p.path) == root)
+    }
+
+    /// Close a project group in navigation, retaining sessions, drafts and work.
+    pub fn close_project(&mut self, path: &str) {
+        let root = self.group_path(path).to_owned();
+        let Some(position) = self
+            .projects
+            .iter()
+            .position(|p| self.group_path(&p.path) == root)
+        else {
+            return;
+        };
+        let closed: std::collections::HashSet<_> = self
+            .projects
+            .iter()
+            .filter(|p| self.group_path(&p.path) == root)
+            .map(|p| p.path.clone())
+            .collect();
+        let active = self
+            .active_project
+            .as_ref()
+            .is_some_and(|p| self.group_path(p) == root);
+        self.closed_projects.insert(root.clone(), self.next_request);
+        self.projects.retain(|p| !closed.contains(&p.path));
+        if let Some(index) = self
+            .last_archived
+            .filter(|i| self.group_path(&self.sessions[*i].scope.project) == root)
+        {
+            self.dismiss_archive(index);
+        }
+        if active {
+            if let Some(index) = self.selected {
+                self.dismiss_side_question(index);
+            }
+            self.navigation += 1;
+            self.active_project = None;
+            self.selected = None;
+            if let Some(project) = self
+                .projects
+                .get(position.min(self.projects.len().saturating_sub(1)))
+            {
+                let path = project.path.clone();
+                self.select_project(&path);
+            }
+        }
+    }
+
+    fn closed_since(&self, project: &str, request: u64) -> bool {
+        self.closed_projects
+            .get(self.group_path(project))
+            .is_some_and(|closed| request <= *closed)
     }
 
     pub fn group_path<'a>(&'a self, path: &'a str) -> &'a str {
@@ -1517,11 +1584,15 @@ impl Workspace {
                 }
             }
             if let Ok(TaskReply::Worktree(worktree)) = &result {
-                if matches!(task, Task::CreateWorktree { .. }) {
-                    if let Some((provider, navigation)) =
-                        launch.filter(|(_, navigation)| *navigation == self.navigation)
-                    {
-                        let _ = navigation;
+                if let Task::CreateWorktree { project, .. } = &task {
+                    // Record ownership before opening: closing the group must also
+                    // reject an in-flight Open for this newly created checkout.
+                    let root = self.group_path(project).to_owned();
+                    self.project_roots
+                        .insert(worktree.project.path.clone(), root);
+                    if let Some((provider, _)) = launch.filter(|(_, navigation)| {
+                        *navigation == self.navigation && !self.closed_since(project, request)
+                    }) {
                         self.launch_project(worktree.project.path.clone(), provider);
                     }
                 }
@@ -1549,35 +1620,39 @@ impl Workspace {
                 }
             }
             if let Ok(TaskReply::Worktrees(Some(listing))) = &result {
-                let root = listing
-                    .worktrees
-                    .iter()
-                    .find(|tree| tree.main)
-                    .map(|tree| tree.project.path.clone())
-                    .unwrap_or_else(|| listing.project.path.clone());
-                for worktree in &listing.worktrees {
-                    self.project_roots
-                        .insert(worktree.project.path.clone(), root.clone());
-                    if worktree.available
-                        && !self
-                            .projects
-                            .iter()
-                            .any(|p| p.path == worktree.project.path)
-                    {
-                        self.projects.push(worktree.project.clone());
-                        for provider in Provider::ALL {
-                            let scope = Scope {
-                                project: worktree.project.path.clone(),
-                                provider,
-                            };
-                            self.request(Command::List(scope.clone()), Pending::List(scope));
+                if !self.closed_since(&listing.project.path, request)
+                    && self.project_is_open(&listing.project.path)
+                {
+                    let root = listing
+                        .worktrees
+                        .iter()
+                        .find(|tree| tree.main)
+                        .map(|tree| tree.project.path.clone())
+                        .unwrap_or_else(|| listing.project.path.clone());
+                    for worktree in &listing.worktrees {
+                        self.project_roots
+                            .insert(worktree.project.path.clone(), root.clone());
+                        if worktree.available
+                            && !self
+                                .projects
+                                .iter()
+                                .any(|p| p.path == worktree.project.path)
+                        {
+                            self.projects.push(worktree.project.clone());
+                            for provider in Provider::ALL {
+                                let scope = Scope {
+                                    project: worktree.project.path.clone(),
+                                    provider,
+                                };
+                                self.request(Command::List(scope.clone()), Pending::List(scope));
+                            }
                         }
-                    }
-                    if let Some(branch) = &worktree.branch {
-                        self.task(Task::Discover {
-                            project: worktree.project.path.clone(),
-                            branch: branch.clone(),
-                        });
+                        if let Some(branch) = &worktree.branch {
+                            self.task(Task::Discover {
+                                project: worktree.project.path.clone(),
+                                branch: branch.clone(),
+                            });
+                        }
                     }
                 }
             }
@@ -1894,12 +1969,14 @@ impl Workspace {
                             .extend(snapshot.remembered.into_iter().filter(|(_, i)| {
                                 *i < self.sessions.len() && !self.sessions[*i].archived
                             }));
-                        self.detail_queue.extend(
-                            self.sessions
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(i, s)| s.remote_id.as_ref().map(|_| i)),
-                        );
+                        let details: Vec<_> = self
+                            .sessions
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, s)| self.project_is_open(&s.scope.project))
+                            .filter_map(|(i, s)| s.remote_id.as_ref().map(|_| i))
+                            .collect();
+                        self.detail_queue.extend(details);
                         if let Some(index) = snapshot.selected.filter(|i| *i < self.sessions.len())
                         {
                             self.select(index);
@@ -1956,17 +2033,43 @@ impl Workspace {
                     }
                 } else {
                     self.dismiss_archive(index);
-                    if select.is_some_and(|(selected, navigation)| {
-                        self.selected == Some(selected) && self.navigation == navigation
-                    }) {
+                    if !self.closed_since(&self.sessions[index].scope.project, request)
+                        && select.is_some_and(|(selected, navigation)| {
+                            self.selected == Some(selected) && self.navigation == navigation
+                        })
+                    {
                         self.select(index);
                     }
                 }
             }
             (Pending::Open(provider, navigation), Reply::Project(project)) => {
+                if self.closed_since(&project.path, request) {
+                    if request == self.latest_open {
+                        self.opening = false;
+                    }
+                    return;
+                }
                 if !self.projects.iter().any(|p| p.path == project.path) {
                     self.projects.push(project.clone());
                 }
+                // Restored, closed groups defer detail reads until reopened.
+                let details: Vec<_> = self
+                    .sessions
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, s)| {
+                        self.group_path(&s.scope.project) == self.group_path(&project.path)
+                            && s.remote_id.is_some()
+                            && s.details.is_none()
+                            && !self.detail_queue.contains(i)
+                            && !self
+                                .pending
+                                .values()
+                                .any(|p| matches!(p, Pending::Details(index) if index == i))
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                self.detail_queue.extend(details);
                 if request == self.latest_open {
                     self.opening = false;
                     if provider.is_none() || navigation == self.navigation {

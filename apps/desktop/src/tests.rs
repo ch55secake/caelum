@@ -136,6 +136,139 @@ fn design_runtime(scene: &str, size: (f32, f32)) -> Runtime<Workspace> {
 }
 
 #[test]
+fn populated_sidebar_shares_space_and_scrolls_projects_and_pull_requests_independently() {
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("sidebar-projects", size);
+        let projects = element(&rt, "projects-scroll");
+        let requests = element(&rt, "requests-scroll");
+        assert!(projects.visible[3] > 130.0, "{projects:?}");
+        assert!(requests.visible[3] > 130.0, "{requests:?}");
+        assert!(element(&rt, "sidebar-scroll").visible[3] >= 100.0);
+        assert!(requests.rect[1] + requests.rect[3] <= size.1);
+        let owner = rt.state.live.as_ref().unwrap().app.selected;
+        let first = crate::code_view::source_key("/projects/caelum", "project");
+        click(&mut rt, &first);
+        for _ in 0..3 {
+            key(&mut rt, Key::Down, Mods::default());
+        }
+        advance(&mut rt, 0.3);
+        let last = element(
+            &rt,
+            &crate::code_view::source_key("/projects/tools", "project"),
+        );
+        assert!(last.focused && last.visible[3] >= 69.0, "{last:?}");
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, owner);
+        click(&mut rt, "pull-request-101");
+        for _ in 0..5 {
+            key(&mut rt, Key::Down, Mods::default());
+        }
+        advance(&mut rt, 0.3);
+        let last = element(&rt, "pull-request-106");
+        assert!(last.focused && last.visible[3] >= 51.0, "{last:?}");
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.2);
+        assert_eq!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .panels
+                .review
+                .as_ref()
+                .unwrap()
+                .1,
+            "https://github.com/ch55secake/caelum/pull/106"
+        );
+    }
+}
+
+#[test]
+fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
+    use caelum_core::application::{Command, Event, Reply};
+    let mut rt = design_runtime("sidebar-projects", (800.0, 620.0));
+    fill(&mut rt, "live-draft-0", "Retain this project draft café");
+    let project = crate::code_view::source_key("/projects/rune", "project");
+    click(&mut rt, &project);
+    click(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum", "project"),
+    );
+    let close = crate::code_view::source_key("/projects/rune", "close-project");
+    click(&mut rt, &close);
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    let first = crate::code_view::source_key("/projects/caelum", "project");
+    click(&mut rt, &first);
+    key(&mut rt, Key::Tab, Mods::default());
+    key(&mut rt, Key::Right, Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(
+        element(
+            &rt,
+            &crate::code_view::source_key("/projects/caelum", "close-project")
+        )
+        .focused,
+        "focused: {:?}",
+        rt.elements()
+            .iter()
+            .filter(|e| e.focused)
+            .map(|e| &e.key)
+            .collect::<Vec<_>>()
+    );
+    key(&mut rt, Key::Text(" ".into()), Mods::default());
+    advance(&mut rt, 0.4);
+    assert!(
+        !rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .project_is_open("/projects/caelum")
+    );
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Retain this project draft café"
+    );
+    click(&mut rt, "search-sessions");
+    fill(&mut rt, "session-search", "Refine");
+    assert!(rt.find("live-session-0").is_none());
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.open_project("/projects/caelum".into());
+        let open = l
+            .app
+            .commands()
+            .into_iter()
+            .find(|(_, c)| matches!(c, Command::Open(_)))
+            .unwrap()
+            .0;
+        l.apply(Event::Completed(
+            open,
+            Ok(Reply::Project(caelum_protocol::ProjectInfo {
+                path: "/projects/caelum".into(),
+                name: "caelum".into(),
+            })),
+        ));
+    });
+    advance(&mut rt, 0.4);
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Retain this project draft café"
+    );
+    for path in ["/projects/website", "/projects/tools", "/projects/caelum"] {
+        click(
+            &mut rt,
+            &crate::code_view::source_key(path, "close-project"),
+        );
+        advance(&mut rt, 0.4);
+    }
+    assert!(rt.state.live.as_ref().unwrap().app.selected.is_none());
+    assert!(element(&rt, "open-project").focused);
+    assert!(rt.find("welcome-open").is_some());
+    assert!(rt.find("message-composer").is_none());
+}
+
+#[test]
 fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         let mut rt = design_runtime("composer-options", size);

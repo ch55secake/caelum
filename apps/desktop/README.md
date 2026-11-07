@@ -21,7 +21,9 @@ share the root lockfile. Packaging produces an ad-hoc-signed `Caelum.app` at
 architecture-specific DMGs and CLI archives.
 
 Install/authenticate Codex or OpenCode for live sessions and `gh` for GitHub.
-⌘O opens projects; `caelum /path` also reaches a running or hidden app. Closing
+⌘O opens projects; `caelum /path` also reaches a running or hidden app. The sidebar's
+project **×** closes its checkout group and retains sessions, drafts and running work.
+Projects and Pull requests share flexible space with Sessions and scroll independently. Closing
 the window keeps work running; ⌘Q shuts down owned providers and saves editors.
 
 ## Offline development
@@ -38,10 +40,10 @@ with `python3 apps/desktop/preview/capture.py`; see [design](../../docs/design/R
 and [performance](../../docs/performance/README.md) for headless interaction replay
 and native frame-measurement commands. Pinned Rune's `--native` mode does not
 dispatch `--script` events; check OS interaction in the running application.
-The 356 light/dark, normal/compact captures include populated, empty, loading,
+The 360 light/dark, normal/compact captures include populated, empty, loading,
 error, hover, focus and disabled states. Use `--scene models` (or `worktrees`,
 `shells`, `review-loading`, `composer-options`, `files-tabs`, `tools-collapsed`,
-`merge-ready`, `merge-blocked`, `shells-collapsed`, `black`, `black-settings`, `crowded`) with `--design-fixture`
+`merge-ready`, `merge-blocked`, `shells-collapsed`, `black`, `black-settings`, `sidebar-projects`, `crowded`) with `--design-fixture`
 to inspect one.
 
 ## State and migration

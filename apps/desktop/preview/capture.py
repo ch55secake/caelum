@@ -35,7 +35,7 @@ interactions = {
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
-scenes += ("shells-collapsed", "black", "black-settings")
+scenes += ("shells-collapsed", "black", "black-settings", "sidebar-projects")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

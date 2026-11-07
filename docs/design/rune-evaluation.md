@@ -1,5 +1,38 @@
 # Native desktop evaluation record
 
+## Sidebar space and project closing — 7 November 2026
+
+This follow-up continues in #95 above #94, following `c62c0b8`.
+
+- Projects and Pull requests now share flexible, content-aware height with Sessions,
+  replacing their 110/100-point caps. The four-project, six-PR fixture gives each
+  section about **268 points at 1280×1000** and **134 points at 800×620**; Sessions
+  retains about 223/111 points. Each section scrolls independently. Project cards
+  use two lines with visible worktree/close actions; PR rows have full-title help.
+- Project **×** and native context-menu **Close project** remove the entire checkout
+  group from open navigation and session search. Stable session indices retain drafts,
+  attachments, queues, live output and reading positions. Reopening restores the
+  remembered session, including after restart; closed groups defer detail discovery
+  until reopened. Closing the final project returns to the welcome screen.
+- Request cutoffs prevent late Open, worktree discovery/creation and archive Undo
+  callbacks from reopening or selecting a closed group. Newly created checkouts record
+  their group before the asynchronous Open handoff.
+- `nix develop -c make check` passed: **226 Rust tests** (168 core, 44 native,
+  6 protocol, 8 CLI), formatting, warnings-denied workspace Clippy and **19 Python
+  checks**. New regressions cover grouped close/reopen/restart, retained live output,
+  context and queues, stale callbacks, compact section bounds, offscreen keyboard
+  navigation, search exclusion and close-action focus recovery.
+- Generated **360 captures**: 70 scenes plus 20 interaction states in both themes
+  and sizes. All trees/logs passed diagnostic checks; populated, compact and ordinary
+  sidebar images were visually reviewed. Refreshed **44 reference screens** and added
+  **two populated-sidebar references**.
+- **24 targeted headless replays** passed on the final build: background close with
+  a retained editor, keyboard close, close-all/focus recovery, context-menu close,
+  independent scrolling and closing from PR review, each in both themes and sizes.
+
+The existing manual/native-menu visual and provider acceptance gaps remain below.
+Artifacts: `/private/var/folders/sd/8zxnlg513mlfz8nkx928l6s00000gn/T/opencode/caelum-sidebar/`.
+
 ## Lighter composer, hideable commands and black appearance — 7 November 2026
 
 This follow-up continues in #95 above #94, following `9281793`.

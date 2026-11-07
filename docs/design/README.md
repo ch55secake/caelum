@@ -135,6 +135,15 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native hidden commands](previews/rune-dark-shells-hide-small.png) | ![Native reopened commands](previews/rune-light-shells-reopen-small.png) |
 
+| Projects and pull requests | Compact sidebar |
+| --- | --- |
+| ![Native populated sidebar](previews/rune-light-sidebar-projects.png) | ![Native compact sidebar](previews/rune-dark-sidebar-projects-small.png) |
+
+Projects and Pull requests receive content-aware shares of sidebar height and
+independent scrollbars. Two-line project cards keep branch/status information and
+visible worktree/close actions. Closing a project retains its sessions, drafts and
+running work for reopening; arrow keys navigate the lists and project actions.
+
 [Earlier before/after comparison (`6e56970` → `9281793`)](previews/rune-refinement-comparison.png)
 records the previous composer, Files inspector, merge panel and tool-header pass
 using matching fixture content.
@@ -176,14 +185,15 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **356 states**: 69 scenes and twenty headless
+The capture script writes **360 states**: 70 scenes and twenty headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
 includes all five Settings pages, models, launcher, session popovers/worktree forms, commands, shells,
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
 loading/error/empty views, questions, images, hover and keyboard focus. The latest
 fixtures include long composer options, multiple file tabs, collapsed tools,
 ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, black
-backgrounds and command collapse/reopen interactions.
+backgrounds, command collapse/reopen interactions and a populated four-project,
+six-PR sidebar.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
 replace the replay's `--at 9 --snap …` with `--video /path/to/replay.mp4 --duration auto`.

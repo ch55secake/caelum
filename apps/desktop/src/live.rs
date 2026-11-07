@@ -12,7 +12,9 @@ use rune::{
     text, text_input,
 };
 use rune_kit::shell::{RowStatus, SidebarHeader, SidebarRow};
-use rune_kit::{ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, glyphs};
+use rune_kit::{
+    ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar, glyphs,
+};
 
 use crate::select::Select;
 use crate::ui::Button;
@@ -160,6 +162,31 @@ impl Live {
             self.panels.archived = false;
             self.panels.screen = crate::panels::Screen::Conversation;
             self.focus();
+        }
+    }
+
+    pub(crate) fn close_project(&mut self, project: &str) {
+        self.panels.remember(&mut self.app);
+        for (index, editor) in self.drafts.iter().enumerate() {
+            self.app.sessions[index].draft.clone_from(&editor.text);
+        }
+        let selected = self.app.selected;
+        let review = self.panels.screen == crate::panels::Screen::Review
+            && self
+                .panels
+                .review
+                .as_ref()
+                .is_some_and(|(p, _)| self.app.group_path(p) == self.app.group_path(project));
+        self.app.close_project(project);
+        self.sync_editors();
+        self.session_menu = None;
+        self.menu = None;
+        if selected != self.app.selected || review {
+            self.panels.screen = crate::panels::Screen::Conversation;
+            self.panels.overlay = None;
+            self.panels.archived = false;
+            self.models = Default::default();
+            self.commands.side_owner = None;
         }
     }
 
@@ -554,12 +581,17 @@ pub fn open_project(_: &mut Workspace, tx: &mut Tx) {
 
 pub fn sidebar(s: &Workspace, k: &Kit) -> El {
     let app = &live(s).app;
+    let roots: Vec<_> = app
+        .projects
+        .iter()
+        .filter(|project| app.group_path(&project.path) == project.path)
+        .collect();
     let mut sidebar = col()
         .w_full()
         .h_full()
         .min_h(0.0)
         .label("Projects and sessions")
-        .gap(6.0)
+        .gap(4.0)
         .child(ui::brand(s, k))
         .child(
             SidebarHeader::new(if app.opening {
@@ -567,6 +599,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             } else {
                 "Projects"
             })
+            .count(roots.len())
             .action(
                 quiet_button(&PLUS, "Open project")
                     .on_press_tx(open_project)
@@ -576,13 +609,13 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             .build(k)
             .key("projects-heading"),
         );
-    let mut projects = col().w_full().gap(4.0);
-    for (index, project) in app
-        .projects
-        .iter()
-        .enumerate()
-        .filter(|(_, project)| app.group_path(&project.path) == project.path)
-    {
+    let mut projects = col()
+        .key("projects-list")
+        .role("list")
+        .w_full()
+        .gap(4.0)
+        .focus_group();
+    for project in &roots {
         let path = project.path.clone();
         let activity = app
             .sessions
@@ -628,6 +661,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 .unwrap_or_default()
         };
         let context_path = path.clone();
+        let close_path = path.clone();
+        let project_key = crate::code_view::source_key(&path, "project");
         let worktree_project = path.clone();
         let worktree_provider = active
             .map(|s| s.scope.provider)
@@ -636,6 +671,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             k.interactive(
                 col()
                     .w_full()
+                    .h(70.0)
                     .gap(5.0)
                     .padding(9.0)
                     .radius(10.0)
@@ -662,6 +698,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                                     .font(k.ty.ui_medium)
                                     .color(k.c.text_base)
                                     .truncate()
+                                    .min_w(0.0)
                                     .grow(1.0),
                             )
                             .child(
@@ -674,19 +711,18 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                                         )
                                     })
                                     .build(k)
+                                    .size(22.0, 24.0)
                                     .key(crate::code_view::source_key(&path, "create-worktree")),
+                            )
+                            .child(
+                                quiet_button(&glyphs::CLOSE, "Close project")
+                                    .on_press(move |s: &mut Workspace| live_mut(s).close_project(&close_path))
+                                    .build(k)
+                                    .key(crate::code_view::source_key(&path, "close-project"))
+                                    .label(format!("Close {}", project.name))
+                                    .help("Close project · Reopen it to return to your sessions and drafts")
+                                    .size(22.0, 24.0),
                             ),
-                    )
-                    .child(
-                        text(
-                            active
-                                .map(|s| s.title.as_str())
-                                .unwrap_or("Choose a session"),
-                        )
-                        .font(k.ty.small)
-                        .color(k.c.text_muted)
-                        .truncate()
-                        .pl(21.0),
                     )
                     .child(
                         row()
@@ -699,6 +735,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                                     .font(k.ty.small)
                                     .color(k.c.text_muted)
                                     .truncate()
+                                    .min_w(0.0)
                                     .grow(1.0),
                             )
                             .child(text(detail).font(rune::TextStyle::new(10.0, 400.0)).color(
@@ -713,6 +750,9 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             .role("button")
             .label(&project.name)
             .description(&path)
+            .help(&path)
+            .focus_group()
+            .focus_return(if roots.len() == 1 { "open-project" } else { "projects-list" })
             .focusable(true)
             .focus_ring(1.0, 0.0, k.c.border_focus)
             .on_press(move |s: &mut Workspace| {
@@ -722,19 +762,27 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 live.menu = None;
                 live.panels.screen = crate::panels::Screen::Conversation;
             })
-            .key(format!("project-{index}")),
+            .key(project_key),
             context_path,
         ));
     }
     sidebar = sidebar
         .child(
             col()
+                .key("projects-scroll")
                 .w_full()
-                .max_h(110.0)
+                .grow(1.2)
+                .min_h(0.0)
+                .max_h((roots.len() as f32 * 74.0 - 4.0).max(40.0))
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(projects),
+                .child(if roots.is_empty() {
+                    ui::caption("Open a project to get started", k).padding(8.0)
+                } else {
+                    projects
+                })
+                .scroll_bar(k),
         )
         .child(
             row()
@@ -837,6 +885,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
     for (index, session) in
         app.sessions.iter().enumerate().filter(|(_, session)| {
             session.archived == live(s).panels.archived
+                && app.project_is_open(&session.scope.project)
                 && (app.active_project.as_ref().is_some_and(|path| {
                     app.group_path(&session.scope.project) == app.group_path(path)
                 }) || !live(s).panels.sessions.text.is_empty())
@@ -957,10 +1006,16 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
-            .child(sessions),
+            .child(sessions)
+            .scroll_bar(k),
     );
     let mut seen = HashSet::new();
-    let mut requests = col().w_full().gap(2.0);
+    let mut requests = col()
+        .key("requests-list")
+        .role("list")
+        .w_full()
+        .gap(4.0)
+        .focus_group();
     for (project, checkout) in &app.services.checkouts {
         if app
             .active_project
@@ -979,13 +1034,14 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 SidebarRow::new(&pr.title)
                     .icon(&ui::BRANCH)
                     .subtitle(format!("#{} · into {}", pr.number, pr.base_ref_name))
-                    .height(48.0)
+                    .height(52.0)
                     .title_style(k.ty.ui)
                     .subtitle_style(k.ty.small)
                     .on_select(move |s: &mut Workspace, _| {
                         crate::panels::open_review(s, project.clone(), url.clone())
                     })
                     .build(k)
+                    .help(format!("#{} · {}", pr.number, pr.title))
                     .key(format!("pull-request-{}", pr.number)),
             );
         }
@@ -1000,8 +1056,14 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         )
         .child(
             col()
+                .key("requests-scroll")
                 .w_full()
-                .max_h(100.0)
+                .grow(1.2)
+                .max_h(if seen.is_empty() {
+                    44.0
+                } else {
+                    seen.len() as f32 * 56.0 - 4.0
+                })
                 .min_h(0.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
@@ -1026,7 +1088,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     }
                 } else {
                     requests
-                }),
+                })
+                .scroll_bar(k),
         );
     sidebar
 }

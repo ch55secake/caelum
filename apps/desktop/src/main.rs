@@ -644,6 +644,9 @@ fn spec() -> AppSpec<Workspace> {
             }),
             ("black", |s| evaluation::scene(s, "black")),
             ("black-settings", |s| evaluation::scene(s, "black-settings")),
+            ("sidebar-projects", |s| {
+                evaluation::scene(s, "sidebar-projects")
+            }),
             ("messages", |s| evaluation::scene(s, "messages")),
             ("archive", |s| evaluation::scene(s, "archive")),
             ("overview", |s| evaluation::scene(s, "overview")),

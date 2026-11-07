@@ -83,10 +83,13 @@ pub fn project(el: El, project: String) -> El {
                 .item(PopupItem::new("worktree", "Create worktree…"))
                 .separator()
                 .item(PopupItem::new("copy", "Copy project path"))
-                .item(PopupItem::new("reveal", "Reveal in Finder")),
+                .item(PopupItem::new("reveal", "Reveal in Finder"))
+                .separator()
+                .item(PopupItem::new("close", "Close project")),
             at,
             move |s: &mut Workspace, pick, tx| match pick {
                 Some("copy") => tx.copy(project.clone()),
+                Some("close") => live_mut(s).close_project(&project),
                 Some("reveal") => live_mut(s).app.task(Task::Reveal {
                     project: project.clone(),
                     path: ".".into(),

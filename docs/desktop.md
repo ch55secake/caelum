@@ -3,8 +3,14 @@
 ## Projects and sessions
 
 Open a project with **⌘O**, the sidebar's **+**, or `caelum /path/to/project`.
-The sidebar groups projects, sessions and related pull requests. **⌘K** searches
-sessions. **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that project's
+The sidebar gives Projects, Sessions and Pull requests independently scrollable
+space that adapts to their contents and window height. Use a project's **×** or
+right-click → **Close project** to close its checkout group. Sessions, drafts,
+attachments, queues and running work are retained; reopening the folder returns to
+the remembered session. Closing the final project returns to the welcome screen.
+Arrow keys navigate each section; Tab enters a project's actions and Left/Right
+moves between Create worktree and Close. **⌘K** searches sessions in open projects.
+**⇧⌘N** opens the project/provider launcher; **⌘N** reuses that project's
 draft. Each session retains an independent draft and reading position. Hover a
 session to close it with **×**. A temporary notice names the archived session and
 offers **Undo**; it expires after eight unengaged seconds and pauses while hovered,
