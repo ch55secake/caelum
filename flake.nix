@@ -18,14 +18,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           linuxLibraries = with pkgs; [
-            glib
-            gtk3
-            libayatana-appindicator
-            librsvg
-            libsoup_3
             openssl
-            webkitgtk_4_1
-            xdotool
           ];
         in
         {
@@ -34,9 +27,8 @@
               cargo
               clippy
               gnumake
-              nodejs_22
               pkg-config
-              pnpm
+              python3
               rust-analyzer
               rustc
               rustfmt

@@ -79,7 +79,7 @@ impl QuestionBroker {
         project: &str,
         session: &str,
         request: &str,
-        answer: Option<Answer>,
+        mut answer: Option<Answer>,
     ) -> Result<(), String> {
         let key = (
             provider.into(),
@@ -95,6 +95,18 @@ impl QuestionBroker {
                 .ok_or("Question is no longer pending")?;
             if pending.submitting {
                 return Err("An answer is already being submitted".into());
+            }
+            if let Some(values) = &answer {
+                let checked = crate::application::forms::validate(&pending.prompt, values);
+                if !checked.errors.is_empty() {
+                    return Err(checked
+                        .errors
+                        .into_iter()
+                        .map(|(key, message)| format!("{key}: {message}"))
+                        .collect::<Vec<_>>()
+                        .join("\n"));
+                }
+                answer = Some(checked.values);
             }
             pending.submitting = true;
             Arc::clone(&pending.reply)
@@ -223,7 +235,7 @@ fn validate(prompt: &QuestionPrompt) -> Result<(), String> {
             field
                 .get("key")
                 .and_then(Value::as_str)
-                .map_or(true, |key| key.is_empty() || !keys.insert(key))
+                .is_none_or(|key| key.is_empty() || !keys.insert(key))
         })
     {
         return Err("Invalid agent question".into());

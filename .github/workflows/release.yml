@@ -32,7 +32,7 @@ jobs:
       should_release: ${{ steps.tag.outputs.should_release }}
       published: ${{ steps.release.outputs.published }}
     steps:
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         id: release-app-token
         with:
@@ -41,7 +41,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: caelum
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ steps.release-app-token.outputs.token || github.token }}
@@ -87,76 +87,44 @@ jobs:
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.release_commit }}
-
-      # Use the current recovery/packaging tools even when rebuilding an older tag.
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          path: release-tools
-          sparse-checkout: scripts/release
 
       - name: Verify release tag matches project version
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           python3 - <<'PY'
-          import json
           import os
           import tomllib
           from pathlib import Path
 
           workspace_version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
-          app_version = json.loads(Path("apps/desktop/src-tauri/tauri.conf.json").read_text())["version"]
-          frontend_version = json.loads(Path("apps/desktop/package.json").read_text())["version"]
           tag = os.environ["RELEASE_TAG"]
 
-          if len({workspace_version, app_version, frontend_version}) != 1:
-              raise SystemExit(
-                  "Cargo workspace, Tauri app, and frontend package versions must match: "
-                  f"{workspace_version}, {app_version}, {frontend_version}"
-              )
           if tag != f"v{workspace_version}":
               raise SystemExit(f"Tag {tag} must match project version v{workspace_version}")
           PY
 
-      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
-          version: 10.12.1
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
+          toolchain: '1.95.0'
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build standalone CLI
-        run: cargo build --locked --release -p caelum-cli --target "${{ matrix.target }}"
-
-      - name: Build desktop app
-        env:
-          APPLE_SIGNING_IDENTITY: "-"
-        run: pnpm --filter @caelum/desktop tauri build --ci --bundles app,dmg --target "${{ matrix.target }}" -- --locked
-
       - name: Package architecture-specific release assets
         env:
           TARGET: ${{ matrix.target }}
           ARCH: ${{ matrix.arch }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: bash release-tools/scripts/release/package_macos_assets.sh
+          MACOSX_DEPLOYMENT_TARGET: '13.0'
+        run: bash scripts/release/package_macos_assets.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.arch }}
           path: ${{ runner.temp }}/release/*
@@ -174,12 +142,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: ${{ needs.prepare.outputs.published != 'true' }}
         with:
           pattern: release-*
@@ -209,7 +177,7 @@ jobs:
             --pattern SHA256SUMS \
             --dir "$RUNNER_TEMP/release"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ch55secake/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -225,7 +193,7 @@ jobs:
             "$RUNNER_TEMP/release/SHA256SUMS" \
             .
 
-      - uses: peter-evans/create-pull-request@v7
+      - uses: peter-evans/create-pull-request@v8
         with:
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

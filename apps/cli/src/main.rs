@@ -118,8 +118,8 @@ fn launch_project_in_desktop(project: Project) -> Result<(), Box<dyn std::error:
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("open")
-            .args(["-a", "Caelum", "--args"])
-            .arg(project.path())
+            .args(["-a", "Caelum"])
+            .arg(caelum_core::desktop::project_url(project.path())?)
             .output()
             .map_err(|error| {
                 format!("could not launch Caelum.app: {error}. Install the desktop app first.")

@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches: [main]
@@ -12,110 +11,98 @@ on:
       skip_bundle:
         type: boolean
         default: false
-
 permissions:
   contents: read
-
+env:
+  MACOSX_DEPLOYMENT_TARGET: '13.0'
 jobs:
   rust-format:
     name: rust-format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.revision || github.sha }}
-      - name: Install Rust formatter
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.95.0'
           components: rustfmt
       - run: cargo fmt --all -- --check
-
   rust-clippy:
     name: rust-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.revision || github.sha }}
-      - name: Install Rust linter
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.95.0'
           components: clippy
-      - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential curl file libayatana-appindicator3-dev libssl-dev \
-            librsvg2-dev libwebkit2gtk-4.1-dev libxdo-dev wget
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-
+      - run: cargo clippy --locked -p caelum-core -p caelum-protocol -p caelum-cli --all-targets -- -D warnings
   rust-test:
     name: rust-tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.revision || github.sha }}
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential curl file libayatana-appindicator3-dev libssl-dev \
-            librsvg2-dev libwebkit2gtk-4.1-dev libxdo-dev wget
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.95.0'
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
-
+      - run: cargo test --locked -p caelum-core -p caelum-protocol -p caelum-cli -- --test-threads=4
+  native-desktop:
+    name: native-desktop-tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.95.0'
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace -- --test-threads=4
+      - run: python3 apps/desktop/preview/capture.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-design-previews
+          path: apps/desktop/preview-results/
   macos-app:
     name: desktop-bundle-build
     if: ${{ inputs.skip_bundle != true }}
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.revision || github.sha }}
-      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
-          version: 10.12.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+          toolchain: '1.95.0'
       - uses: Swatinem/rust-cache@v2
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @caelum/desktop tauri build --ci --bundles app,dmg -- --locked
+      - name: Build and verify native app, DMG and CLI archive
         env:
-          APPLE_SIGNING_IDENTITY: "-"
-
-  desktop-frontend:
-    name: desktop-frontend-build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+          TARGET: aarch64-apple-darwin
+          ARCH: aarch64
+        run: |
+          RELEASE_TAG="v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          export RELEASE_TAG
+          bash scripts/release/package_macos_assets.sh
+      - uses: actions/upload-artifact@v7
         with:
-          ref: ${{ inputs.revision || github.sha }}
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @caelum/desktop build
-      - run: pnpm --filter @caelum/desktop test
-      - run: pnpm --filter @caelum/desktop exec playwright install --with-deps chromium webkit
-      - run: pnpm --filter @caelum/desktop test:ui
-
+          name: caelum-macos
+          path: ${{ runner.temp }}/release/*
   release-package:
     name: release-package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.revision || github.sha }}
       - run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
-      - run: bash -n scripts/release/package_macos_assets.sh
+      - run: python3 -m unittest discover -s scripts/profile -p 'test_*.py'
+      - run: bash -n scripts/release/package_macos_assets.sh scripts/release/package_macos_app.sh scripts/release/macos_libraries.sh

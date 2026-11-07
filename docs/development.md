@@ -2,25 +2,31 @@
 
 ## Prerequisites
 
-- Rust stable with `rustfmt` and `clippy`
-- Node.js 22 and pnpm 10
-- [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/)
+- macOS 13 or later and Xcode Command Line Tools for the desktop
+- Rust **1.95.0**, including `rustfmt` and `clippy` (`rust-toolchain.toml`)
+- Python 3.11+ for previews, packaging and release-script checks
 - A configured [Codex](codex.md) or [OpenCode](opencode.md) installation for live sessions
+- Authenticated GitHub CLI (`gh`) for pull requests
 
-Alternatively, run `nix develop` for the Rust, Node.js, pnpm and Make toolchain. The shell includes Tauri's Linux libraries; macOS platform prerequisites must be installed on the host.
+`nix develop` supplies the Rust, Python and Make tools. macOS platform tools must
+be installed on the host. Rune and rune-kit are revision-pinned; all four crates
+share the root `Cargo.lock`. Core, protocol and CLI checks also run on Linux.
 
 ## Commands
 
 ```sh
-make help                         # Available tasks
-make dev                          # Install dependencies and run the desktop
-make app                          # Build the macOS app bundle
-make frontend                     # Build only the frontend
+make dev PROJECT=.                # Run the native desktop
+make app                          # Build target/<triple>/release/bundle/macos/Caelum.app
 make cli                          # Build the standalone CLI
-make cli-run PROJECT=.            # Open a project through the CLI
-make check                        # Rust formatting, lint, tests and frontend build
+make cli-run PROJECT=.            # Open a project in the installed app
+make previews                     # Capture offline native reference scenes
+make check                        # Formatting, lint, Rust and Python tests
 ```
 
-See [contributing](contributing.md) for frontend unit tests, browser tests and focused checks. Browser tests mock the desktop/provider boundary; Rust integration tests exercise adapters against local fake servers.
+Use `cargo run --locked -p caelum-desktop -- --design-fixture` for an offline UI,
+or `--evaluation-workload` for the long-history/concurrent-stream fixture. Use
+`CAELUM_STATE=/absolute/path/to/isolated/workspace.json` for live development with
+separate saved data. Close the window to keep sessions running; quit with ⌘Q.
 
-See [architecture](architecture.md) for frontend feature folders, native command modules and shared-core boundaries, and [releasing](releasing.md) for distributable packages.
+See [contributing](contributing.md), [architecture](architecture.md),
+[performance](performance/README.md) and [releasing](releasing.md).

@@ -1,6 +1,6 @@
 # Caelum
 
-An AI coding workspace for macOS, with a Tauri desktop app and standalone Rust CLI. Work with project-scoped **Codex** and **OpenCode** sessions, browse files, review changes and manage GitHub pull requests in one place.
+An AI coding workspace for macOS, with a native Rune desktop app and standalone Rust CLI. Work with project-scoped **Codex** and **OpenCode** sessions, browse files, review changes and manage GitHub pull requests in one place.
 
 - Independent session drafts, streamed responses, tool activity and restored history.
 - Project and worktree navigation with remembered sessions and live Git status.
@@ -12,7 +12,7 @@ An AI coding workspace for macOS, with a Tauri desktop app and standalone Rust C
 
 [Download a release](https://github.com/ch55secake/caelum/releases), then configure [Codex](docs/codex.md) or [OpenCode](docs/opencode.md). Open a project and send your first message.
 
-For local development, install Rust, Node.js 22, pnpm 10 and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), then run:
+For local development, install Rust 1.95.0 and Xcode Command Line Tools, then run:
 
 ```sh
 make dev
@@ -29,11 +29,12 @@ The repository also provides a `nix develop` shell. See [development setup](docs
 - [Architecture](docs/architecture.md) · [Security](docs/security.md)
 - [Development](docs/development.md) · [Contributing](docs/contributing.md)
 - [Releasing](docs/releasing.md) · [Roadmap](docs/roadmap.md)
+- [Workspace design](docs/design/README.md) — native surfaces, previews and interaction fixtures
 
 ## Repository
 
 ```text
-apps/desktop/          Tauri + React desktop application
+apps/desktop/          Native Rune desktop application
 apps/cli/              Standalone CLI
 crates/caelum-core/    Shared application logic and provider adapters
 crates/caelum-protocol/ Serializable interface types

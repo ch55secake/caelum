@@ -10,7 +10,7 @@ caelum run "Fix the failing tests" --project .
 caelum sessions [PROJECT] --provider opencode
 ```
 
-Without a subcommand, `caelum [PROJECT]` opens the project in the installed Caelum desktop app on macOS. The project defaults to the current directory; the provider defaults to Codex.
+Without a subcommand, `caelum [PROJECT]` opens the project in the installed Caelum desktop app on macOS. The project defaults to the current directory; terminal provider commands default to Codex. A validated, encoded `caelum://open?path=…` URL reaches both cold and already-running apps, including a hidden window.
 
 Use `--session ID` with `chat` or `run` to resume a provider-owned session. `/quit` exits interactive chat. Provider permissions are denied unless explicitly approved once in the terminal.
 

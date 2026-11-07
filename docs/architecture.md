@@ -1,99 +1,93 @@
 # Architecture
 
-## Current structure
+## Ownership
 
-- `caelum-core` contains application logic that must remain independent of Tauri and the CLI. It validates project roots, resolves existing paths within the selected project, coordinates one-shot approvals, and owns managed child-process lifecycles.
-- `caelum-protocol` contains serializable types that can cross the Rust/UI boundary without importing desktop framework types, including provider-preserving approval requests.
-- `apps/desktop/src-tauri` is the privileged desktop boundary. It provides typed Tauri commands for app metadata, opening a validated project, and resolving explicit approval prompts; folder selection uses Tauri's native dialog plugin.
-- `apps/desktop/src` is a React UI. It does not access the filesystem directly.
-- `apps/cli` is a separate clap binary and links the same core library.
+- `crates/caelum-core`: renderer-independent application state, provider adapters,
+  persistence, scoped filesystem access, Git/worktrees and GitHub operations.
+- `crates/caelum-protocol`: serializable values shared by interfaces and adapters.
+- `apps/desktop`: Rune rendering, native editors/focus/dialogs, pane state and
+  macOS lifecycle integration. This is the shipping desktop application.
+- `apps/cli`: clap-based terminal workflows and desktop project launching, using
+  the same Rust providers and project validation.
 
-## Desktop source layout
+The root Cargo workspace uses Rust 1.95.0 and one lockfile. Rune/rune-kit are pinned
+to `ddf14140253bd1b963993895e3fa025d1ec58537`.
 
-`apps/desktop/src/main.tsx` is the entry point. Source ownership follows dependency layers:
+## Application runtime
 
-- `app/`: application composition and routing between workspace surfaces.
-- `ui/`: React surfaces, local interaction state, colocated styles, reusable `primitives/` and code rendering. The sidebar is a UI consumer rather than the owner of controller types.
-- `application/`: workspace coordination, session history/metadata loading, shared GitHub discovery/detail/review caches, file-workspace persistence and settings. `workspace/store.ts` owns scoped mutations, request locks and revision lifetimes; `controller.ts` exposes the application contract.
-- `domain/`: framework-independent state transitions, parsing, value types and colocated unit tests. Domains may share these values without depending on a UI surface.
-- `platform/`: desktop/browser integration utilities such as clipboard access.
+`caelum-core::application::Workspace` owns sessions, options, drafts, queues,
+approvals/questions, project selection and service requests. Commands/results
+carry their originating project/provider/session and stable local session slot.
+Request generations reject stale history, project, file and review responses.
+`Conversation` reconciles provider history with live text, reasoning and tool
+events without duplicating or overwriting newer activity.
 
-Imports point inward: UI can use application/domain/platform modules, application can use domain/platform modules, and domain code cannot import React, Tauri or UI. `scripts/check-boundaries.mjs` enforces those dependencies during builds and unit checks, including type and dynamic imports. Use direct imports from the owning module. Browser specs and native mocks remain under `apps/desktop/tests/`.
+`Runtime` uses eight normal workers, two control workers, bounded command queues,
+a 1,024-event inbox and 256-event UI drains. Arrival wakes Rune; provider I/O
+does not run on the UI thread. Cancellation and permission replies bypass the
+normal persistence gate. The shared `ProviderRuntime` owns providers, brokers,
+process registration and session-branch attribution.
 
-`Composer` owns transient command surfaces. `/btw` replaces the main form with `SideQuestionPanel`, preserving the session draft and attachments; its local question, snapshots and reply lifetime end on dismissal/navigation. Both textareas measure outside the layout flow. Composer mode changes restore the transcript's follow/reading position after layout, including same-height swaps that WebKit can clamp without a resize event. Timeline keyboard handling lives on the dialog, with explicit Escape and composer-focus restoration. Double-Escape cancellation is session-scoped and lets local dismissal handlers consume Escape first. Statistics separate project-filter/request state from `StatsOverview`; all-time calendar-day activity buckets cap chart density without changing totals. Playwright runs the full Chromium suite and focused timeline/composer/statistics coverage in WebKit.
+Codex uses one `codex app-server --listen stdio://` JSONL connection per project.
+OpenCode uses its verified local registered service or an owned loopback server.
+Only owned processes are terminated on shutdown. See [Codex](codex.md),
+[OpenCode](opencode.md) and [security boundaries](security.md).
 
-## Provider integration
+## Desktop modules
 
-The desktop Rust crate root delegates to `runtime/`. `runtime/mod.rs` composes plugins and the application, `lifecycle.rs` owns state construction and shutdown, `persistence.rs` owns persistence/startup state, and `events.rs` forwards provider and approval/question events. `commands/mod.rs` is the single IPC registry. Thin handlers live beside their owning boundary; `commands/providers/` holds shared session commands and provider-specific endpoints. OpenCode handlers separate session lifecycle, conversation execution and usage queries. Provider logic remains in `caelum-core`.
+- `main.rs`: entry point, shell, keyboard routing and offline render modes.
+- `lifecycle.rs`: standard macOS menus and `caelum://open?path=…` delivery.
+- `live.rs`: editor/application synchronization, runtime wake/drain, sidebar,
+  windowed transcript and composer controls.
+- `state.rs`: pane/view state and the original simulated interaction fixture.
+- `panels.rs`: file/change inspector, worktree/settings/session dialogs and
+  main-screen PR review. Local and review diffs have independent state.
+- `questions.rs`: form editors backed by shared Rust validation.
+- `theme.rs` / `ui.rs`: semantic palettes, typography and shared surfaces.
+- `evaluation.rs`: offline design and demanding-workload fixtures.
 
-Provider adapters, sessions, SQLite storage, Git, terminal/PTY, and filesystem operations belong in `caelum-core` or focused core submodules. Tauri commands should stay thin and validate inputs before calling core APIs. CLI commands should use those same APIs rather than duplicate behavior.
+Each session has an independent native editor and reading position. Settings,
+worktree and session dialogs scope focus. Long transcripts, file previews and
+review patches are windowed/bounded. Provider/model/effort/agent choices are
+captured when a message is queued. Rendering state never owns provider processes.
 
-The Codex adapter in `caelum-core` starts one local `codex app-server --listen stdio://` process per project and speaks the official JSONL request/notification protocol. It performs the `initialize`/`initialized` handshake, checks CLI authentication with `codex login status`, scopes thread listing and resumption to the validated project directory, and forwards streamed app-server events to the desktop. Command and file-change requests use the shared one-shot approval broker. Processes are tracked for shutdown and restarted on the next request after an unexpected exit.
+## Persistence and migration
 
-The OpenCode adapter in `caelum-core` attaches to the registered local background service after verifying `/api/info`, or starts an owned loopback `opencode serve` process per project. It scopes sessions to the validated project directory, waits for the `/api/event` subscription before fetching snapshots, and forwards permission requests through the shared one-shot approval broker. Only owned processes are terminated on shutdown. The desktop reconciles live text, thinking, and tool events with provider history and periodically refreshes selected sessions to recover missed updates.
+`~/.caelum/workspace-v1.json` stores versioned projects, sessions, drafts,
+attachments, options, queues and preferences. `CAELUM_STATE` overrides the path;
+`CAELUM_RUNE_STATE` remains a compatibility override. A lifetime file lock
+prevents concurrent desktop writers. Writes use a private temporary file,
+fsync and atomic replacement; submissions wait for their own durable snapshot.
+Invalid/future state blocks saving instead of becoming an empty workspace.
 
-See [security.md](security.md) for current permission boundaries and process lifecycle guarantees.
-See [codex.md](codex.md) for Codex CLI setup and app-server protocol behavior.
-See [opencode.md](opencode.md) for OpenCode server setup and HTTP/SSE behavior.
+On the first production-default launch, migration prefers the evaluation
+snapshot at `~/.caelum/rune/workspace-v1.json`. Otherwise it imports workspace
+metadata from `~/Library/Application Support/dev.caelum.desktop/workspace.sqlite3`.
+SQLite backup includes committed WAL data; migration runs only on the copied
+database. Sources remain available. Explicit state overrides skip migration.
+Legacy appearance/provider preferences can be imported from exported v1 JSON.
 
-## Projects and worktrees
+`branches.sqlite3` beside the snapshot retains session-specific branch history.
+Conversation history remains provider-owned. Closing the window keeps the
+runtime and state alive; Dock activation or a project URL reopens it. Quitting
+stops workers/owned providers before flushing the latest editors and releasing
+the lock. Restored queues and unacknowledged submissions pause for explicit resume.
 
-`caelum-core::worktrees` discovers checkouts with Git's NUL-delimited porcelain output and creates new branches with `git worktree add`. Storage is grouped by the original checkout name and a stable hash of the canonical common Git directory, so linked checkouts share an identity and separate clones stay independent. A project opened below the repository root retains its relative directory in other checkouts; unavailable directories and paths resolving outside a checkout cannot be selected.
+## Projects and services
 
-The desktop groups checkout directories under a logical project while keeping provider connections, sessions, drafts, file tabs, and Git review keyed by the working directory. SQLite records the root project and preferred checkout alongside per-directory session metadata. Schema v5 adds `session_branches`, keyed by canonical project path, provider, and session ID, with a nullable branch for observed detached HEAD. Schema v6 adds `session_branch_history` with a unique branch per session scope, seeded from the last saved branches. Updating the latest branch and retaining its history is transactional. Branch records survive session listing, archive/undo, and restart. Conversation history stays provider-owned.
+Core validates project roots and scoped paths. Checkouts group under a project
+while retaining independent provider sessions and drafts. Worktree creation uses
+Git's native APIs and stable per-repository storage. Removal checks active work,
+pending requests and Git dirty/locked state; it preserves branches and commits.
 
-Removal checks active provider sessions and pending requests, then uses `git worktree remove` without forcing or deleting the branch. Successful removal releases checkout-specific connections and app workspace records, including nested project directories. OpenCode's shared background service remains externally owned. Navigation and request revisions prevent delayed responses from switching the active checkout or restoring removed state.
+`SessionBranches` records branches during unambiguous execution, retaining earlier
+branches across restart/archive. Concurrent sessions in the same checkout do not
+claim each other's changes. Linked worktrees remain independent. Provider-native
+metadata can seed Codex history; idle sessions keep their historical associations.
 
-`Sidebar` keeps project rows in a height-bounded list with a remembered-session subtitle, visible branch/change status and independent worktree disclosures. `ProjectWorktrees` resolves the same checkout as project activation and shows its selected provider/session title; background titles are hydrated through session lists without resuming conversations. `sessionTitle` shares the native-title, initial-prompt and untitled fallbacks with the session list and header. Project activity badges aggregate across checkouts; `SidebarDetails` provides viewport-positioned hover/focus paths and full titles alongside screen-reader descriptions. Disclosure preferences are stored by root project path. Linked-checkout navigation reveals its worktree group, while the original checkout is also available inside expanded groups.
-
-`useSidebarView` belongs to `App` so sidebar collapse does not discard each checkout's search state or session/PR scroll positions. Sessions and Pull requests occupy separate stacked sections with independently scrolling lists and persistent headings. The session search opens on demand, including through the app-wide keyboard shortcut. `useSessionPullRequests` keeps discovery and counts independent of session filtering.
-
-## Context menus
-
-`ContextMenuProvider` composes contextual actions and renders an app-owned React menu using the current theme. Menus are portaled into the active dialog when needed, positioned within the viewport, and support keyboard navigation, dismissal, and focus restoration. Navigation revisions invalidate stale actions. Text editing snapshots the original selection, uses the clipboard plugin for copy/paste, and retains browser undo history; delayed clipboard reads cannot edit a different draft or changed selection.
-
-## GitHub pull requests
-
-`caelum-core::github` uses the installed `gh` executable and its existing authentication through bounded, noninteractive processes. Visible session branch indicators share lightweight discovery by checkout/branch. Hovering or focusing an indicator fetches richer PR metadata using its canonical HTTPS URL, preserving repository identity for forks and linked worktrees. Both GitHub Actions checks and legacy commit statuses cross the typed protocol boundary.
-
-`SessionBranches` observes execution start/completion before Tauri forwards provider events to the UI. It reads the local checkout root and branch, recording session-specific associations without attributing the current branch to historical sessions during sidebar reads. Recorded branches override Codex's native `gitInfo.branch`; unobserved Codex sessions retain native metadata. OpenCode's directory-scoped VCS endpoint cannot establish historical ownership, so unobserved sessions gain a branch on their next execution. Concurrent executions sharing a canonical checkout root suppress ambiguous branch updates, including projects opened at different subdirectories; linked worktrees remain independent. Git inspection failures retain previous associations, and disconnects clear active execution tracking.
-
-Session details and branch-update events carry both the latest branch and all recorded branches. Native session-specific branches seed history when available. PR discovery covers the full recorded history and recursively follows GitHub’s `baseRefName` to discover stack ancestors missed between local samples. Base lookups share the four-request queue and cache; visited checkout/branch keys terminate cycles. Entries are deduplicated by PR URL and linked session identity; closed or merged PRs leave the open list without removing branch history. Known base relationships remain in the in-memory cache when a child PR closes, keeping its open ancestors reachable for the current app run.
-
-Git status refreshes also sample the branch of a known, unambiguous execution under the tracking lock. Changed associations are persisted and emitted as `session-branch-updated` before the status response or execution event reaches the UI. `useSessionMetadata` applies these lightweight updates immediately, retains line counts, refreshes branch-specific PR discovery, and prevents older in-flight provider metadata from restoring the previous branch. Idle sessions retain their historical associations.
-
-`PullRequestPreviewProvider` owns the sidebar's single portaled hover card and routes overview actions to `App`. Hoverable icons are separate buttons on session rows only. Hover delays, viewport positioning, keyboard entry, focus restoration, and navigation-scoped dismissal keep previews usable without selecting a different checkout or session. `App` renders the selected PR as a dedicated main-workspace screen, keeping the conversation and inspector mounted but hidden. The sidebar remains available for direct navigation, the selected PR row is marked current, and opening a screen focuses its heading. Session/project navigation clears the selected PR; collapsing the sidebar leaves it open. Detail requests are deduplicated and cached by URL for a minute, with inactive cache entries bounded; unsubscribing a view prevents late results from replacing a different PR. Refresh failures preserve the last successful snapshot and expose retry locally.
-
-`SessionPullRequests` lists unique PR URLs attached to the current checkout's unarchived sessions beneath the session list. `useSessionPullRequests` loads session branch metadata in small batches, including off-screen sessions, without connecting their conversations. `useBranchPullRequests` shares discovery subscriptions and a four-request queue with the inline indicators. Session filtering does not affect the PR list; project changes and archive/restore update its membership. Each list row opens the PR screen directly, preserving the active session and its draft.
-
-Composer PR completion supplies only the active session to the same discovery hook, retaining its stack ancestry. Selection uses `readPullRequestDetails` to take a fresh snapshot, sharing concurrent URL-keyed reads with previews. Draft/caret revisions and unmount/availability checks discard stale attachment reads. `domain/pull-requests/pullRequestContext` normalizes and bounds the snapshot; `domain/composer/promptContext` composes its versioned envelope with file snapshots and decodes both for transcript, queue and recall. Workspace PR attachments are scoped by project/provider/session, deduplicated by canonical URL, cleared on admission and restored after failed sends. Side questions keep their own attachments and retry the exact captured prompt.
-
-Discovery requests fetch up to two matches and reject ambiguous branch associations. Successful misses clear entries, while errors retain the last successful result, expose inline retry, and shorten the visible refresh cadence from one minute to 15 seconds. **Refresh sessions** invalidates discovery immediately, including older in-flight responses, and refreshes metadata for loaded providers. Execution events await any queued fresh metadata before invalidating the resulting branch's discovery entry. Forced requests share the same bounded queue, and session metadata revisions prevent pre-refresh or pre-archive snapshots from restoring stale associations.
-
-`PullRequestChecks` uses shared check normalization for status icons, pending animations, summary counts, and check-detail links. Optional check-run `startedAt` and `completedAt` timestamps cross the protocol boundary for completed durations and running elapsed times. A shared one-second UI timer derives elapsed time from GitHub's start timestamp, resumes on visibility changes, and stops when no timed checks are running; it does not trigger detail requests. Queued checks, legacy statuses, and missing or zero timestamps have no runtime. The active screen refreshes pending checks or unknown mergeability on a 15-second cadence, with the normal one-minute cache for settled details. Reduced-motion preferences disable spinner animation.
-
-`PullRequestMerge` presents GitHub's mergeability state and a split merge button, using the shared `ChoicePicker` for merge/squash/rebase options. The shared `mergeStatus` rules drive a green ready badge in preview/screen headers, a highlighted merge panel with a checkmark, and the green action button. Refreshes and mutations temporarily replace readiness with progress; blocked states retain their explanation and a neutral disabled action. The typed `github_merge_pull_request` command uses authenticated `gh api` against the canonical PR host/repository and pins the merge to the displayed head commit. GitHub enforces permissions, enabled merge methods, and repository rules; only a confirmed API merge counts as success. Merge progress and errors live in the URL-keyed detail cache, so navigation preserves in-flight actions and duplicate submissions are suppressed. Successful merges update the detail snapshot and remove matching discovery entries, including delayed branch lookups; failures retain the PR and reload its latest metadata for retry.
-
-`github_update_pull_request_branch` requests a remote base-into-head merge through the canonical PR repository's `update-branch` API, pinned with `expected_head_sha`. Branch-update progress and errors share the detail cache with merges, preventing concurrent mutations across navigation. The API accepts updates asynchronously, so the active screen refreshes every five seconds until the head changes or the PR closes. An unconfirmed update stops waiting after 90 seconds and exposes a refresh/retry message; a failed refresh retains the previous details.
-
-The screen exposes keyboard-accessible **Overview** and **Files changed** tabs, mounting the unified review on first use and keeping selections across tab changes. `caelum-core::github::review` reads remote files through the canonical PR's REST endpoint in 30-file pages, checking the head and base around each page. It retains rename/status/count metadata and optional patches; GitHub's 3,000-file limit and omitted text patches remain visible. `PullRequestFiles` renders continuous full-height patches in the PR screen's single vertical scroll container, with sticky file headers and feedback actions, a hideable scroll-tracking navigator, and per-file/global collapse controls. The focusable navigator has independent vertical scrolling and contains scroll gestures at its edges. Resize observation and frame-scheduled page-scroll measurements bound its height to the visible space below the toolbar, including before it reaches its sticky position; compact layouts cap it at 320px. Expanded thread context stays full-height on the page. An intersection observer appends file pages near the end of the patches only while the tab is active; failed page reads retain the existing diffs and retry the same page. `DiffSection` shares themed syntax highlighting with the local Git viewer and optionally displays old/new line gutters derived from each unified hunk. These are remote PR patches, independent of local uncommitted changes.
-
-Before the first file page arrives, `PullRequestFilesSkeleton` provides decorative navigator rows and diff cards with an accessible loading status. Skeletons use theme colors and respect reduced motion; refreshes and pagination retain loaded content, while initial errors and empty results use their normal states.
-
-File headers and estimated patch space remain in the page while an active-tab intersection observer mounts patch bodies near the viewport. Once visited, bodies stay mounted across collapse and tab changes; `content-visibility` skips off-screen layout while retaining measured heights. Memoized feedback derivation, stable render callbacks, patch bodies, Markdown comments, and code rows prevent tab changes from rebuilding unchanged diffs. Jumping to a file or thread mounts its patch immediately before measuring the destination. Head changes reset the review and its rendered-file set.
-
-Review threads are matched to current file paths or rename paths, then to their current line on the declared old/new side. `DiffCode` highlights the whole patch before splitting code blocks at annotated lines, keeping comment cards outside horizontal code scrollers so they wrap normally. Multiple threads on a line remain distinct. Outdated, file-level, and omitted-line threads appear beside their file with their original diff context; original line numbers are never used to anchor outdated feedback to the current patch. Threads on unloaded or missing files stay visible after the patches and move inline as files arrive. Discussion and review summaries follow on the same page. Reply data and explicit choices belong to the review owner, preserving completed replies and selections through placement changes and file collapse.
-
-The file navigator indexes loaded threads independently of mounted patches, with per-file counts, unresolved indicators, line/range and side labels, previews, and thread states. Resolved threads use a compact, initially closed disclosure in both inline and fallback placements, and omit navigator previews while retaining their location and resolved/outdated status. The disclosure keeps its content mounted and marks explicitly selected feedback even when collapsed. Each keyboard-accessible thread link expands its file, scrolls beneath the sticky toolbar/header, and focuses the comment card or resolved disclosure. Unloaded/missing-file threads remain indexed with links to their fallback cards. Discussion and review-summary links target their sections, and thread pagination/status stays above the file layout so additional feedback is discoverable without scrolling through every patch.
-
-Feedback uses GitHub GraphQL connections for issue comments, review summaries, review threads, and additional thread replies. Each source has explicit pagination. Typed responses preserve author, Markdown, URL, file, line/range, side, resolution, outdated state, and a single diff-context hunk per thread. GraphQL errors and mismatched canonical URLs or head commits are rejected, including for reply-node requests. `usePullRequestReview` caches pages by URL, head, source, and thread/cursor with bounded concurrency and inactive-entry eviction. Refresh retains successful snapshots on error, discards older in-flight results, and restarts pagination; file pages from different base commits cannot be combined.
-
-`PullRequestReview` selects current unresolved threads and non-approval discussion/review text by default, allowing explicit selection of resolved/outdated threads. Incomplete threads require loading their remaining replies. **Address selected comments** serializes only selected loaded feedback with canonical PR and commit context into an ordinary prompt for the selected connected, idle session. The shared submit path accepts an explicit message while preserving the session's draft and attachments, model/agent choices, scoped errors, and duplicate-submission lock. Successful sends return to the conversation only if navigation still points at the originating session and PR. Oversized feedback is rejected with a request to select fewer comments rather than silently truncated. Markdown rendering skips raw HTML for descriptions and comments.
-
-## Security boundaries
-
-- Only Rust performs project path validation and future privileged operations.
-- Frontend requests are treated as untrusted input.
-- Secrets must not be stored in SQLite; use OS credential storage when provider authentication is added.
-- Agent tool permissions and destructive Git operations require explicit, appropriately scoped approval.
-- Keep Tauri capabilities narrow as commands and plugins are introduced.
+GitHub operations use authenticated `gh` through bounded subprocesses. Discovery
+follows recorded branches and stacked bases, deduplicating canonical PR URLs.
+Files and feedback paginate against the expected head/base. Review generations
+reject late pages even after a same-head refresh. Mutations remain locked across
+navigation/refresh and pin the displayed head. GitHub enforces merge permissions
+and repository rules. Selected feedback becomes editable composer context.

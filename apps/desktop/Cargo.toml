@@ -1,0 +1,16 @@
+[package]
+name = "caelum-desktop"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+publish = false
+license = "MIT"
+description = "Caelum's native coding workspace"
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "ddf14140253bd1b963993895e3fa025d1ec58537", default-features = false, features = ["accessibility", "metal-backend", "native-file-dialog"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "ddf14140253bd1b963993895e3fa025d1ec58537", features = ["markdown"] }
+serde.workspace = true
+serde_json.workspace = true
+caelum-core = { path = "../../crates/caelum-core" }
+caelum-protocol = { path = "../../crates/caelum-protocol" }

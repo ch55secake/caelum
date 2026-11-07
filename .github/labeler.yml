@@ -19,9 +19,9 @@ build:
       - any-glob-to-any-file:
           - "Cargo.toml"
           - "Cargo.lock"
-          - "package.json"
-          - "pnpm-workspace.yaml"
-          - "pnpm-lock.yaml"
+          - "rust-toolchain.toml"
+          - "flake.nix"
+          - "Makefile"
 
 ci:
   - changed-files:
@@ -49,16 +49,12 @@ security:
       - any-glob-to-any-file:
           - "docs/security/**"
           - "crates/caelum-core/src/permissions/**"
-          - "apps/desktop/src-tauri/capabilities/**"
 
 dependencies:
   - changed-files:
       - any-glob-to-any-file:
           - "**/Cargo.toml"
           - "Cargo.lock"
-          - "**/package.json"
-          - "pnpm-lock.yaml"
-          - "pnpm-workspace.yaml"
 
 bug:
   - head-branch: ["^fix/", "^bugfix/"]
