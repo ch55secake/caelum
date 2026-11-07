@@ -65,6 +65,11 @@ set -eu
 test "$#" -eq 3
 test "$1" = -a
 test "$2" = Caelum
+# Launch-only environment/output options are for the cold start; repeat opens
+# should match the CLI's normal LaunchServices request to the running app.
+if /bin/ps -axo comm= | /usr/bin/grep -Fqx "$CAELUM_SMOKE_EXECUTABLE"; then
+  exec /usr/bin/open -a "$CAELUM_SMOKE_APP" "$3"
+fi
 exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
   --env "HOME=$CAELUM_SMOKE_HOME" --env "CAELUM_STATE=$CAELUM_SMOKE_STATE" \
   --env "XDG_STATE_HOME=$CAELUM_SMOKE_HOME/state" --env "PATH=$PATH" \
@@ -80,7 +85,8 @@ exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
                                     remembered={str(p): i for i, p in enumerate(projects)}, project_roots={})))
     environment = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin",
                    "CAELUM_SMOKE_APP": str(app), "CAELUM_SMOKE_HOME": str(home),
-                   "CAELUM_SMOKE_STATE": str(state), "CAELUM_SMOKE_LOG": str(log)}
+                   "CAELUM_SMOKE_STATE": str(state), "CAELUM_SMOKE_LOG": str(log),
+                   "CAELUM_SMOKE_EXECUTABLE": str(executable)}
 
     def selected(index):
         snapshot = json.loads(state.read_text())
