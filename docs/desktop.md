@@ -126,7 +126,8 @@ Select lines and choose **Add selection** to attach them to the prompt. Files, l
 changes and continuous PR review share the same native code/diff surfaces.
 
 Expand **Caelum worktrees** inside a project group to see the worktrees created
-through Caelum. Indented folder names and a connecting line show which project
+through Caelum. The section is hidden when that project has no Caelum worktrees.
+Indented folder names and a connecting line show which project
 owns each worktree. Rows show the current worktree and working, queued or unread
 activity; hover for the branch and full path. Click the project card to return to
 its original folder, or a worktree to restore its session, draft and reading position.

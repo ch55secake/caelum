@@ -370,14 +370,13 @@ pub fn manager(s: &Workspace, k: &Kit) -> El {
 
 pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
     let app = &live(s).app;
-    let catalog = app.services.worktrees(project);
+    let count = app.managed_worktrees(project).count();
+    if count == 0 {
+        return None;
+    }
     let task = refresh_task(app, project);
     let busy = app.services.busy(&task);
     let error = app.services.error(&task);
-    if catalog.is_none() && !busy && error.is_none() {
-        return None;
-    }
-    let count = app.managed_worktrees(project).count();
     let parent = project_name(app, project);
     let active = app
         .active_project
@@ -388,7 +387,7 @@ pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
         .worktree_expanded
         .get(project)
         .copied()
-        .unwrap_or(active && count > 0);
+        .unwrap_or(active);
     let toggle_project = project.to_owned();
     let manage_project = project.to_owned();
     let mut body = col()
@@ -482,83 +481,74 @@ pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
         );
     let mut height = 36.0;
     if expanded {
-        if catalog.is_some() {
-            for tree in app.managed_worktrees(project) {
-                let path = tree.project.path.clone();
-                let selected = app.active_project.as_ref() == Some(&path);
-                let branch = tree.branch.as_deref().unwrap_or("Detached HEAD");
-                let status = status(app, tree);
-                let mut help = format!("{parent} / {}\n{branch}\n{path}\n{status}", name(tree));
-                if let Some(reason) = &tree.locked {
-                    help.push_str(&format!("\nLocked: {reason}"));
-                }
-                body =
-                    body.child(
-                        k.interactive(
-                            row()
-                                .w_full()
-                                .h(42.0)
-                                .px(8.0)
-                                .gap(7.0)
-                                .center_y()
-                                .radius(6.0)
-                                .fill(if selected {
-                                    k.c.hover
-                                } else {
-                                    rune::Color::TRANSPARENT
-                                })
-                                .child(icon(&ui::FOLDER, 12.0).color(if selected {
-                                    k.c.icon_accent
-                                } else {
-                                    k.c.icon_muted
-                                }))
+        for tree in app.managed_worktrees(project) {
+            let path = tree.project.path.clone();
+            let selected = app.active_project.as_ref() == Some(&path);
+            let branch = tree.branch.as_deref().unwrap_or("Detached HEAD");
+            let status = status(app, tree);
+            let mut help = format!("{parent} / {}\n{branch}\n{path}\n{status}", name(tree));
+            if let Some(reason) = &tree.locked {
+                help.push_str(&format!("\nLocked: {reason}"));
+            }
+            body = body.child(
+                k.interactive(
+                    row()
+                        .w_full()
+                        .h(42.0)
+                        .px(8.0)
+                        .gap(7.0)
+                        .center_y()
+                        .radius(6.0)
+                        .fill(if selected {
+                            k.c.hover
+                        } else {
+                            rune::Color::TRANSPARENT
+                        })
+                        .child(icon(&ui::FOLDER, 12.0).color(if selected {
+                            k.c.icon_accent
+                        } else {
+                            k.c.icon_muted
+                        }))
+                        .child(
+                            col()
+                                .grow(1.0)
+                                .min_w(0.0)
+                                .gap(2.0)
                                 .child(
-                                    col()
-                                        .grow(1.0)
-                                        .min_w(0.0)
-                                        .gap(2.0)
-                                        .child(
-                                            text(name(tree))
-                                                .font(k.ty.ui)
-                                                .color(k.c.text_base)
-                                                .truncate(),
-                                        )
-                                        .child(
-                                            text(&status)
-                                                .font(rune::TextStyle::new(10.0, 400.0))
-                                                .color(k.c.text_muted)
-                                                .truncate(),
-                                        ),
+                                    text(name(tree))
+                                        .font(k.ty.ui)
+                                        .color(k.c.text_base)
+                                        .truncate(),
                                 )
-                                .children(selected.then(|| {
-                                    icon(k.glyph.check_small, 12.0).color(k.c.icon_accent)
-                                })),
+                                .child(
+                                    text(&status)
+                                        .font(rune::TextStyle::new(10.0, 400.0))
+                                        .color(k.c.text_muted)
+                                        .truncate(),
+                                ),
                         )
-                        .key(crate::code_view::source_key(&tree.project.path, "checkout"))
-                        .role("button")
-                        .label(format!("Switch to worktree {}", name(tree)))
-                        .description(format!(
-                            "{parent} · {status} · {}{}",
-                            tree.project.path,
-                            if selected { " · Current checkout" } else { "" }
-                        ))
-                        .help(help)
-                        .focusable(true)
-                        .focus_selected(selected)
-                        .focus_ring(1.0, 0.0, k.c.border_focus)
-                        .disabled(!tree.available)
-                        .opacity(if tree.available { 1.0 } else { 0.5 })
-                        .on_press(move |s: &mut Workspace| select(s, &path)),
-                    );
-                height += 44.0;
-            }
-            if count == 0 {
-                body = body.child(ui::caption("No worktrees yet", k).px(8.0).py(6.0));
-                height += 28.0;
-            }
-        } else if busy {
-            body = body.child(ui::caption("Loading worktrees…", k).padding(8.0));
-            height += 34.0;
+                        .children(
+                            selected
+                                .then(|| icon(k.glyph.check_small, 12.0).color(k.c.icon_accent)),
+                        ),
+                )
+                .key(crate::code_view::source_key(&tree.project.path, "checkout"))
+                .role("button")
+                .label(format!("Switch to worktree {}", name(tree)))
+                .description(format!(
+                    "{parent} · {status} · {}{}",
+                    tree.project.path,
+                    if selected { " · Current checkout" } else { "" }
+                ))
+                .help(help)
+                .focusable(true)
+                .focus_selected(selected)
+                .focus_ring(1.0, 0.0, k.c.border_focus)
+                .disabled(!tree.available)
+                .opacity(if tree.available { 1.0 } else { 0.5 })
+                .on_press(move |s: &mut Workspace| select(s, &path)),
+            );
+            height += 44.0;
         }
     }
     if let Some(error) = error {
