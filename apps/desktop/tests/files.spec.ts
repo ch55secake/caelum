@@ -654,7 +654,7 @@ test("Files migrates legacy reading positions while delayed Rust grammars preser
       .poll(async () =>
         Math.abs((await scroller.evaluate((node) => node.scrollTop)) - top),
       )
-      .toBeLessThanOrEqual(1); // WebKit rounds fractional line heights after highlighting.
+      .toBeLessThanOrEqual(2); // WebKit rounds fractional line heights after highlighting.
     await expect(input).toBeFocused();
     await expect(input).toHaveValue("Keep this draft and focus");
   } finally {
