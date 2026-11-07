@@ -30,9 +30,8 @@ For visual changes, run `make previews` and inspect light/dark, inspector,
 compact and settings scenes. Native frame measurements are described in
 [performance](performance/README.md).
 
-CI runs portable Rust checks on Linux, native checks/previews and packaging on
-macOS, and Python release/profile checks. The historical required context
-`desktop-frontend-build` gates the native-test job during the stacked cutover;
-it runs no web build. `desktop-bundle-build` verifies the app, DMG and CLI archive.
+CI runs portable Rust checks on Linux, native tests/previews and packaging on
+macOS, and Python release/profile checks. `desktop-bundle-build` verifies the
+app, DMG and CLI archive.
 
 Use Conventional Commits and the repository's pull-request template.
