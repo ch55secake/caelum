@@ -1116,6 +1116,15 @@ fn models_slash_command_opens_the_picker_for_the_current_session() {
     assert!(live.models.is_open());
     assert!(live.app.sessions[0].draft.is_empty());
     assert!(!live.app.sessions[0].submitting);
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| {
+        matches!(
+            command,
+            caelum_core::application::Command::Choices(scope)
+                if scope.project == "/project"
+                    && scope.provider == caelum_core::application::Provider::Codex
+        )
+    }));
     assert!(
         rt.elements()
             .iter()
