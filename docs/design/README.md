@@ -127,9 +127,9 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native check details](previews/rune-light-check-details.png) | ![Native branch behind](previews/rune-dark-merge-behind-small.png) |
 
-| Black workspace | Black appearance setting |
+| Vercel workspace | Vercel appearance setting |
 | --- | --- |
-| ![Native black workspace](previews/rune-dark-black.png) | ![Native black settings](previews/rune-dark-black-settings-small.png) |
+| ![Native Vercel workspace](previews/rune-dark-vercel.png) | ![Native Vercel settings](previews/rune-dark-vercel-settings-small.png) |
 
 | Hidden background commands | Reopened command previews |
 | --- | --- |
@@ -148,9 +148,11 @@ running work for reopening; arrow keys navigate the lists and project actions.
 records the previous composer, Files inspector, merge panel and tool-header pass
 using matching fixture content.
 
-Four theme families and six accent colours (plus the theme default) apply across
-the workspace. The saved **Black backgrounds** option uses black workspace/sidebar
-surfaces and near-black panels in dark appearance, keeping theme text and accents.
+Five theme families and six accent colours (plus the theme default) apply across
+the workspace. **Vercel** uses a black workspace, subtly raised sidebar/panels,
+visible pane borders and monochrome controls, with a corresponding light palette.
+Existing Black backgrounds preferences migrate to Vercel. Theme cards wrap in
+compact Settings and preview the current light/dark appearance.
 Rune follows system reduced-motion preferences. Use the running
 application to judge focus, typing, scrolling, pane motion and OS context menus;
 headless replays provide deterministic interaction coverage.
@@ -191,8 +193,8 @@ includes all five Settings pages, models, launcher, session popovers/worktree fo
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
 loading/error/empty views, questions, images, hover and keyboard focus. The latest
 fixtures include long composer options, multiple file tabs, collapsed tools,
-ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, black
-backgrounds, command collapse/reopen interactions and a populated four-project,
+ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, Vercel
+appearance, command collapse/reopen interactions and a populated four-project,
 six-PR sidebar.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,

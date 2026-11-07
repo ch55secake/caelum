@@ -3,22 +3,31 @@ use rune_kit::{Kit, MarkdownStyle};
 
 // Caelum's default palette, mapped to Rune's semantic component tokens.
 pub fn kit(dark: bool) -> Kit {
-    appearance(dark, "caelum", "violet", false)
+    appearance(dark, "caelum", "violet")
 }
 
-pub const FAMILIES: [(&str, &str); 4] = [
+pub const FAMILIES: [(&str, &str); 5] = [
     ("caelum", "Caelum"),
+    ("vercel", "Vercel"),
     ("catppuccin", "Catppuccin"),
     ("nord", "Nord"),
     ("tokyo-night", "Tokyo Night"),
 ];
 pub const ACCENTS: [&str; 7] = ["theme", "violet", "blue", "teal", "green", "amber", "rose"];
 
-pub fn appearance(dark: bool, family: &str, accent_name: &str, black_backgrounds: bool) -> Kit {
+pub fn appearance(dark: bool, family: &str, accent_name: &str) -> Kit {
     let mut k = Kit::neutral(dark);
     let color = |light, dark_value| hex(if dark { dark_value } else { light }).unwrap();
     // Background, sidebar, panel, hover, border, text, muted, accent, solid, success, danger.
-    let mut values = match (family, dark) {
+    let values = match (family, dark) {
+        ("vercel", true) => [
+            "#000000", "#0a0a0a", "#141414", "#1f1f1f", "#2e2e2e", "#ededed", "#a1a1a1", "#ededed",
+            "#ededed", "#46c983", "#ff6369",
+        ],
+        ("vercel", false) => [
+            "#ffffff", "#fafafa", "#f2f2f2", "#eaeaea", "#d9d9d9", "#171717", "#666666", "#171717",
+            "#171717", "#007a43", "#c92035",
+        ],
         ("catppuccin", true) => [
             "#1e1e2e", "#181825", "#313244", "#45475a", "#45475a", "#cdd6f4", "#a6adc8", "#cba6f7",
             "#6c468f", "#a6e3a1", "#f38ba8",
@@ -52,9 +61,6 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str, black_backgrounds
             "#6659b0", "#337348", "#b53a51",
         ],
     };
-    if dark && black_backgrounds {
-        values[..5].copy_from_slice(&["#000000", "#000000", "#080808", "#141414", "#242424"]);
-    }
     let [
         bg,
         sidebar,
@@ -68,7 +74,7 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str, black_backgrounds
         success,
         danger,
     ] = values.map(|value| hex(value).unwrap());
-    if let Some((light, dark, fill)) = match accent_name {
+    let custom_accent = match accent_name {
         "violet" => Some(("#6c56b0", "#a39af6", "#6659b0")),
         "blue" => Some(("#3568b0", "#82b4f4", "#3568b0")),
         "teal" => Some(("#216f68", "#72c7bf", "#23776f")),
@@ -76,7 +82,8 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str, black_backgrounds
         "amber" => Some(("#875819", "#e4b56e", "#94621c")),
         "rose" => Some(("#a54163", "#e79ab0", "#ad476a")),
         _ => None,
-    } {
+    };
+    if let Some((light, dark, fill)) = custom_accent {
         accent = color(light, dark);
         solid = hex(fill).unwrap();
     }
@@ -93,8 +100,17 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str, black_backgrounds
     k.c.bg_accent = solid;
     k.c.bg_icon_button_contrast = k.c.bg_accent;
     k.c.submit_highlight = Color::TRANSPARENT;
-    k.c.submit_fg = Color::WHITE;
-    k.c.submit_icon = Color::WHITE;
+    k.c.submit_fg = if family == "vercel" && dark && custom_accent.is_none() {
+        sidebar
+    } else {
+        Color::WHITE
+    };
+    k.c.submit_icon = k.c.submit_fg;
+    if family == "vercel" {
+        k.c.bg_contrast = solid;
+        k.c.text_contrast = k.c.submit_fg;
+        k.c.knob_on = k.c.submit_fg;
+    }
     k.c.text_base = text;
     k.c.text_strong = text;
     k.c.text_muted = muted;
@@ -107,8 +123,8 @@ pub fn appearance(dark: bool, family: &str, accent_name: &str, black_backgrounds
     k.c.border_base = border;
     k.c.border_muted = border;
     k.c.border_weak = border;
-    k.c.border_strong = if dark && black_backgrounds {
-        hex("#303030").unwrap()
+    k.c.border_strong = if family == "vercel" {
+        color("#c9c9c9", "#3a3a3a")
     } else if family == "caelum" {
         color("#cccccc", "#3b3b3b")
     } else {

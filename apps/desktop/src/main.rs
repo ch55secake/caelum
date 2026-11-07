@@ -404,7 +404,6 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
                 dark,
                 &live.app.preferences.theme_family,
                 &live.app.preferences.accent_color,
-                live.app.preferences.black_backgrounds,
             )
         },
     );
@@ -531,7 +530,15 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     // retaining rounded controls and composer surfaces inside the panes.
     let mut shell_kit = k.clone();
     shell_kit.radius.lg = 0.0;
-    shell_kit.c.border_muted = k.c.bg_base;
+    shell_kit.c.border_muted = if s
+        .live
+        .as_ref()
+        .is_some_and(|l| l.app.preferences.theme_family == "vercel")
+    {
+        k.c.border_base
+    } else {
+        k.c.bg_base
+    };
     let shell = SplitView::new(main)
         .sidebar(
             &sidebar_pane,
@@ -642,8 +649,10 @@ fn spec() -> AppSpec<Workspace> {
             ("shells-collapsed", |s| {
                 evaluation::scene(s, "shells-collapsed")
             }),
-            ("black", |s| evaluation::scene(s, "black")),
-            ("black-settings", |s| evaluation::scene(s, "black-settings")),
+            ("vercel", |s| evaluation::scene(s, "vercel")),
+            ("vercel-settings", |s| {
+                evaluation::scene(s, "vercel-settings")
+            }),
             ("sidebar-projects", |s| {
                 evaluation::scene(s, "sidebar-projects")
             }),

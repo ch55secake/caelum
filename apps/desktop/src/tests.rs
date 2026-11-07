@@ -723,68 +723,72 @@ fn collapsed_background_commands_keep_running_and_remain_session_local() {
 }
 
 #[test]
-fn black_backgrounds_toggle_saves_and_preserves_theme_and_accent_across_modes() {
+fn vercel_theme_is_keyboard_selectable_and_retains_mode_and_accent_on_restore() {
     use caelum_core::application::{Event, Reply, Snapshot};
-    let mut rt = design_runtime("black-settings", (800.0, 620.0));
-    click(&mut rt, "black-backgrounds");
-    assert!(
-        !rt.state
-            .live
-            .as_ref()
-            .unwrap()
-            .app
-            .preferences
-            .black_backgrounds
-    );
-    key(&mut rt, Key::Text(" ".into()), Mods::default());
-    advance(&mut rt, 0.2);
-    assert!(
-        rt.state
-            .live
-            .as_ref()
-            .unwrap()
-            .app
-            .preferences
-            .black_backgrounds
-    );
-    assert!(element(&rt, "black-backgrounds").focused);
-    click(&mut rt, "family-nord");
-    click(&mut rt, "accent-teal");
-    for mode in ["light", "dark", "system"] {
-        click(&mut rt, &format!("theme-{mode}"));
-        let p = &rt.state.live.as_ref().unwrap().app.preferences;
-        assert_eq!(p.theme, mode);
-        assert!(p.black_backgrounds);
-        assert_eq!(p.theme_family, "nord");
-        assert_eq!(p.accent_color, "teal");
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("vercel-settings", size);
+        click(&mut rt, "accent-violet");
+        click(&mut rt, "family-caelum");
+        key(&mut rt, Key::Tab, Mods::default());
+        advance(&mut rt, 0.1);
+        assert!(element(&rt, "family-vercel").focused);
+        key(&mut rt, Key::Text(" ".into()), Mods::default());
+        advance(&mut rt, 0.2);
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().app.preferences.accent_color,
+            "theme"
+        );
+        for (family, _) in crate::theme::FAMILIES {
+            let card = element(&rt, &format!("family-{family}"));
+            assert!(
+                card.rect
+                    .iter()
+                    .zip(card.visible)
+                    .all(|(a, b)| (*a - b).abs() < 1.0),
+                "{card:?}"
+            );
+        }
+        click(&mut rt, "accent-teal");
+        click(&mut rt, "family-vercel");
+        for mode in ["light", "dark", "system"] {
+            click(&mut rt, &format!("theme-{mode}"));
+            advance(&mut rt, 0.3);
+            let p = &rt.state.live.as_ref().unwrap().app.preferences;
+            assert_eq!(p.theme, mode);
+            assert_eq!(p.theme_family, "vercel");
+            assert_eq!(p.accent_color, "teal");
+            assert_ne!(element(&rt, "main-pane").fill, element(&rt, "shell").fill);
+        }
+        let snapshot: Snapshot = serde_json::from_slice(
+            &serde_json::to_vec(&rt.state.live.as_ref().unwrap().app.snapshot()).unwrap(),
+        )
+        .unwrap();
+        let mut restored = caelum_core::application::Workspace::default();
+        restored.enable_store("unused-fixture-state.json".into());
+        let load = restored.commands().pop().unwrap().0;
+        restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
+        assert_eq!(restored.preferences.theme_family, "vercel");
+        assert_eq!(restored.preferences.accent_color, "teal");
     }
-    let snapshot: Snapshot = serde_json::from_slice(
-        &serde_json::to_vec(&rt.state.live.as_ref().unwrap().app.snapshot()).unwrap(),
-    )
-    .unwrap();
-    let mut restored = caelum_core::application::Workspace::default();
-    restored.enable_store("unused-fixture-state.json".into());
-    let load = restored.commands().pop().unwrap().0;
-    restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
-    assert!(restored.preferences.black_backgrounds);
-    assert_eq!(restored.preferences.theme_family, "nord");
-    assert_eq!(restored.preferences.accent_color, "teal");
-    for (family, _) in crate::theme::FAMILIES {
-        for dark in [false, true] {
-            let regular = crate::theme::appearance(dark, family, "teal", false);
-            let black = crate::theme::appearance(dark, family, "teal", true);
-            assert_eq!(black.c.text_accent, regular.c.text_accent);
-            assert_eq!(black.c.bg_accent, regular.c.bg_accent);
-            assert_eq!(black.c.text_base, regular.c.text_base);
-            if dark {
-                assert_eq!(black.c.bg_base, rune::color::hex("#000000").unwrap());
-                assert_eq!(black.c.bg_deep, black.c.bg_base);
-                assert_eq!(black.c.layer_01, rune::color::hex("#080808").unwrap());
+    let luminance = |c: rune::Color| {
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
             } else {
-                assert_eq!(black.c.bg_base, regular.c.bg_base);
-                assert_eq!(black.c.bg_deep, regular.c.bg_deep);
-                assert_eq!(black.c.layer_01, regular.c.layer_01);
+                ((v + 0.055) / 1.055).powf(2.4)
             }
+        };
+        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+    };
+    for dark in [false, true] {
+        for accent in crate::theme::ACCENTS {
+            let k = crate::theme::appearance(dark, "vercel", accent);
+            let foreground = luminance(k.c.submit_fg);
+            let background = luminance(k.c.bg_icon_button_contrast);
+            assert!(
+                (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05) >= 4.5,
+                "unreadable Vercel submit control: {dark}, {accent}"
+            );
         }
     }
 }

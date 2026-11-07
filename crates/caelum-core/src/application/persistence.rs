@@ -15,7 +15,6 @@ mod migration;
 pub struct Preferences {
     pub files: BTreeMap<String, FileWorkspace>,
     pub theme: String,
-    pub black_backgrounds: bool,
     pub theme_family: String,
     pub accent_color: String,
     pub default_provider: Provider,
@@ -34,7 +33,6 @@ impl Default for Preferences {
         Self {
             files: BTreeMap::new(),
             theme: "system".into(),
-            black_backgrounds: false,
             theme_family: "caelum".into(),
             accent_color: "violet".into(),
             default_provider: Provider::Codex,
@@ -86,7 +84,7 @@ impl Preferences {
         if let Some(theme @ ("light" | "dark" | "system")) = value["theme"].as_str() {
             settings.theme = theme.into();
         }
-        if let Some(family @ ("caelum" | "catppuccin" | "nord" | "tokyo-night")) =
+        if let Some(family @ ("caelum" | "vercel" | "catppuccin" | "nord" | "tokyo-night")) =
             value["themeFamily"].as_str()
         {
             settings.theme_family = family.into();
@@ -236,7 +234,15 @@ impl Store {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.to_string()),
         };
-        let state: Snapshot = serde_json::from_slice(&bytes)
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("Cannot read saved workspace: {e}"))?;
+        // The former black-surface override is now a complete theme. Migrate at
+        // the read boundary so the next snapshot contains only the new setting.
+        if value["preferences"]["blackBackgrounds"] == true {
+            value["preferences"]["themeFamily"] = "vercel".into();
+            value["preferences"]["accentColor"] = "theme".into();
+        }
+        let state: Snapshot = serde_json::from_value(value)
             .map_err(|e| format!("Cannot read saved workspace: {e}"))?;
         if state.version != 1 {
             return Err("Unsupported workspace version; saved data was preserved".into());

@@ -485,7 +485,6 @@ fn workspace_roundtrip_keeps_drafts_and_unknown_versions_are_not_imported() {
     ));
     let store = Store(directory.join("workspace.json"));
     let mut app = Workspace::default();
-    app.preferences.black_backgrounds = true;
     app.preferences.theme_family = "nord".into();
     app.preferences.accent_color = "teal".into();
     let index = app.new_session(scope(Provider::OpenCode, "/project with spaces"));
@@ -496,15 +495,30 @@ fn workspace_roundtrip_keeps_drafts_and_unknown_versions_are_not_imported() {
     );
     store.save(&app.snapshot()).unwrap();
     assert_eq!(store.load().unwrap(), Some(app.snapshot()));
-    let mut old = serde_json::to_value(app.snapshot()).unwrap();
-    old["preferences"]
-        .as_object_mut()
-        .unwrap()
-        .remove("blackBackgrounds");
-    let old: Snapshot = serde_json::from_value(old).unwrap();
-    assert!(!old.preferences.black_backgrounds);
-    assert_eq!(old.preferences.theme_family, "nord");
-    assert_eq!(old.preferences.accent_color, "teal");
+    for mode in ["light", "dark", "system"] {
+        for black in [false, true] {
+            let mut old = serde_json::to_value(app.snapshot()).unwrap();
+            old["preferences"]["theme"] = mode.into();
+            old["preferences"]["blackBackgrounds"] = black.into();
+            std::fs::write(&store.0, serde_json::to_vec(&old).unwrap()).unwrap();
+            let migrated = store.load().unwrap().unwrap();
+            assert_eq!(migrated.preferences.theme, mode);
+            assert_eq!(
+                migrated.preferences.theme_family,
+                if black { "vercel" } else { "nord" }
+            );
+            assert_eq!(
+                migrated.preferences.accent_color,
+                if black { "theme" } else { "teal" }
+            );
+            assert_eq!(migrated.sessions, app.snapshot().sessions);
+            store.save(&migrated).unwrap();
+            assert_eq!(store.load().unwrap(), Some(migrated.clone()));
+            assert!(serde_json::to_value(migrated).unwrap()["preferences"]
+                .get("blackBackgrounds")
+                .is_none());
+        }
+    }
     let mut future = app.snapshot();
     future.version = 2;
     store.save(&future).unwrap();
