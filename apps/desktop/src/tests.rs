@@ -285,13 +285,7 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                     .working = working
             });
             advance(&mut rt, 0.3);
-            for name in [
-                "model-trigger",
-                "provider-trigger",
-                "effort-trigger",
-                "agent-trigger",
-                "send",
-            ] {
+            for name in ["model-trigger", "effort-trigger", "agent-trigger", "send"] {
                 let e = element(&rt, name);
                 assert!(e.rect[2] >= 32.0 && e.rect[3] >= 28.0, "{name}: {e:?}");
                 assert!(
@@ -320,13 +314,85 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                     Some("Stop generation")
                 );
             }
-            click(&mut rt, "agent-trigger");
-            key(&mut rt, Key::Escape, Mods::default());
-            advance(&mut rt, 0.2);
-            assert!(element(&rt, "agent-trigger").focused);
+            assert!(rt.find("provider-trigger").is_none());
+            for name in ["effort", "agent"] {
+                let trigger = format!("{name}-trigger");
+                click(&mut rt, &trigger);
+                let menu = element(&rt, &format!("{name}-content"));
+                assert!(
+                    menu.rect
+                        .iter()
+                        .zip(menu.visible)
+                        .all(|(a, b)| (*a - b).abs() < 1.0),
+                    "{menu:?}"
+                );
+                key(&mut rt, Key::Escape, Mods::default());
+                advance(&mut rt, 0.2);
+                assert!(element(&rt, &trigger).focused);
+            }
             assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
         }
     }
+}
+
+#[test]
+fn composer_menus_use_provider_ids_restore_defaults_and_dismiss_on_session_change() {
+    let mut rt = design_runtime("composer-options", (800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        let scope = app.sessions[0].scope.clone();
+        app.choices
+            .get_mut(&scope)
+            .unwrap()
+            .agents
+            .push(caelum_protocol::ProviderChoice {
+                id: "custom-review".into(),
+                name: "Review assistant".into(),
+            });
+    });
+    advance(&mut rt, 0.2);
+    let draft = rt.state.live.as_ref().unwrap().drafts[0].text.clone();
+    click(&mut rt, "agent-trigger");
+    assert_eq!(
+        element(&rt, "option3").label.as_deref(),
+        Some("Review assistant")
+    );
+    click(&mut rt, "option3");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .agent
+            .as_deref(),
+        Some("custom-review")
+    );
+    click(&mut rt, "effort-trigger");
+    key(&mut rt, Key::End, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .effort
+            .as_deref(),
+        Some("Low")
+    );
+    for name in ["effort", "agent"] {
+        click(&mut rt, &format!("{name}-trigger"));
+        click(&mut rt, "option0");
+    }
+    let options = &rt.state.live.as_ref().unwrap().app.sessions[0].options;
+    assert!(options.effort.is_none() && options.agent.is_none());
+    assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, draft);
+    let other = rt.state.live.as_ref().unwrap().app.sessions[1]
+        .options
+        .clone();
+    click(&mut rt, "agent-trigger");
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(1));
+    advance(&mut rt, 0.3);
+    assert!(rt.find("agent-content").is_none());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[1].options,
+        other
+    );
 }
 
 #[test]
@@ -1277,7 +1343,7 @@ fn long_drafts_and_crowded_sidebar_keep_controls_in_bounds() {
         "live-draft-0",
         &"A long Unicode draft café ☁️\n".repeat(30),
     );
-    for name in ["nav-settings", "undo-archive", "send", "provider-trigger"] {
+    for name in ["nav-settings", "undo-archive", "send", "model-trigger"] {
         let e = element(&rt, name);
         assert!(
             e.visible[2] > 0.0 && e.visible[3] > 0.0,
@@ -2531,7 +2597,7 @@ fn real_workspace_services_smoke() {
 }
 
 #[test]
-fn live_provider_and_model_controls_apply_to_first_send() {
+fn settings_provider_and_composer_choices_apply_to_first_send() {
     use caelum_core::application::{Command, Provider, Scope};
     use caelum_protocol::{ProviderChoice, ProviderChoices, ProviderModelChoice};
     let mut rt = live_runtime();
@@ -2565,10 +2631,28 @@ fn live_provider_and_model_controls_apply_to_first_send() {
             },
         );
     });
-    click(&mut rt, "provider-trigger");
-    click(&mut rt, "option1");
+    fill(&mut rt, "live-draft-0", "Keep this Codex draft");
+    click(&mut rt, "nav-settings");
+    click(&mut rt, "settings-providers");
+    click(&mut rt, "default-provider-opencode");
+    key(&mut rt, Key::Escape, Mods::default());
+    click(&mut rt, "new-session");
+    let index = rt.state.live.as_ref().unwrap().app.selected.unwrap();
+    let draft = format!("live-draft-{index}");
+    assert_ne!(index, 0);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep this Codex draft"
+    );
     assert_eq!(
         rt.state.live.as_ref().unwrap().app.sessions[0]
+            .scope
+            .provider,
+        Provider::Codex
+    );
+    assert!(rt.find("provider-trigger").is_none());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[index]
             .scope
             .provider,
         Provider::OpenCode
@@ -2588,12 +2672,12 @@ fn live_provider_and_model_controls_apply_to_first_send() {
         vec!["second"]
     );
     key(&mut rt, Key::Enter, Mods::default());
-    assert!(element(&rt, "live-draft-0").focused);
+    assert!(element(&rt, &draft).focused);
     click(&mut rt, "model-trigger");
     fill(&mut rt, "model-search", "first");
     key(&mut rt, Key::Escape, Mods::default());
     assert_eq!(
-        rt.state.live.as_ref().unwrap().app.sessions[0]
+        rt.state.live.as_ref().unwrap().app.sessions[index]
             .options
             .model
             .as_deref(),
@@ -2603,8 +2687,9 @@ fn live_provider_and_model_controls_apply_to_first_send() {
     fill(&mut rt, "model-search", "second");
     click(&mut rt, "option0");
     click(&mut rt, "agent-trigger");
-    click(&mut rt, "option0");
-    click(&mut rt, "live-draft-0");
+    key(&mut rt, Key::End, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    click(&mut rt, &draft);
     rt.paste("Use my choices");
     key(&mut rt, Key::Enter, Mods::default());
     let (_, command) = rt
@@ -2617,16 +2702,17 @@ fn live_provider_and_model_controls_apply_to_first_send() {
         .pop()
         .unwrap();
     assert!(
-        matches!(command, Command::Start(scope, options) if scope.provider == Provider::OpenCode
-        && options.model.as_deref() == Some("second") && options.effort.as_deref() == Some("low") && options.agent.as_deref() == Some("build"))
+        matches!(&command, Command::Start(scope, options) if scope.provider == Provider::OpenCode
+        && options.model.as_deref() == Some("second") && options.effort.as_deref() == Some("low") && options.agent.as_deref() == Some("build")),
+        "{command:?}"
     );
     click(&mut rt, "model-trigger");
     fill(&mut rt, "model-search", "first");
     click(&mut rt, "option0");
-    click(&mut rt, "live-draft-0");
+    click(&mut rt, &draft);
     rt.paste("Queue with a different model");
     key(&mut rt, Key::Enter, Mods::default());
-    let queued = &rt.state.live.as_ref().unwrap().app.sessions[0].queue;
+    let queued = &rt.state.live.as_ref().unwrap().app.sessions[index].queue;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].options.model.as_deref(), Some("first"));
 }
@@ -2640,12 +2726,7 @@ fn compact_live_inspector_and_modals_preserve_the_composer_and_focus() {
     advance(&mut rt, 0.5);
     for screen in ["nav-files", "nav-changes"] {
         click(&mut rt, screen);
-        for key in [
-            "live-draft-0",
-            "send",
-            "close-inspector",
-            "provider-trigger",
-        ] {
+        for key in ["live-draft-0", "send", "close-inspector", "model-trigger"] {
             let e = element(&rt, key);
             assert!(e.rect[2] > 0.0 && e.rect[3] > 0.0);
             assert!(
