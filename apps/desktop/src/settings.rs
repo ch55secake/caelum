@@ -117,7 +117,7 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let provider = live(s).panels.settings_provider;
     let mut body = col().w_full().gap(12.0).child(ui::section(
         "Providers",
-        "Defaults for new sessions. Change individual sessions in the composer.",
+        "Choose the provider and defaults for new sessions.",
         k,
     ));
     let mut defaults = row().gap(4.0);
@@ -128,7 +128,8 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                 app.preferences.default_provider == p,
                 k,
             )
-            .on_press(move |s: &mut Workspace| live_mut(s).app.preferences.default_provider = p),
+            .on_press(move |s: &mut Workspace| live_mut(s).app.preferences.default_provider = p)
+            .key(format!("default-provider-{}", p.as_str())),
         );
     }
     body = body.child(

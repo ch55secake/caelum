@@ -16,8 +16,9 @@ The follow-up captures restore the original 18-point Lucide Orbit mark, keep the
 sidebar toggle beside the brand, and use browser-equivalent unsmoothed system text.
 The inspector sits below the shared toolbar; pane widths adapt to compact windows
 while retaining the user's preferred sizes. The bounded multiline editor and
-composer controls occupy separate rows; borderless model-first labels with small
-chevrons wrap in narrow panes
+composer controls occupy separate rows; borderless model-first labels and icon-led
+effort/agent choices wrap in narrow panes. Their popouts show titles, readable
+choices and default options; the provider is chosen in Settings. The controls sit
 beside an aligned Send/Stop action. Settings lives in the top toolbar, archive
 filtering sits beside Sessions, and session actions belong to the clicked row.
 Archive Undo is a temporary bottom-centred notice above the composer, pausing on
@@ -115,6 +116,10 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native narrow composer](previews/rune-dark-composer-options-small.png) | ![Native file tabs](previews/rune-light-files-tabs.png) |
 
+| Reasoning effort menu | Agent menu |
+| --- | --- |
+| ![Native effort choices](previews/rune-dark-composer-effort.png) | ![Native agent choices](previews/rune-light-composer-agent-small.png) |
+
 | Compact file tabs | Tool icons and details |
 | --- | --- |
 | ![Native compact files](previews/rune-dark-files-tabs-small.png) | ![Native collapsed tools](previews/rune-dark-tools-collapsed.png) |
@@ -127,9 +132,9 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native check details](previews/rune-light-check-details.png) | ![Native branch behind](previews/rune-dark-merge-behind-small.png) |
 
-| Black workspace | Black appearance setting |
+| Vercel workspace | Vercel appearance setting |
 | --- | --- |
-| ![Native black workspace](previews/rune-dark-black.png) | ![Native black settings](previews/rune-dark-black-settings-small.png) |
+| ![Native Vercel workspace](previews/rune-dark-vercel.png) | ![Native Vercel settings](previews/rune-dark-vercel-settings-small.png) |
 
 | Hidden background commands | Reopened command previews |
 | --- | --- |
@@ -148,9 +153,12 @@ running work for reopening; arrow keys navigate the lists and project actions.
 records the previous composer, Files inspector, merge panel and tool-header pass
 using matching fixture content.
 
-Four theme families and six accent colours (plus the theme default) apply across
-the workspace. The saved **Black backgrounds** option uses black workspace/sidebar
-surfaces and near-black panels in dark appearance, keeping theme text and accents.
+Five theme families and six accent colours (plus the theme default) apply across
+the workspace. **Vercel** uses a pure-black workspace and sidebar, subtly raised panels,
+a soft hairline sidebar divider with fading ends and monochrome controls, with a
+corresponding light palette.
+Existing Black backgrounds preferences migrate to Vercel. Theme cards wrap in
+compact Settings and preview the current light/dark appearance.
 Rune follows system reduced-motion preferences. Use the running
 application to judge focus, typing, scrolling, pane motion and OS context menus;
 headless replays provide deterministic interaction coverage.
@@ -191,8 +199,8 @@ includes all five Settings pages, models, launcher, session popovers/worktree fo
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
 loading/error/empty views, questions, images, hover and keyboard focus. The latest
 fixtures include long composer options, multiple file tabs, collapsed tools,
-ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, black
-backgrounds, command collapse/reopen interactions and a populated four-project,
+ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, Vercel
+appearance, command collapse/reopen interactions and a populated four-project,
 six-PR sidebar.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,

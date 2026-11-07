@@ -270,8 +270,14 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
 
 #[test]
 fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
-    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+    for (size, inspector) in [
+        ((800.0, 620.0), false),
+        ((800.0, 620.0), true),
+        ((1280.0, 1000.0), false),
+        ((1280.0, 1000.0), true),
+    ] {
         let mut rt = design_runtime("composer-options", size);
+        rt.update(|s, _| s.inspector.set_open(inspector));
         for working in [false, true] {
             rt.update(|s, _| {
                 s.live.as_mut().unwrap().app.sessions[0]
@@ -279,13 +285,7 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                     .working = working
             });
             advance(&mut rt, 0.3);
-            for name in [
-                "model-trigger",
-                "provider-trigger",
-                "effort-trigger",
-                "agent-trigger",
-                "send",
-            ] {
+            for name in ["model-trigger", "effort-trigger", "agent-trigger", "send"] {
                 let e = element(&rt, name);
                 assert!(e.rect[2] >= 32.0 && e.rect[3] >= 28.0, "{name}: {e:?}");
                 assert!(
@@ -298,6 +298,15 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                 assert!(e.rect[1] + e.rect[3] <= size.1, "{name} below window");
             }
             assert!(element(&rt, "composer-editor").visible[3] >= 46.0);
+            let composer = element(&rt, "message-composer").rect;
+            let send = element(&rt, "send").rect;
+            for axis in [0, 1] {
+                let inset = composer[axis] + composer[axis + 2] - send[axis] - send[axis + 2];
+                assert!(
+                    (inset - 12.0).abs() < 0.5,
+                    "Send/Stop inset: {inset}; size={size:?}, inspector={inspector}, working={working}"
+                );
+            }
             if working {
                 assert!(element(&rt, "queue-message").visible[2] >= 50.0);
                 assert_eq!(
@@ -305,13 +314,85 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                     Some("Stop generation")
                 );
             }
-            click(&mut rt, "agent-trigger");
-            key(&mut rt, Key::Escape, Mods::default());
-            advance(&mut rt, 0.2);
-            assert!(element(&rt, "agent-trigger").focused);
+            assert!(rt.find("provider-trigger").is_none());
+            for name in ["effort", "agent"] {
+                let trigger = format!("{name}-trigger");
+                click(&mut rt, &trigger);
+                let menu = element(&rt, &format!("{name}-content"));
+                assert!(
+                    menu.rect
+                        .iter()
+                        .zip(menu.visible)
+                        .all(|(a, b)| (*a - b).abs() < 1.0),
+                    "{menu:?}"
+                );
+                key(&mut rt, Key::Escape, Mods::default());
+                advance(&mut rt, 0.2);
+                assert!(element(&rt, &trigger).focused);
+            }
             assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
         }
     }
+}
+
+#[test]
+fn composer_menus_use_provider_ids_restore_defaults_and_dismiss_on_session_change() {
+    let mut rt = design_runtime("composer-options", (800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        let scope = app.sessions[0].scope.clone();
+        app.choices
+            .get_mut(&scope)
+            .unwrap()
+            .agents
+            .push(caelum_protocol::ProviderChoice {
+                id: "custom-review".into(),
+                name: "Review assistant".into(),
+            });
+    });
+    advance(&mut rt, 0.2);
+    let draft = rt.state.live.as_ref().unwrap().drafts[0].text.clone();
+    click(&mut rt, "agent-trigger");
+    assert_eq!(
+        element(&rt, "option3").label.as_deref(),
+        Some("Review assistant")
+    );
+    click(&mut rt, "option3");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .agent
+            .as_deref(),
+        Some("custom-review")
+    );
+    click(&mut rt, "effort-trigger");
+    key(&mut rt, Key::End, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .effort
+            .as_deref(),
+        Some("Low")
+    );
+    for name in ["effort", "agent"] {
+        click(&mut rt, &format!("{name}-trigger"));
+        click(&mut rt, "option0");
+    }
+    let options = &rt.state.live.as_ref().unwrap().app.sessions[0].options;
+    assert!(options.effort.is_none() && options.agent.is_none());
+    assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, draft);
+    let other = rt.state.live.as_ref().unwrap().app.sessions[1]
+        .options
+        .clone();
+    click(&mut rt, "agent-trigger");
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(1));
+    advance(&mut rt, 0.3);
+    assert!(rt.find("agent-content").is_none());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[1].options,
+        other
+    );
 }
 
 #[test]
@@ -723,68 +804,71 @@ fn collapsed_background_commands_keep_running_and_remain_session_local() {
 }
 
 #[test]
-fn black_backgrounds_toggle_saves_and_preserves_theme_and_accent_across_modes() {
+fn vercel_theme_is_keyboard_selectable_and_retains_mode_and_accent_on_restore() {
     use caelum_core::application::{Event, Reply, Snapshot};
-    let mut rt = design_runtime("black-settings", (800.0, 620.0));
-    click(&mut rt, "black-backgrounds");
-    assert!(
-        !rt.state
-            .live
-            .as_ref()
-            .unwrap()
-            .app
-            .preferences
-            .black_backgrounds
-    );
-    key(&mut rt, Key::Text(" ".into()), Mods::default());
-    advance(&mut rt, 0.2);
-    assert!(
-        rt.state
-            .live
-            .as_ref()
-            .unwrap()
-            .app
-            .preferences
-            .black_backgrounds
-    );
-    assert!(element(&rt, "black-backgrounds").focused);
-    click(&mut rt, "family-nord");
-    click(&mut rt, "accent-teal");
-    for mode in ["light", "dark", "system"] {
-        click(&mut rt, &format!("theme-{mode}"));
-        let p = &rt.state.live.as_ref().unwrap().app.preferences;
-        assert_eq!(p.theme, mode);
-        assert!(p.black_backgrounds);
-        assert_eq!(p.theme_family, "nord");
-        assert_eq!(p.accent_color, "teal");
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("vercel-settings", size);
+        click(&mut rt, "accent-violet");
+        click(&mut rt, "family-caelum");
+        key(&mut rt, Key::Tab, Mods::default());
+        advance(&mut rt, 0.1);
+        assert!(element(&rt, "family-vercel").focused);
+        key(&mut rt, Key::Text(" ".into()), Mods::default());
+        advance(&mut rt, 0.2);
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().app.preferences.accent_color,
+            "theme"
+        );
+        for (family, _) in crate::theme::FAMILIES {
+            let card = element(&rt, &format!("family-{family}"));
+            assert!(
+                card.rect
+                    .iter()
+                    .zip(card.visible)
+                    .all(|(a, b)| (*a - b).abs() < 1.0),
+                "{card:?}"
+            );
+        }
+        click(&mut rt, "accent-teal");
+        click(&mut rt, "family-vercel");
+        for mode in ["light", "dark", "system"] {
+            click(&mut rt, &format!("theme-{mode}"));
+            advance(&mut rt, 0.3);
+            let p = &rt.state.live.as_ref().unwrap().app.preferences;
+            assert_eq!(p.theme, mode);
+            assert_eq!(p.theme_family, "vercel");
+            assert_eq!(p.accent_color, "teal");
+        }
+        let snapshot: Snapshot = serde_json::from_slice(
+            &serde_json::to_vec(&rt.state.live.as_ref().unwrap().app.snapshot()).unwrap(),
+        )
+        .unwrap();
+        let mut restored = caelum_core::application::Workspace::default();
+        restored.enable_store("unused-fixture-state.json".into());
+        let load = restored.commands().pop().unwrap().0;
+        restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
+        assert_eq!(restored.preferences.theme_family, "vercel");
+        assert_eq!(restored.preferences.accent_color, "teal");
     }
-    let snapshot: Snapshot = serde_json::from_slice(
-        &serde_json::to_vec(&rt.state.live.as_ref().unwrap().app.snapshot()).unwrap(),
-    )
-    .unwrap();
-    let mut restored = caelum_core::application::Workspace::default();
-    restored.enable_store("unused-fixture-state.json".into());
-    let load = restored.commands().pop().unwrap().0;
-    restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
-    assert!(restored.preferences.black_backgrounds);
-    assert_eq!(restored.preferences.theme_family, "nord");
-    assert_eq!(restored.preferences.accent_color, "teal");
-    for (family, _) in crate::theme::FAMILIES {
-        for dark in [false, true] {
-            let regular = crate::theme::appearance(dark, family, "teal", false);
-            let black = crate::theme::appearance(dark, family, "teal", true);
-            assert_eq!(black.c.text_accent, regular.c.text_accent);
-            assert_eq!(black.c.bg_accent, regular.c.bg_accent);
-            assert_eq!(black.c.text_base, regular.c.text_base);
-            if dark {
-                assert_eq!(black.c.bg_base, rune::color::hex("#000000").unwrap());
-                assert_eq!(black.c.bg_deep, black.c.bg_base);
-                assert_eq!(black.c.layer_01, rune::color::hex("#080808").unwrap());
+    let luminance = |c: rune::Color| {
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
             } else {
-                assert_eq!(black.c.bg_base, regular.c.bg_base);
-                assert_eq!(black.c.bg_deep, regular.c.bg_deep);
-                assert_eq!(black.c.layer_01, regular.c.layer_01);
+                ((v + 0.055) / 1.055).powf(2.4)
             }
+        };
+        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+    };
+    for dark in [false, true] {
+        for accent in crate::theme::ACCENTS {
+            let k = crate::theme::appearance(dark, "vercel", accent);
+            let foreground = luminance(k.c.submit_fg);
+            let background = luminance(k.c.bg_icon_button_contrast);
+            assert!(
+                (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05) >= 4.5,
+                "unreadable Vercel submit control: {dark}, {accent}"
+            );
         }
     }
 }
@@ -1280,7 +1364,7 @@ fn long_drafts_and_crowded_sidebar_keep_controls_in_bounds() {
         "live-draft-0",
         &"A long Unicode draft café ☁️\n".repeat(30),
     );
-    for name in ["nav-settings", "undo-archive", "send", "provider-trigger"] {
+    for name in ["nav-settings", "undo-archive", "send", "model-trigger"] {
         let e = element(&rt, name);
         assert!(
             e.visible[2] > 0.0 && e.visible[3] > 0.0,
@@ -2534,7 +2618,7 @@ fn real_workspace_services_smoke() {
 }
 
 #[test]
-fn live_provider_and_model_controls_apply_to_first_send() {
+fn settings_provider_and_composer_choices_apply_to_first_send() {
     use caelum_core::application::{Command, Provider, Scope};
     use caelum_protocol::{ProviderChoice, ProviderChoices, ProviderModelChoice};
     let mut rt = live_runtime();
@@ -2568,10 +2652,28 @@ fn live_provider_and_model_controls_apply_to_first_send() {
             },
         );
     });
-    click(&mut rt, "provider-trigger");
-    click(&mut rt, "option1");
+    fill(&mut rt, "live-draft-0", "Keep this Codex draft");
+    click(&mut rt, "nav-settings");
+    click(&mut rt, "settings-providers");
+    click(&mut rt, "default-provider-opencode");
+    key(&mut rt, Key::Escape, Mods::default());
+    click(&mut rt, "new-session");
+    let index = rt.state.live.as_ref().unwrap().app.selected.unwrap();
+    let draft = format!("live-draft-{index}");
+    assert_ne!(index, 0);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep this Codex draft"
+    );
     assert_eq!(
         rt.state.live.as_ref().unwrap().app.sessions[0]
+            .scope
+            .provider,
+        Provider::Codex
+    );
+    assert!(rt.find("provider-trigger").is_none());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[index]
             .scope
             .provider,
         Provider::OpenCode
@@ -2591,12 +2693,12 @@ fn live_provider_and_model_controls_apply_to_first_send() {
         vec!["second"]
     );
     key(&mut rt, Key::Enter, Mods::default());
-    assert!(element(&rt, "live-draft-0").focused);
+    assert!(element(&rt, &draft).focused);
     click(&mut rt, "model-trigger");
     fill(&mut rt, "model-search", "first");
     key(&mut rt, Key::Escape, Mods::default());
     assert_eq!(
-        rt.state.live.as_ref().unwrap().app.sessions[0]
+        rt.state.live.as_ref().unwrap().app.sessions[index]
             .options
             .model
             .as_deref(),
@@ -2606,8 +2708,9 @@ fn live_provider_and_model_controls_apply_to_first_send() {
     fill(&mut rt, "model-search", "second");
     click(&mut rt, "option0");
     click(&mut rt, "agent-trigger");
-    click(&mut rt, "option0");
-    click(&mut rt, "live-draft-0");
+    key(&mut rt, Key::End, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    click(&mut rt, &draft);
     rt.paste("Use my choices");
     key(&mut rt, Key::Enter, Mods::default());
     let (_, command) = rt
@@ -2620,16 +2723,17 @@ fn live_provider_and_model_controls_apply_to_first_send() {
         .pop()
         .unwrap();
     assert!(
-        matches!(command, Command::Start(scope, options) if scope.provider == Provider::OpenCode
-        && options.model.as_deref() == Some("second") && options.effort.as_deref() == Some("low") && options.agent.as_deref() == Some("build"))
+        matches!(&command, Command::Start(scope, options) if scope.provider == Provider::OpenCode
+        && options.model.as_deref() == Some("second") && options.effort.as_deref() == Some("low") && options.agent.as_deref() == Some("build")),
+        "{command:?}"
     );
     click(&mut rt, "model-trigger");
     fill(&mut rt, "model-search", "first");
     click(&mut rt, "option0");
-    click(&mut rt, "live-draft-0");
+    click(&mut rt, &draft);
     rt.paste("Queue with a different model");
     key(&mut rt, Key::Enter, Mods::default());
-    let queued = &rt.state.live.as_ref().unwrap().app.sessions[0].queue;
+    let queued = &rt.state.live.as_ref().unwrap().app.sessions[index].queue;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].options.model.as_deref(), Some("first"));
 }
@@ -2643,12 +2747,7 @@ fn compact_live_inspector_and_modals_preserve_the_composer_and_focus() {
     advance(&mut rt, 0.5);
     for screen in ["nav-files", "nav-changes"] {
         click(&mut rt, screen);
-        for key in [
-            "live-draft-0",
-            "send",
-            "close-inspector",
-            "provider-trigger",
-        ] {
+        for key in ["live-draft-0", "send", "close-inspector", "model-trigger"] {
             let e = element(&rt, key);
             assert!(e.rect[2] > 0.0 && e.rect[3] > 0.0);
             assert!(
