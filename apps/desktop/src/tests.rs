@@ -2034,6 +2034,60 @@ fn models_slash_command_opens_the_picker_for_the_current_session() {
 }
 
 #[test]
+fn variants_and_effort_slash_commands_change_model_effort() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        let scope = app.sessions[0].scope.clone();
+        app.sessions[0].options.model = None;
+        app.choices.insert(
+            scope,
+            serde_json::from_value(serde_json::json!({
+                "models": [{
+                    "id": "model-with-efforts",
+                    "name": "Effort model",
+                    "efforts": [
+                        {"id":"medium","name":"Medium"},
+                        {"id":"xhigh","name":"Extra high"},
+                        {"id":"max","name":"Maximum"}
+                    ],
+                    "defaultEffort": "medium"
+                }],
+                "agents": [],
+                "defaultModel": "model-with-efforts"
+            }))
+            .unwrap(),
+        );
+    });
+
+    fill(&mut rt, "live-draft-0", "/variants");
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(rt.find("effort-content").is_some());
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.2);
+
+    fill(&mut rt, "live-draft-0", "/effort xhigh");
+    key(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .effort
+            .as_deref(),
+        Some("xhigh")
+    );
+
+    fill(&mut rt, "live-draft-0", "/effort default");
+    key(&mut rt, Key::Enter, Mods::default());
+    assert!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .effort
+            .is_none()
+    );
+}
+
+#[test]
 fn reminders_are_absent_from_transcript_copy_and_timeline_with_stable_jumps() {
     let app = spec();
     let mut state = crate::evaluation::design();
