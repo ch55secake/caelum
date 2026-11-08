@@ -105,8 +105,10 @@ reported token usage and model capacity when available.
 
 Type **/** to discover local and provider commands. `/new`, `/models`, `/timeline`,
 `/files`, `/changes` and `/settings` open native workflows. `/models` opens the
-searchable model picker for the current session. OpenCode also supports `/usage`,
-`/stats`, provider-discovered commands and `/btw question` (`/ask` is an alias).
+searchable model picker for the current session. `/variants` or bare `/effort`
+opens the selected model’s effort choices; `/effort xhigh` selects an effort
+directly, and `/effort default` restores the model default. OpenCode also supports
+`/usage`, `/stats`, provider-discovered commands and `/btw question` (`/ask` is an alias).
 Side questions have a separate editor, context, retry and answer-copy actions;
 they preserve the main draft and do not add a conversation turn. Timeline groups
 prompts by date, shows excerpts and highlights search matches. Use ↑/↓ and Enter to

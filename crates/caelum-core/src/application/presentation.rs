@@ -376,13 +376,7 @@ impl Tool {
             .find_map(|key| input[*key].as_str())
             .map(str::to_owned)
             .or_else(|| input.as_str().map(str::to_owned))
-            .unwrap_or_else(|| {
-                if !paths.is_empty() {
-                    paths.join(", ")
-                } else {
-                    entry.input.lines().next().unwrap_or_default().into()
-                }
-            })
+            .unwrap_or_else(|| paths.join(", "))
         };
         let mut details = Vec::new();
         if let Some(cwd) = input["cwd"]
