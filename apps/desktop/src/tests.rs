@@ -719,6 +719,12 @@ fn background_previews_are_bounded_and_output_actions_keep_their_session() {
         advance(&mut rt, 0.3);
         let output = element(&rt, "shell-output-shell_fixture");
         assert!(output.visible[3] >= 80.0 && output.rect[3] < size.1);
+        assert!(
+            rt.elements()
+                .iter()
+                .filter_map(|e| e.text.as_deref())
+                .all(|text| !text.contains("shell_fixture") && !text.contains("shell-1"))
+        );
         rt.update(|s, _| s.live.as_mut().unwrap().app.select(1));
         advance(&mut rt, 0.2);
         click(&mut rt, "output-stop-shell-shell_fixture");

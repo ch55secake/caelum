@@ -161,7 +161,7 @@ pub fn choice(title: &str, detail: &str, selected: bool, k: &Kit) -> El {
                             .color(k.c.text_base)
                             .truncate(),
                     )
-                    .child(caption(detail, k).truncate()),
+                    .children((!detail.is_empty()).then(|| caption(detail, k).truncate())),
             )
             .child(
                 icon(k.glyph.check_small, 14.0)
@@ -171,7 +171,7 @@ pub fn choice(title: &str, detail: &str, selected: bool, k: &Kit) -> El {
     )
     .role("button")
     .label(title)
-    .description(detail)
+    .description(if detail.is_empty() { title } else { detail })
     .focusable(true)
     .focus_ring(1.5, 0.0, k.c.border_focus)
 }
