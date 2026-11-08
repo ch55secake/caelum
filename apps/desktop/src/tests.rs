@@ -3064,8 +3064,13 @@ fn closing_local_sessions_and_undo_keep_the_workspace_editable() {
         }
         let live = rt.state.live.as_ref().unwrap();
         assert!(live.app.sessions[0].archived);
-        assert_eq!(live.app.selected, Some(2));
+        assert_eq!(live.app.selected, Some(1));
+        assert_eq!(live.app.sessions.len(), 2);
         assert!(live.panels.overlay.is_none());
+        assert_eq!(live.drafts[1].text, "Independent background draft");
+        element(&rt, "live-draft-1");
+        close_session(&mut rt, 1);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(2));
         element(&rt, "live-draft-2");
         rt.paste("Replacement draft");
         rt.frame(1.0 / 60.0);
@@ -3073,11 +3078,9 @@ fn closing_local_sessions_and_undo_keep_the_workspace_editable() {
             rt.state.live.as_ref().unwrap().drafts[2].text,
             "Replacement draft"
         );
-        close_session(&mut rt, 1);
-        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(2));
         click(&mut rt, "undo-archive");
         let live = rt.state.live.as_ref().unwrap();
-        assert_eq!(live.app.selected, Some(2));
+        assert_eq!(live.app.selected, Some(1));
         assert!(!live.app.sessions[1].archived);
         assert_eq!(live.drafts[1].text, "Independent background draft");
         assert_eq!(live.drafts[0].text, "Keep the archived draft café ☁️");
@@ -3193,7 +3196,7 @@ fn closing_provider_sessions_handles_completion_failure_and_selection_changes() 
             "Provider draft after restore"
         );
 
-        // The selected provider session also creates a ready-to-type replacement.
+        // Prefer the other session's draft instead of creating a blank replacement.
         click(&mut rt, "session-actions-0");
         click(&mut rt, "archive-session");
         let request = rt
@@ -3213,13 +3216,37 @@ fn closing_provider_sessions_handles_completion_failure_and_selection_changes() 
                 .apply(Event::Completed(request, Ok(Reply::Done)));
         });
         advance(&mut rt, 0.4);
-        element(&rt, "live-draft-2");
-        rt.paste("New provider draft");
-        rt.frame(1.0 / 60.0);
         let live = rt.state.live.as_ref().unwrap();
-        assert_eq!(live.app.selected, Some(2));
-        assert_eq!(live.drafts[2].text, "New provider draft");
+        assert_eq!(live.app.selected, Some(1));
+        assert_eq!(live.app.sessions.len(), 2);
         assert_eq!(live.drafts[1].text, "Still writing here");
+
+        // Restoring from the archive list updates both provider and workspace state.
+        click(&mut rt, "toggle-archived");
+        click(&mut rt, "live-session-0");
+        click(&mut rt, "session-actions-0");
+        click(&mut rt, "archive-session");
+        let (request, command) = rt
+            .state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .pop()
+            .unwrap();
+        assert!(matches!(command, Command::Archive(_, false)));
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .apply(Event::Completed(request, Ok(Reply::Done)));
+        });
+        advance(&mut rt, 0.4);
+        let live = rt.state.live.as_ref().unwrap();
+        assert!(!live.app.sessions[0].archived);
+        assert_eq!(live.app.selected, Some(0));
+        assert!(!live.panels.archived);
     }
 }
 

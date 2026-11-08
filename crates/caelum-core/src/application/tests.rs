@@ -579,6 +579,30 @@ fn stale_opencode_archive_error_forgets_the_session_locally() {
 }
 
 #[test]
+fn archiving_selects_existing_context_before_a_blank_session() {
+    let mut app = Workspace::default();
+    app.projects.push(ProjectInfo {
+        path: "/project".into(),
+        name: "Project".into(),
+    });
+    let archived = app.new_session(scope(Provider::Codex, "/project"));
+    let contextual = app.new_session(scope(Provider::Codex, "/project"));
+    app.sessions[contextual].remote_id = Some("thread-with-context".into());
+    let blank = app.new_session(scope(Provider::Codex, "/project"));
+    app.select(archived);
+
+    app.archive(archived, true);
+
+    assert_eq!(app.selected, Some(contextual));
+    assert_eq!(app.sessions.len(), 3, "do not create another empty session");
+    assert!(!app.sessions[blank].archived);
+
+    app.undo_archive();
+    assert_eq!(app.selected, Some(archived));
+    assert!(!app.sessions[archived].archived);
+}
+
+#[test]
 fn managed_worktrees_exclude_external_checkouts_and_survive_storage_changes() {
     let mut app = Workspace::default();
     app.projects.push(ProjectInfo {

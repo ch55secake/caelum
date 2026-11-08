@@ -120,6 +120,16 @@ impl Session {
         self.submitting || self.conversation.working
     }
 
+    fn has_context(&self) -> bool {
+        self.remote_id.is_some()
+            || !self.conversation.entries.is_empty()
+            || !self.draft.trim().is_empty()
+            || !self.attachments.is_empty()
+            || !self.queue.is_empty()
+            || !self.inbox.items.is_empty()
+            || self.title != "New session"
+    }
+
     pub fn can_send(&self) -> bool {
         !self.working()
             && self.loaded
@@ -567,6 +577,34 @@ impl Workspace {
         true
     }
 
+    fn select_archive_replacement(&mut self, index: usize) -> usize {
+        let scope = self.sessions[index].scope.clone();
+        let group = self.group_path(&scope.project).to_owned();
+        let replacement = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(candidate, session)| {
+                *candidate != index
+                    && !session.archived
+                    && !session.forgotten
+                    && !session.archiving
+                    && self.project_is_open(&session.scope.project)
+                    && self.group_path(&session.scope.project) == group
+            })
+            .max_by_key(|(candidate, session)| {
+                (
+                    session.has_context(),
+                    session.scope.project == scope.project,
+                    *candidate,
+                )
+            })
+            .map(|(candidate, _)| candidate);
+        let replacement = replacement.unwrap_or_else(|| self.new_session(scope));
+        self.select(replacement);
+        replacement
+    }
+
     fn set_archived(&mut self, index: usize, archived: bool, select: bool) {
         if self.sessions[index].forgotten {
             return;
@@ -605,15 +643,18 @@ impl Workspace {
         } else {
             session.archived = archived;
             if archived {
-                self.archived_notice(index, self.archive_revision);
+                let owns_notice = self.archived_notice(index, self.archive_revision);
+                if self.selected == Some(index) {
+                    let replacement = self.select_archive_replacement(index);
+                    if owns_notice {
+                        self.archive_replacement = Some(replacement);
+                    }
+                }
             } else {
                 self.dismiss_archive(index);
-            }
-            if archived && self.selected == Some(index) {
-                self.new_session(self.sessions[index].scope.clone());
-                self.archive_replacement = self.selected;
-            } else if !archived && select {
-                self.select(index);
+                if select {
+                    self.select(index);
+                }
             }
         }
     }
@@ -2211,9 +2252,9 @@ impl Workspace {
                 if archived {
                     let owns_notice = self.archived_notice(index, revision);
                     if self.selected == Some(index) {
-                        self.new_session(self.sessions[index].scope.clone());
+                        let replacement = self.select_archive_replacement(index);
                         if owns_notice {
-                            self.archive_replacement = self.selected;
+                            self.archive_replacement = Some(replacement);
                         }
                     }
                 } else {
