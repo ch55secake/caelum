@@ -64,6 +64,14 @@ pub fn configure(app: App<Workspace>) -> App<Workspace> {
 }
 
 pub fn open_url(s: &mut Workspace, url: &str, _: &mut Tx) {
+    // The release smoke test uses this marker to distinguish an OS URL event
+    // that never reached the app from one whose project-open request stalled.
+    if let Some(path) = std::env::var_os("CAELUM_SMOKE_CALLBACK_TRACE") {
+        use std::{fs::OpenOptions, io::Write};
+        if let Ok(mut trace) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(trace, "received");
+        }
+    }
     let Some(state) = &s.live else {
         return;
     };

@@ -52,6 +52,7 @@ def run(app, cli, root):
     state = home / "workspace.json"
     log = root / "app.log"
     launch_trace = root / "launch.log"
+    callback_trace = root / "callback.log"
     projects = create_projects(root)
     # Keep this check offline, including on a developer's authenticated machine.
     for provider in ("codex", "opencode"):
@@ -75,6 +76,7 @@ fi
 printf 'cold\t%s\n' "$3" >> "$CAELUM_SMOKE_TRACE"
 exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
   --env "HOME=$CAELUM_SMOKE_HOME" --env "CAELUM_STATE=$CAELUM_SMOKE_STATE" \
+  --env "CAELUM_SMOKE_CALLBACK_TRACE=$CAELUM_SMOKE_CALLBACK_TRACE" \
   --env "XDG_STATE_HOME=$CAELUM_SMOKE_HOME/state" --env "PATH=$PATH" \
   --stdout "$CAELUM_SMOKE_LOG" --stderr "$CAELUM_SMOKE_LOG" "$3"
 ''')
@@ -90,6 +92,7 @@ exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
                    "CAELUM_SMOKE_APP": str(app), "CAELUM_SMOKE_HOME": str(home),
                    "CAELUM_SMOKE_STATE": str(state), "CAELUM_SMOKE_LOG": str(log),
                    "CAELUM_SMOKE_EXECUTABLE": str(executable),
+                   "CAELUM_SMOKE_CALLBACK_TRACE": str(callback_trace),
                    "CAELUM_SMOKE_TRACE": str(launch_trace)}
 
     def selected(index):
@@ -108,6 +111,7 @@ exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
                 "session_projects": [session["scope"]["project"] for session in current_state["sessions"]],
                 "app_pids": pids(executable),
                 "launch_trace": launch_trace.read_text() if launch_trace.exists() else "",
+                "callback_trace": callback_trace.read_text() if callback_trace.exists() else "",
                 "app_log": log.read_text() if log.exists() else "",
             }
             raise RuntimeError(f"{error}; diagnostics={json.dumps(diagnostics, ensure_ascii=False)}") from error
@@ -135,6 +139,8 @@ exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
         quit_app(pid)
         pid = None
         assert [s["draft"] for s in json.loads(state.read_text())["sessions"]] == [s["draft"] for s in sessions]
+        callbacks = callback_trace.read_text().splitlines() if callback_trace.exists() else []
+        assert callbacks == ["received"] * 4, f"Expected four URL callbacks, got {callbacks}"
         print("Verified packaged CLI cold/warm URLs, hidden-app reopening, draft restoration and graceful quit")
     finally:
         # Only this supplied bundle's process is eligible for cleanup.
