@@ -60,6 +60,12 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
         };
         Owner::Session(index, l.app.sessions[index].scope.clone())
     };
+    let choices_scope = owner.scope().clone();
+    let needs_choices = l
+        .app
+        .choices
+        .get(&choices_scope)
+        .is_none_or(|choices| choices.models.is_empty());
     l.models.selected = match &owner {
         Owner::Session(i, _) => l.app.sessions[*i].options.model.clone(),
         Owner::Defaults(scope) => l
@@ -72,6 +78,9 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
     l.models.owner = Some(owner);
     l.models.query.clear();
     l.models.query.focused = true;
+    if needs_choices {
+        l.app.refresh_choices_for(choices_scope);
+    }
     l.panels.settings_menu = None;
     for draft in &mut l.drafts {
         draft.focused = false;
