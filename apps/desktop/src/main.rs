@@ -655,6 +655,18 @@ fn spec() -> AppSpec<Workspace> {
             ("tools-collapsed", |s| {
                 evaluation::scene(s, "tools-collapsed")
             }),
+            ("patch-short", |s| evaluation::scene(s, "patch-short")),
+            ("patch-long", |s| evaluation::scene(s, "patch-long")),
+            ("patch-multi", |s| evaluation::scene(s, "patch-multi")),
+            ("vercel-patch-short", |s| {
+                evaluation::scene(s, "vercel-patch-short")
+            }),
+            ("vercel-patch-long", |s| {
+                evaluation::scene(s, "vercel-patch-long")
+            }),
+            ("vercel-patch-multi", |s| {
+                evaluation::scene(s, "vercel-patch-multi")
+            }),
             ("merge-ready", |s| evaluation::scene(s, "merge-ready")),
             ("merge-blocked", |s| evaluation::scene(s, "merge-blocked")),
             ("merge-pending", |s| evaluation::scene(s, "merge-pending")),

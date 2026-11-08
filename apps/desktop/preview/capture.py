@@ -35,11 +35,16 @@ interactions = {
     "shells-hide": ("shells-many", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "shells-reopen": ("shells-collapsed", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "vercel-select": ("settings", [{"t": 0.25, "key": "family-vercel"}]),
+    "vercel-providers": ("vercel-settings", [{"t": 0.25, "key": "settings-providers"}]),
+    "vercel-notifications": ("vercel-settings", [{"t": 0.25, "key": "settings-notifications"}]),
+    "patch-collapsed": ("vercel-patch-multi", [{"t": 0.25, "key": "tool-0-opencode-tool-patch"}]),
+    "patch-expanded": ("vercel-patch-long", [{"t": 0.8, "key": "expand-patch-0-opencode-tool-patch"}]),
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")
+scenes += ("patch-short", "patch-long", "patch-multi", "vercel-patch-short", "vercel-patch-long", "vercel-patch-multi")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):
@@ -50,7 +55,7 @@ for theme in ("dark", "light"):
             script.write_text(json.dumps(events))
         command = [
             str(binary), "--design-fixture", "--theme", theme,
-            "--scale", "1", "--at", "1", "--size",
+            "--scale", "1", "--at", "1.8" if label == "patch-expanded" else "1", "--size",
             "800x620" if compact or scene in ("compact", "crowded") else "1280x1000",
             *(["--scene", scene] if scene else []),
             "--snap", str(output / f"{name}.png"),

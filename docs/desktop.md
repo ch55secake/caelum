@@ -45,9 +45,13 @@ closes it; its footer can save the current model, effort and agent as provider d
 Responses, thinking, typed Read/Run/Patch rows, compaction and shell activity
 appear in the transcript with tool-specific icons, status and timing. Click a row
 or focus it and press Space to toggle **Details / Hide**. Patch
-previews open automatically, with size and tool-detail controls. Explicitly collapsed
-patches stay collapsed as output arrives. Internal reminders are hidden from rows,
-timeline results and copied responses, while literal code stays intact. **Load earlier messages**
+previews open automatically and fit short changes to their content. Longer patches
+use a compact scrollable preview with **Expand preview / Compact preview** controls.
+File headers, unchanged lines and selections follow the selected theme; additions
+and removals retain their status colours. Use the file chevron to collapse a file,
+the copy icon to copy the patch, or **…** beside the tool heading for tool details.
+Explicitly collapsed patches stay collapsed as output arrives. Internal reminders
+are hidden from rows, timeline results and copied responses, while literal code stays intact. **Load earlier messages**
 pages provider history while the visible transcript stays bounded.
 Running OpenCode background commands appear above the composer with three truncated
 output lines, elapsed time, refresh and **Stop**. **Hide** reduces them to a command-count
@@ -165,8 +169,9 @@ while comments are selected. See
 
 The top-toolbar gear or **⌘,** opens Settings. Choose System/Light/Dark, Caelum/Vercel/Catppuccin/Nord/Tokyo Night,
 and six accents or the theme default. Its five pages are Appearance, Providers,
-Worktrees, Notifications and About. Provider defaults/favourites, notification
-visibility and sounds, worktree storage, legacy settings import and persistence
+Worktrees, Notifications and About, with keyboard-navigable sections and compact,
+page-sized panels. Switching sections resets the page's scroll position. Provider
+defaults/favourites, notification visibility and sounds, worktree storage, legacy settings import and persistence
 retry live here. Unread state persists and clears only when the loaded conversation
 is visible and following the latest messages.
 The default Caelum palette keeps surfaces neutral, with colour in selection markers,

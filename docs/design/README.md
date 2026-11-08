@@ -30,8 +30,17 @@ Shared controls now cover command panels, questions, dialogs and dropdowns, with
 tool-specific icons, quiet Details/Hide controls, green success indicators and
 explicit loading, empty and error surfaces. Default surfaces stay neutral;
 colour is carried by markers, underlines, focus borders, links and solid actions.
-Model selection is an anchored searchable popover. Patch previews open by default;
-the composer pulse and active-agent indicator follow session state between output
+Model selection is an anchored searchable popover. Inline patch previews open by
+default and size to their visible file headers, code and unchanged-line gaps. Short
+patches have no expansion footer; longer patches start at a 204-point viewport and
+can expand to half the window height, up to 480 points. Collapsing a file reclaims
+its space. The file count and tool-details action share the tool heading; filenames
+stay in the diff headers. Headers use the conversation background, and selections
+and hunk gaps follow the theme accent. Settings uses a vertical section list,
+aligned label/control rows and page-specific heights with scrollable overflow.
+Switching sections resets scrolling and dismisses the previous page's dropdown.
+Provider model fields show their friendly names.
+The composer pulse and active-agent indicator follow session state between output
 events. PR review restores Overview / Files changed, searchable file/thread
 navigation, inline feedback and a selected-feedback bar naming its destination session.
 The overview has a centred 960-point reading column, separate review/check/branch
@@ -152,6 +161,14 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native Vercel workspace](previews/rune-dark-vercel.png) | ![Native Vercel settings](previews/rune-dark-vercel-settings-small.png) |
 
+| Short inline patch | Multiple-file inline patch |
+| --- | --- |
+| ![Compact Vercel patch](previews/rune-dark-vercel-patch-short-small.png) | ![Light Vercel patch](previews/rune-light-vercel-patch-multi-small.png) |
+
+| Expanded inline patch | Compact notification settings |
+| --- | --- |
+| ![Expanded Vercel patch](previews/rune-dark-patch-expanded.png) | ![Vercel notifications](previews/rune-light-vercel-notifications-small.png) |
+
 | Hidden background commands | Reopened command previews |
 | --- | --- |
 | ![Native hidden commands](previews/rune-dark-shells-hide-small.png) | ![Native reopened commands](previews/rune-light-shells-reopen-small.png) |
@@ -209,7 +226,7 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **360 states**: 70 scenes and twenty headless
+The capture script writes **432 states**: 81 scenes and 27 headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
 includes all five Settings pages, models, launcher, session popovers/worktree forms, commands, shells,
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
@@ -217,7 +234,8 @@ loading/error/empty views, questions, images, hover and keyboard focus. The late
 fixtures include long composer options, multiple file tabs, collapsed tools,
 ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, Vercel
 appearance, command collapse/reopen interactions and a populated four-project,
-six-PR sidebar.
+six-PR sidebar. Inline patches cover short, long and multiple-file changes in
+Caelum and Vercel, plus explicit collapse and expansion replays.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
 replace the replay's `--at 9 --snap …` with `--video /path/to/replay.mp4 --duration auto`.

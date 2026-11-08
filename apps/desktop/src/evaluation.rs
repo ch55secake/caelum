@@ -73,6 +73,30 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         return false;
     };
     let project = "/projects/caelum";
+    let patch_scene = name.strip_prefix("vercel-").unwrap_or(name);
+    if matches!(patch_scene, "patch-short" | "patch-long" | "patch-multi") {
+        if name.starts_with("vercel-") {
+            l.app.preferences.theme_family = "vercel".into();
+            l.app.preferences.accent_color = "theme".into();
+        }
+        let patch = match patch_scene {
+            "patch-long" => format!(
+                "--- a/src/session.rs\n+++ b/src/session.rs\n@@ -40,24 +40,24 @@\n{}",
+                (0..24).map(|i| format!("-    restore_slot({i});\n+    restore_owned_slot(session, {i});\n")).collect::<String>()
+            ),
+            "patch-multi" => "--- a/src/session.rs\n+++ b/src/session.rs\n@@ -1 +1 @@\n-restore();\n+restore_owned_draft();\n--- a/src/composer.rs\n+++ b/src/composer.rs\n@@ -1 +1 @@\n-const HEIGHT: f32 = 56.0;\n+const MAX_HEIGHT: f32 = 180.0;\n--- a/src/theme.rs\n+++ b/src/theme.rs\n@@ -1 +1 @@\n-let surface = kit.c.layer_01;\n+let surface = kit.c.bg_base;\n".into(),
+            _ => "@@ -1 +1 @@\n-restore();\n+restore_owned_draft();\n".into(),
+        };
+        let session = &mut l.app.sessions[0];
+        session.conversation = Default::default();
+        session.conversation.history(Provider::OpenCode, &[
+            json!({"id":"prompt","type":"user","text":"Keep the draft and reading position when switching sessions."}),
+            json!({"id":"work","type":"assistant","content":[
+                {"id":"patch","type":"tool","name":"apply_patch","state":{"status":"completed","input":{"path":"src/session.rs","patch":patch},"content":[{"type":"text","text":"Updated the session workspace."}],"time":{"start":1000,"end":1200}}}
+            ]}),
+        ], false);
+        return true;
+    }
     if matches!(
         name,
         "sidebar-worktrees"
