@@ -1000,7 +1000,16 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         let mut item = ui::session_row(&session.title, &detail, app.selected == Some(index), k)
             .on_select(move |s: &mut Workspace, _| {
                 let live = live_mut(s);
+                let worktree_group = live
+                    .app
+                    .group_path(&live.app.sessions[index].scope.project)
+                    .to_owned();
                 live.app.select(index);
+                live.app
+                    .preferences
+                    .worktree_expanded
+                    .entry(worktree_group)
+                    .or_insert(false);
                 live.panels.screen = crate::panels::Screen::Conversation;
                 live.menu = None;
             });
@@ -1798,10 +1807,15 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .min_w(0.0),
     );
     if let Some(choices) = choices {
+        let model_id = session
+            .options
+            .model
+            .as_ref()
+            .or(choices.default_model.as_ref());
         if let Some(model) = choices
             .models
             .iter()
-            .find(|model| Some(&model.id) == session.options.model.as_ref())
+            .find(|model| Some(&model.id) == model_id)
             && !model.efforts.is_empty()
         {
             let default = model
@@ -1898,6 +1912,7 @@ fn choice_label(choice: &caelum_protocol::ProviderChoice) -> &str {
         "medium" => "Medium",
         "high" => "High",
         "xhigh" => "Extra high",
+        "max" => "Maximum",
         "build" => "Build",
         "plan" => "Plan",
         _ => &choice.name,
@@ -1906,13 +1921,20 @@ fn choice_label(choice: &caelum_protocol::ProviderChoice) -> &str {
 
 fn effort_choice(effort: &caelum_protocol::ProviderChoice) -> Choice {
     let choice = Choice::new(&effort.id, choice_label(effort));
-    match effort.id.to_ascii_lowercase().as_str() {
-        "none" => choice.detail("Respond without extra reasoning"),
-        "minimal" | "low" => choice.detail("Less reasoning, quicker responses"),
-        "medium" => choice.detail("Balance reasoning depth and speed"),
-        "high" => choice.detail("Think more deeply about complex tasks"),
-        "xhigh" => choice.detail("Use the most reasoning time"),
-        _ => choice,
+    match effort_description(&effort.id) {
+        Some(description) => choice.detail(description),
+        None => choice,
+    }
+}
+
+fn effort_description(id: &str) -> Option<&'static str> {
+    match id.to_ascii_lowercase().as_str() {
+        "none" => Some("Respond without extra reasoning"),
+        "minimal" | "low" => Some("Less reasoning, quicker responses"),
+        "medium" => Some("Balance reasoning depth and speed"),
+        "high" => Some("Think more deeply about complex tasks"),
+        "xhigh" | "max" => Some("Use the maximum reasoning effort for complex tasks"),
+        _ => None,
     }
 }
 
@@ -2195,4 +2217,23 @@ fn toggle_menu(s: &mut Workspace, name: &'static str) {
     let live = live_mut(s);
     let next = live.app.selected.map(|index| (name, index));
     live.menu = if live.menu == next { None } else { next };
+}
+
+pub fn open_effort(s: &mut Workspace, index: usize) {
+    let live = live_mut(s);
+    live.menu = Some(("effort", index));
+    live.drafts[index].focused = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effort_description;
+
+    #[test]
+    fn max_effort_has_a_description() {
+        assert_eq!(
+            effort_description("max"),
+            Some("Use the maximum reasoning effort for complex tasks")
+        );
+    }
 }

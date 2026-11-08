@@ -656,6 +656,18 @@ fn spec() -> AppSpec<Workspace> {
             ("tools-collapsed", |s| {
                 evaluation::scene(s, "tools-collapsed")
             }),
+            ("patch-short", |s| evaluation::scene(s, "patch-short")),
+            ("patch-long", |s| evaluation::scene(s, "patch-long")),
+            ("patch-multi", |s| evaluation::scene(s, "patch-multi")),
+            ("vercel-patch-short", |s| {
+                evaluation::scene(s, "vercel-patch-short")
+            }),
+            ("vercel-patch-long", |s| {
+                evaluation::scene(s, "vercel-patch-long")
+            }),
+            ("vercel-patch-multi", |s| {
+                evaluation::scene(s, "vercel-patch-multi")
+            }),
             ("merge-ready", |s| evaluation::scene(s, "merge-ready")),
             ("merge-blocked", |s| evaluation::scene(s, "merge-blocked")),
             ("merge-pending", |s| evaluation::scene(s, "merge-pending")),
@@ -724,6 +736,16 @@ fn spec() -> AppSpec<Workspace> {
             ("notifications", |s| evaluation::scene(s, "notifications")),
             ("storage", |s| evaluation::scene(s, "storage")),
             ("about", |s| evaluation::scene(s, "about")),
+            ("about-checking", |s| evaluation::scene(s, "about-checking")),
+            ("about-current", |s| evaluation::scene(s, "about-current")),
+            ("about-update", |s| evaluation::scene(s, "about-update")),
+            ("about-release", |s| evaluation::scene(s, "about-release")),
+            ("about-ahead", |s| evaluation::scene(s, "about-ahead")),
+            ("about-error", |s| evaluation::scene(s, "about-error")),
+            ("vercel-about", |s| evaluation::scene(s, "vercel-about")),
+            ("vercel-about-update", |s| {
+                evaluation::scene(s, "vercel-about-update")
+            }),
             ("models", |s| evaluation::scene(s, "models")),
             ("launcher", |s| evaluation::scene(s, "launcher")),
             ("session", |s| evaluation::scene(s, "session")),
