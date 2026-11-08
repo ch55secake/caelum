@@ -993,7 +993,8 @@ fn discovering_worktrees_loads_their_provider_choices() {
                 "defaultBase":"main",
                 "worktrees":[
                     {"path":"/main","project":{"path":"/main","name":"Main"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
-                    {"path":"/linked","project":{"path":"/linked","name":"Linked"},"branch":"feature","main":false,"locked":null,"prunable":null,"available":true}
+                    {"path":"/worktrees/linked","project":{"path":"/worktrees/linked","name":"Linked"},"branch":"feature","main":false,"locked":null,"prunable":null,"available":true},
+                    {"path":"/external","project":{"path":"/external","name":"External"},"branch":"external","main":false,"locked":null,"prunable":null,"available":true}
                 ]
             }))
             .unwrap(),
@@ -1002,11 +1003,15 @@ fn discovering_worktrees_loads_their_provider_choices() {
 
     let commands = app.commands();
     for provider in Provider::ALL {
-        let scope = scope(provider, "/linked");
+        let scope = scope(provider, "/worktrees/linked");
         assert!(commands.iter().any(|(_, command)| {
             matches!(command, Command::Choices(requested) if requested == &scope)
         }));
     }
+    assert!(!commands.iter().any(|(_, command)| {
+        matches!(command, Command::Choices(scope) | Command::Commands(scope) | Command::List(scope)
+            if scope.project == "/external")
+    }));
 }
 
 #[test]
