@@ -85,6 +85,7 @@ pub struct Panels {
     selection: Option<Selection>,
     preview_page: usize,
     pub worktree: Option<crate::worktree::Form>,
+    pub rename_worktree: Option<crate::worktree::RenameForm>,
     pub(crate) directory: TextEdit,
     directory_loaded: bool,
 }
@@ -142,6 +143,7 @@ impl Default for Panels {
             selection: None,
             preview_page: 0,
             worktree: None,
+            rename_worktree: None,
             directory: TextEdit::new(""),
             directory_loaded: false,
         }
@@ -1928,26 +1930,38 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
     {
         for tree in &listing.worktrees {
             let path = tree.project.path.clone();
-            let mut line = ui::card(k).padding(6.0).gap(4.0).child(
-                ui::choice(
-                    &format!(
-                        "{}{}",
-                        tree.branch.as_deref().unwrap_or("Detached HEAD"),
-                        if tree.main { " · Main checkout" } else { "" }
-                    ),
-                    &tree.project.path,
-                    &tree.project.path == project,
-                    k,
-                )
-                .disabled(!tree.available || busy)
-                .opacity(if tree.available { 1.0 } else { 0.5 })
-                .help(&tree.project.path)
-                .on_press(move |s: &mut Workspace| {
-                    let live = live_mut(s);
-                    live.app.open_project(path.clone());
-                    live.panels.overlay = None;
-                }),
+            let label = tree.label.clone().unwrap_or_else(|| {
+                std::path::Path::new(&tree.path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            let detail = format!(
+                "{}{}",
+                tree.branch.as_deref().unwrap_or("Detached HEAD"),
+                if tree.main { " · Main checkout" } else { "" }
             );
+            let mut line = ui::card(k).padding(6.0).gap(4.0).child(
+                ui::choice(&label, &detail, &tree.project.path == project, k)
+                    .disabled(!tree.available || busy)
+                    .opacity(if tree.available { 1.0 } else { 0.5 })
+                    .help(format!("{}\n{}", detail, tree.project.path))
+                    .on_press(move |s: &mut Workspace| {
+                        let live = live_mut(s);
+                        live.app.open_project(path.clone());
+                        live.panels.overlay = None;
+                    }),
+            );
+            if !tree.main {
+                line = line.child(crate::worktree::rename_control(
+                    s,
+                    k,
+                    project.clone(),
+                    &tree.path,
+                    &label,
+                ));
+            }
             if let Some(reason) = &tree.locked {
                 line = line.child(ui::caption(format!("Locked · {reason}"), k).px(10.0));
             } else if !tree.available {

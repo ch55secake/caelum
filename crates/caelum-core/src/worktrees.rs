@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
     process::{Command, Output},
@@ -44,13 +45,13 @@ impl WorktreeClient {
             .path()
             .strip_prefix(&root)
             .map_err(|_| WorktreeError::InvalidPath)?;
-        let common = checked(
-            project.path(),
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )?;
-        let common = PathBuf::from(text(&common)).canonicalize()?;
+        let common = common_git_dir(project.path())?;
         let records = checked(project.path(), &["worktree", "list", "--porcelain", "-z"])?;
         let mut worktrees = parse_worktrees(&records, prefix)?;
+        let labels = read_labels(&common)?;
+        for entry in &mut worktrees {
+            entry.label = labels.get(&entry.path).cloned();
+        }
         let primary = worktrees.first().ok_or(WorktreeError::NotRepository)?;
         let group = primary.project.clone();
         let name = Path::new(&primary.path)
@@ -241,7 +242,56 @@ impl WorktreeClient {
         }
         // No force flag: Git refuses tracked changes, untracked files and
         // submodules. Removing a checkout leaves its branch and commits intact.
+        let common = common_git_dir(project.path())?;
         checked(project.path(), &["worktree", "remove", "--", &entry.path])?;
+        if let Ok(mut labels) = read_labels(&common) {
+            if labels.remove(&entry.path).is_some() {
+                // The checkout is already removed; stale local metadata must not
+                // turn a successful Git operation into an apparent failure.
+                let _ = write_labels(&common, &labels);
+            }
+        }
+        Ok(entry)
+    }
+
+    pub fn rename(
+        &self,
+        project_path: impl AsRef<Path>,
+        worktree_path: &str,
+        name: &str,
+    ) -> Result<GitWorktree, WorktreeError> {
+        let _guard = self
+            .operations
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let project = Project::open(project_path)?;
+        let listing = self
+            .list(project.path(), "")?
+            .ok_or(WorktreeError::NotRepository)?;
+        let mut entry = listing
+            .worktrees
+            .into_iter()
+            .find(|entry| entry.path == worktree_path)
+            .ok_or(WorktreeError::UnknownWorktree)?;
+        if entry.main {
+            return Err(WorktreeError::MainWorktree);
+        }
+
+        let name = validate_worktree_name(name)?;
+        let common = common_git_dir(project.path())?;
+        let mut labels = read_labels(&common)?;
+        let folder = Path::new(&entry.path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+        if name == folder {
+            labels.remove(&entry.path);
+            entry.label = None;
+        } else {
+            labels.insert(entry.path.clone(), name.clone());
+            entry.label = Some(name);
+        }
+        write_labels(&common, &labels)?;
         Ok(entry)
     }
 
@@ -295,6 +345,7 @@ fn parse_worktrees(bytes: &[u8], prefix: &Path) -> Result<Vec<GitWorktree>, Work
                         .into_owned(),
                     path: directory.to_string_lossy().into_owned(),
                 },
+                label: None,
                 branch: None,
                 main: entries.is_empty(),
                 locked: None,
@@ -320,6 +371,56 @@ fn parse_worktrees(bytes: &[u8], prefix: &Path) -> Result<Vec<GitWorktree>, Work
         entries.push(entry);
     }
     Ok(entries)
+}
+
+const LABELS_FILE: &str = "caelum-worktree-labels.json";
+
+fn labels_path(common: &Path) -> PathBuf {
+    common.join(LABELS_FILE)
+}
+
+fn common_git_dir(project: &Path) -> Result<PathBuf, WorktreeError> {
+    let common = checked(
+        project,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    Ok(PathBuf::from(text(&common)).canonicalize()?)
+}
+
+fn read_labels(common: &Path) -> Result<BTreeMap<String, String>, WorktreeError> {
+    let path = labels_path(common);
+    match fs::read(&path) {
+        Ok(data) => serde_json::from_slice(&data)
+            .map_err(|error| WorktreeError::InvalidLabels(error.to_string())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn write_labels(common: &Path, labels: &BTreeMap<String, String>) -> Result<(), WorktreeError> {
+    let path = labels_path(common);
+    if labels.is_empty() {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        return Ok(());
+    }
+    let temporary = common.join(format!("{LABELS_FILE}.{}.tmp", std::process::id()));
+    let data = serde_json::to_vec_pretty(labels)
+        .map_err(|error| WorktreeError::InvalidLabels(error.to_string()))?;
+    fs::write(&temporary, data)?;
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+fn validate_worktree_name(name: &str) -> Result<String, WorktreeError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+        return Err(WorktreeError::InvalidName);
+    }
+    Ok(name.to_owned())
 }
 
 fn validate_branch(path: &Path, branch: &str) -> Result<(), WorktreeError> {
@@ -433,6 +534,10 @@ pub enum WorktreeError {
     Locked,
     #[error("The selected base does not contain this project's directory.")]
     MissingProjectDirectory,
+    #[error("Enter a worktree name of 1–100 characters without control characters.")]
+    InvalidName,
+    #[error("worktree name metadata is invalid: {0}")]
+    InvalidLabels(String),
 }
 
 #[cfg(test)]
@@ -566,6 +671,79 @@ mod tests {
             Err(WorktreeError::UnknownWorktree)
         ));
         assert!(path.is_dir());
+    }
+
+    #[test]
+    fn renames_worktree_labels_without_changing_branches_or_checkout_paths() {
+        let test = Repository::new();
+        let entry = test
+            .client
+            .create(&test.repo, "work/session-1", "main", "")
+            .unwrap();
+        let renamed = test
+            .client
+            .rename(&test.repo, &entry.path, "Fix checkout picker")
+            .unwrap();
+
+        assert_eq!(renamed.path, entry.path);
+        assert_eq!(renamed.branch, entry.branch);
+        assert_eq!(renamed.label.as_deref(), Some("Fix checkout picker"));
+        let listing = test.client.list(&test.repo, "").unwrap().unwrap();
+        assert_eq!(
+            listing
+                .worktrees
+                .iter()
+                .find(|tree| tree.path == entry.path)
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("Fix checkout picker")
+        );
+
+        test.client
+            .rename(&test.repo, &entry.path, "work-session-1")
+            .unwrap();
+        assert_eq!(
+            test.client
+                .list(&test.repo, "")
+                .unwrap()
+                .unwrap()
+                .worktrees
+                .iter()
+                .find(|tree| tree.path == entry.path)
+                .unwrap()
+                .label,
+            None
+        );
+        assert!(Path::new(&entry.path).is_dir());
+        assert!(checked(
+            &test.repo,
+            &["show-ref", "--verify", "refs/heads/work/session-1"]
+        )
+        .is_ok());
+        test.client
+            .rename(&test.repo, &entry.path, "Fix checkout picker")
+            .unwrap();
+        test.client.remove(&test.repo, &entry.path).unwrap();
+        assert!(!labels_path(&common_git_dir(&test.repo).unwrap()).exists());
+    }
+
+    #[test]
+    fn worktree_labels_reject_empty_names_and_the_main_checkout() {
+        let test = Repository::new();
+        let entry = test
+            .client
+            .create(&test.repo, "feature", "main", "")
+            .unwrap();
+        assert!(matches!(
+            test.client.rename(&test.repo, &entry.path, " \n "),
+            Err(WorktreeError::InvalidName)
+        ));
+        assert!(matches!(
+            test.client
+                .rename(&test.repo, &test.repo.to_string_lossy(), "Primary"),
+            Err(WorktreeError::MainWorktree)
+        ));
     }
 
     #[test]

@@ -76,6 +76,12 @@ pub enum Task {
         project: String,
         path: String,
     },
+    RenameWorktree {
+        project: String,
+        path: String,
+        name: String,
+        directory: String,
+    },
     Discover {
         project: String,
         branch: String,
@@ -158,6 +164,7 @@ impl Task {
             | Self::Worktrees { project, .. }
             | Self::CreateWorktree { project, .. }
             | Self::RemoveWorktree { project, .. }
+            | Self::RenameWorktree { project, .. }
             | Self::Discover { project, .. }
             | Self::Details { project, .. }
             | Self::ReviewFiles { project, .. }
@@ -197,7 +204,9 @@ impl Task {
             Self::Git { .. } => "git".into(),
             Self::Diff { path, .. } => format!("diff:{path}"),
             Self::Worktrees { .. } => "worktrees".into(),
-            Self::CreateWorktree { .. } | Self::RemoveWorktree { .. } => "worktree-mutation".into(),
+            Self::CreateWorktree { .. }
+            | Self::RemoveWorktree { .. }
+            | Self::RenameWorktree { .. } => "worktree-mutation".into(),
             Self::Discover { branch, .. } => format!("discover:{branch}"),
             Self::Details { url, .. } => format!("details:{url}"),
             Self::ReviewFiles { url, .. } => format!("files:{url}"),
@@ -347,6 +356,12 @@ impl Task {
                     .release_checkout(std::path::Path::new(path));
                 Ok(TaskReply::Worktree(removed))
             }
+            Self::RenameWorktree {
+                project,
+                path,
+                name,
+                ..
+            } => reply!(worktrees.rename(project, path, name), Worktree),
             Self::Discover { project, branch } => {
                 reply!(github::open_pull_request(project, branch), Discovered)
             }
@@ -718,6 +733,15 @@ impl Services {
                     directory: String::new(),
                 })
             }
+            (
+                Task::RenameWorktree {
+                    project, directory, ..
+                },
+                TaskReply::Worktree(_),
+            ) => next.push(Task::Worktrees {
+                project: project.clone(),
+                directory: directory.clone(),
+            }),
             (Task::Discover { project, branch }, TaskReply::Discovered(Some(pr))) => {
                 if let Some(previous) = checkout.pull_requests.iter_mut().find(|p| p.url == pr.url)
                 {

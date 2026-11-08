@@ -1686,19 +1686,29 @@ impl Workspace {
                     for worktree in &listing.worktrees {
                         self.project_roots
                             .insert(worktree.project.path.clone(), root.clone());
-                        if worktree.available
-                            && !self
+                        if worktree.available {
+                            let mut project_info = worktree.project.clone();
+                            if let Some(label) = &worktree.label {
+                                project_info.name.clone_from(label);
+                            }
+                            if let Some(project) = self
                                 .projects
-                                .iter()
-                                .any(|p| p.path == worktree.project.path)
-                        {
-                            self.projects.push(worktree.project.clone());
-                            for provider in Provider::ALL {
-                                let scope = Scope {
-                                    project: worktree.project.path.clone(),
-                                    provider,
-                                };
-                                self.request(Command::List(scope.clone()), Pending::List(scope));
+                                .iter_mut()
+                                .find(|p| p.path == worktree.project.path)
+                            {
+                                project.name = project_info.name;
+                            } else {
+                                self.projects.push(project_info);
+                                for provider in Provider::ALL {
+                                    let scope = Scope {
+                                        project: worktree.project.path.clone(),
+                                        provider,
+                                    };
+                                    self.request(
+                                        Command::List(scope.clone()),
+                                        Pending::List(scope),
+                                    );
+                                }
                             }
                         }
                         if let Some(branch) = &worktree.branch {

@@ -611,6 +611,23 @@ fn merge_checks_methods_and_mutations_retain_the_review_owner() {
 }
 
 #[test]
+fn worktree_labels_can_be_edited_from_the_checkout_list() {
+    use caelum_core::application::{Command, Task};
+    let mut rt = design_runtime("worktrees", (800.0, 620.0));
+    assert!(element(&rt, "rename-worktree").visible[3] > 0.0);
+    click(&mut rt, "rename-worktree");
+    fill(&mut rt, "rename-worktree-name", "Fix checkout picker");
+    click(&mut rt, "save-worktree-name");
+
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| matches!(
+        command,
+        Command::Task(Task::RenameWorktree { path, name, .. })
+            if path == "/projects/caelum-native" && name == "Fix checkout picker"
+    )));
+}
+
+#[test]
 fn worktree_form_searches_bases_and_captures_project_provider_and_branch() {
     use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
     let mut rt = design_runtime("worktree-create", (800.0, 620.0));
