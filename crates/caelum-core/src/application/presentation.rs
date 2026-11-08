@@ -311,6 +311,8 @@ pub struct Tool {
     pub paths: Vec<String>,
     pub patch: String,
     pub input: String,
+    pub output: String,
+    pub error: String,
     pub outcome: Outcome,
     pub details: Vec<String>,
     pub timing: String,
@@ -318,7 +320,7 @@ pub struct Tool {
 
 impl Tool {
     pub fn from_entry(entry: &Entry, now: u64) -> Self {
-        let input: Value =
+        let mut input: Value =
             serde_json::from_str(&entry.input).unwrap_or(Value::String(entry.input.clone()));
         let name = match entry.kind {
             EntryKind::Reasoning => {
@@ -339,6 +341,15 @@ impl Tool {
             },
         }
         .to_owned();
+        if name == "Run" {
+            match &mut input {
+                Value::Object(fields) => {
+                    fields.remove("id");
+                }
+                Value::String(text) => *text = hide_shell_ids(text),
+                _ => {}
+            }
+        }
         let mut paths = Vec::new();
         collect_paths(&input, &mut paths);
         paths.sort();
@@ -430,17 +441,40 @@ impl Tool {
         } else {
             outcome(&entry.status, entry.complete)
         };
+        let output = if name == "Run" {
+            hide_shell_ids(&entry.output)
+        } else {
+            entry.output.clone()
+        };
+        let error = if name == "Run" {
+            hide_shell_ids(&entry.error)
+        } else {
+            entry.error.clone()
+        };
         Self {
             name,
             summary: summary.chars().take(180).collect(),
             paths,
             patch,
             input,
+            output,
+            error,
             outcome: state,
             details,
             timing,
         }
     }
+}
+
+fn hide_shell_ids(text: &str) -> String {
+    static SHELL_ID: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    SHELL_ID
+        .get_or_init(|| {
+            regex::Regex::new(r#"(?i)(<shell\b[^>]*?)\s+id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#)
+                .expect("shell ID regex")
+        })
+        .replace_all(text, "$1")
+        .into_owned()
 }
 
 fn trim_tool_input(input: &mut Value, name: &str, patch: &str, summary: &str) {

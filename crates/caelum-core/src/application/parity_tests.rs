@@ -676,6 +676,38 @@ fn tool_timing_is_frozen_when_complete_and_usage_remains_attributed_to_its_model
 }
 
 #[test]
+fn shell_tool_feed_hides_internal_ids_but_keeps_command_and_output() {
+    let id = "sh_internal_fixture";
+    let markup = format!(r#"<shell id="{id}" state="completed" command="cargo test">done</shell>"#);
+    let mut conversation = Conversation::default();
+    conversation.history(
+        Provider::OpenCode,
+        &[json!({
+            "id":"message",
+            "type":"assistant",
+            "content":[{
+                "id":"tool",
+                "type":"tool",
+                "name":"shell",
+                "state":{
+                    "status":"completed",
+                    "input":markup.clone(),
+                    "content":[{"type":"text","text":markup}]
+                }
+            }]
+        })],
+        false,
+    );
+    let tool = presentation::Tool::from_entry(&conversation.entries[0], 0);
+    assert!(!tool.summary.contains(id));
+    assert!(!tool.input.contains(id));
+    assert!(!tool.output.contains(id));
+    assert!(tool.summary.contains("cargo test"));
+    assert!(tool.output.contains("state=\"completed\""));
+    assert!(tool.output.contains("done"));
+}
+
+#[test]
 fn refreshing_statistics_preserves_the_same_filter_cache_and_rejects_old_ranges() {
     let mut app = workspace();
     let task = Task::Stats {
