@@ -22,6 +22,12 @@ pub struct Form {
     submitted: bool,
 }
 
+pub struct RenameForm {
+    project: String,
+    path: String,
+    name: TextEdit,
+}
+
 impl Form {
     pub fn sync(&mut self, app: &Application) -> bool {
         if self.initialized {
@@ -72,6 +78,110 @@ pub fn open(s: &mut Workspace, project: String, provider: Provider) {
     });
     l.panels.worktree = Some(form);
     l.panels.overlay = Some(Screen::CreateWorktree);
+}
+
+pub fn rename_control(
+    s: &Workspace,
+    k: &Kit,
+    project: String,
+    path: &str,
+    current_name: &str,
+) -> El {
+    let editing = is_renaming(s, path);
+    if !editing {
+        let path = path.to_owned();
+        let current_name = current_name.to_owned();
+        let key = crate::code_view::source_key(&path, "rename-worktree");
+        return ui::Button::new("Rename")
+            .variant(ButtonVariant::GhostMuted)
+            .on_press(move |s: &mut Workspace| {
+                let mut name = TextEdit::new(&current_name);
+                name.focused = true;
+                live_mut(s).panels.rename_worktree = Some(RenameForm {
+                    project: project.clone(),
+                    path: path.clone(),
+                    name,
+                });
+            })
+            .build(k)
+            .key(key);
+    }
+
+    let form = live(s).panels.rename_worktree.as_ref().unwrap();
+    let name_key = crate::code_view::source_key(&form.path, "rename-worktree-name");
+    let save_key = crate::code_view::source_key(&form.path, "save-worktree-name");
+    let cancel_key = crate::code_view::source_key(&form.path, "cancel-worktree-name");
+    let task = Task::RenameWorktree {
+        project: form.project.clone(),
+        path: form.path.clone(),
+        name: form.name.text.trim().to_owned(),
+        directory: live(s).app.preferences.worktree_directory.clone(),
+    };
+    let busy = live(s).app.services.busy(&task);
+    row()
+        .w_full()
+        .gap(6.0)
+        .center_y()
+        .child(
+            ui::field(&form.name, "Worktree name", "A short descriptive name", k)
+                .key(name_key)
+                .grow(1.0)
+                .on_edit(|s: &mut Workspace| {
+                    &mut live_mut(s).panels.rename_worktree.as_mut().unwrap().name
+                })
+                .on_input_key(|s: &mut Workspace, ev, _| {
+                    if ev.key != Key::Enter {
+                        return false;
+                    }
+                    submit_rename(s);
+                    true
+                }),
+        )
+        .child(
+            ui::Button::new(if busy { "Saving…" } else { "Save" })
+                .variant(ButtonVariant::Contrast)
+                .disabled(busy || task_name_empty(&task))
+                .on_press(submit_rename)
+                .build(k)
+                .key(save_key),
+        )
+        .child(
+            ui::Button::new("Cancel")
+                .variant(ButtonVariant::GhostMuted)
+                .on_press(|s: &mut Workspace| live_mut(s).panels.rename_worktree = None)
+                .build(k)
+                .key(cancel_key),
+        )
+}
+
+pub fn is_renaming(s: &Workspace, path: &str) -> bool {
+    live(s)
+        .panels
+        .rename_worktree
+        .as_ref()
+        .is_some_and(|form| form.path == path)
+}
+
+fn task_name_empty(task: &Task) -> bool {
+    matches!(task, Task::RenameWorktree { name, .. } if name.is_empty())
+}
+
+fn submit_rename(s: &mut Workspace) {
+    let l = live_mut(s);
+    let Some(form) = &l.panels.rename_worktree else {
+        return;
+    };
+    let task = Task::RenameWorktree {
+        project: form.project.clone(),
+        path: form.path.clone(),
+        name: form.name.text.trim().to_owned(),
+        directory: l.app.preferences.worktree_directory.clone(),
+    };
+    if task_name_empty(&task) || l.app.services.busy(&task) {
+        return;
+    }
+    l.app.task(task);
+    l.panels.rename_worktree = None;
 }
 
 fn submit(s: &mut Workspace) {

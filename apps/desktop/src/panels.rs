@@ -86,6 +86,7 @@ pub struct Panels {
     selection: Option<Selection>,
     preview_page: usize,
     pub worktree: Option<crate::worktree::Form>,
+    pub rename_worktree: Option<crate::worktree::RenameForm>,
     pub(crate) directory: TextEdit,
     directory_loaded: bool,
 }
@@ -143,6 +144,7 @@ impl Default for Panels {
             selection: None,
             preview_page: 0,
             worktree: None,
+            rename_worktree: None,
             directory: TextEdit::new(""),
             directory_loaded: false,
         }

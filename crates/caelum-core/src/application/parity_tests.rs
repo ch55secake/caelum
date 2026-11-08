@@ -151,6 +151,7 @@ fn launcher_worktree_handoff_uses_the_chosen_provider_and_preserves_newer_naviga
                         path: "/linked".into(),
                         name: "Linked".into(),
                     },
+                    label: None,
                     branch: Some("feature".into()),
                     main: false,
                     locked: None,

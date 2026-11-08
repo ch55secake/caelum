@@ -947,6 +947,7 @@ fn removing_the_active_linked_checkout_returns_to_the_surviving_project() {
                     name: "Linked".into(),
                     path: "/linked".into(),
                 },
+                label: None,
                 branch: Some("feature".into()),
                 main: false,
                 locked: None,

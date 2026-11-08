@@ -146,6 +146,9 @@ pub fn status(app: &Application, tree: &GitWorktree) -> String {
 }
 
 pub fn name(tree: &GitWorktree) -> &str {
+    if let Some(label) = tree.label.as_deref() {
+        return label;
+    }
     std::path::Path::new(&tree.path)
         .file_name()
         .and_then(|name| name.to_str())
@@ -172,7 +175,15 @@ pub fn manager_height(s: &Workspace) -> f32 {
     let app = &live(s).app;
     let count = owner(s).map_or(0, |project| app.managed_worktrees(project).count());
     let has_error = owner(s).is_some_and(|project| error(app, project).is_some());
-    (132.0 + count as f32 * 65.0 + if has_error { 96.0 } else { 0.0 }).clamp(240.0, 400.0)
+    let editing = owner(s).is_some_and(|project| {
+        app.managed_worktrees(project)
+            .any(|tree| crate::worktree::is_renaming(s, &tree.path))
+    });
+    (132.0
+        + count as f32 * 65.0
+        + if editing { 44.0 } else { 0.0 }
+        + if has_error { 96.0 } else { 0.0 })
+    .clamp(240.0, 400.0)
 }
 
 pub fn error<'a>(app: &'a Application, project: &str) -> Option<&'a str> {
@@ -251,62 +262,81 @@ pub fn manager(s: &Workspace, k: &Kit) -> El {
         }
         let current = app.active_project.as_ref() == Some(&tree.project.path);
         let path = tree.project.path.clone();
+        let tree_name = name(tree);
+        let editing = crate::worktree::is_renaming(s, &tree.path);
         let detail = format!(
             "{} · {}",
             tree.branch.as_deref().unwrap_or("Detached HEAD"),
             status(app, tree)
         );
-        rows = rows.child(
-            row()
-                .w_full()
-                .gap(4.0)
-                .center_y()
-                .py(3.0)
-                .child(crate::context::worktree(
-                    ui::choice(name(tree), &detail, current, k)
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .h(58.0)
-                        .disabled(!tree.available || busy)
-                        .label(format!("Open worktree {} for {parent}", name(tree)))
-                        .help(format!("{}\n{}\n{detail}", parent, tree.project.path))
-                        .key(crate::code_view::source_key(
-                            &tree.project.path,
-                            "manage-checkout",
-                        ))
-                        .on_press(move |s: &mut Workspace| select(s, &path)),
-                    project.into(),
-                    tree.path.clone(),
-                    crate::code_view::source_key(&tree.project.path, "manage-checkout"),
-                ))
-                .child(
-                    ui::Button::new("Remove")
-                        .variant(ButtonVariant::GhostMuted)
-                        .disabled(removal(app, project, &tree.path).is_none())
-                        .on_press({
-                            let project = project.to_owned();
-                            let path = tree.path.clone();
-                            move |s: &mut Workspace| {
-                                let app = &mut live_mut(s).app;
-                                if let Some(task) = removal(app, &project, &path) {
-                                    app.task(task);
-                                }
-                            }
-                        })
-                        .build(k)
-                        .px(8.0)
-                        .label(format!("Remove worktree {} from {parent}", name(tree)))
-                        .help(
-                            tree.locked
-                                .as_deref()
-                                .unwrap_or("Remove worktree; keep its branch and commits"),
-                        )
-                        .key(crate::code_view::source_key(
-                            &tree.project.path,
-                            "remove-worktree",
-                        )),
-                ),
+        let mut line = row()
+            .w_full()
+            .gap(4.0)
+            .center_y()
+            .py(3.0)
+            .child(crate::context::worktree(
+                ui::choice(tree_name, &detail, current, k)
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .h(58.0)
+                    .disabled(!tree.available || busy)
+                    .label(format!("Open worktree {tree_name} for {parent}"))
+                    .help(format!("{}\n{}\n{detail}", parent, tree.project.path))
+                    .key(crate::code_view::source_key(
+                        &tree.project.path,
+                        "manage-checkout",
+                    ))
+                    .on_press(move |s: &mut Workspace| select(s, &path)),
+                project.into(),
+                tree.path.clone(),
+                crate::code_view::source_key(&tree.project.path, "manage-checkout"),
+            ));
+        if !editing {
+            line = line.child(crate::worktree::rename_control(
+                s,
+                k,
+                project.to_owned(),
+                &tree.path,
+                tree_name,
+            ));
+        }
+        line = line.child(
+            ui::Button::new("Remove")
+                .variant(ButtonVariant::GhostMuted)
+                .disabled(removal(app, project, &tree.path).is_none())
+                .on_press({
+                    let project = project.to_owned();
+                    let path = tree.path.clone();
+                    move |s: &mut Workspace| {
+                        let app = &mut live_mut(s).app;
+                        if let Some(task) = removal(app, &project, &path) {
+                            app.task(task);
+                        }
+                    }
+                })
+                .build(k)
+                .px(8.0)
+                .label(format!("Remove worktree {tree_name} from {parent}"))
+                .help(
+                    tree.locked
+                        .as_deref()
+                        .unwrap_or("Remove worktree; keep its branch and commits"),
+                )
+                .key(crate::code_view::source_key(
+                    &tree.project.path,
+                    "remove-worktree",
+                )),
         );
+        rows = rows.child(line);
+        if editing {
+            rows = rows.child(crate::worktree::rename_control(
+                s,
+                k,
+                project.to_owned(),
+                &tree.path,
+                tree_name,
+            ));
+        }
     }
     if count == 0 {
         rows = rows.child(

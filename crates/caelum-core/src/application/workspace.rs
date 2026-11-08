@@ -1776,23 +1776,34 @@ impl Workspace {
                         if *owner != root {
                             continue;
                         }
-                        if worktree.available
-                            && !self
+                        if worktree.available && worktree.project.path != root {
+                            let mut project_info = worktree.project.clone();
+                            project_info.name = worktree.label.clone().unwrap_or_else(|| {
+                                std::path::Path::new(&worktree.path)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned()
+                            });
+                            if let Some(project) = self
                                 .projects
-                                .iter()
-                                .any(|p| p.path == worktree.project.path)
-                        {
-                            self.projects.push(worktree.project.clone());
-                            for provider in Provider::ALL {
-                                let scope = Scope {
-                                    project: worktree.project.path.clone(),
-                                    provider,
-                                };
-                                self.request(
-                                    Command::List(scope.clone()),
-                                    Pending::List(scope.clone()),
-                                );
-                                self.refresh_choices_for(scope);
+                                .iter_mut()
+                                .find(|p| p.path == worktree.project.path)
+                            {
+                                project.name = project_info.name;
+                            } else {
+                                self.projects.push(project_info);
+                                for provider in Provider::ALL {
+                                    let scope = Scope {
+                                        project: worktree.project.path.clone(),
+                                        provider,
+                                    };
+                                    self.request(
+                                        Command::List(scope.clone()),
+                                        Pending::List(scope.clone()),
+                                    );
+                                    self.refresh_choices_for(scope);
+                                }
                             }
                         }
                         if let Some(branch) = &worktree.branch {

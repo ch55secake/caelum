@@ -1460,6 +1460,28 @@ fn merge_checks_methods_and_mutations_retain_the_review_owner() {
 }
 
 #[test]
+fn worktree_labels_can_be_edited_from_the_checkout_list() {
+    use caelum_core::application::{Command, Task};
+    let mut rt = design_runtime("worktrees", (800.0, 620.0));
+    let path = "/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native";
+    let rename_key = crate::code_view::source_key(path, "rename-worktree");
+    let name_key = crate::code_view::source_key(path, "rename-worktree-name");
+    let save_key = crate::code_view::source_key(path, "save-worktree-name");
+    assert!(element(&rt, &rename_key).visible[3] > 0.0);
+    click(&mut rt, &rename_key);
+    fill(&mut rt, &name_key, "Fix checkout picker");
+    click(&mut rt, &save_key);
+
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| matches!(
+        command,
+        Command::Task(Task::RenameWorktree { path, name, .. })
+            if path == "/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native"
+                && name == "Fix checkout picker"
+    )));
+}
+
+#[test]
 fn worktree_form_searches_bases_and_captures_project_provider_and_branch() {
     use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
     let mut rt = design_runtime("worktree-create", (800.0, 620.0));

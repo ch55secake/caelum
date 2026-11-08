@@ -50,6 +50,8 @@ pub struct ProjectInfo {
 pub struct GitWorktree {
     pub path: String,
     pub project: ProjectInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub branch: Option<String>,
     pub main: bool,
     pub locked: Option<String>,
