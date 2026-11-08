@@ -3275,8 +3275,8 @@ fn deleting_an_archived_session_requires_confirmation() {
     );
     assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].forgotten);
 
-    click(&mut rt, "session-actions-0");
-    click(&mut rt, "delete-session");
+    close_session(&mut rt, 0);
+    element(&rt, "confirm-delete-session");
     click(&mut rt, "confirm-delete-session");
     let (request, command) = rt
         .state
