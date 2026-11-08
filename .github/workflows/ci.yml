@@ -1,7 +1,6 @@
 name: CI
 on:
-  push:
-    branches: [main]
+  # Main commits are checked by the release workflow's reusable CI run.
   pull_request:
   workflow_call:
     inputs:
@@ -21,8 +20,63 @@ concurrency:
 env:
   MACOSX_DEPLOYMENT_TARGET: '13.0'
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      native: ${{ steps.filter.outputs.native }}
+      preview: ${{ steps.filter.outputs.preview }}
+      bundle: ${{ steps.filter.outputs.bundle }}
+    steps:
+      - name: Keep reusable CI unfiltered
+        if: ${{ github.event_name != 'pull_request' }}
+        run: echo "Running full reusable CI checks."
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - 'Cargo.toml'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+            native:
+              - 'apps/desktop/src/**'
+              - 'apps/desktop/preview/**'
+              - 'apps/desktop/Cargo.toml'
+              - 'crates/caelum-core/**'
+              - 'crates/caelum-protocol/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+            preview:
+              - 'apps/desktop/src/**'
+              - 'apps/desktop/assets/**'
+              - 'apps/desktop/preview/**'
+              - 'apps/desktop/Cargo.toml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+            bundle:
+              - '**/*.rs'
+              - 'Cargo.toml'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'apps/desktop/assets/**'
+              - 'apps/desktop/THIRD_PARTY_NOTICES.md'
+              - 'scripts/release/**'
+
   rust-format:
     name: rust-format
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +89,8 @@ jobs:
       - run: cargo fmt --all -- --check
   rust-clippy:
     name: rust-lint
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -48,6 +104,8 @@ jobs:
       - run: cargo clippy --locked -p caelum-core -p caelum-protocol -p caelum-cli --all-targets -- -D warnings
   rust-test:
     name: rust-tests
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -60,6 +118,8 @@ jobs:
       - run: cargo test --locked -p caelum-core -p caelum-protocol -p caelum-cli -- --test-threads=4
   native-desktop:
     name: native-desktop-tests
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.native == 'true' || needs.changes.outputs.preview == 'true' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -73,13 +133,16 @@ jobs:
       - run: cargo clippy --locked -p caelum-desktop --all-targets -- -D warnings
       - run: cargo test --locked -p caelum-desktop -- --test-threads=4
       - run: python3 apps/desktop/preview/capture.py
+        if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.preview == 'true' }}
       - uses: actions/upload-artifact@v7
+        if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.preview == 'true' }}
         with:
           name: native-design-previews
           path: apps/desktop/preview-results/
   macos-app:
     name: desktop-bundle-build
-    if: ${{ inputs.skip_bundle != true }}
+    needs: changes
+    if: ${{ inputs.skip_bundle != true && (github.event_name != 'pull_request' || needs.changes.outputs.bundle == 'true') }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
