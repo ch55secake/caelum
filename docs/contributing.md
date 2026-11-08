@@ -30,10 +30,10 @@ For visual changes, run `make previews` and inspect light/dark, inspector,
 compact and settings scenes. Native frame measurements are described in
 [performance](performance/README.md).
 
-CI runs portable Rust checks on Linux when Rust inputs change, native tests on
-macOS for desktop changes, and captures previews only for desktop UI, assets or
-fixture changes. Python release/profile checks run separately. The release
-workflow checks main commits and builds release assets; PR bundle checks verify
-the app, DMG and CLI archive when Rust, app or packaging inputs change.
+CI runs portable Rust checks on Linux for every PR, native tests on macOS for
+desktop changes, and captures previews only for desktop UI, assets or fixture
+changes. Python release/profile checks run separately. The release workflow
+checks main commits and builds release assets; PR bundle checks verify the app,
+DMG and CLI archive when Rust, app or packaging inputs change.
 
 Use Conventional Commits and the repository's pull-request template.
