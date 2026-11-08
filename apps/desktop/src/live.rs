@@ -965,7 +965,16 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         let mut item = ui::session_row(&session.title, &detail, app.selected == Some(index), k)
             .on_select(move |s: &mut Workspace, _| {
                 let live = live_mut(s);
+                let worktree_group = live
+                    .app
+                    .group_path(&live.app.sessions[index].scope.project)
+                    .to_owned();
                 live.app.select(index);
+                live.app
+                    .preferences
+                    .worktree_expanded
+                    .entry(worktree_group)
+                    .or_insert(false);
                 live.panels.screen = crate::panels::Screen::Conversation;
                 live.menu = None;
             });
