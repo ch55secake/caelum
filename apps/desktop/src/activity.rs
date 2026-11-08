@@ -160,7 +160,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
         && presentation.name == "Run"
         && !entry.output.is_empty()
     {
-        let recent = entry
+        let recent = presentation
             .output
             .lines()
             .rev()
@@ -334,8 +334,8 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
             }
             for (name, value) in [
                 ("Input", &presentation.input),
-                ("Output", &entry.output),
-                ("Error", &entry.error),
+                ("Output", &presentation.output),
+                ("Error", &presentation.error),
             ] {
                 if value.is_empty() {
                     continue;

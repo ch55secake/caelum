@@ -281,7 +281,7 @@ pub fn panel(s: &Workspace, k: &Kit) -> El {
         for command in &panel.commands {
             let id = command.id.clone();
             list = list.child(
-                ui::choice(&command.command, &command.id, panel.selected == id, k).on_press(
+                ui::choice(&command.command, "", panel.selected == id, k).on_press(
                     move |s: &mut Workspace| {
                         let l = live_mut(s);
                         let panel = l.shell_panel.as_mut().unwrap();
