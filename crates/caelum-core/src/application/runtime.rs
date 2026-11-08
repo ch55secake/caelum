@@ -131,7 +131,7 @@ impl ProviderRuntime {
                     *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
                         crate::session_branches::SessionBranches::new(Some(database));
                 }
-                return Ok(Reply::Snapshot(snapshot));
+                return Ok(Reply::Snapshot(snapshot.map(Box::new)));
             }
             Command::Save(store, state) => return store.save(state).map(|()| Reply::Done),
             Command::Commands(scope) => {
@@ -422,7 +422,7 @@ pub enum Command {
     Sound(u8),
     Task(Task),
     Load(Store),
-    Save(Store, Snapshot),
+    Save(Store, Box<Snapshot>),
     Commands(Scope),
     Shells(SessionKey),
     Archive(SessionKey, bool),
@@ -444,7 +444,7 @@ pub enum Reply {
     Inbox(Vec<serde_json::Value>),
     Generated(String),
     Task(TaskReply),
-    Snapshot(Option<Snapshot>),
+    Snapshot(Option<Box<Snapshot>>),
     Commands(Vec<caelum_protocol::OpenCodeCommandInfo>),
     Shells(Vec<caelum_protocol::OpenCodeBackgroundShell>),
     Details(caelum_protocol::SessionDetails),

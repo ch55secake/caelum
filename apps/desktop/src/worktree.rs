@@ -1,4 +1,5 @@
 //! A creation form owns its checkout and provider across navigation and async reads.
+use crate::context::EditMenu;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -86,14 +87,11 @@ pub fn rename_control(
     path: &str,
     current_name: &str,
 ) -> El {
-    let editing = live(s)
-        .panels
-        .rename_worktree
-        .as_ref()
-        .is_some_and(|form| form.path == path);
+    let editing = is_renaming(s, path);
     if !editing {
         let path = path.to_owned();
         let current_name = current_name.to_owned();
+        let key = crate::code_view::source_key(&path, "rename-worktree");
         return ui::Button::new("Rename")
             .variant(ButtonVariant::GhostMuted)
             .on_press(move |s: &mut Workspace| {
@@ -106,10 +104,13 @@ pub fn rename_control(
                 });
             })
             .build(k)
-            .key("rename-worktree");
+            .key(key);
     }
 
     let form = live(s).panels.rename_worktree.as_ref().unwrap();
+    let name_key = crate::code_view::source_key(&form.path, "rename-worktree-name");
+    let save_key = crate::code_view::source_key(&form.path, "save-worktree-name");
+    let cancel_key = crate::code_view::source_key(&form.path, "cancel-worktree-name");
     let task = Task::RenameWorktree {
         project: form.project.clone(),
         path: form.path.clone(),
@@ -123,7 +124,7 @@ pub fn rename_control(
         .center_y()
         .child(
             ui::field(&form.name, "Worktree name", "A short descriptive name", k)
-                .key("rename-worktree-name")
+                .key(name_key)
                 .grow(1.0)
                 .on_edit(|s: &mut Workspace| {
                     &mut live_mut(s).panels.rename_worktree.as_mut().unwrap().name
@@ -142,15 +143,23 @@ pub fn rename_control(
                 .disabled(busy || task_name_empty(&task))
                 .on_press(submit_rename)
                 .build(k)
-                .key("save-worktree-name"),
+                .key(save_key),
         )
         .child(
             ui::Button::new("Cancel")
                 .variant(ButtonVariant::GhostMuted)
                 .on_press(|s: &mut Workspace| live_mut(s).panels.rename_worktree = None)
                 .build(k)
-                .key("cancel-worktree-name"),
+                .key(cancel_key),
         )
+}
+
+pub fn is_renaming(s: &Workspace, path: &str) -> bool {
+    live(s)
+        .panels
+        .rename_worktree
+        .as_ref()
+        .is_some_and(|form| form.path == path)
 }
 
 fn task_name_empty(task: &Task) -> bool {
@@ -258,9 +267,8 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             })
             .search(
                 ui::field(&form.search, "Find base branch", "Search branches…", k)
-                    .key("worktree-base-search")
-                    .on_edit(|s: &mut Workspace| {
-                        &mut live_mut(s).panels.worktree.as_mut().unwrap().search
+                    .edit_menu("worktree-base-search", |s| {
+                        Some(&mut live_mut(s).panels.worktree.as_mut()?.search)
                     }),
             )
             .build(k, layers)
@@ -269,10 +277,9 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .child(ui::caption("New branch", k))
             .child(
                 ui::field(&form.branch, "New branch", "work/my-change", k)
-                    .key("worktree-branch")
                     .disabled(busy)
-                    .on_edit(|s: &mut Workspace| {
-                        &mut live_mut(s).panels.worktree.as_mut().unwrap().branch
+                    .edit_menu("worktree-branch", |s| {
+                        Some(&mut live_mut(s).panels.worktree.as_mut()?.branch)
                     })
                     .on_input_key(|s: &mut Workspace, ev, _| {
                         if ev.key != Key::Enter {
@@ -312,7 +319,7 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     }
     if form.submitted && !busy && l.app.services.error(&task).is_none() {
         fields = fields.child(ui::caption(
-            "Worktree created. It's available in the checkout chooser.",
+            "Worktree created. It's available in the sidebar worktree list.",
             k,
         ));
     }

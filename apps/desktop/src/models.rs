@@ -1,4 +1,5 @@
 //! Searchable model catalogue. The picker owns its target until it closes.
+use crate::context::EditMenu;
 use crate::{
     Workspace,
     live::{live, live_mut},
@@ -59,6 +60,12 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
         };
         Owner::Session(index, l.app.sessions[index].scope.clone())
     };
+    let choices_scope = owner.scope().clone();
+    let needs_choices = l
+        .app
+        .choices
+        .get(&choices_scope)
+        .is_none_or(|choices| choices.models.is_empty());
     l.models.selected = match &owner {
         Owner::Session(i, _) => l.app.sessions[*i].options.model.clone(),
         Owner::Defaults(scope) => l
@@ -71,6 +78,9 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
     l.models.owner = Some(owner);
     l.models.query.clear();
     l.models.query.focused = true;
+    if needs_choices {
+        l.app.refresh_choices_for(choices_scope);
+    }
     l.panels.settings_menu = None;
     for draft in &mut l.drafts {
         draft.focused = false;
@@ -371,12 +381,14 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
             "Search models, providers or context capacity…",
             k,
         )
-        .key("model-search")
-        .on_edit(|s: &mut Workspace| &mut live_mut(s).models.query)
-        .on_input_change(|s: &mut Workspace, tx| {
-            live_mut(s).models.selected = None;
-            tx.scroll_to_y("model-scroll", 0.0);
-        })
+        .edit_menu_changed(
+            "model-search",
+            |s| Some(&mut live_mut(s).models.query),
+            |s, tx| {
+                live_mut(s).models.selected = None;
+                tx.scroll_to_y("model-scroll", 0.0);
+            },
+        )
         .on_input_key(key),
     );
     if let Some(error) = l.app.notices.get(scope) {

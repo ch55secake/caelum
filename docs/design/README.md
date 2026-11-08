@@ -120,6 +120,22 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native effort choices](previews/rune-dark-composer-effort.png) | ![Native agent choices](previews/rune-light-composer-agent-small.png) |
 
+| Session context menu | Composer editing menu |
+| --- | --- |
+| ![Custom session actions](previews/rune-dark-context-session.png) | ![Custom editing actions](previews/rune-light-context-editor-small.png) |
+
+| Caelum worktrees | Compact project navigation |
+| --- | --- |
+| ![Caelum worktree folders and activity](previews/rune-dark-sidebar-worktrees.png) | ![Worktrees inside their parent project](previews/rune-light-sidebar-worktrees-small.png) |
+
+| Multiple project groups | Project-scoped worktree manager |
+| --- | --- |
+| ![Worktree ownership across projects](previews/rune-dark-sidebar-worktrees-projects.png) | ![Compact Caelum worktree manager](previews/rune-light-worktree-manager-small.png) |
+
+| Vercel worktrees | Compact Vercel worktrees |
+| --- | --- |
+| ![Flat Vercel worktree hierarchy](previews/rune-dark-sidebar-worktrees-vercel.png) | ![Light Vercel worktrees](previews/rune-light-sidebar-worktrees-vercel-small.png) |
+
 | Compact file tabs | Tool icons and details |
 | --- | --- |
 | ![Native compact files](previews/rune-dark-files-tabs-small.png) | ![Native collapsed tools](previews/rune-dark-tools-collapsed.png) |

@@ -63,6 +63,7 @@ impl WorktreeClient {
             slug(&name),
             path_id(&common)
         ));
+        let storage_directory = resolved_directory(&storage_directory);
         let branches = checked(
             project.path(),
             &[
@@ -317,6 +318,16 @@ impl WorktreeClient {
     }
 }
 
+// Resolve existing parents too, so a new storage folder has the same identity
+// before and after creation (including macOS /var and custom symlink aliases).
+fn resolved_directory(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|_| match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => resolved_directory(parent).join(name),
+            _ => path.to_owned(),
+        })
+}
+
 fn parse_worktrees(bytes: &[u8], prefix: &Path) -> Result<Vec<GitWorktree>, WorktreeError> {
     let mut entries = Vec::new();
     let mut current: Option<GitWorktree> = None;
@@ -560,6 +571,7 @@ mod tests {
             ));
             let repo = directory.join("project with spaces");
             fs::create_dir_all(repo.join("src")).unwrap();
+            let directory = directory.canonicalize().unwrap();
             checked(&repo, &["init", "-b", "main"]).unwrap();
             fs::write(repo.join("src/file.txt"), "original\n").unwrap();
             checked(&repo, &["add", "."]).unwrap();
@@ -770,6 +782,23 @@ mod tests {
             .create(&test.repo, "feature", "main", &custom.to_string_lossy())
             .unwrap();
         assert!(Path::new(&entry.path).starts_with(custom.canonicalize().unwrap()));
+        #[cfg(unix)]
+        {
+            let alias = test.directory.join("storage alias");
+            std::os::unix::fs::symlink(&custom, &alias).unwrap();
+            assert_eq!(
+                test.client
+                    .list(&test.repo, &alias.to_string_lossy())
+                    .unwrap()
+                    .unwrap()
+                    .storage_directory,
+                test.client
+                    .list(&test.repo, &custom.to_string_lossy())
+                    .unwrap()
+                    .unwrap()
+                    .storage_directory,
+            );
+        }
         assert!(test
             .client
             .create(&test.repo, "feature", "main", "")

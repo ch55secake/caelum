@@ -55,6 +55,317 @@ fn fill(rt: &mut Runtime<Workspace>, field: &str, value: &str) {
     advance(rt, 0.1);
 }
 
+fn secondary(rt: &mut Runtime<Workspace>, target: &str) {
+    let (x, y) = rt
+        .find(target)
+        .unwrap_or_else(|| panic!("missing {target}"));
+    rt.pointer_move(x, y);
+    rt.secondary_down(x, y);
+    rt.secondary_up(x, y);
+    advance(rt, 0.2);
+    assert!(rt.popup_menu().is_none(), "context menus are app-owned");
+    assert!(rt.find("context-menu").is_some());
+}
+
+fn context_item(rt: &Runtime<Workspace>, label: &str) -> ElementInfo {
+    rt.elements()
+        .into_iter()
+        .find(|e| {
+            !e.exiting
+                && e.role == "menuitem"
+                && e.path.contains("context-menu")
+                && e.label.as_deref() == Some(label)
+        })
+        .unwrap_or_else(|| panic!("missing context action {label}"))
+}
+
+fn choose_context(rt: &mut Runtime<Workspace>, label: &str) {
+    let key = context_item(rt, label).key.unwrap();
+    click(rt, &key);
+    advance(rt, 0.3);
+    assert!(!crate::context::is_open(&rt.state));
+}
+
+#[test]
+fn context_menus_keep_background_session_ownership_and_keyboard_focus() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.sessions[0].conversation.working = true;
+        l.app.sessions[1].remote_id = Some("background".into());
+        l.app.sessions[1].loaded = true;
+        l.app.sessions[1].title = "Background session".into();
+    });
+    secondary(&mut rt, "live-session-1");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    choose_context(&mut rt, "Copy session title");
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("Background session")
+    );
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    assert!(element(&rt, "session-actions-1").focused);
+    key(
+        &mut rt,
+        Key::Function(10),
+        Mods {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    advance(&mut rt, 0.2);
+    assert!(crate::context::is_open(&rt.state));
+    key(&mut rt, Key::End, Mods::default());
+    assert!(context_item(&rt, "Archive session").focused);
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.3);
+    assert!(element(&rt, "session-actions-1").focused);
+    assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+    secondary(&mut rt, "live-session-0");
+    assert!(!context_item(&rt, "Archive session").focusable);
+    let archive = context_item(&rt, "Archive session").key.unwrap();
+    click(&mut rt, &archive);
+    assert!(crate::context::is_open(&rt.state));
+    assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].archived);
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.3);
+    secondary(&mut rt, "live-session-1");
+    choose_context(&mut rt, "Refresh session");
+    let l = rt.state.live.as_mut().unwrap();
+    assert!(l.app.commands().iter().any(|(_, c)| matches!(c, caelum_core::application::Command::Resume(key) if key.id == "background")));
+    assert_eq!(l.app.selected, Some(0));
+}
+
+#[test]
+fn context_editor_preserves_unicode_selection_undo_and_paste_ownership() {
+    let mut rt = live_runtime();
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    fill(&mut rt, "live-draft-0", "Keep café ☁️ safe");
+    rt.update(|s, _| s.live.as_mut().unwrap().drafts[0].set_selection(5, "Keep café ☁️".len()));
+    secondary(&mut rt, "live-draft-0");
+    choose_context(&mut rt, "Cut");
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("café ☁️")
+    );
+    assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, "Keep  safe");
+    assert!(element(&rt, "live-draft-0").focused);
+    secondary(&mut rt, "live-draft-0");
+    choose_context(&mut rt, "Undo");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep café ☁️ safe"
+    );
+    secondary(&mut rt, "live-draft-0");
+    choose_context(&mut rt, "Redo");
+    secondary(&mut rt, "live-draft-0");
+    choose_context(&mut rt, "Paste");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep café ☁️ safe"
+    );
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0].draft,
+        "Keep café ☁️ safe"
+    );
+    secondary(&mut rt, "live-draft-0");
+    choose_context(&mut rt, "Select all");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].selected(),
+        "Keep café ☁️ safe"
+    );
+    secondary(&mut rt, "live-draft-0");
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(1));
+    advance(&mut rt, 0.3);
+    assert!(!crate::context::is_open(&rt.state));
+    assert!(rt.find("context-menu").is_none());
+    assert!(rt.state.live.as_ref().unwrap().drafts[1].text.is_empty());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        "Keep café ☁️ safe"
+    );
+}
+
+#[test]
+fn context_menus_stay_in_bounds_and_dismiss_before_parent_overlays() {
+    for dark in [false, true] {
+        let mut rt = design_runtime("models", (800.0, 620.0));
+        rt.update(|s, _| s.dark = Some(dark));
+        fill(&mut rt, "model-search", "model");
+        secondary(&mut rt, "model-search");
+        let menu = element(&rt, "context-menu");
+        assert!(
+            menu.rect
+                .iter()
+                .zip(menu.visible)
+                .all(|(a, b)| (*a - b).abs() < 1.0),
+            "{menu:?}"
+        );
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(rt.state.live.as_ref().unwrap().models.is_open());
+        assert!(element(&rt, "model-search").focused);
+        secondary(&mut rt, "model-search");
+        key(&mut rt, Key::Tab, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(rt.state.live.as_ref().unwrap().models.is_open());
+        assert!(element(&rt, "model-search").focused);
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.3);
+        rt.secondary_down(795.0, 615.0);
+        rt.secondary_up(795.0, 615.0);
+        advance(&mut rt, 0.3);
+        let menu = element(&rt, "context-menu");
+        assert!(menu.rect[0] >= 0.0 && menu.rect[1] >= 0.0);
+        assert!(menu.rect[0] + menu.rect[2] <= 800.0 && menu.rect[1] + menu.rect[3] <= 620.0);
+        click(&mut rt, "nav-settings");
+        assert!(!crate::context::is_open(&rt.state));
+        assert!(
+            rt.state.live.as_ref().unwrap().panels.overlay.is_none(),
+            "outside click only dismisses the menu"
+        );
+    }
+}
+
+#[test]
+fn context_message_and_file_actions_capture_the_clicked_content() {
+    let mut rt = design_runtime("messages", (1280.0, 1000.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    secondary(&mut rt, "user-bubble-0-opencode-formatted");
+    choose_context(&mut rt, "Copy message");
+    assert!(clipboard.text().unwrap().contains("**session owner**"));
+    let original = rt.state.live.as_ref().unwrap().drafts[0].text.clone();
+    secondary(&mut rt, "user-bubble-0-opencode-formatted");
+    choose_context(&mut rt, "Use in prompt");
+    assert!(
+        rt.state.live.as_ref().unwrap().drafts[0]
+            .text
+            .starts_with(&original)
+    );
+    assert!(
+        rt.state.live.as_ref().unwrap().drafts[0]
+            .text
+            .contains("**session owner**")
+    );
+    assert!(element(&rt, "live-draft-0").focused);
+
+    let mut rt = design_runtime("files", (1280.0, 1000.0));
+    rt.use_clipboard(&clipboard);
+    let project = rt
+        .state
+        .live
+        .as_ref()
+        .unwrap()
+        .app
+        .active_project
+        .clone()
+        .unwrap();
+    let source = crate::code_view::source_key(&project, "Cargo.toml");
+    secondary(&mut rt, &source);
+    choose_context(&mut rt, "Copy full path");
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(format!("{project}/Cargo.toml").as_str())
+    );
+    secondary(&mut rt, &source);
+    choose_context(&mut rt, "Add to prompt");
+    let l = rt.state.live.as_ref().unwrap();
+    assert_eq!(l.app.sessions[0].attachments[0].path, "Cargo.toml");
+    assert!(
+        l.app.sessions[0].attachments[0]
+            .content
+            .contains("[package]")
+    );
+    assert!(l.app.sessions[1].attachments.is_empty());
+}
+
+#[test]
+fn context_paths_preserve_the_open_file_and_project_until_chosen() {
+    let mut rt = design_runtime("files-tabs", (1280.0, 1000.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    let project = rt
+        .state
+        .live
+        .as_ref()
+        .unwrap()
+        .app
+        .active_project
+        .clone()
+        .unwrap();
+    let tab = format!(
+        "file-tab-{}",
+        crate::code_view::source_key(&project, "README.md")
+    );
+    secondary(&mut rt, &tab);
+    choose_context(&mut rt, "Copy relative path");
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("README.md")
+    );
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts[&project]
+            .selected_file
+            .as_deref(),
+        Some("Cargo.toml")
+    );
+    secondary(&mut rt, &tab);
+    choose_context(&mut rt, "Close file");
+    let checkout = &rt.state.live.as_ref().unwrap().app.services.checkouts[&project];
+    assert!(!checkout.tabs.iter().any(|p| p == "README.md"));
+    assert_eq!(checkout.selected_file.as_deref(), Some("Cargo.toml"));
+    secondary(&mut rt, "file-tree-Cargo.toml");
+    choose_context(&mut rt, "Copy full path");
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(format!("{project}/Cargo.toml").as_str())
+    );
+
+    let mut rt = live_runtime();
+    rt.use_clipboard(&clipboard);
+    rt.update(|s, _| {
+        s.live
+            .as_mut()
+            .unwrap()
+            .app
+            .projects
+            .push(caelum_protocol::ProjectInfo {
+                name: "Other project".into(),
+                path: "/other".into(),
+            })
+    });
+    fill(&mut rt, "live-draft-0", "Keep my project draft");
+    let other = crate::code_view::source_key("/other", "project");
+    secondary(&mut rt, &other);
+    choose_context(&mut rt, "Copy project path");
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("/other")
+    );
+    assert_eq!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .active_project
+            .as_deref(),
+        Some("/project")
+    );
+    secondary(&mut rt, &other);
+    choose_context(&mut rt, "New session");
+    let l = rt.state.live.as_ref().unwrap();
+    assert_eq!(
+        l.app.sessions[l.app.selected.unwrap()].scope.project,
+        "/other"
+    );
+    assert_eq!(l.drafts[0].text, "Keep my project draft");
+}
+
 #[test]
 fn session_popover_roves_without_selecting_its_background_owner() {
     let mut rt = live_runtime_size((800.0, 620.0));
@@ -133,6 +444,544 @@ fn design_runtime(scene: &str, size: (f32, f32)) -> Runtime<Workspace> {
     rt.on_key = app.on_key;
     advance(&mut rt, 0.4);
     rt
+}
+
+#[test]
+fn managed_worktrees_keep_parent_groups_in_navigation_search_and_actions() {
+    use caelum_core::application::{Command, Task};
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("sidebar-worktrees-projects", size);
+        for (parent, child) in [
+            ("/projects/caelum", "/projects/caelum-native"),
+            ("/projects/rune", "/worktrees/rune/key-navigation"),
+        ] {
+            let group = element(&rt, &crate::code_view::source_key(parent, "project-group"));
+            let row = element(&rt, &crate::code_view::source_key(child, "checkout"));
+            assert!(row.path.starts_with(&group.path));
+            assert!(
+                row.rect[0]
+                    > element(&rt, &crate::code_view::source_key(parent, "project")).rect[0] + 10.0
+            );
+        }
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/scratch/external-review",
+                "checkout"
+            ))
+            .is_none()
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/projects/caelum",
+                "checkout"
+            ))
+            .is_none()
+        );
+        click(
+            &mut rt,
+            &crate::code_view::source_key("/projects/caelum", "manage-worktrees"),
+        );
+        let rows = element(&rt, "worktrees-scroll");
+        assert!(
+            element(
+                &rt,
+                &crate::code_view::source_key("/projects/caelum-native", "manage-checkout")
+            )
+            .path
+            .starts_with(&rows.path)
+        );
+        assert!(
+            !element(
+                &rt,
+                &crate::code_view::source_key("/projects/caelum", "manage-checkout")
+            )
+            .path
+            .starts_with(&rows.path)
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/worktrees/rune/key-navigation",
+                "manage-checkout"
+            ))
+            .is_none()
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/scratch/external-review",
+                "manage-checkout"
+            ))
+            .is_none()
+        );
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .app
+                .select_project("/projects/rune")
+        });
+        advance(&mut rt, 0.2);
+        click(&mut rt, "manager-new-worktree");
+        fill(&mut rt, "worktree-branch", "work/owned-by-caelum");
+        key(&mut rt, Key::Enter, Mods::default());
+        assert!(
+            rt.state
+                .live
+                .as_mut()
+                .unwrap()
+                .app
+                .commands()
+                .iter()
+                .any(|(_, c)| matches!(c,
+            Command::Task(Task::CreateWorktree { project, .. }) if project == "/projects/caelum"))
+        );
+
+        let mut rt = design_runtime("sidebar-worktrees-projects", size);
+        rt.update(|s, _| crate::panels::open_launcher(s));
+        advance(&mut rt, 0.3);
+        for (parent, child) in [
+            ("/projects/caelum", "/projects/caelum-native"),
+            ("/projects/rune", "/worktrees/rune/key-navigation"),
+        ] {
+            let group = element(&rt, &crate::code_view::source_key(parent, "launch-group"));
+            assert!(
+                element(&rt, &crate::code_view::source_key(child, "launch"))
+                    .path
+                    .starts_with(&group.path)
+            );
+        }
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/scratch/external-review",
+                "launch"
+            ))
+            .is_none()
+        );
+        fill(&mut rt, "launch-search", "key-navigation");
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/projects/rune",
+                "launch-group"
+            ))
+            .is_some()
+        );
+        assert!(
+            rt.find(&crate::code_view::source_key(
+                "/projects/caelum",
+                "launch-group"
+            ))
+            .is_none()
+        );
+        click(
+            &mut rt,
+            &crate::code_view::source_key("/worktrees/rune/key-navigation", "launch"),
+        );
+        assert_eq!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .app
+                .active_project
+                .as_deref(),
+            Some("/worktrees/rune/key-navigation")
+        );
+    }
+    let rt = design_runtime("worktrees-empty", (800.0, 620.0));
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some("No Caelum worktrees yet"))
+    );
+    assert!(element(&rt, "manager-new-worktree").visible[3] >= 30.0);
+    assert!(rt.elements().iter().any(|e| e.text.as_deref()
+        == Some("Create a worktree to work on caelum in parallel.")
+        && e.visible[3] > 10.0));
+    let rt = design_runtime("worktrees-error", (800.0, 620.0));
+    assert!(
+        element(
+            &rt,
+            &crate::code_view::source_key(
+                "/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native",
+                "manage-checkout"
+            )
+        )
+        .visible[3]
+            >= 57.0
+    );
+}
+
+#[test]
+fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("sidebar-worktrees", size);
+        let root = "/projects/caelum";
+        let linked = "/projects/caelum-native";
+        let main_key = crate::code_view::source_key(root, "project");
+        let linked_key = crate::code_view::source_key(linked, "checkout");
+        let linked_path = element(&rt, &linked_key).path;
+        assert!(rt.elements().iter().any(|e| e.path.starts_with(&linked_path)
+            && e.text.as_deref() == Some("1 working")));
+        fill(&mut rt, "live-draft-0", "Keep the main draft");
+        click(&mut rt, &linked_key);
+        let index = rt.state.live.as_ref().unwrap().app.selected.unwrap();
+        assert_eq!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .app
+                .active_project
+                .as_deref(),
+            Some(linked)
+        );
+        assert_eq!(
+            rt.state.live.as_ref().unwrap().drafts[0].text,
+            "Keep the main draft"
+        );
+        click(&mut rt, &main_key);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+        assert!(rt.state.live.as_ref().unwrap().app.sessions[index].working());
+        assert!(!rt.state.live.as_ref().unwrap().app.sessions[index].stopping);
+        assert!(element(&rt, "sidebar-scroll").visible[3] >= 80.0);
+        let toggle = crate::code_view::source_key(root, "worktrees-toggle");
+        click(&mut rt, &toggle);
+        assert!(rt.find(&linked_key).is_none());
+        assert_eq!(
+            rt.state
+                .live
+                .as_ref()
+                .unwrap()
+                .app
+                .preferences
+                .worktree_expanded
+                .get(root),
+            Some(&false)
+        );
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(rt.find(&linked_key).is_some());
+        let next_key = crate::code_view::source_key("/projects/caelum-providers", "checkout");
+        click(&mut rt, &next_key);
+        key(&mut rt, Key::Up, Mods::default());
+        advance(&mut rt, 0.2);
+        assert!(element(&rt, &linked_key).focused);
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.2);
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(index));
+    }
+}
+
+#[test]
+fn worktree_management_keeps_its_project_and_missing_rows_cannot_navigate() {
+    let mut rt = design_runtime("sidebar-worktrees-many", (800.0, 620.0));
+    let root = "/projects/caelum";
+    let missing = crate::code_view::source_key("/projects/caelum-task-11", "checkout");
+    assert!(!element(&rt, &missing).focusable);
+    let last = crate::code_view::source_key("/projects/caelum-task-10", "checkout");
+    click(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum-native", "checkout"),
+    );
+    let selected = rt.state.live.as_ref().unwrap().app.selected;
+    for _ in 0..12 {
+        key(&mut rt, Key::Down, Mods::default());
+    }
+    advance(&mut rt, 0.3);
+    let row = element(&rt, &last);
+    assert!(row.focused && row.visible[3] >= 41.0, "{row:?}");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, selected);
+    rt.update(|s, tx| {
+        crate::checkouts::manage(s, root.into());
+        tx.scroll_to_y("projects-scroll", 0.0);
+        let l = s.live.as_mut().unwrap();
+        l.app.projects.push(caelum_protocol::ProjectInfo {
+            path: "/other".into(),
+            name: "Other".into(),
+        });
+        l.app.select_project("/other");
+        l.sync_editors();
+    });
+    advance(&mut rt, 0.3);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().checkouts.project.as_deref(),
+        Some(root)
+    );
+    assert!(
+        rt.find(&crate::code_view::source_key(root, "manage-checkout"))
+            .is_some()
+    );
+    click(
+        &mut rt,
+        &crate::code_view::source_key(root, "manage-checkout"),
+    );
+    assert_eq!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .app
+            .active_project
+            .as_deref(),
+        Some(root)
+    );
+    assert!(rt.state.live.as_ref().unwrap().panels.overlay.is_none());
+}
+
+#[test]
+fn context_worktrees_delete_the_clicked_checkout_and_surface_failures() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let parent = "/projects/rune";
+    let path = "/worktrees/rune/key-navigation";
+    let directory = format!("{path}/app");
+    for surface in ["checkout", "manage-checkout", "launch"] {
+        let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
+        fill(&mut rt, "live-draft-0", "Keep the other project's draft");
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            // A subproject's navigation path differs from the Git worktree root.
+            app.projects
+                .iter_mut()
+                .find(|p| p.path == path)
+                .unwrap()
+                .path = directory.clone();
+            app.project_roots.insert(directory.clone(), parent.into());
+            app.services
+                .checkouts
+                .get_mut(parent)
+                .unwrap()
+                .worktrees
+                .as_mut()
+                .unwrap()
+                .worktrees
+                .iter_mut()
+                .find(|tree| tree.path == path)
+                .unwrap()
+                .project
+                .path = directory.clone();
+            app.commands();
+        });
+        match surface {
+            "manage-checkout" => rt.update(|s, _| crate::checkouts::manage(s, parent.into())),
+            "launch" => {
+                rt.update(|s, _| crate::panels::open_launcher(s));
+                advance(&mut rt, 0.2);
+                fill(&mut rt, "launch-search", "key-navigation");
+            }
+            _ => rt.update(|_, tx| tx.scroll_to_y("projects-scroll", 1000.0)),
+        }
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            for (request, command) in app.commands() {
+                if let Command::Task(Task::Worktrees { project, .. }) = command {
+                    let listing = app.services.worktrees(&project).cloned();
+                    app.apply(Event::Completed(
+                        request,
+                        Ok(Reply::Task(TaskReply::Worktrees(listing))),
+                    ));
+                }
+            }
+        });
+        advance(&mut rt, 0.3);
+        let row = crate::code_view::source_key(&directory, surface);
+        secondary(&mut rt, &row);
+        let menu = element(&rt, "context-menu");
+        assert!(
+            menu.rect
+                .iter()
+                .zip(menu.visible)
+                .all(|(a, b)| (*a - b).abs() < 1.0)
+        );
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+        key(&mut rt, Key::Escape, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(element(&rt, &row).focused);
+        key(
+            &mut rt,
+            Key::Function(10),
+            Mods {
+                shift: true,
+                ..Default::default()
+            },
+        );
+        advance(&mut rt, 0.2);
+        key(&mut rt, Key::End, Mods::default());
+        assert!(context_item(&rt, "Delete worktree").focused);
+        key(&mut rt, Key::Enter, Mods::default());
+        advance(&mut rt, 0.3);
+        assert!(!crate::context::is_open(&rt.state));
+        let remove = |rt: &mut Runtime<Workspace>| {
+            let commands = rt.state.live.as_mut().unwrap().app.commands();
+            let removals: Vec<_> = commands
+                .into_iter()
+                .filter(|(_, c)| matches!(c, Command::Task(Task::RemoveWorktree { .. })))
+                .collect();
+            assert_eq!(removals.len(), 1);
+            assert!(
+                matches!(&removals[0].1, Command::Task(Task::RemoveWorktree { project, path: target })
+                if project == parent && target == path)
+            );
+            removals[0].0
+        };
+        let request = remove(&mut rt);
+        let failure = "Worktree contains modified or untracked files";
+        rt.update(|s, _| {
+            s.live
+                .as_mut()
+                .unwrap()
+                .app
+                .apply(Event::Completed(request, Err(failure.into())))
+        });
+        advance(&mut rt, 0.3);
+        assert!(rt.find(&row).is_some());
+        assert!(rt.elements().iter().any(|e| !e.exiting
+            && e.text.as_deref()
+                == Some(if surface == "checkout" {
+                    "Couldn't update worktrees"
+                } else {
+                    failure
+                })));
+        secondary(&mut rt, &row);
+        choose_context(&mut rt, "Delete worktree");
+        let request = remove(&mut rt);
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            let tree = app
+                .managed_worktrees(parent)
+                .find(|tree| tree.path == path)
+                .unwrap()
+                .clone();
+            app.apply(Event::Completed(
+                request,
+                Ok(Reply::Task(TaskReply::Worktree(tree))),
+            ));
+        });
+        advance(&mut rt, 0.3);
+        assert!(rt.find(&row).is_none());
+        assert!(
+            rt.find(&crate::code_view::source_key(parent, "worktree-group"))
+                .is_none()
+        );
+        let l = rt.state.live.as_mut().unwrap();
+        assert_eq!(l.app.active_project.as_deref(), Some("/projects/caelum"));
+        assert_eq!(l.app.selected, Some(0));
+        assert_eq!(l.drafts[0].text, "Keep the other project's draft");
+        assert_eq!(l.app.managed_worktrees("/projects/caelum").count(), 2);
+        assert!(l.app.commands().iter().any(|(_, c)| matches!(c,
+            Command::Task(Task::Worktrees { project, .. }) if project == parent)));
+    }
+}
+
+#[test]
+fn context_worktree_deletion_rechecks_locks_mutations_and_catalog_changes() {
+    use caelum_core::application::{Command, Task};
+    let parent = "/projects/rune";
+    let path = "/worktrees/rune/key-navigation";
+    let row = crate::code_view::source_key(path, "checkout");
+    for changed in ["locked", "busy", "removed"] {
+        let mut rt = design_runtime("sidebar-worktrees-projects", (1280.0, 1000.0));
+        secondary(&mut rt, &row);
+        assert!(context_item(&rt, "Delete worktree").focusable);
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            if changed == "busy" {
+                app.task(Task::RemoveWorktree {
+                    project: parent.into(),
+                    path: path.into(),
+                });
+            } else {
+                let trees = &mut app
+                    .services
+                    .checkouts
+                    .get_mut(parent)
+                    .unwrap()
+                    .worktrees
+                    .as_mut()
+                    .unwrap()
+                    .worktrees;
+                if changed == "locked" {
+                    trees.iter_mut().find(|t| t.path == path).unwrap().locked =
+                        Some("Keep this worktree".into());
+                } else {
+                    trees.retain(|t| t.path != path);
+                }
+            }
+            app.commands();
+        });
+        choose_context(&mut rt, "Delete worktree");
+        assert!(
+            !rt.state
+                .live
+                .as_mut()
+                .unwrap()
+                .app
+                .commands()
+                .iter()
+                .any(|(_, c)| matches!(c, Command::Task(Task::RemoveWorktree { .. })))
+        );
+        if changed != "removed" {
+            secondary(&mut rt, &row);
+            assert!(!context_item(&rt, "Delete worktree").focusable);
+        }
+    }
+    let mut rt = design_runtime("sidebar-worktrees", (800.0, 620.0));
+    secondary(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum-native", "checkout"),
+    );
+    choose_context(&mut rt, "Delete worktree");
+    assert!(
+        !rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, c)| matches!(c, Command::Task(Task::RemoveWorktree { .. })))
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.text.as_deref() == Some("Couldn't update worktrees"))
+    );
+    assert!(rt.state.live.as_ref().unwrap().app.sessions.iter().any(
+        |session| session.scope.project == "/projects/caelum-native"
+            && session.working()
+            && !session.draft.is_empty()
+    ));
+}
+
+#[test]
+fn worktree_discovery_loads_background_projects_once_and_refreshes_without_navigation() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    let mut rt = design_runtime("sidebar-projects", (1280.0, 1000.0));
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.commands();
+        assert!(l.checkouts.sync(&mut l.app));
+        let commands = l.app.commands();
+        assert_eq!(commands.len(), 4);
+        for (id, command) in commands {
+            assert!(matches!(command, Command::Task(Task::Worktrees { .. })));
+            l.app.apply(Event::Completed(
+                id,
+                Ok(Reply::Task(TaskReply::Worktrees(None))),
+            ));
+        }
+        assert!(
+            !l.checkouts.sync(&mut l.app),
+            "non-Git projects must not retry every frame"
+        );
+        assert!(l.app.commands().is_empty());
+    });
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    let mut rt = design_runtime("sidebar-worktrees", (1280.0, 1000.0));
+    click(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum", "refresh-worktrees"),
+    );
+    assert!(rt.state.live.as_mut().unwrap().app.commands().iter().any(|(_, c)| matches!(c, Command::Task(Task::Worktrees { project, .. }) if project == "/projects/caelum")));
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
 }
 
 #[test]
@@ -614,16 +1463,21 @@ fn merge_checks_methods_and_mutations_retain_the_review_owner() {
 fn worktree_labels_can_be_edited_from_the_checkout_list() {
     use caelum_core::application::{Command, Task};
     let mut rt = design_runtime("worktrees", (800.0, 620.0));
-    assert!(element(&rt, "rename-worktree").visible[3] > 0.0);
-    click(&mut rt, "rename-worktree");
-    fill(&mut rt, "rename-worktree-name", "Fix checkout picker");
-    click(&mut rt, "save-worktree-name");
+    let path = "/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native";
+    let rename_key = crate::code_view::source_key(path, "rename-worktree");
+    let name_key = crate::code_view::source_key(path, "rename-worktree-name");
+    let save_key = crate::code_view::source_key(path, "save-worktree-name");
+    assert!(element(&rt, &rename_key).visible[3] > 0.0);
+    click(&mut rt, &rename_key);
+    fill(&mut rt, &name_key, "Fix checkout picker");
+    click(&mut rt, &save_key);
 
     let commands = rt.state.live.as_mut().unwrap().app.commands();
     assert!(commands.iter().any(|(_, command)| matches!(
         command,
         Command::Task(Task::RenameWorktree { path, name, .. })
-            if path == "/projects/caelum-native" && name == "Fix checkout picker"
+            if path == "/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native"
+                && name == "Fix checkout picker"
     )));
 }
 
@@ -863,7 +1717,10 @@ fn vercel_theme_is_keyboard_selectable_and_retains_mode_and_accent_on_restore() 
         let mut restored = caelum_core::application::Workspace::default();
         restored.enable_store("unused-fixture-state.json".into());
         let load = restored.commands().pop().unwrap().0;
-        restored.apply(Event::Completed(load, Ok(Reply::Snapshot(Some(snapshot)))));
+        restored.apply(Event::Completed(
+            load,
+            Ok(Reply::Snapshot(Some(Box::new(snapshot)))),
+        ));
         assert_eq!(restored.preferences.theme_family, "vercel");
         assert_eq!(restored.preferences.accent_color, "teal");
     }
@@ -1133,6 +1990,15 @@ fn models_slash_command_opens_the_picker_for_the_current_session() {
     assert!(live.models.is_open());
     assert!(live.app.sessions[0].draft.is_empty());
     assert!(!live.app.sessions[0].submitting);
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| {
+        matches!(
+            command,
+            caelum_core::application::Command::Choices(scope)
+                if scope.project == "/project"
+                    && scope.provider == caelum_core::application::Provider::Codex
+        )
+    }));
     assert!(
         rt.elements()
             .iter()
@@ -2050,7 +2916,7 @@ fn project_links_wait_for_restore_and_keep_drafts_when_the_app_is_running() {
     assert!(matches!(commands[0].1, Command::Load(_)));
     live.app.apply(Event::Completed(
         commands[0].0,
-        Ok(Reply::Snapshot(Some(original.snapshot()))),
+        Ok(Reply::Snapshot(Some(Box::new(original.snapshot())))),
     ));
     live.poll(&mut rune::Tx::default());
     let mut commands = live.app.commands();

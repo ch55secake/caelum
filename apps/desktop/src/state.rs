@@ -206,7 +206,8 @@ impl Workspace {
 // Advance every session, including those currently hidden behind another selection.
 pub fn poll(s: &mut Workspace, now: f64, tx: &mut Tx) -> bool {
     if let Some(live) = &mut s.live {
-        return live.poll(tx);
+        let changed = live.poll(tx);
+        return crate::context::sync(live, tx) || changed;
     }
     let mut changed = false;
     for session in &mut s.sessions {
