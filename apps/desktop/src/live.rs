@@ -11,7 +11,8 @@ use rune::{
 };
 use rune_kit::shell::{RowStatus, SidebarHeader, SidebarRow};
 use rune_kit::{
-    ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar, glyphs,
+    ButtonVariant, Dialog, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar,
+    glyphs,
 };
 
 use crate::context::EditMenu;
@@ -42,6 +43,7 @@ pub struct Live {
     pub(crate) patches: std::collections::HashMap<(usize, String), crate::code_view::Document>,
     menu: Option<(&'static str, usize)>,
     pub session_menu: Option<usize>,
+    delete_confirmation: Option<usize>,
     pub shell_panel: Option<crate::shells::Panel>,
     pub(crate) collapsed_shells: HashSet<usize>,
     pub focus_key: Option<String>,
@@ -99,6 +101,7 @@ impl Live {
             patches: Default::default(),
             menu: None,
             session_menu: None,
+            delete_confirmation: None,
             shell_panel: None,
             collapsed_shells: Default::default(),
             focus_key: None,
@@ -162,6 +165,34 @@ impl Live {
             self.panels.screen = crate::panels::Screen::Conversation;
             self.focus();
         }
+    }
+
+    pub(crate) fn request_delete_session(&mut self, index: usize) {
+        if self.app.sessions.get(index).is_some_and(|session| {
+            session.archived && !session.forgotten && !archive_disabled(self, index)
+        }) {
+            self.menu = None;
+            self.session_menu = None;
+            self.delete_confirmation = Some(index);
+        }
+    }
+
+    pub(crate) fn confirm_delete_session(&mut self, index: usize) {
+        if self.delete_confirmation.take() == Some(index) {
+            let selected = self.app.selected;
+            self.app.delete_archived_session(index);
+            self.sync_editors();
+            if self.app.selected != selected {
+                self.panels.archived = false;
+                self.panels.screen = crate::panels::Screen::Conversation;
+                self.focus();
+            }
+        }
+    }
+
+    pub(crate) fn cancel_delete_session(&mut self) {
+        self.delete_confirmation = None;
+        self.focus();
     }
 
     pub(crate) fn close_project(&mut self, project: &str) {
@@ -952,12 +983,16 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 "Needs an answer"
             } else if session.archiving {
                 "Archiving…"
+            } else if session.deleting {
+                "Deleting…"
             } else if session.stopping {
                 "Stopping…"
             } else if session.working() {
                 "Working…"
             } else if session.loading {
                 "Loading history…"
+            } else if let Some(error) = session.error.as_deref() {
+                error
             } else {
                 session.scope.project.rsplit('/').next().unwrap_or_default()
             }
@@ -1002,6 +1037,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         if !pending
             && !session.working()
             && !session.archiving
+            && !session.deleting
             && session.queue.is_empty()
             && session.inbox.items.is_empty()
         {
@@ -1946,6 +1982,32 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
         })
         .key("archive-session"),
     );
+    if session.archived {
+        content = content.child(
+            ui::choice(
+                if session.deleting {
+                    "Deleting session…"
+                } else {
+                    "Delete permanently…"
+                },
+                "Delete this session and its provider history",
+                false,
+                k,
+            )
+            .disabled(archive_disabled || session.deleting)
+            .role("menuitem")
+            .focus_highlight(k.c.hover)
+            .opacity(if archive_disabled || session.deleting {
+                0.5
+            } else {
+                1.0
+            })
+            .on_press(move |s: &mut Workspace| {
+                live_mut(s).request_delete_session(index);
+            })
+            .key("delete-session"),
+        );
+    }
     content
 }
 
@@ -1953,6 +2015,7 @@ pub(crate) fn archive_disabled(live: &Live, index: usize) -> bool {
     let session = &live.app.sessions[index];
     session.working()
         || session.archiving
+        || session.deleting
         || !session.queue.is_empty()
         || !session.inbox.items.is_empty()
         || live.app.approvals.iter().any(|p| {
@@ -2077,6 +2140,55 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             layers,
         );
     }
+}
+
+pub fn delete_confirmation(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
+    let Some(index) = live(s).delete_confirmation else {
+        return;
+    };
+    let Some(session) = live(s).app.sessions.get(index) else {
+        return;
+    };
+    let title = session.title.clone();
+    let description = if session.remote_id.is_some() {
+        format!(
+            "Delete “{title}”, its provider history and any child sessions? This cannot be undone."
+        )
+    } else {
+        format!(
+            "Permanently remove “{title}” and its unsent draft and attachments? This cannot be undone."
+        )
+    };
+    Dialog::new("delete-session", "Delete session permanently?")
+        .description(description)
+        .open(true)
+        .click_outside(false)
+        .width(460.0)
+        .fit()
+        .on_close(|s: &mut Workspace| live_mut(s).cancel_delete_session())
+        .child(
+            row()
+                .w_full()
+                .justify_end()
+                .gap(8.0)
+                .child(
+                    crate::ui::Button::new("Cancel")
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press(|s: &mut Workspace| live_mut(s).cancel_delete_session())
+                        .build(k)
+                        .key("cancel-delete-session"),
+                )
+                .child(
+                    crate::ui::Button::new("Delete permanently")
+                        .variant(ButtonVariant::Contrast)
+                        .on_press(move |s: &mut Workspace| {
+                            live_mut(s).confirm_delete_session(index)
+                        })
+                        .build(k)
+                        .key("confirm-delete-session"),
+                ),
+        )
+        .build(k, layers);
 }
 
 fn toggle_menu(s: &mut Workspace, name: &'static str) {

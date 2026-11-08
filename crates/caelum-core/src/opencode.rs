@@ -651,6 +651,39 @@ impl OpenCodeProvider {
         Ok(())
     }
 
+    pub fn delete_session(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+    ) -> Result<(), OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        let session = self.session(&server, &project, session_id)?;
+        if session.is_working {
+            return Err(OpenCodeError::Protocol(
+                "stop the running turn before deleting this session".into(),
+            ));
+        }
+        if !session.archived {
+            return Err(OpenCodeError::Protocol(
+                "only archived OpenCode sessions can be deleted".into(),
+            ));
+        }
+        server.request_json(
+            Method::DELETE,
+            &format!("/api/session/{session_id}"),
+            &[],
+            None,
+        )?;
+        self.inner.questions.clear(
+            PROVIDER_NAME,
+            &project.path().to_string_lossy(),
+            Some(session_id),
+        );
+        server.forget_session(session_id);
+        Ok(())
+    }
+
     pub fn cancel_turn(
         &self,
         project_path: impl AsRef<Path>,
@@ -1241,6 +1274,9 @@ fn session_info(value: &Value) -> Option<OpenCodeSession> {
                 .unwrap_or("")
                 .to_owned(),
         ),
+        archived: value
+            .pointer("/time/archived")
+            .is_some_and(|archived| !archived.is_null()),
         is_working: false,
         id: value.get("id")?.as_str()?.to_owned(),
         title: value
@@ -1710,8 +1746,9 @@ class Handler(BaseHTTPRequestHandler):
             assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
             self.send_json({"data": list(FORMS.values()) + [{"id": "frm_global", "sessionID": "global", "fields": []}]})
         elif path == "/api/session":
+            archived = SESSION.get("time", {}).get("archived") is not None
             assert parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["false"]
-            self.send_json({"data": [] if SESSION.get("archived") else [SESSION], "cursor": {"previous": None, "next": None}})
+            self.send_json({"data": [] if archived else [SESSION], "cursor": {"previous": None, "next": None}})
         elif path == "/api/session/active":
             self.send_json({"data": {"ses_fake": {"type": "running"}} if os.path.exists(os.path.join(PROJECT, "busy")) else {}})
         elif path == "/api/shell":
@@ -1814,7 +1851,10 @@ class Handler(BaseHTTPRequestHandler):
         if os.path.exists(os.path.join(PROJECT, "archive-error")):
             self.send_error(500)
             return
-        SESSION["archived"] = body["archived"]
+        if body["archived"]:
+            SESSION.setdefault("time", {})["archived"] = 456
+        else:
+            SESSION.setdefault("time", {}).pop("archived", None)
         self.send_response(204)
         self.end_headers()
 
@@ -1832,6 +1872,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/api/session/ses_fake/inbox/"):
             INBOX.pop(self.path.rsplit("/", 1)[1], None)
+            self.send_response(204)
+            self.end_headers()
+            return
+        if urlsplit(self.path).path == "/api/session/ses_fake":
+            if os.path.exists(os.path.join(PROJECT, "delete-error")):
+                self.send_error(500)
+                return
+            SESSION["deleted"] = True
+            open(os.path.join(PROJECT, "deleted"), "w").close()
             self.send_response(204)
             self.end_headers()
             return
@@ -2603,6 +2652,7 @@ server.serve_forever()
         assert!(provider
             .set_session_archived(&project_path, "ses_fake", true)
             .is_err());
+        assert!(provider.delete_session(&project_path, "ses_fake").is_err());
         fs::remove_file(project_path.join("busy")).unwrap();
         fs::write(project_path.join("archive-error"), "").unwrap();
         assert!(provider
@@ -2632,6 +2682,28 @@ server.serve_forever()
             provider.list_sessions(&project_path).unwrap().sessions[0].id,
             "ses_fake"
         );
+        assert!(matches!(
+            provider.delete_session(&project_path, "ses_fake"),
+            Err(OpenCodeError::Protocol(message)) if message.contains("only archived")
+        ));
+        provider
+            .set_session_archived(&project_path, "ses_fake", true)
+            .unwrap();
+        fs::write(project_path.join("busy"), "").unwrap();
+        assert!(provider.delete_session(&project_path, "ses_fake").is_err());
+        fs::remove_file(project_path.join("busy")).unwrap();
+        fs::write(project_path.join("delete-error"), "").unwrap();
+        assert!(provider.delete_session(&project_path, "ses_fake").is_err());
+        fs::remove_file(project_path.join("delete-error")).unwrap();
+        provider.delete_session(&project_path, "ses_fake").unwrap();
+        assert!(project_path.join("deleted").exists());
+        let server = provider
+            .inner
+            .lock_servers()
+            .get(&Project::open(&project_path).unwrap().path().to_path_buf())
+            .unwrap()
+            .clone();
+        assert!(!server.owns_session("ses_fake"));
 
         let process_id = provider
             .inner

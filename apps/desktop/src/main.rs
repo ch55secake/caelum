@@ -587,6 +587,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
         panels::overlays(s, &k, &mut layers);
         models::overlay(s, &k, &mut layers);
         context::overlay(s, &k, &mut layers);
+        live::delete_confirmation(s, &k, &mut layers);
     }
     col()
         .w_full()

@@ -39,6 +39,7 @@ pub struct Session {
     /// this project. Kept in memory only so pending requests retain stable indices.
     pub forgotten: bool,
     pub archiving: bool,
+    pub deleting: bool,
     pub reading: f32,
     pub unread: bool,
     pub shells: Vec<caelum_protocol::OpenCodeBackgroundShell>,
@@ -87,6 +88,7 @@ impl Session {
             archived: false,
             forgotten: false,
             archiving: false,
+            deleting: false,
             reading: -1.0,
             unread: false,
             shells: Vec::new(),
@@ -156,6 +158,7 @@ enum Pending {
     Commands(Scope),
     Shells(usize, u64),
     Archive(usize, bool, Option<(usize, u64)>, u64),
+    DeleteSession(usize),
     Attachment(usize, String),
     Mention {
         index: usize,
@@ -524,6 +527,62 @@ impl Workspace {
 
     pub fn archive(&mut self, index: usize, archived: bool) {
         self.set_archived(index, archived, true);
+    }
+
+    pub fn delete_archived_session(&mut self, index: usize) -> bool {
+        let Some(session) = self.sessions.get(index) else {
+            return false;
+        };
+        if !session.archived
+            || session.forgotten
+            || session.archiving
+            || session.deleting
+            || session.working()
+            || !session.queue.is_empty()
+            || !session.inbox.items.is_empty()
+            || self.approvals.iter().any(|prompt| {
+                session.remote_id.is_some()
+                    && session.remote_id.as_ref() == prompt.session_id.as_ref()
+                    && session.scope.project == prompt.project_path
+                    && session.scope.provider.as_str() == prompt.provider
+            })
+            || self.questions.iter().any(|prompt| {
+                session.remote_id.as_deref() == Some(prompt.session_id.as_str())
+                    && session.scope.project == prompt.project_path
+                    && session.scope.provider.as_str() == prompt.provider
+            })
+        {
+            return false;
+        }
+        let key = session.key();
+        self.sessions[index].error = None;
+        if let Some(key) = key {
+            self.sessions[index].deleting = true;
+            self.request(Command::DeleteSession(key), Pending::DeleteSession(index));
+        } else {
+            self.forget_deleted_session(index);
+        }
+        true
+    }
+
+    fn forget_deleted_session(&mut self, index: usize) {
+        if self.sessions[index].forgotten {
+            return;
+        }
+        let selected = self.selected == Some(index);
+        self.sessions[index].forgotten = true;
+        self.sessions[index].deleting = false;
+        self.sessions[index].error = None;
+        self.remembered.retain(|_, remembered| *remembered != index);
+        self.remembered_checkouts
+            .retain(|_, remembered| *remembered != index);
+        self.dismiss_archive(index);
+        if self.archive_replacement == Some(index) {
+            self.archive_replacement = None;
+        }
+        if selected {
+            self.select_archive_replacement(index);
+        }
     }
 
     pub fn undo_archive(&mut self) {
@@ -1953,6 +2012,10 @@ impl Workspace {
                             self.archive_clock = Some((super::presentation::now(), 8_000));
                         }
                     }
+                    Pending::DeleteSession(index) => {
+                        self.sessions[index].deleting = false;
+                        self.sessions[index].error = Some(error);
+                    }
                     Pending::Attachment(index, _) => {
                         self.sessions[index].attaching =
                             self.sessions[index].attaching.saturating_sub(1);
@@ -2268,6 +2331,9 @@ impl Workspace {
                     }
                 }
             }
+            (Pending::DeleteSession(index), Reply::Done) => {
+                self.forget_deleted_session(index);
+            }
             (Pending::Open(provider, navigation), Reply::Project(project)) => {
                 if self.closed_since(&project.path, request) {
                     if request == self.latest_open {
@@ -2521,6 +2587,29 @@ impl Workspace {
     fn provider_event(&mut self, path: &str, provider: Provider, method: &str, data: &Value) {
         if method == "filesystem.changed" && self.active_project.as_deref() == Some(path) {
             self.refresh_files();
+            return;
+        }
+        if matches!(method, "session.deleted" | "thread/deleted") {
+            let deleted = match provider {
+                Provider::Codex => data["threadId"].as_str(),
+                Provider::OpenCode => data["sessionID"].as_str(),
+            };
+            if let Some(id) = deleted {
+                let indices = self
+                    .sessions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, session)| {
+                        session.scope.project == path
+                            && session.scope.provider == provider
+                            && session.remote_id.as_deref() == Some(id)
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                for index in indices {
+                    self.forget_deleted_session(index);
+                }
+            }
             return;
         }
         let disconnected = matches!(method, "codex/processExited" | "server.disconnected");

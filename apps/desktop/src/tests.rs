@@ -3251,6 +3251,60 @@ fn closing_provider_sessions_handles_completion_failure_and_selection_changes() 
 }
 
 #[test]
+fn deleting_an_archived_session_requires_confirmation() {
+    use caelum_core::application::{Command, Event, Reply};
+
+    let mut rt = live_runtime();
+    rt.update(|s, _| {
+        let live = s.live.as_mut().unwrap();
+        live.app.sessions[0].remote_id = Some("remote-session".into());
+        live.app.sessions[0].archived = true;
+        live.panels.archived = true;
+    });
+    advance(&mut rt, 0.3);
+
+    click(&mut rt, "session-actions-0");
+    click(&mut rt, "delete-session");
+    element(&rt, "confirm-delete-session");
+    click(&mut rt, "cancel-delete-session");
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(
+        commands
+            .iter()
+            .all(|(_, command)| !matches!(command, Command::DeleteSession(_)))
+    );
+    assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].forgotten);
+
+    click(&mut rt, "session-actions-0");
+    click(&mut rt, "delete-session");
+    click(&mut rt, "confirm-delete-session");
+    let (request, command) = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .into_iter()
+        .find(|(_, command)| matches!(command, Command::DeleteSession(_)))
+        .unwrap();
+    assert!(matches!(command, Command::DeleteSession(key) if key.id == "remote-session"));
+    assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].forgotten);
+
+    rt.update(|s, _| {
+        s.live
+            .as_mut()
+            .unwrap()
+            .apply(Event::Completed(request, Ok(Reply::Done)));
+    });
+    advance(&mut rt, 0.4);
+    let live = rt.state.live.as_ref().unwrap();
+    assert!(live.app.sessions[0].forgotten);
+    assert_ne!(live.app.selected, Some(0));
+    assert!(!live.panels.archived);
+}
+
+#[test]
 fn live_creation_streaming_and_failed_submissions_preserve_independent_editors() {
     use caelum_core::application::{Command, Event, Options, Reply, SessionKey, Summary};
     let mut rt = live_runtime();
