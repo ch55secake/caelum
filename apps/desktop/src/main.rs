@@ -1,4 +1,5 @@
 mod activity;
+mod checkouts;
 mod code_view;
 mod commands;
 mod completion;
@@ -687,6 +688,21 @@ fn spec() -> AppSpec<Workspace> {
                 evaluation::scene(s, "overview-blocked")
             }),
             ("worktrees", |s| evaluation::scene(s, "worktrees")),
+            ("sidebar-worktrees", |s| {
+                evaluation::scene(s, "sidebar-worktrees")
+            }),
+            ("sidebar-worktrees-many", |s| {
+                evaluation::scene(s, "sidebar-worktrees-many")
+            }),
+            ("sidebar-worktrees-projects", |s| {
+                evaluation::scene(s, "sidebar-worktrees-projects")
+            }),
+            ("sidebar-worktrees-vercel", |s| {
+                evaluation::scene(s, "sidebar-worktrees-vercel")
+            }),
+            ("worktrees-empty", |s| {
+                evaluation::scene(s, "worktrees-empty")
+            }),
             ("worktrees-loading", |s| {
                 evaluation::scene(s, "worktrees-loading")
             }),

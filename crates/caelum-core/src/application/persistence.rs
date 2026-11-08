@@ -2,7 +2,7 @@ use super::{Attachment, Options, Provider, QueuedPrompt, Scope};
 use caelum_protocol::ProjectInfo;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -19,6 +19,7 @@ pub struct Preferences {
     pub accent_color: String,
     pub default_provider: Provider,
     pub worktree_directory: String,
+    pub worktree_expanded: BTreeMap<String, bool>,
     pub providers: BTreeMap<String, Options>,
     pub favorite_models: BTreeMap<String, Vec<String>>,
     pub notifications: bool,
@@ -37,6 +38,7 @@ impl Default for Preferences {
             accent_color: "violet".into(),
             default_provider: Provider::Codex,
             worktree_directory: String::new(),
+            worktree_expanded: BTreeMap::new(),
             providers: BTreeMap::new(),
             favorite_models: BTreeMap::new(),
             notifications: true,
@@ -177,6 +179,10 @@ pub struct Snapshot {
     pub preferences: Preferences,
     #[serde(default)]
     pub remembered: BTreeMap<String, usize>,
+    #[serde(default)]
+    pub remembered_checkouts: BTreeMap<String, usize>,
+    #[serde(default)]
+    pub managed_worktrees: BTreeSet<String>,
     #[serde(default)]
     pub project_roots: BTreeMap<String, String>,
 }

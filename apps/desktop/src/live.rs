@@ -21,6 +21,7 @@ use crate::{PLUS, SEND, STOP, Workspace, on_key, quiet_button, theme, ui};
 
 pub struct Live {
     pub context: crate::context::State,
+    pub checkouts: crate::checkouts::State,
     pub completion: crate::completion::Menu,
     pub commands: crate::commands::State,
     pub models: crate::models::Picker,
@@ -77,6 +78,7 @@ impl Live {
         }
         Self {
             context: Default::default(),
+            checkouts: Default::default(),
             completion: Default::default(),
             commands: Default::default(),
             models: Default::default(),
@@ -380,6 +382,7 @@ impl Live {
                 .retain(|key, _| self.visible_entries.contains(key));
         }
         if self.runtime.is_some() {
+            changed |= self.checkouts.sync(&mut self.app);
             self.runtime
                 .as_mut()
                 .unwrap()
@@ -480,6 +483,14 @@ impl Live {
             || (self.panels.screen == crate::panels::Screen::Conversation
                 && self.last_screen != self.panels.screen)
         {
+            if self.last_selected.is_some()
+                && self.last_selected != self.app.selected
+                && let Some(project) = &self.app.active_project
+                && self.app.group_path(project) != project
+            {
+                let root = self.app.group_path(project).to_owned();
+                self.app.preferences.worktree_expanded.insert(root, true);
+            }
             self.menu = None;
             if let Some(previous) = self.last_selected
                 && self.last_selected != self.app.selected
@@ -613,6 +624,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         .w_full()
         .gap(4.0)
         .focus_group();
+    let mut projects_height = (roots.len() as f32 * 74.0 - 4.0).max(40.0);
+    let mut expanded_worktrees = false;
     for project in &roots {
         let path = project.path.clone();
         let activity = app
@@ -643,13 +656,24 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     app.group_path(&s.scope.project) == path && !s.archived && !s.forgotten
                 })
             });
-        let checkout = active.map(|s| &s.scope.project).unwrap_or(&path);
+        let checkout = &path;
         let git = app
             .services
             .checkouts
             .get(checkout)
             .and_then(|c| c.git.as_ref());
-        let branch = git.and_then(|g| g.branch.as_deref()).unwrap_or("No branch");
+        let branch = git
+            .and_then(|g| g.branch.as_deref())
+            .or_else(|| {
+                app.services
+                    .worktrees(&path)?
+                    .worktrees
+                    .iter()
+                    .find(|tree| &tree.project.path == checkout)?
+                    .branch
+                    .as_deref()
+            })
+            .unwrap_or("No branch");
         let detail = if requests > 0 {
             format!("{requests} need attention")
         } else if activity > 0 {
@@ -665,7 +689,10 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         let worktree_provider = active
             .map(|s| s.scope.provider)
             .unwrap_or(app.preferences.default_provider);
-        projects = projects.child(crate::context::project(
+        let mut group = col().w_full()
+            .key(crate::code_view::source_key(&project.path, "project-group"))
+            .role("group").label(format!("{} project and worktrees", project.name))
+            .child(crate::context::project(
             k.interactive(
                 col()
                     .w_full()
@@ -673,24 +700,12 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     .gap(5.0)
                     .padding(9.0)
                     .radius(10.0)
-                    .fill(if selected {
-                        k.c.layer_01
-                    } else {
-                        rune::Color::TRANSPARENT
-                    })
-                    .border(
-                        1.0,
-                        if selected {
-                            k.c.border_muted
-                        } else {
-                            rune::Color::TRANSPARENT
-                        },
-                    )
+                    .fill(rune::Color::TRANSPARENT)
                     .child(
                         row()
                             .gap(7.0)
                             .center_y()
-                            .child(icon(&ui::FOLDER, 14.0).color(k.c.icon_muted))
+                            .child(icon(&ui::FOLDER, 14.0).color(if selected { k.c.icon_accent } else { k.c.icon_muted }))
                             .child(
                                 text(&project.name)
                                     .font(k.ty.ui_medium)
@@ -729,7 +744,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                             .pl(21.0)
                             .child(icon(&ui::BRANCH, 11.0).color(k.c.icon_muted))
                             .child(
-                                text(branch)
+                                text(format!("Project folder · {branch}"))
                                     .font(k.ty.small)
                                     .color(k.c.text_muted)
                                     .truncate()
@@ -754,24 +769,26 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             .focusable(true)
             .focus_ring(1.0, 0.0, k.c.border_focus)
             .on_press(move |s: &mut Workspace| {
-                let live = live_mut(s);
-                live.app.select_project(&path);
-                live.sync_editors();
-                live.menu = None;
-                live.panels.screen = crate::panels::Screen::Conversation;
+                crate::checkouts::select(s, &path);
             })
             .key(project_key),
             context_path,
         ));
+        if let Some((worktrees, height)) = crate::checkouts::sidebar(s, k, &project.path) {
+            group = group.child(worktrees);
+            projects_height += height + 4.0;
+            expanded_worktrees |= height > 36.0;
+        }
+        projects = projects.child(group);
     }
     sidebar = sidebar
         .child(
             col()
                 .key("projects-scroll")
                 .w_full()
-                .grow(1.2)
+                .grow(if expanded_worktrees { 2.5 } else { 1.2 })
                 .min_h(0.0)
-                .max_h((roots.len() as f32 * 74.0 - 4.0).max(40.0))
+                .max_h(projects_height)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
@@ -917,6 +934,15 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     .get(&session.scope.project)
                     .and_then(|c| c.git.as_ref())
                     .and_then(|g| g.branch.as_deref())
+            })
+            .or_else(|| {
+                app.services
+                    .worktrees(&session.scope.project)?
+                    .worktrees
+                    .iter()
+                    .find(|tree| tree.project.path == session.scope.project)?
+                    .branch
+                    .as_deref()
             })
             .unwrap_or(session.scope.provider.as_str());
         let detail = format!(
