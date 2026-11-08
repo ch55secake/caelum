@@ -45,6 +45,7 @@ scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")
 scenes += ("patch-short", "patch-long", "patch-multi", "vercel-patch-short", "vercel-patch-long", "vercel-patch-multi")
+scenes += ("about-checking", "about-current", "about-update", "about-release", "about-ahead", "about-error", "vercel-about", "vercel-about-update")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

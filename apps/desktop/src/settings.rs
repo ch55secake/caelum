@@ -10,8 +10,8 @@ use caelum_core::{
     application::{Provider, Scope, Task},
     updates,
 };
-use rune::{El, FileDialogOptions, ScrollSpec, col, row, text};
-use rune_kit::{ButtonVariant, Kit, ScrollBar, SelectAppearance, Switch};
+use rune::{El, FileDialogOptions, ScrollSpec, TextStyle, col, icon, row, text};
+use rune_kit::{ButtonVariant, Kit, ScrollBar, SelectAppearance, Switch, glyphs};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Page {
@@ -47,7 +47,7 @@ pub fn height(s: &Workspace) -> f32 {
         }
         Page::Worktrees => 236.0,
         Page::Notifications => 316.0,
-        Page::About => 374.0,
+        Page::About => 360.0,
     };
     height
         + if l.app.persistence_error.is_some() {
@@ -91,19 +91,20 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .label("Settings sections")
         .focus_group()
         .key("settings-navigation");
-    for (name, target) in [
-        ("Appearance", Page::Appearance),
-        ("Providers", Page::Providers),
-        ("Worktrees", Page::Worktrees),
-        ("Notifications", Page::Notifications),
-        ("About", Page::About),
+    for (name, target, glyph) in [
+        ("Appearance", Page::Appearance, &crate::APPEARANCE),
+        ("Providers", Page::Providers, &ui::AGENT),
+        ("Worktrees", Page::Worktrees, &ui::BRANCH),
+        ("Notifications", Page::Notifications, &ui::BELL),
+        ("About", Page::About, &crate::ORBIT),
     ] {
         nav = nav.child(
             k.interactive(
                 row()
                     .w_full()
                     .h(34.0)
-                    .px(10.0)
+                    .px(8.0)
+                    .gap(8.0)
                     .center_y()
                     .radius(6.0)
                     .fill(if page == target {
@@ -111,6 +112,11 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                     } else {
                         rune::Color::TRANSPARENT
                     })
+                    .child(icon(glyph, 14.0).color(if page == target {
+                        k.c.icon_base
+                    } else {
+                        k.c.icon_muted
+                    }))
                     .child(text(name).font(k.ty.ui_medium).color(if page == target {
                         k.c.text_base
                     } else {
@@ -598,101 +604,234 @@ fn about(s: &Workspace, k: &Kit) -> El {
         std::env::consts::ARCH,
         updates::REPOSITORY_URL
     );
-    let copy = details.clone();
-    let mut body = col()
-        .w_full()
-        .gap(12.0)
-        .child(heading("Caelum", "A native home for AI coding agents", k))
-        .child(
-            text(details)
-                .font(k.ty.ui)
-                .color(k.c.text_base)
-                .wrap()
-                .selectable(true),
-        )
-        .child(
-            Button::new("Copy app details")
-                .variant(ButtonVariant::Outline)
-                .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
-                .build(k)
-                .key("copy-app-details"),
-        );
-    let mut links = row().gap(4.0);
-    for (name, url) in [
-        ("Repository", updates::REPOSITORY_URL),
-        ("Releases", updates::RELEASES_URL),
-        ("Licence", updates::LICENSE_URL),
+    let platform = match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    };
+    let architecture = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "Apple silicon",
+        ("macos", "x86_64") => "Intel",
+        (_, "aarch64") => "ARM64",
+        (_, "x86_64") => "x64",
+        (_, other) => other,
+    };
+    let mut body = col().w_full().gap(16.0).child(
+        row()
+            .w_full()
+            .gap(16.0)
+            .center_y()
+            .py(8.0)
+            .child(
+                row()
+                    .size(64.0, 64.0)
+                    .center()
+                    .radius(14.0)
+                    .fill(k.c.bg_base)
+                    .border(1.0, k.c.border_muted)
+                    .child(icon(&crate::ORBIT, 34.0).color(k.c.text_accent)),
+            )
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(3.0)
+                    .child(
+                        text("Caelum")
+                            .font(TextStyle::new(24.0, 600.0).lh(30.0))
+                            .color(k.c.text_base),
+                    )
+                    .child(ui::caption("A native home for AI coding agents.", k))
+                    .child(
+                        row()
+                            .gap(8.0)
+                            .center_y()
+                            .child(
+                                ui::caption(format!("Version {}", env!("CARGO_PKG_VERSION")), k)
+                                    .selectable(true),
+                            )
+                            .child(ui::caption("·", k))
+                            .child(ui::caption(format!("{platform} · {architecture}"), k)),
+                    ),
+            )
+            .child(
+                crate::quiet_button(&glyphs::COPY, "Copy app details")
+                    .on_press_tx(move |_: &mut Workspace, tx| tx.copy(details.clone()))
+                    .build(k)
+                    .key("copy-app-details"),
+            ),
+    );
+    body = body.child(about_updates(s, k));
+    let mut links = row().w_full().gap(8.0);
+    for (name, url, key) in [
+        ("Source code", updates::REPOSITORY_URL, "about-repository"),
+        ("Release notes", updates::RELEASES_URL, "about-releases"),
+        ("MIT licence", updates::LICENSE_URL, "about-licence"),
     ] {
         links = links.child(
-            Button::new(name)
-                .variant(ButtonVariant::GhostMuted)
-                .on_press_tx(move |_: &mut Workspace, tx| {
-                    let _ = tx.open_url(url);
-                })
-                .build(k),
+            k.interactive(
+                row()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .h(32.0)
+                    .px(8.0)
+                    .gap(8.0)
+                    .center_y()
+                    .radius(6.0)
+                    .child(text(name).font(k.ty.ui).color(k.c.text_base).grow(1.0))
+                    .child(icon(&ui::EXTERNAL, 13.0).color(k.c.icon_muted)),
+            )
+            .role("link")
+            .label(name)
+            .help("Open in browser")
+            .focusable(true)
+            .focus_ring(1.0, 0.0, k.c.border_focus)
+            .on_press_tx(move |_: &mut Workspace, tx| {
+                let _ = tx.open_url(url);
+            })
+            .key(key),
         );
     }
     body = body.child(links).child(ui::divider(k));
-    let busy = live(s).app.services.busy(&Task::Updates);
-    body = body.child(
-        Button::new(if busy {
-            "Checking…"
-        } else {
-            "Check for updates"
-        })
-        .variant(ButtonVariant::Outline)
-        .disabled(busy)
-        .on_press(|s: &mut Workspace| live_mut(s).app.task(Task::Updates))
-        .build(k)
-        .key("check-updates"),
-    );
-    if let Some(update) = &live(s).app.services.update {
-        let status = match update.status {
-            caelum_protocol::UpdateStatus::Available => {
-                format!("Version {} is available", update.latest_version)
-            }
-            caelum_protocol::UpdateStatus::UpToDate => "You’re up to date".into(),
-            caelum_protocol::UpdateStatus::Ahead => {
-                "This build is newer than the latest release".into()
-            }
+    body = body.child(setting_row(
+        "Import preferences",
+        "From a legacy Caelum settings file.",
+        row().justify_end().child(
+            Button::new("Import JSON…")
+                .variant(ButtonVariant::Outline)
+                .on_press_tx(|_: &mut Workspace, tx| {
+                    tx.open_file(
+                        FileDialogOptions::default(),
+                        |s: &mut Workspace, result, _| match result {
+                            Ok(Some(path)) => live_mut(s).app.task(Task::ImportSettings {
+                                path: path.to_string_lossy().into_owned(),
+                            }),
+                            Err(error) => live_mut(s).app.error = Some(error.to_string()),
+                            _ => {}
+                        },
+                    )
+                })
+                .build(k)
+                .key("import-settings"),
+        ),
+        k,
+    ));
+    if let Some(error) = live(s).app.services.error(&Task::ImportSettings {
+        path: String::new(),
+    }) {
+        body = body.child(ui::caption(error, k).color(k.c.danger.fg).selectable(true));
+    }
+    body
+}
+
+fn about_updates(s: &Workspace, k: &Kit) -> El {
+    use caelum_protocol::UpdateStatus;
+    let services = &live(s).app.services;
+    let busy = services.busy(&Task::Updates);
+    let error = services.error(&Task::Updates);
+    let update = services.update.as_ref();
+    let (title, detail) = if busy {
+        (
+            "Checking for updates",
+            "Looking for the latest release…".into(),
+        )
+    } else if let Some(error) = error {
+        ("Couldn’t check for updates", error.to_owned())
+    } else if let Some(update) = update {
+        match update.status {
+            UpdateStatus::Available => (
+                "Update available",
+                format!("Version {} is ready to download.", update.latest_version),
+            ),
+            UpdateStatus::UpToDate => (
+                "You’re up to date",
+                "You’re running the latest release.".into(),
+            ),
+            UpdateStatus::Ahead => (
+                "Ahead of the latest release",
+                format!("Latest stable version: {}", update.latest_version),
+            ),
+        }
+    } else {
+        (
+            "Software updates",
+            "Keep Caelum up to date with the latest release.".into(),
+        )
+    };
+    let marker = if busy {
+        rune_kit::Spinner::new().size(16.0).build(k)
+    } else if error.is_some() {
+        icon(&glyphs::CIRCLE_X, 16.0).color(k.c.danger.fg)
+    } else if update.is_some_and(|u| u.status == UpdateStatus::UpToDate) {
+        icon(&glyphs::CHECK, 16.0).color(k.c.success.fg)
+    } else {
+        icon(&ui::REFRESH, 16.0).color(k.c.icon_muted)
+    };
+    let mut actions = row().gap(6.0).center_y();
+    if let Some(update) =
+        update.filter(|u| !busy && error.is_none() && u.status == UpdateStatus::Available)
+    {
+        let (label, url, key) = match &update.download_url {
+            Some(url) => ("Download update", url, "download-update"),
+            None => ("View release", &update.release_url, "view-release"),
         };
-        body = body.child(ui::caption(status, k));
-        if let Some(url) = &update.download_url {
-            let url = url.clone();
-            body = body.child(
-                Button::new("Download update")
+        let url = url.clone();
+        actions = actions
+            .child(
+                Button::new(label)
+                    .variant(ButtonVariant::Contrast)
                     .on_press_tx(move |_: &mut Workspace, tx| {
                         let _ = tx.open_url(&url);
                     })
-                    .build(k),
+                    .build(k)
+                    .help("Open in browser")
+                    .key(key),
+            )
+            .child(
+                crate::quiet_button(&ui::REFRESH, "Check for updates")
+                    .on_press(|s: &mut Workspace| live_mut(s).app.task(Task::Updates))
+                    .build(k)
+                    .key("check-updates"),
             );
-        }
-    }
-    if let Some(error) = live(s)
-        .app
-        .services
-        .checkouts
-        .get("")
-        .and_then(|c| c.error.as_ref())
-    {
-        body = body.child(ui::caption(error, k).color(k.c.danger.fg));
-    }
-    body.child(
-        Button::new("Import legacy settings JSON…")
-            .variant(ButtonVariant::GhostMuted)
-            .on_press_tx(|_: &mut Workspace, tx| {
-                tx.open_file(
-                    FileDialogOptions::default(),
-                    |s: &mut Workspace, result, _| match result {
-                        Ok(Some(path)) => live_mut(s).app.task(Task::ImportSettings {
-                            path: path.to_string_lossy().into_owned(),
-                        }),
-                        Err(error) => live_mut(s).app.error = Some(error.to_string()),
-                        _ => {}
-                    },
-                )
+    } else {
+        actions = actions.child(
+            Button::new(if busy {
+                "Checking…"
+            } else if error.is_some() {
+                "Try again"
+            } else if update.is_some() {
+                "Check again"
+            } else {
+                "Check for updates"
             })
+            .variant(ButtonVariant::Outline)
+            .disabled(busy)
+            .on_press(|s: &mut Workspace| live_mut(s).app.task(Task::Updates))
             .build(k)
-            .key("import-settings"),
-    )
+            .key("check-updates"),
+        );
+    }
+    row()
+        .w_full()
+        .min_h(88.0)
+        .padding(14.0)
+        .gap(12.0)
+        .center_y()
+        .radius(8.0)
+        .fill(k.c.bg_base)
+        .border(1.0, k.c.border_muted)
+        .child(marker)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(4.0)
+                .role("status")
+                .label(format!("{title}. {detail}"))
+                .child(text(title).font(k.ty.ui_medium).color(k.c.text_base).wrap())
+                .child(ui::caption(detail, k).selectable(true)),
+        )
+        .child(actions)
+        .key("about-updates")
 }

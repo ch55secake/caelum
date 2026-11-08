@@ -240,15 +240,75 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         }
         return true;
     }
+    let about = name.strip_prefix("vercel-").unwrap_or(name);
+    if matches!(
+        about,
+        "about"
+            | "about-checking"
+            | "about-current"
+            | "about-update"
+            | "about-release"
+            | "about-ahead"
+            | "about-error"
+    ) {
+        if name.starts_with("vercel-") {
+            l.app.preferences.theme_family = "vercel".into();
+            l.app.preferences.accent_color = "theme".into();
+        }
+        l.panels.settings_page = crate::settings::Page::About;
+        if about != "about" {
+            use caelum_protocol::{UpdateCheck, UpdateStatus};
+            let (status, latest) = match about {
+                "about-current" => (UpdateStatus::UpToDate, env!("CARGO_PKG_VERSION")),
+                "about-ahead" => (UpdateStatus::Ahead, "0.1.0"),
+                _ => (UpdateStatus::Available, "0.2.0"),
+            };
+            l.app.services.update = Some(UpdateCheck {
+                current_version: env!("CARGO_PKG_VERSION").into(),
+                latest_version: latest.into(),
+                status,
+                release_url: format!("{}/tag/v{latest}", caelum_core::updates::RELEASES_URL),
+                download_url: (about != "about-release").then(|| {
+                    format!(
+                        "{}/download/v{latest}/Caelum-v{latest}-aarch64.dmg",
+                        caelum_core::updates::RELEASES_URL
+                    )
+                }),
+            });
+        }
+        if matches!(about, "about-checking" | "about-error") {
+            l.app.task(caelum_core::application::Task::Updates);
+            if about == "about-error" {
+                for (id, command) in l.app.commands() {
+                    if matches!(
+                        command,
+                        caelum_core::application::Command::Task(
+                            caelum_core::application::Task::Updates
+                        )
+                    ) {
+                        l.app.apply(Event::Completed(
+                            id,
+                            Err(
+                                "Could not reach GitHub. Check your connection and try again."
+                                    .into(),
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        crate::panels::show(state, crate::panels::Screen::Settings);
+        return true;
+    }
     if matches!(
         name,
-        "providers" | "provider-error" | "notifications" | "storage" | "about"
+        "providers" | "provider-error" | "notifications" | "storage"
     ) {
         l.panels.settings_page = match name {
             "providers" | "provider-error" => crate::settings::Page::Providers,
             "notifications" => crate::settings::Page::Notifications,
             "storage" => crate::settings::Page::Worktrees,
-            _ => crate::settings::Page::About,
+            _ => unreachable!(),
         };
         if name == "provider-error" {
             l.app.notices.insert(

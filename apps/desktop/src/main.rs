@@ -735,6 +735,16 @@ fn spec() -> AppSpec<Workspace> {
             ("notifications", |s| evaluation::scene(s, "notifications")),
             ("storage", |s| evaluation::scene(s, "storage")),
             ("about", |s| evaluation::scene(s, "about")),
+            ("about-checking", |s| evaluation::scene(s, "about-checking")),
+            ("about-current", |s| evaluation::scene(s, "about-current")),
+            ("about-update", |s| evaluation::scene(s, "about-update")),
+            ("about-release", |s| evaluation::scene(s, "about-release")),
+            ("about-ahead", |s| evaluation::scene(s, "about-ahead")),
+            ("about-error", |s| evaluation::scene(s, "about-error")),
+            ("vercel-about", |s| evaluation::scene(s, "vercel-about")),
+            ("vercel-about-update", |s| {
+                evaluation::scene(s, "vercel-about-update")
+            }),
             ("models", |s| evaluation::scene(s, "models")),
             ("launcher", |s| evaluation::scene(s, "launcher")),
             ("session", |s| evaluation::scene(s, "session")),

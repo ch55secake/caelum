@@ -40,6 +40,11 @@ and hunk gaps follow the theme accent. Settings uses a vertical section list,
 aligned label/control rows and page-specific heights with scrollable overflow.
 Switching sections resets scrolling and dismisses the previous page's dropdown.
 Provider model fields show their friendly names.
+Settings sections have quiet icons. About uses a theme-aware Orbit mark, a compact
+version/platform line, grouped project links and a dedicated update-status panel.
+Checking, current, available, newer-build and error states share the same panel;
+downloads appear only for an available update, with a release-page fallback when
+no matching download exists. Legacy preferences import has its own labelled row.
 The composer pulse and active-agent indicator follow session state between output
 events. PR review restores Overview / Files changed, searchable file/thread
 navigation, inline feedback and a selected-feedback bar naming its destination session.
@@ -161,6 +166,10 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- |
 | ![Native Vercel workspace](previews/rune-dark-vercel.png) | ![Native Vercel settings](previews/rune-dark-vercel-settings-small.png) |
 
+| About Caelum | Available update |
+| --- | --- |
+| ![Vercel About page](previews/rune-dark-vercel-about-small.png) | ![About with an update available](previews/rune-light-about-update-small.png) |
+
 | Short inline patch | Multiple-file inline patch |
 | --- | --- |
 | ![Compact Vercel patch](previews/rune-dark-vercel-patch-short-small.png) | ![Light Vercel patch](previews/rune-light-vercel-patch-multi-small.png) |
@@ -226,7 +235,7 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **432 states**: 81 scenes and 27 headless
+The capture script writes **464 states**: 89 scenes and 27 headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
 includes all five Settings pages, models, launcher, session popovers/worktree forms, commands, shells,
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
@@ -235,7 +244,8 @@ fixtures include long composer options, multiple file tabs, collapsed tools,
 ready/blocked/pending/conflicting/behind/draft/merged/closed PR states, Vercel
 appearance, command collapse/reopen interactions and a populated four-project,
 six-PR sidebar. Inline patches cover short, long and multiple-file changes in
-Caelum and Vercel, plus explicit collapse and expansion replays.
+Caelum and Vercel, plus explicit collapse and expansion replays. About includes
+checking, current, available, missing-download, newer-build and error states.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
 replace the replay's `--at 9 --snap …` with `--video /path/to/replay.mp4 --duration auto`.

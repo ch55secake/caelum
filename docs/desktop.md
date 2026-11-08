@@ -174,6 +174,10 @@ page-sized panels. Switching sections resets the page's scroll position. Provide
 defaults/favourites, notification visibility and sounds, worktree storage, legacy settings import and persistence
 retry live here. Unread state persists and clears only when the loaded conversation
 is visible and following the latest messages.
+About brings together the app version and platform, project links, and a manual
+update check. Available updates open in your browser; the page also offers a
+copyable app-details summary and legacy preferences import. Update failures can
+be retried directly from the status panel.
 The default Caelum palette keeps surfaces neutral, with colour in selection markers,
 tab underlines, focus borders, status icons, links and primary actions.
 Choose **Vercel** for a monochrome theme with a pure-black workspace and sidebar,
