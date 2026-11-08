@@ -672,6 +672,27 @@ fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
 }
 
 #[test]
+fn selecting_a_session_keeps_its_worktree_group_collapsed_by_default() {
+    let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
+    let root = "/projects/caelum";
+    let selected_worktree = crate::code_view::source_key("/projects/caelum-native", "checkout");
+    let other_expanded_worktree =
+        crate::code_view::source_key("/worktrees/rune/key-navigation", "checkout");
+
+    assert!(rt.find(&selected_worktree).is_some());
+    assert!(rt.find(&other_expanded_worktree).is_some());
+    click(&mut rt, "live-session-1");
+
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(1));
+    assert_eq!(
+        element(&rt, &crate::code_view::source_key(root, "worktrees-toggle")).expanded,
+        Some(false)
+    );
+    assert!(rt.find(&selected_worktree).is_none());
+    assert!(rt.find(&other_expanded_worktree).is_some());
+}
+
+#[test]
 fn worktree_management_keeps_its_project_and_missing_rows_cannot_navigate() {
     let mut rt = design_runtime("sidebar-worktrees-many", (800.0, 620.0));
     let root = "/projects/caelum";
