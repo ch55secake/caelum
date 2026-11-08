@@ -133,12 +133,13 @@ impl CodexProvider {
     ) -> Result<CodexSessionList, CodexError> {
         let project = Project::open(project_path)?;
         let connection = self.connection(&project)?;
-        Self::list_sessions_on(&project, &connection)
+        Self::list_sessions_on(&project, &connection, false)
     }
 
     fn list_sessions_on(
         project: &Project,
         connection: &CodexConnection,
+        archived: bool,
     ) -> Result<CodexSessionList, CodexError> {
         let mut cursor = Value::Null;
         let mut seen_cursors = HashSet::new();
@@ -151,7 +152,7 @@ impl CodexProvider {
                     "cursor": cursor,
                     "limit": 100,
                     "sortKey": "updated_at",
-                    "archived": false,
+                    "archived": archived,
                     "cwd": project.path().to_string_lossy(),
                     "sourceKinds": ["appServer", "cli", "vscode"]
                 }),
@@ -535,6 +536,51 @@ impl CodexProvider {
         Ok(())
     }
 
+    pub fn delete_session(
+        &self,
+        project_path: impl AsRef<Path>,
+        thread_id: &str,
+    ) -> Result<(), CodexError> {
+        if thread_id.trim().is_empty() {
+            return Err(CodexError::InvalidThreadId);
+        }
+        let project = Project::open(project_path)?;
+        let connection = self.connection(&project)?;
+        let response = connection.request("thread/read", json!({ "threadId": thread_id }))?;
+        let cwd = response
+            .pointer("/thread/cwd")
+            .and_then(Value::as_str)
+            .ok_or(CodexError::ThreadNotInProject)?;
+        if Path::new(cwd).canonicalize().ok().as_deref() != Some(project.path()) {
+            return Err(CodexError::ThreadNotInProject);
+        }
+        if response
+            .pointer("/thread/status/type")
+            .and_then(Value::as_str)
+            == Some("active")
+        {
+            return Err(CodexError::Protocol(
+                "stop the running turn before deleting this session".into(),
+            ));
+        }
+        if !Self::list_sessions_on(&project, &connection, true)?
+            .threads
+            .iter()
+            .any(|thread| thread.id == thread_id)
+        {
+            return Err(CodexError::Protocol(
+                "only archived Codex sessions can be deleted".into(),
+            ));
+        }
+        connection.request("thread/delete", json!({ "threadId": thread_id }))?;
+        self.inner.questions.clear(
+            PROVIDER_NAME,
+            &project.path().to_string_lossy(),
+            Some(thread_id),
+        );
+        Ok(())
+    }
+
     pub fn cancel_turn(
         &self,
         project_path: impl AsRef<Path>,
@@ -571,7 +617,7 @@ impl CodexProvider {
                 .unwrap_or_else(|p| p.into_inner())
                 .is_empty();
             if starting
-                || Self::list_sessions_on(&Project::open(&path)?, &connection)?
+                || Self::list_sessions_on(&Project::open(&path)?, &connection, false)?
                     .threads
                     .iter()
                     .any(|thread| thread.is_working)
@@ -1167,6 +1213,7 @@ import json, os, sys
 models = {'thread-existing': 'saved-model'}
 efforts = {'thread-existing': 'low'}
 archived = set()
+deleted = set()
 for raw in sys.stdin:
     request = json.loads(raw)
     method = request.get('method')
@@ -1184,8 +1231,8 @@ for raw in sys.stdin:
         assert params['capabilities']['experimentalApi'] is True
         result = {'userAgent': 'fake-codex'}
     elif method == 'thread/list':
-        assert params['archived'] is False
-        result = {'data': [] if 'thread-existing' in archived else [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123, 'status': {'type': 'active' if os.path.exists('active-thread') else 'idle'}}], 'nextCursor': None}
+        present = ('thread-existing' in archived) == params['archived'] and 'thread-existing' not in deleted
+        result = {'data': [{'id': 'thread-existing', 'name': 'Existing', 'preview': 'Earlier work', 'updatedAt': 123, 'status': {'type': 'active' if os.path.exists('active-thread') else 'idle'}}] if present else [], 'nextCursor': None}
     elif method == 'thread/read':
         result = {'thread': {'id': params['threadId'], 'cwd': os.path.dirname(os.getcwd()) if params['threadId'] == 'foreign-thread' else os.getcwd(), 'gitInfo': {'branch': 'feature/sidebar'}, 'status': {'type': 'active' if os.path.exists('active-thread') else 'idle'}}}
     elif method in ['thread/archive', 'thread/unarchive']:
@@ -1194,6 +1241,12 @@ for raw in sys.stdin:
             continue
         if method == 'thread/archive': archived.add(params['threadId'])
         else: archived.discard(params['threadId'])
+        result = {}
+    elif method == 'thread/delete':
+        if os.path.exists('delete-error'):
+            print(json.dumps({'id': request_id, 'error': {'code': -32000, 'message': 'delete unavailable'}}), flush=True)
+            continue
+        deleted.add(params['threadId'])
         result = {}
     elif method == 'thread/start':
         models['thread-new'] = params.get('model') or 'default-model'
@@ -1330,6 +1383,40 @@ for raw in sys.stdin:
             provider.list_sessions(&project_path).unwrap().threads[0].id,
             "thread-existing"
         );
+        assert!(matches!(
+            provider.delete_session(&project_path, "thread-existing"),
+            Err(CodexError::Protocol(message)) if message.contains("only archived")
+        ));
+        fs::write(project_path.join("active-thread"), "").unwrap();
+        assert!(provider
+            .delete_session(&project_path, "thread-existing")
+            .is_err());
+        fs::remove_file(project_path.join("active-thread")).unwrap();
+        assert!(matches!(
+            provider.delete_session(&project_path, "foreign-thread"),
+            Err(CodexError::ThreadNotInProject)
+        ));
+        provider
+            .set_session_archived(&project_path, "thread-existing", true)
+            .unwrap();
+        fs::write(project_path.join("active-thread"), "").unwrap();
+        assert!(provider
+            .delete_session(&project_path, "thread-existing")
+            .is_err());
+        fs::remove_file(project_path.join("active-thread")).unwrap();
+        fs::write(project_path.join("delete-error"), "").unwrap();
+        assert!(provider
+            .delete_session(&project_path, "thread-existing")
+            .is_err());
+        fs::remove_file(project_path.join("delete-error")).unwrap();
+        provider
+            .delete_session(&project_path, "thread-existing")
+            .unwrap();
+        assert!(provider
+            .list_sessions(&project_path)
+            .unwrap()
+            .threads
+            .is_empty());
         provider.shutdown();
     }
 

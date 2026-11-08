@@ -11,7 +11,8 @@ use rune::{
 };
 use rune_kit::shell::{RowStatus, SidebarHeader, SidebarRow};
 use rune_kit::{
-    ButtonVariant, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar, glyphs,
+    ButtonVariant, Dialog, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar,
+    glyphs,
 };
 
 use crate::context::EditMenu;
@@ -42,6 +43,7 @@ pub struct Live {
     pub(crate) patches: std::collections::HashMap<(usize, String), crate::code_view::Document>,
     menu: Option<(&'static str, usize)>,
     pub session_menu: Option<usize>,
+    delete_confirmation: Option<usize>,
     pub shell_panel: Option<crate::shells::Panel>,
     pub(crate) collapsed_shells: HashSet<usize>,
     pub focus_key: Option<String>,
@@ -99,6 +101,7 @@ impl Live {
             patches: Default::default(),
             menu: None,
             session_menu: None,
+            delete_confirmation: None,
             shell_panel: None,
             collapsed_shells: Default::default(),
             focus_key: None,
@@ -162,6 +165,34 @@ impl Live {
             self.panels.screen = crate::panels::Screen::Conversation;
             self.focus();
         }
+    }
+
+    pub(crate) fn request_delete_session(&mut self, index: usize) {
+        if self.app.sessions.get(index).is_some_and(|session| {
+            session.archived && !session.forgotten && !archive_disabled(self, index)
+        }) {
+            self.menu = None;
+            self.session_menu = None;
+            self.delete_confirmation = Some(index);
+        }
+    }
+
+    pub(crate) fn confirm_delete_session(&mut self, index: usize) {
+        if self.delete_confirmation.take() == Some(index) {
+            let selected = self.app.selected;
+            self.app.delete_archived_session(index);
+            self.sync_editors();
+            if self.app.selected != selected {
+                self.panels.archived = false;
+                self.panels.screen = crate::panels::Screen::Conversation;
+                self.focus();
+            }
+        }
+    }
+
+    pub(crate) fn cancel_delete_session(&mut self) {
+        self.delete_confirmation = None;
+        self.focus();
     }
 
     pub(crate) fn close_project(&mut self, project: &str) {
@@ -952,12 +983,16 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                 "Needs an answer"
             } else if session.archiving {
                 "Archiving…"
+            } else if session.deleting {
+                "Deleting…"
             } else if session.stopping {
                 "Stopping…"
             } else if session.working() {
                 "Working…"
             } else if session.loading {
                 "Loading history…"
+            } else if let Some(error) = session.error.as_deref() {
+                error
             } else {
                 session.scope.project.rsplit('/').next().unwrap_or_default()
             }
@@ -1011,6 +1046,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         if !pending
             && !session.working()
             && !session.archiving
+            && !session.deleting
             && session.queue.is_empty()
             && session.inbox.items.is_empty()
         {
@@ -1771,10 +1807,15 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .min_w(0.0),
     );
     if let Some(choices) = choices {
+        let model_id = session
+            .options
+            .model
+            .as_ref()
+            .or(choices.default_model.as_ref());
         if let Some(model) = choices
             .models
             .iter()
-            .find(|model| Some(&model.id) == session.options.model.as_ref())
+            .find(|model| Some(&model.id) == model_id)
             && !model.efforts.is_empty()
         {
             let default = model
@@ -1871,6 +1912,7 @@ fn choice_label(choice: &caelum_protocol::ProviderChoice) -> &str {
         "medium" => "Medium",
         "high" => "High",
         "xhigh" => "Extra high",
+        "max" => "Maximum",
         "build" => "Build",
         "plan" => "Plan",
         _ => &choice.name,
@@ -1879,13 +1921,20 @@ fn choice_label(choice: &caelum_protocol::ProviderChoice) -> &str {
 
 fn effort_choice(effort: &caelum_protocol::ProviderChoice) -> Choice {
     let choice = Choice::new(&effort.id, choice_label(effort));
-    match effort.id.to_ascii_lowercase().as_str() {
-        "none" => choice.detail("Respond without extra reasoning"),
-        "minimal" | "low" => choice.detail("Less reasoning, quicker responses"),
-        "medium" => choice.detail("Balance reasoning depth and speed"),
-        "high" => choice.detail("Think more deeply about complex tasks"),
-        "xhigh" => choice.detail("Use the most reasoning time"),
-        _ => choice,
+    match effort_description(&effort.id) {
+        Some(description) => choice.detail(description),
+        None => choice,
+    }
+}
+
+fn effort_description(id: &str) -> Option<&'static str> {
+    match id.to_ascii_lowercase().as_str() {
+        "none" => Some("Respond without extra reasoning"),
+        "minimal" | "low" => Some("Less reasoning, quicker responses"),
+        "medium" => Some("Balance reasoning depth and speed"),
+        "high" => Some("Think more deeply about complex tasks"),
+        "xhigh" | "max" => Some("Use the maximum reasoning effort for complex tasks"),
+        _ => None,
     }
 }
 
@@ -1955,6 +2004,32 @@ pub fn session_actions(s: &Workspace, k: &Kit) -> El {
         })
         .key("archive-session"),
     );
+    if session.archived {
+        content = content.child(
+            ui::choice(
+                if session.deleting {
+                    "Deleting session…"
+                } else {
+                    "Delete permanently…"
+                },
+                "Delete this session and its provider history",
+                false,
+                k,
+            )
+            .disabled(archive_disabled || session.deleting)
+            .role("menuitem")
+            .focus_highlight(k.c.hover)
+            .opacity(if archive_disabled || session.deleting {
+                0.5
+            } else {
+                1.0
+            })
+            .on_press(move |s: &mut Workspace| {
+                live_mut(s).request_delete_session(index);
+            })
+            .key("delete-session"),
+        );
+    }
     content
 }
 
@@ -1962,6 +2037,7 @@ pub(crate) fn archive_disabled(live: &Live, index: usize) -> bool {
     let session = &live.app.sessions[index];
     session.working()
         || session.archiving
+        || session.deleting
         || !session.queue.is_empty()
         || !session.inbox.items.is_empty()
         || live.app.approvals.iter().any(|p| {
@@ -2088,8 +2164,76 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     }
 }
 
+pub fn delete_confirmation(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
+    let Some(index) = live(s).delete_confirmation else {
+        return;
+    };
+    let Some(session) = live(s).app.sessions.get(index) else {
+        return;
+    };
+    let title = session.title.clone();
+    let description = if session.remote_id.is_some() {
+        format!(
+            "Delete “{title}”, its provider history and any child sessions? This cannot be undone."
+        )
+    } else {
+        format!(
+            "Permanently remove “{title}” and its unsent draft and attachments? This cannot be undone."
+        )
+    };
+    Dialog::new("delete-session", "Delete session permanently?")
+        .description(description)
+        .open(true)
+        .click_outside(false)
+        .width(460.0)
+        .fit()
+        .on_close(|s: &mut Workspace| live_mut(s).cancel_delete_session())
+        .child(
+            row()
+                .w_full()
+                .justify_end()
+                .gap(8.0)
+                .child(
+                    crate::ui::Button::new("Cancel")
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press(|s: &mut Workspace| live_mut(s).cancel_delete_session())
+                        .build(k)
+                        .key("cancel-delete-session"),
+                )
+                .child(
+                    crate::ui::Button::new("Delete permanently")
+                        .variant(ButtonVariant::Contrast)
+                        .on_press(move |s: &mut Workspace| {
+                            live_mut(s).confirm_delete_session(index)
+                        })
+                        .build(k)
+                        .key("confirm-delete-session"),
+                ),
+        )
+        .build(k, layers);
+}
+
 fn toggle_menu(s: &mut Workspace, name: &'static str) {
     let live = live_mut(s);
     let next = live.app.selected.map(|index| (name, index));
     live.menu = if live.menu == next { None } else { next };
+}
+
+pub fn open_effort(s: &mut Workspace, index: usize) {
+    let live = live_mut(s);
+    live.menu = Some(("effort", index));
+    live.drafts[index].focused = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effort_description;
+
+    #[test]
+    fn max_effort_has_a_description() {
+        assert_eq!(
+            effort_description("max"),
+            Some("Use the maximum reasoning effort for complex tasks")
+        );
+    }
 }

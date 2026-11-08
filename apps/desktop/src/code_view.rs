@@ -59,6 +59,28 @@ pub fn source_key(project: &str, path: &str) -> String {
     format!("source-{:x}", hash.finish())
 }
 
+/// Pinned Rune's unwrapped row metrics: file headers, actual gaps and code lines.
+/// Inline patches have no full-file context or annotations to add extra rows.
+pub fn inline_height(diff: &DiffState) -> f32 {
+    diff.files()
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            44.0 + if diff.collapsed(index) {
+                0.0
+            } else if file.hunks.is_empty() {
+                40.0
+            } else {
+                let lines: usize = file.hunks.iter().map(|h| h.lines.len()).sum();
+                let gaps = (0..=file.hunks.len())
+                    .filter(|&gap| diff.hidden(index, gap).is_some_and(|n| n > 0))
+                    .count();
+                lines as f32 * 20.0 + gaps as f32 * 32.0
+            }
+        })
+        .sum()
+}
+
 impl Document {
     pub fn patch(&mut self, path: &str, patch: &str) -> bool {
         let mut hash = std::collections::hash_map::DefaultHasher::new();

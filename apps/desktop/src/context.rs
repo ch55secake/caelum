@@ -581,7 +581,7 @@ pub fn session(el: El, index: usize) -> El {
         let archived = session.archived;
         let title = session.title.clone();
         let id = session.remote_id.clone();
-        let menu = Menu::new()
+        let mut menu = Menu::new()
             .item(Item::new("copy", "Copy session title").icon(&glyphs::COPY))
             .item(Item::new("id", "Copy session ID").enabled(id.is_some()))
             .item(
@@ -604,6 +604,12 @@ pub fn session(el: El, index: usize) -> El {
                 .icon(&ui::ARCHIVE)
                 .enabled(!crate::live::archive_disabled(live(s), index)),
             );
+        if archived {
+            menu = menu.separator().item(
+                Item::new("delete", "Delete session permanently")
+                    .enabled(!crate::live::archive_disabled(live(s), index)),
+            );
+        }
         // Restoring the row itself would follow the list's selected session.
         // Its action button keeps keyboard focus on the right-clicked owner.
         show(
@@ -617,6 +623,9 @@ pub fn session(el: El, index: usize) -> El {
                 "refresh" => live_mut(s).app.refresh(index),
                 "archive" if !crate::live::archive_disabled(live(s), index) => {
                     live_mut(s).archive(index, !archived)
+                }
+                "delete" if archived && !crate::live::archive_disabled(live(s), index) => {
+                    live_mut(s).request_delete_session(index)
                 }
                 _ => {}
             },

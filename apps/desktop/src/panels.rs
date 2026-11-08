@@ -865,11 +865,7 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     };
     let mut menus = Vec::new();
     let (title, description, body) = match screen {
-        Screen::Settings => (
-            "Settings",
-            "Make Caelum feel like home.",
-            crate::settings::view(s, k, &mut menus),
-        ),
+        Screen::Settings => ("Settings", "", crate::settings::view(s, k, &mut menus)),
         Screen::Worktrees => (
             "Caelum worktrees",
             "Created in Caelum for this project.",
@@ -913,7 +909,7 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         _ => return,
     };
     let (width, height) = match screen {
-        Screen::Settings => (760.0, 460.0),
+        Screen::Settings => (740.0, crate::settings::height(s)),
         Screen::Launcher => (560.0, 380.0),
         Screen::Worktrees => (560.0, crate::checkouts::manager_height(s)),
         Screen::CreateWorktree => (500.0, 330.0),
@@ -924,8 +920,13 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     };
     let available =
         rune::memo::window_layout("shell").map_or(height, |r| (r[3] - 170.0).max(220.0));
-    Dialog::new("workspace", title)
-        .description(description)
+    let dialog = Dialog::new("workspace", title);
+    let dialog = if description.is_empty() {
+        dialog
+    } else {
+        dialog.description(description)
+    };
+    dialog
         .open(true)
         .click_outside(false)
         .width(width)
@@ -1954,12 +1955,12 @@ pub fn select_change(s: &mut Workspace, project: String, path: String) {
 
 pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
     let preferences = &live(s).app.preferences;
-    let mut content = col().w_full().gap(16.0).child(ui::section(
+    let mut content = col().w_full().gap(8.0).child(crate::settings::heading(
         "Appearance",
         "Choose a theme and an accent for your workspace.",
         k,
     ));
-    let mut themes = row().w_full().gap(8.0);
+    let mut themes = row().gap(4.0);
     for (mode, name) in [("system", "System"), ("dark", "Dark"), ("light", "Light")] {
         themes = themes.child(
             ui::tab(name, preferences.theme == mode, k)
@@ -1971,7 +1972,15 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
                 .grow(1.0),
         );
     }
-    content = content.child(themes);
+    content = content
+        .child(crate::settings::setting_row(
+            "Colour mode",
+            "Follow your system or choose a mode.",
+            themes,
+            k,
+        ))
+        .child(ui::divider(k))
+        .child(ui::caption("Theme", k).pt(8.0));
     let mut families = row().w_full().flex_wrap().gap(8.0);
     for (id, name) in theme::FAMILIES {
         let palette = theme::appearance(k.dark, id, "theme");
@@ -1979,10 +1988,10 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
             k.interactive(
                 col()
                     .grow(1.0)
-                    .min_w(100.0)
-                    .gap(8.0)
-                    .padding(10.0)
-                    .radius(8.0)
+                    .min_w(84.0)
+                    .gap(6.0)
+                    .padding(8.0)
+                    .radius(6.0)
                     .fill(k.c.bg_base)
                     .border(
                         1.0,
@@ -2025,17 +2034,15 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
             .key(format!("family-{id}")),
         );
     }
-    content = content
-        .child(families)
-        .child(ui::caption("Accent colour", k));
-    let mut accents = row().gap(8.0);
+    content = content.child(families).child(ui::divider(k).mt(8.0));
+    let mut accents = row().gap(6.0).center_y();
     for accent in theme::ACCENTS {
         let palette = theme::appearance(k.dark, &preferences.theme_family, accent);
         accents = accents.child(
             k.interactive(
                 rune::el()
-                    .size(30.0, 30.0)
-                    .radius(15.0)
+                    .size(26.0, 26.0)
+                    .radius(13.0)
                     .fill(palette.c.text_accent)
                     .border(
                         if preferences.accent_color == accent {
@@ -2056,7 +2063,12 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
             .key(format!("accent-{accent}")),
         );
     }
-    content.child(accents)
+    content.child(crate::settings::setting_row(
+        "Accent colour",
+        "Highlights and active controls.",
+        accents,
+        k,
+    ))
 }
 
 fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {

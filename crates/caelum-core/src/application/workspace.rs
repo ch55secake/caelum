@@ -39,6 +39,7 @@ pub struct Session {
     /// this project. Kept in memory only so pending requests retain stable indices.
     pub forgotten: bool,
     pub archiving: bool,
+    pub deleting: bool,
     pub reading: f32,
     pub unread: bool,
     pub shells: Vec<caelum_protocol::OpenCodeBackgroundShell>,
@@ -87,6 +88,7 @@ impl Session {
             archived: false,
             forgotten: false,
             archiving: false,
+            deleting: false,
             reading: -1.0,
             unread: false,
             shells: Vec::new(),
@@ -120,6 +122,16 @@ impl Session {
         self.submitting || self.conversation.working
     }
 
+    fn has_context(&self) -> bool {
+        self.remote_id.is_some()
+            || !self.conversation.entries.is_empty()
+            || !self.draft.trim().is_empty()
+            || !self.attachments.is_empty()
+            || !self.queue.is_empty()
+            || !self.inbox.items.is_empty()
+            || self.title != "New session"
+    }
+
     pub fn can_send(&self) -> bool {
         !self.working()
             && self.loaded
@@ -146,6 +158,7 @@ enum Pending {
     Commands(Scope),
     Shells(usize, u64),
     Archive(usize, bool, Option<(usize, u64)>, u64),
+    DeleteSession(usize),
     Attachment(usize, String),
     Mention {
         index: usize,
@@ -516,6 +529,62 @@ impl Workspace {
         self.set_archived(index, archived, true);
     }
 
+    pub fn delete_archived_session(&mut self, index: usize) -> bool {
+        let Some(session) = self.sessions.get(index) else {
+            return false;
+        };
+        if !session.archived
+            || session.forgotten
+            || session.archiving
+            || session.deleting
+            || session.working()
+            || !session.queue.is_empty()
+            || !session.inbox.items.is_empty()
+            || self.approvals.iter().any(|prompt| {
+                session.remote_id.is_some()
+                    && session.remote_id.as_ref() == prompt.session_id.as_ref()
+                    && session.scope.project == prompt.project_path
+                    && session.scope.provider.as_str() == prompt.provider
+            })
+            || self.questions.iter().any(|prompt| {
+                session.remote_id.as_deref() == Some(prompt.session_id.as_str())
+                    && session.scope.project == prompt.project_path
+                    && session.scope.provider.as_str() == prompt.provider
+            })
+        {
+            return false;
+        }
+        let key = session.key();
+        self.sessions[index].error = None;
+        if let Some(key) = key {
+            self.sessions[index].deleting = true;
+            self.request(Command::DeleteSession(key), Pending::DeleteSession(index));
+        } else {
+            self.forget_deleted_session(index);
+        }
+        true
+    }
+
+    fn forget_deleted_session(&mut self, index: usize) {
+        if self.sessions[index].forgotten {
+            return;
+        }
+        let selected = self.selected == Some(index);
+        self.sessions[index].forgotten = true;
+        self.sessions[index].deleting = false;
+        self.sessions[index].error = None;
+        self.remembered.retain(|_, remembered| *remembered != index);
+        self.remembered_checkouts
+            .retain(|_, remembered| *remembered != index);
+        self.dismiss_archive(index);
+        if self.archive_replacement == Some(index) {
+            self.archive_replacement = None;
+        }
+        if selected {
+            self.select_archive_replacement(index);
+        }
+    }
+
     pub fn undo_archive(&mut self) {
         if let Some(index) = self.last_archived {
             let select =
@@ -567,6 +636,34 @@ impl Workspace {
         true
     }
 
+    fn select_archive_replacement(&mut self, index: usize) -> usize {
+        let scope = self.sessions[index].scope.clone();
+        let group = self.group_path(&scope.project).to_owned();
+        let replacement = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(candidate, session)| {
+                *candidate != index
+                    && !session.archived
+                    && !session.forgotten
+                    && !session.archiving
+                    && self.project_is_open(&session.scope.project)
+                    && self.group_path(&session.scope.project) == group
+            })
+            .max_by_key(|(candidate, session)| {
+                (
+                    session.has_context(),
+                    session.scope.project == scope.project,
+                    *candidate,
+                )
+            })
+            .map(|(candidate, _)| candidate);
+        let replacement = replacement.unwrap_or_else(|| self.new_session(scope));
+        self.select(replacement);
+        replacement
+    }
+
     fn set_archived(&mut self, index: usize, archived: bool, select: bool) {
         if self.sessions[index].forgotten {
             return;
@@ -605,15 +702,18 @@ impl Workspace {
         } else {
             session.archived = archived;
             if archived {
-                self.archived_notice(index, self.archive_revision);
+                let owns_notice = self.archived_notice(index, self.archive_revision);
+                if self.selected == Some(index) {
+                    let replacement = self.select_archive_replacement(index);
+                    if owns_notice {
+                        self.archive_replacement = Some(replacement);
+                    }
+                }
             } else {
                 self.dismiss_archive(index);
-            }
-            if archived && self.selected == Some(index) {
-                self.new_session(self.sessions[index].scope.clone());
-                self.archive_replacement = self.selected;
-            } else if !archived && select {
-                self.select(index);
+                if select {
+                    self.select(index);
+                }
             }
         }
     }
@@ -1912,6 +2012,10 @@ impl Workspace {
                             self.archive_clock = Some((super::presentation::now(), 8_000));
                         }
                     }
+                    Pending::DeleteSession(index) => {
+                        self.sessions[index].deleting = false;
+                        self.sessions[index].error = Some(error);
+                    }
                     Pending::Attachment(index, _) => {
                         self.sessions[index].attaching =
                             self.sessions[index].attaching.saturating_sub(1);
@@ -2211,9 +2315,9 @@ impl Workspace {
                 if archived {
                     let owns_notice = self.archived_notice(index, revision);
                     if self.selected == Some(index) {
-                        self.new_session(self.sessions[index].scope.clone());
+                        let replacement = self.select_archive_replacement(index);
                         if owns_notice {
-                            self.archive_replacement = self.selected;
+                            self.archive_replacement = Some(replacement);
                         }
                     }
                 } else {
@@ -2226,6 +2330,9 @@ impl Workspace {
                         self.select(index);
                     }
                 }
+            }
+            (Pending::DeleteSession(index), Reply::Done) => {
+                self.forget_deleted_session(index);
             }
             (Pending::Open(provider, navigation), Reply::Project(project)) => {
                 if self.closed_since(&project.path, request) {
@@ -2480,6 +2587,29 @@ impl Workspace {
     fn provider_event(&mut self, path: &str, provider: Provider, method: &str, data: &Value) {
         if method == "filesystem.changed" && self.active_project.as_deref() == Some(path) {
             self.refresh_files();
+            return;
+        }
+        if matches!(method, "session.deleted" | "thread/deleted") {
+            let deleted = match provider {
+                Provider::Codex => data["threadId"].as_str(),
+                Provider::OpenCode => data["sessionID"].as_str(),
+            };
+            if let Some(id) = deleted {
+                let indices = self
+                    .sessions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, session)| {
+                        session.scope.project == path
+                            && session.scope.provider == provider
+                            && session.remote_id.as_deref() == Some(id)
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                for index in indices {
+                    self.forget_deleted_session(index);
+                }
+            }
             return;
         }
         let disconnected = matches!(method, "codex/processExited" | "server.disconnected");

@@ -158,6 +158,16 @@ impl ProviderRuntime {
                     .set_session_archived(&key.scope.project, &key.id, *archived)
                     .map_err(|e| e.to_string()),
             },
+            Command::DeleteSession(key) => match key.scope.provider {
+                Provider::Codex => self
+                    .codex
+                    .delete_session(&key.scope.project, &key.id)
+                    .map_err(|e| e.to_string()),
+                Provider::OpenCode => self
+                    .opencode
+                    .delete_session(&key.scope.project, &key.id)
+                    .map_err(|e| e.to_string()),
+            },
             Command::Details(key) => {
                 let details = match key.scope.provider {
                     Provider::Codex => self
@@ -426,6 +436,7 @@ pub enum Command {
     Commands(Scope),
     Shells(SessionKey),
     Archive(SessionKey, bool),
+    DeleteSession(SessionKey),
     Details(SessionKey),
     Open(String),
     List(Scope),
