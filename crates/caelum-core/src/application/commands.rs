@@ -4,6 +4,8 @@ use super::Provider;
 pub enum LocalCommand {
     New,
     Models,
+    Variants,
+    Effort,
     Timeline,
     Files,
     Changes,
@@ -19,6 +21,16 @@ pub const COMMANDS: &[(&str, &str, LocalCommand)] = &[
         "models",
         "Choose a model for this session",
         LocalCommand::Models,
+    ),
+    (
+        "variants",
+        "Choose a model effort variant",
+        LocalCommand::Variants,
+    ),
+    (
+        "effort",
+        "Set the model effort for the next message",
+        LocalCommand::Effort,
     ),
     ("timeline", "Find an earlier prompt", LocalCommand::Timeline),
     ("files", "Browse project files", LocalCommand::Files),
@@ -54,7 +66,7 @@ impl LocalCommand {
         if !command.available(provider) {
             return Err(format!("/{name} is only available with OpenCode."));
         }
-        if *command != Self::SideQuestion && !args.trim().is_empty() {
+        if !matches!(*command, Self::SideQuestion | Self::Effort) && !args.trim().is_empty() {
             return Err(format!("/{name} does not take arguments."));
         }
         Ok(Some((*command, args.trim())))
@@ -73,6 +85,25 @@ mod tests {
                 Ok(Some((LocalCommand::Models, "")))
             );
             assert!(LocalCommand::parse("/models fast", provider).is_err());
+        }
+    }
+
+    #[test]
+    fn variants_and_effort_commands_are_available_for_both_providers() {
+        for provider in [Provider::Codex, Provider::OpenCode] {
+            assert_eq!(
+                LocalCommand::parse("/variants", provider),
+                Ok(Some((LocalCommand::Variants, "")))
+            );
+            assert_eq!(
+                LocalCommand::parse("/effort", provider),
+                Ok(Some((LocalCommand::Effort, "")))
+            );
+            assert_eq!(
+                LocalCommand::parse("/effort xhigh", provider),
+                Ok(Some((LocalCommand::Effort, "xhigh")))
+            );
+            assert!(LocalCommand::parse("/variants xhigh", provider).is_err());
         }
     }
 }
