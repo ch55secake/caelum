@@ -520,7 +520,11 @@ impl Live {
                 && self.app.group_path(project) != project
             {
                 let root = self.app.group_path(project).to_owned();
-                self.app.preferences.worktree_expanded.insert(root, true);
+                self.app
+                    .preferences
+                    .worktree_expanded
+                    .entry(root)
+                    .or_insert(true);
             }
             self.menu = None;
             if let Some(previous) = self.last_selected
