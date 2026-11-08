@@ -66,6 +66,9 @@ jobs:
     name: Check release commit
     needs: prepare
     if: ${{ needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.published != 'true' }}
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
     with:
       revision: ${{ needs.prepare.outputs.release_commit }}
