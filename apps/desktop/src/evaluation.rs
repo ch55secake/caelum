@@ -73,6 +73,86 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         return false;
     };
     let project = "/projects/caelum";
+    if matches!(
+        name,
+        "sidebar-worktrees"
+            | "sidebar-worktrees-many"
+            | "sidebar-worktrees-projects"
+            | "sidebar-worktrees-vercel"
+    ) {
+        if name == "sidebar-worktrees-vercel" {
+            l.app.preferences.theme_family = "vercel".into();
+            l.app.preferences.accent_color = "theme".into();
+        }
+        let mut trees = vec![
+            json!({"path":project,"project":{"path":project,"name":"caelum"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true}),
+            json!({"path":"/projects/caelum-native","project":{"path":"/projects/caelum-native","name":"caelum-native"},"branch":"feat/native-workspace","main":false,"locked":null,"prunable":null,"available":true}),
+            json!({"path":"/projects/caelum-providers","project":{"path":"/projects/caelum-providers","name":"caelum-providers"},"branch":"fix/provider-reconnect","main":false,"locked":null,"prunable":null,"available":true}),
+            json!({"path":"/scratch/external-review","project":{"path":"/scratch/external-review","name":"external-review"},"branch":"tool/review","main":false,"locked":null,"prunable":null,"available":true}),
+        ];
+        if name == "sidebar-worktrees-many" {
+            for i in 0..12 {
+                let path = format!("/projects/caelum-task-{i}");
+                trees.push(json!({"path":path,"project":{"path":path,"name":format!("task-{i}")},"branch":format!("work/task-{i}"),"main":false,"locked":if i == 10 { Some("Release checkout") } else { None },"prunable":null,"available":i != 11}));
+            }
+        }
+        seed_worktrees(l, serde_json::from_value(json!({
+            "project":{"path":project,"name":"caelum"},"storageDirectory":"/projects","branches":["main","unused-branch"],"defaultBase":"main","worktrees":trees,
+        })).unwrap());
+        for (path, title, provider) in [
+            (
+                "/projects/caelum-native",
+                "Restore the worktree sidebar",
+                Provider::Codex,
+            ),
+            (
+                "/projects/caelum-providers",
+                "Reconnect provider sessions",
+                Provider::OpenCode,
+            ),
+        ] {
+            let index = l.app.new_session(Scope {
+                project: path.into(),
+                provider,
+            });
+            let session = &mut l.app.sessions[index];
+            session.title = title.into();
+            session.draft = format!("Independent draft for {title}");
+            session.loaded = true;
+            if provider == Provider::Codex {
+                session.conversation.working = true;
+            } else {
+                session.queue.push(caelum_core::application::QueuedPrompt {
+                    text: "Review the reconnect changes".into(),
+                    options: Default::default(),
+                });
+                session.queue_paused = true;
+            }
+        }
+        if matches!(
+            name,
+            "sidebar-worktrees-projects" | "sidebar-worktrees-vercel"
+        ) {
+            l.app.projects.push(caelum_protocol::ProjectInfo {
+                path: "/projects/rune".into(),
+                name: "rune".into(),
+            });
+            seed_worktrees(l, serde_json::from_value(json!({
+                "project":{"path":"/projects/rune","name":"rune"},"storageDirectory":"/worktrees/rune","branches":["main","fix/key-navigation"],"defaultBase":"main",
+                "worktrees":[
+                    {"path":"/projects/rune","project":{"path":"/projects/rune","name":"rune"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
+                    {"path":"/worktrees/rune/key-navigation","project":{"path":"/worktrees/rune/key-navigation","name":"rune"},"branch":"fix/key-navigation","main":false,"locked":null,"prunable":null,"available":true}
+                ]
+            })).unwrap());
+            l.app
+                .preferences
+                .worktree_expanded
+                .insert("/projects/rune".into(), true);
+        }
+        l.app.select(0);
+        finish_fixture_reads(l);
+        return true;
+    }
     if name == "sidebar-projects" {
         for (path, name) in [
             ("/projects/rune", "rune"),
@@ -181,28 +261,35 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
     }
     if matches!(
         name,
-        "worktrees" | "worktrees-loading" | "worktrees-error" | "worktree-create"
+        "worktrees"
+            | "worktrees-loading"
+            | "worktrees-error"
+            | "worktrees-empty"
+            | "worktree-create"
     ) {
         crate::panels::show(state, crate::panels::Screen::Worktrees);
         let l = state.live.as_mut().unwrap();
         if name == "worktrees-loading" {
             return true;
         }
-        let checkout = l.app.services.checkouts.get_mut(project).unwrap();
+        let mut listing: caelum_protocol::GitWorktrees = serde_json::from_value(json!({
+            "project":{"path":project,"name":"Caelum"},"storageDirectory":"/Users/oscar/.caelum/worktrees/caelum-7d0420ab","branches":["main","feat/native"],"defaultBase":"main",
+            "worktrees":[
+                {"path":project,"project":{"path":project,"name":"Caelum"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
+                {"path":"/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native","project":{"path":"/Users/oscar/.caelum/worktrees/caelum-7d0420ab/feat-native","name":"Caelum"},"branch":"feat/native","main":false,"locked":null,"prunable":null,"available":true}
+            ]
+        })).unwrap();
+        if name == "worktrees-empty" {
+            listing.worktrees.retain(|tree| tree.main);
+        }
+        seed_worktrees(l, listing);
+        finish_fixture_reads(l);
         if name == "worktrees-error" {
-            checkout.error = Some(
+            l.app.services.checkouts.get_mut(project).unwrap().error = Some(
                 "This checkout has uncommitted changes. Commit or move them before removing it."
                     .into(),
             );
         }
-        checkout.worktrees = Some(serde_json::from_value(json!({
-            "project":{"path":project,"name":"Caelum"},"storageDirectory":"/Users/oscar/.caelum/worktrees","branches":["main","feat/native"],"defaultBase":"main",
-            "worktrees":[
-                {"path":project,"project":{"path":project,"name":"Caelum"},"branch":"main","main":true,"locked":null,"prunable":null,"available":true},
-                {"path":"/projects/caelum-native","project":{"path":"/projects/caelum-native","name":"Caelum native"},"branch":"feat/native","main":false,"locked":null,"prunable":null,"available":true}
-            ]
-        })).unwrap());
-        finish_fixture_reads(l);
         if name == "worktree-create" {
             crate::worktree::open(state, project.into(), Provider::OpenCode);
         }
@@ -489,6 +576,25 @@ fn finish_fixture_reads(live: &mut crate::live::Live) {
     use caelum_core::application::{Command, Reply, TaskReply};
     for (id, command) in live.app.commands() {
         if matches!(command, Command::Task(_)) {
+            live.app
+                .apply(Event::Completed(id, Ok(Reply::Task(TaskReply::Done))));
+        }
+    }
+}
+
+fn seed_worktrees(live: &mut crate::live::Live, listing: caelum_protocol::GitWorktrees) {
+    use caelum_core::application::{Command, Reply, Task, TaskReply};
+    live.app.task(Task::Worktrees {
+        project: listing.project.path.clone(),
+        directory: String::new(),
+    });
+    for (id, command) in live.app.commands() {
+        if matches!(command, Command::Task(Task::Worktrees { .. })) {
+            live.apply(Event::Completed(
+                id,
+                Ok(Reply::Task(TaskReply::Worktrees(Some(listing.clone())))),
+            ));
+        } else if matches!(command, Command::Task(_)) {
             live.app
                 .apply(Event::Completed(id, Ok(Reply::Task(TaskReply::Done))));
         }

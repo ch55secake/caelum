@@ -387,6 +387,48 @@ pub fn project(el: El, project: String) -> El {
     })
 }
 
+pub fn worktree(el: El, project: String, path: String, origin: String) -> El {
+    el.on_secondary_press(move |s: &mut Workspace, at, _| {
+        let app = &live(s).app;
+        let Some(tree) = app
+            .managed_worktrees(&project)
+            .find(|tree| tree.path == path)
+        else {
+            return;
+        };
+        let directory = tree.project.path.clone();
+        let project = project.clone();
+        let path = path.clone();
+        let menu = Menu::new()
+            .item(Item::new("copy", "Copy worktree path").icon(&glyphs::COPY))
+            .item(
+                Item::new("reveal", "Reveal in Finder")
+                    .icon(&ui::FOLDER)
+                    .enabled(tree.available),
+            )
+            .separator()
+            .item(
+                Item::new("delete", "Delete worktree")
+                    .icon(&glyphs::CLOSE)
+                    .enabled(crate::checkouts::removal(app, &project, &path).is_some()),
+            );
+        show(s, at, origin.clone(), menu, move |s, pick, tx| match pick {
+            "copy" => tx.copy(path),
+            "reveal" => live_mut(s).app.task(Task::Reveal {
+                project: directory,
+                path: ".".into(),
+            }),
+            "delete" => {
+                let app = &mut live_mut(s).app;
+                if let Some(task) = crate::checkouts::removal(app, &project, &path) {
+                    app.task(task);
+                }
+            }
+            _ => {}
+        });
+    })
+}
+
 pub fn path(el: El, project: String, path: String, directory: bool, origin: String) -> El {
     el.key(&origin)
         .on_secondary_press(move |s: &mut Workspace, at, _| {
