@@ -419,6 +419,7 @@ pub struct Checkout {
     pub git: Option<GitRepositoryStatus>,
     pub diffs: BTreeMap<String, GitFileDiff>,
     pub worktrees: Option<GitWorktrees>,
+    worktrees_revision: u64,
     pub pull_requests: Vec<GitHubPullRequest>,
     pub error: Option<String>,
 }
@@ -496,6 +497,24 @@ pub struct Services {
 }
 
 impl Services {
+    /// A listing read from any checkout describes the same repository. Prefer
+    /// the newest successful request, even if replies finish out of order.
+    pub fn worktrees(&self, project: &str) -> Option<&GitWorktrees> {
+        self.checkouts
+            .values()
+            .filter_map(|checkout| {
+                let listing = checkout.worktrees.as_ref()?;
+                (listing.project.path == project
+                    || listing
+                        .worktrees
+                        .iter()
+                        .any(|tree| tree.project.path == project))
+                .then_some((checkout.worktrees_revision, listing))
+            })
+            .max_by_key(|(revision, _)| *revision)
+            .map(|(_, listing)| listing)
+    }
+
     pub fn refresh_review(&mut self, project: &str, url: &str) {
         self.revision += 1;
         let key = (project.into(), url.into());
@@ -702,7 +721,10 @@ impl Services {
             {
                 checkout.diffs.insert(path.clone(), diff);
             }
-            (_, TaskReply::Worktrees(listing)) => checkout.worktrees = listing,
+            (_, TaskReply::Worktrees(listing)) => {
+                checkout.worktrees = listing;
+                checkout.worktrees_revision = id;
+            }
             (
                 Task::CreateWorktree {
                     directory, project, ..

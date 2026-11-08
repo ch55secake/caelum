@@ -16,11 +16,17 @@ independent draft and reading position. Hover a
 session to close it with **×**. A temporary notice names the archived session and
 offers **Undo**; it expires after eight unengaged seconds and pauses while hovered,
 keyboard-focused or restoring. Undo preserves newer navigation. Session actions and
-native context menus also offer archive/reconnect. Hover any session row for its
+custom context menus also offer archive/reconnect. Hover any session row for its
 **…** popover; actions belong to that row, including background sessions. Escape
 returns focus to its button. Use the archive icon beside
 **Sessions** to switch between active and archived sessions. **New session** uses
 the default provider chosen in Settings → Providers.
+
+Right-click projects, sessions, messages, files, tabs and pull requests for themed
+context menus. Actions apply to the item you clicked, including background sessions
+and files. Text fields offer Undo, Redo, Cut, Copy, Paste and Select all, preserving
+their selection and editing history. **⇧F10** or the Menu key opens the focused
+item's menu; arrows navigate, Enter chooses, and Escape or Tab dismisses it.
 
 Choose the model, reasoning effort and available agent in the composer. Effort
 and agent controls have distinct icons and labelled popouts with readable names,
@@ -119,11 +125,27 @@ in-flight refresh schedules another read. Linked-worktree Git metadata is watche
 Select lines and choose **Add selection** to attach them to the prompt. Files, local staged/unstaged/untracked
 changes and continuous PR review share the same native code/diff surfaces.
 
-Use a project's branch icon or **Create worktree** in the project/provider launcher
+Expand **Worktrees** beneath a project to see the worktrees created
+through Caelum. The section is hidden when that project has no Caelum worktrees.
+Indented folder names and a connecting line show which project
+owns each worktree. Rows show the current worktree and working, queued or unread
+activity; hover for the branch and full path. Click the project card to return to
+its original folder, or a worktree to restore its session, draft and reading position.
+Arrow keys and Enter also navigate the list. Disclosure choices persist.
+Right-click a worktree in the sidebar, manager or new-session launcher and choose
+**Delete worktree** to remove it.
+Caelum remembers created worktrees across restarts and storage-directory changes,
+and recognises older worktrees in that project's Caelum storage folder.
+Use **Refresh worktrees** to update the list, or **… → Manage worktrees** for a
+compact list with the parent project's name and path, creation and removal actions.
+
+Use a project's branch icon or **New worktree** in its manager
 to open the creation form. Replace the selected suggested branch, search the starting
 branch and review the destination, then press Enter or **Create worktree**. The form
-keeps its original project and provider. **Manage checkouts** opens discovery and
-removal. Change the parent directory in Settings; the default storage is under
+keeps its original project and provider. The new-session launcher groups Caelum
+worktrees beneath their parent project, including while searching, and offers
+creation and management beside each project. Change the parent directory in Settings;
+the default storage is under
 `~/.caelum/worktrees`. Each checkout keeps its own sessions and drafts. Removing
 a checkout preserves its branch and commits; active work and dirty/locked Git
 checkouts prevent removal.

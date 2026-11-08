@@ -1,3 +1,4 @@
+use crate::context::EditMenu;
 use crate::ui::Button;
 use crate::{
     Workspace,
@@ -287,7 +288,6 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                 let name = name.to_owned();
                 form = form.child(
                     text_input(&draft.editors[&name], k.ty.ui)
-                        .key(format!("question-input-{}-{name}", prompt.request_id))
                         .label(if field["custom"] == true {
                             "Custom answer"
                         } else {
@@ -316,16 +316,17 @@ pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
                                 k.c.border_base
                             },
                         )
-                        .on_edit(move |s: &mut Workspace| {
-                            live_mut(s)
-                                .forms
-                                .drafts
-                                .get_mut(&owner)
-                                .unwrap()
-                                .editors
-                                .get_mut(&name)
-                                .unwrap()
-                        }),
+                        .edit_menu(
+                            format!("question-input-{}-{name}", prompt.request_id),
+                            move |s| {
+                                live_mut(s)
+                                    .forms
+                                    .drafts
+                                    .get_mut(&owner)?
+                                    .editors
+                                    .get_mut(&name)
+                            },
+                        ),
                 );
             }
             if draft.attempted

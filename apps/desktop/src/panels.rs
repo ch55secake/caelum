@@ -1,4 +1,5 @@
 //! Native workspace views; all reads, mutations and response ownership are in core.
+use crate::context::EditMenu;
 use crate::ui::Button;
 use crate::{
     Workspace,
@@ -395,6 +396,12 @@ fn scroll(content: El) -> El {
 }
 
 pub fn show(s: &mut Workspace, screen: Screen) {
+    if screen == Screen::Worktrees
+        && let Some(project) = live(s).app.active_project.clone()
+    {
+        crate::checkouts::manage(s, project);
+        return;
+    }
     if screen == Screen::Session {
         live_mut(s).session_menu = live(s).app.selected;
         return;
@@ -526,96 +533,159 @@ fn launcher(s: &Workspace, k: &Kit) -> El {
         ui::field(
             &l.commands.search,
             "Find project",
-            "Find a project or checkout…",
+            "Find a project or worktree…",
             k,
         )
-        .key("launch-search")
-        .on_edit(|s: &mut Workspace| &mut live_mut(s).commands.search),
+        .edit_menu("launch-search", |s| Some(&mut live_mut(s).commands.search)),
     );
     let query = l.commands.search.text.to_lowercase();
-    let mut projects = col().w_full().gap(5.0);
-    for project in l.app.projects.iter().filter(|p| {
-        format!("{} {}", p.name, p.path)
+    let mut projects = col().w_full().gap(12.0);
+    for project in l
+        .app
+        .projects
+        .iter()
+        .filter(|p| l.app.group_path(&p.path) == p.path)
+    {
+        let matches_project = format!("{} {}", project.name, project.path)
             .to_lowercase()
-            .contains(&query)
-    }) {
+            .contains(&query);
+        let trees: Vec<_> = l
+            .app
+            .managed_worktrees(&project.path)
+            .filter(|tree| {
+                matches_project
+                    || format!(
+                        "{} {}",
+                        tree.path,
+                        tree.branch.as_deref().unwrap_or_default()
+                    )
+                    .to_lowercase()
+                    .contains(&query)
+            })
+            .collect();
+        if !matches_project && trees.is_empty() {
+            continue;
+        }
         let path = project.path.clone();
         let tree_project = path.clone();
-        let branch = l
-            .app
-            .services
-            .checkouts
-            .get(&path)
-            .and_then(|c| c.git.as_ref())
-            .and_then(|g| g.branch.as_deref());
-        projects = projects.child(
-            row()
+        let manage_project = path.clone();
+        let mut group = col()
+            .w_full()
+            .gap(2.0)
+            .role("group")
+            .label(format!("{} project and worktrees", project.name))
+            .key(crate::code_view::source_key(&path, "launch-group"))
+            .child(
+                row()
+                    .w_full()
+                    .gap(6.0)
+                    .center_y()
+                    .child(
+                        ui::choice(
+                            &project.name,
+                            &format!("Project folder · {}", project.path),
+                            l.app.active_project.as_ref() == Some(&path),
+                            k,
+                        )
+                        .on_press(move |s: &mut Workspace| launch(s, &path))
+                        .h(50.0)
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .key(crate::code_view::source_key(&project.path, "launch")),
+                    )
+                    .child(
+                        quiet_button(&ui::BRANCH, "Create worktree for this project")
+                            .on_press(move |s: &mut Workspace| {
+                                crate::worktree::open(
+                                    s,
+                                    tree_project.clone(),
+                                    live(s).panels.launch_provider,
+                                )
+                            })
+                            .build(k)
+                            .label(format!("Create worktree for {}", project.name))
+                            .key(crate::code_view::source_key(
+                                &project.path,
+                                "launch-worktree",
+                            )),
+                    )
+                    .child(
+                        quiet_button(&ui::MORE, "Manage this project's worktrees")
+                            .on_press(move |s: &mut Workspace| {
+                                crate::checkouts::manage(s, manage_project.clone())
+                            })
+                            .build(k)
+                            .key(crate::code_view::source_key(
+                                &project.path,
+                                "launch-manage-worktrees",
+                            )),
+                    ),
+            );
+        if !trees.is_empty() {
+            let mut children = col()
                 .w_full()
-                .gap(6.0)
-                .center_y()
-                .child(
+                .pl(24.0)
+                .gap(2.0)
+                .child(ui::caption("Worktrees", k).px(10.0).py(3.0));
+            for tree in trees {
+                let path = tree.project.path.clone();
+                children = children.child(crate::context::worktree(
                     ui::choice(
-                        &branch.map_or_else(
-                            || project.name.clone(),
-                            |b| format!("{} · {b}", project.name),
-                        ),
-                        &project.path,
+                        crate::checkouts::name(tree),
+                        tree.branch.as_deref().unwrap_or("Detached HEAD"),
                         l.app.active_project.as_ref() == Some(&path),
                         k,
                     )
-                    .on_press(move |s: &mut Workspace| {
-                        let l = live_mut(s);
-                        l.app.select_project(&path);
-                        let scope = caelum_core::application::Scope {
-                            project: path.clone(),
-                            provider: l.panels.launch_provider,
-                        };
-                        l.app.project_draft(scope);
-                        l.sync_editors();
-                        l.panels.overlay = None;
-                        l.panels.screen = Screen::Conversation;
-                        l.focus();
-                    })
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .key(crate::code_view::source_key(&project.path, "launch")),
-                )
-                .child(
-                    quiet_button(&ui::BRANCH, "Create worktree for this project")
-                        .on_press(move |s: &mut Workspace| {
-                            crate::worktree::open(
-                                s,
-                                tree_project.clone(),
-                                live(s).panels.launch_provider,
-                            )
-                        })
-                        .build(k)
-                        .key(crate::code_view::source_key(
-                            &project.path,
-                            "launch-worktree",
-                        )),
-                ),
-        );
+                    .disabled(!tree.available)
+                    .h(46.0)
+                    .label(format!(
+                        "New session in {} / {}",
+                        project.name,
+                        crate::checkouts::name(tree)
+                    ))
+                    .help(&tree.project.path)
+                    .on_press(move |s: &mut Workspace| launch(s, &path))
+                    .key(crate::code_view::source_key(&tree.project.path, "launch")),
+                    project.path.clone(),
+                    tree.path.clone(),
+                    crate::code_view::source_key(&tree.project.path, "launch"),
+                ));
+            }
+            group = group.child(children);
+        }
+        if let Some(error) = crate::checkouts::error(&l.app, &project.path) {
+            group = group.child(ui::caption(error, k).wrap().color(k.c.danger.fg).px(10.0));
+        }
+        projects = projects.child(group);
     }
-    body.child(scroll(projects)).child(ui::divider(k)).child(
-        row()
-            .gap(8.0)
-            .child(
-                Button::new("Open folder…")
-                    .on_press_tx(crate::live::open_project)
-                    .build(k),
-            )
-            .child(
-                Button::new("Create worktree…")
-                    .disabled(l.app.active_project.is_none())
-                    .on_press(|s: &mut Workspace| {
-                        if let Some(project) = live(s).app.active_project.clone() {
-                            crate::worktree::open(s, project, live(s).panels.launch_provider);
-                        }
-                    })
-                    .build(k),
-            ),
+    body.child(
+        scroll(projects)
+            .key("launcher-projects-scroll")
+            .scroll_bar(k),
     )
+    .child(ui::divider(k))
+    .child(
+        row().gap(8.0).child(
+            Button::new("Open folder…")
+                .on_press_tx(crate::live::open_project)
+                .build(k),
+        ),
+    )
+}
+
+fn launch(s: &mut Workspace, path: &str) {
+    let l = live_mut(s);
+    if !l.app.select_checkout(path) {
+        return;
+    }
+    l.app.project_draft(caelum_core::application::Scope {
+        project: path.into(),
+        provider: l.panels.launch_provider,
+    });
+    l.sync_editors();
+    l.panels.overlay = None;
+    l.panels.screen = Screen::Conversation;
+    l.focus();
 }
 
 pub fn open_review(s: &mut Workspace, project: String, url: String) {
@@ -799,9 +869,9 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             crate::settings::view(s, k, &mut menus),
         ),
         Screen::Worktrees => (
-            "Worktrees",
-            "Independent checkouts for parallel work.",
-            worktrees(s, k),
+            "Caelum worktrees",
+            "Created in Caelum for this project.",
+            crate::checkouts::manager(s, k),
         ),
         Screen::CreateWorktree => (
             "Create worktree",
@@ -842,7 +912,8 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     };
     let (width, height) = match screen {
         Screen::Settings => (760.0, 460.0),
-        Screen::Launcher => (520.0, 310.0),
+        Screen::Launcher => (560.0, 380.0),
+        Screen::Worktrees => (560.0, crate::checkouts::manager_height(s)),
         Screen::CreateWorktree => (500.0, 330.0),
         Screen::Timeline => (580.0, 344.0),
         Screen::Stats => (720.0, 620.0),
@@ -907,10 +978,9 @@ fn files(s: &Workspace, k: &Kit) -> El {
                     "Search files or text…",
                     k,
                 )
-                .key("file-search")
                 .grow(1.0)
                 .min_w(0.0)
-                .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.search)
+                .edit_menu("file-search", |s| Some(&mut live_mut(s).panels.search))
                 .on_submit(run_search),
             )
             .child(
@@ -951,7 +1021,9 @@ fn files(s: &Workspace, k: &Kit) -> El {
                 let project = project.clone();
                 let path = hit.path.clone();
                 let line = hit.line;
-                listing = listing.child(
+                let context_project = project.clone();
+                let context_path = path.clone();
+                listing = listing.child(crate::context::path(
                     ui::choice(
                         &format!(
                             "{}{}",
@@ -968,7 +1040,11 @@ fn files(s: &Workspace, k: &Kit) -> El {
                         live.panels.selection = None;
                         live.app.open_file(project.clone(), path.clone());
                     }),
-                );
+                    context_project,
+                    context_path,
+                    false,
+                    format!("file-result-{}-{}", hit.path, line.unwrap_or_default()),
+                ));
             }
             if results.truncated || results.skipped > 0 {
                 listing = listing.child(label(
@@ -1007,6 +1083,9 @@ fn files(s: &Workspace, k: &Kit) -> El {
         let selected = checkout.selected_file.as_ref() == Some(&path);
         let key = format!("file-tab-{}", crate::code_view::source_key(&project, &path));
         let close_key = format!("close-{key}");
+        let context_project = project.clone();
+        let context_path = path.clone();
+        let context_key = key.clone();
         let focused = live
             .focus_key
             .as_ref()
@@ -1031,7 +1110,7 @@ fn files(s: &Workspace, k: &Kit) -> El {
             .label(format!("Close {path}"))
             .size(22.0, 24.0)
             .group_opacity(if focused { 1.0 } else { 0.0 }, 1.0);
-        tabs = tabs.child(
+        tabs = tabs.child(crate::context::path(
             k.interactive(
                 row()
                     .h(34.0)
@@ -1091,7 +1170,11 @@ fn files(s: &Workspace, k: &Kit) -> El {
                 l.panels.selection = None;
                 l.app.open_file(project.clone(), path.clone());
             }),
-        );
+            context_project,
+            context_path,
+            false,
+            context_key,
+        ));
     }
     if !checkout.tabs.is_empty() {
         browser = browser.child(tabs).child(ui::divider(k));
@@ -1211,18 +1294,20 @@ fn files(s: &Workspace, k: &Kit) -> El {
                 .gap(4.0)
                 .child(
                     ui::field(&live.panels.find, "Find in file", "Find in file…", k)
-                        .key("local-file-search")
                         .label("Find in file")
                         .placeholder("Find in file…", k.c.text_muted)
                         .color(k.c.text_base)
                         .single_line()
                         .grow(1.0)
                         .min_w(0.0)
-                        .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.find)
-                        .on_input_change(|s: &mut Workspace, tx| {
-                            live_mut(s).panels.find_index = usize::MAX;
-                            find_next(s, false, tx);
-                        })
+                        .edit_menu_changed(
+                            "local-file-search",
+                            |s| Some(&mut live_mut(s).panels.find),
+                            |s, tx| {
+                                live_mut(s).panels.find_index = usize::MAX;
+                                find_next(s, false, tx);
+                            },
+                        )
                         .on_submit(|s: &mut Workspace, tx| find_next(s, false, tx)),
                 )
                 .child(
@@ -1310,6 +1395,7 @@ fn files(s: &Workspace, k: &Kit) -> El {
             .map(|s| s.text.clone())
             .unwrap_or_else(|| file.content.clone()),
         selection.and_then(|s| s.lines),
+        crate::code_view::source_key(project, path),
     );
     live.panels.documents[&(project.clone(), path.clone())]
         .position
@@ -1391,7 +1477,7 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
             .files
             .get(&p)
             .is_some_and(|saved| saved.expanded.contains(&f));
-        tree = tree.child(
+        tree = tree.child(crate::context::path(
             k.interactive(
                 row()
                     .w_full()
@@ -1447,7 +1533,11 @@ fn directory(s: &Workspace, k: &Kit, project: &str, path: &str, depth: usize) ->
                 }
             })
             .key(format!("file-tree-{}", entry.path)),
-        );
+            project.to_owned(),
+            entry.path.clone(),
+            dir,
+            format!("file-tree-{}", entry.path),
+        ));
         if dir && expanded && depth < 30 {
             tree = tree.child(directory(s, k, project, &entry.path, depth + 1));
         }
@@ -1613,9 +1703,10 @@ fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                     })
                     .variant(ButtonVariant::GhostMuted)
                     .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
-                    .build(&action_kit),
-                    project,
-                    path,
+                    .build(&action_kit)
+                    .key(format!("patch-context-{path}")),
+                    project.clone(),
+                    path.clone(),
                     content,
                     selected.map(|s| {
                         (
@@ -1623,6 +1714,7 @@ fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                             s.start.line.max(s.end.line) as usize,
                         )
                     }),
+                    format!("patch-context-{path}"),
                 )
             })
             .annotation(move |s, annotation| {
@@ -1856,135 +1948,6 @@ pub fn select_change(s: &mut Workspace, project: String, path: String) {
     live.panels.change_diff = DiffState::new(diff::parse(""));
     live.panels.change_hash = 0;
     live.app.task(Task::Diff { project, path });
-}
-
-fn worktrees(s: &Workspace, k: &Kit) -> El {
-    let live = live(s);
-    let Some(project) = &live.app.active_project else {
-        return ui::empty(
-            "Open a Git project",
-            "Choose a project before creating a separate checkout.",
-            k,
-        );
-    };
-    let refresh = Task::Worktrees {
-        project: project.clone(),
-        directory: live.app.preferences.worktree_directory.clone(),
-    };
-    let mutation = Task::CreateWorktree {
-        project: project.clone(),
-        branch: String::new(),
-        base: String::new(),
-        directory: String::new(),
-    };
-    let busy = live.app.services.busy(&mutation);
-    let checkout = live.app.services.checkouts.get(project);
-    let mut content = col().w_full().gap(12.0).child(
-        row()
-            .w_full()
-            .center_y()
-            .gap(8.0)
-            .child(
-                ui::caption(project, k)
-                    .truncate()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .help(project),
-            )
-            .child(action("Refresh", refresh.clone(), s, k))
-            .child(
-                Button::new("Create worktree…")
-                    .variant(ButtonVariant::Contrast)
-                    .on_press({
-                        let project = project.clone();
-                        move |s: &mut Workspace| {
-                            let l = crate::live::live(s);
-                            let provider = l
-                                .app
-                                .selected
-                                .map(|i| l.app.sessions[i].scope.provider)
-                                .unwrap_or(l.app.preferences.default_provider);
-                            crate::worktree::open(s, project.clone(), provider);
-                        }
-                    })
-                    .build(k),
-            ),
-    );
-    if let Some(error) = live
-        .app
-        .services
-        .error(&mutation)
-        .or_else(|| live.app.services.error(&refresh))
-        .or_else(|| checkout.and_then(|c| c.error.as_deref()))
-    {
-        content = content.child(ui::notice("Worktree unavailable", error, k));
-    }
-    if let Some(listing) = live
-        .app
-        .services
-        .checkouts
-        .get(project)
-        .and_then(|c| c.worktrees.as_ref())
-    {
-        for tree in &listing.worktrees {
-            let path = tree.project.path.clone();
-            let mut line = ui::card(k).padding(6.0).gap(4.0).child(
-                ui::choice(
-                    &format!(
-                        "{}{}",
-                        tree.branch.as_deref().unwrap_or("Detached HEAD"),
-                        if tree.main { " · Main checkout" } else { "" }
-                    ),
-                    &tree.project.path,
-                    &tree.project.path == project,
-                    k,
-                )
-                .disabled(!tree.available || busy)
-                .opacity(if tree.available { 1.0 } else { 0.5 })
-                .help(&tree.project.path)
-                .on_press(move |s: &mut Workspace| {
-                    let live = live_mut(s);
-                    live.app.open_project(path.clone());
-                    live.panels.overlay = None;
-                }),
-            );
-            if let Some(reason) = &tree.locked {
-                line = line.child(ui::caption(format!("Locked · {reason}"), k).px(10.0));
-            } else if !tree.available {
-                line = line.child(ui::caption("Checkout directory is unavailable", k).px(10.0));
-            }
-            if !tree.main && tree.locked.is_none() {
-                line = line.child(action(
-                    "Remove checkout",
-                    Task::RemoveWorktree {
-                        project: project.clone(),
-                        path: tree.path.clone(),
-                    },
-                    s,
-                    k,
-                ));
-            }
-            content = content.child(line);
-        }
-    } else {
-        content = content.child(
-            if live.app.services.busy(&Task::Worktrees {
-                project: project.clone(),
-                directory: live.app.preferences.worktree_directory.clone(),
-            }) {
-                ui::skeleton("Loading worktrees", 3, k)
-            } else {
-                ui::empty(
-                    "No worktrees yet",
-                    "Open a Git project to create an independent checkout.",
-                    k,
-                )
-            },
-        );
-    }
-    scroll(content.pr(10.0))
-        .key("worktrees-scroll")
-        .scroll_bar(k)
 }
 
 pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
@@ -2534,8 +2497,9 @@ fn review_files_view(
                 "Find a file…",
                 k,
             )
-            .key("review-file-search")
-            .on_edit(|s: &mut Workspace| &mut live_mut(s).panels.review_search),
+            .edit_menu("review-file-search", |s| {
+                Some(&mut live_mut(s).panels.review_search)
+            }),
         )
         .child(
             col()

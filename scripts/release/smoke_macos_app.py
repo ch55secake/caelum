@@ -32,6 +32,15 @@ def application(pid, action):
     ], text=True).strip()
 
 
+def create_projects(root):
+    projects = [root / "first café #1", root / "second & 2%+?"]
+    for project in projects:
+        project.mkdir()
+    # Match the canonical paths saved by Project::open. Filesystems can return
+    # a different Unicode normalization than the string used to create a path.
+    return [project.resolve(strict=True) for project in projects]
+
+
 def run(app, cli, root):
     executable = app / "Contents/MacOS/caelum-desktop"
     if pids(executable):
@@ -42,9 +51,8 @@ def run(app, cli, root):
     bin_dir.mkdir()
     state = home / "workspace.json"
     log = root / "app.log"
-    projects = [root / "first café #1", root / "second & 2%+?"]
-    for project in projects:
-        project.mkdir()
+    launch_trace = root / "launch.log"
+    projects = create_projects(root)
     # Keep this check offline, including on a developer's authenticated machine.
     for provider in ("codex", "opencode"):
         path = bin_dir / provider
@@ -58,6 +66,13 @@ set -eu
 test "$#" -eq 3
 test "$1" = -a
 test "$2" = Caelum
+# Launch-only environment/output options are for the cold start; repeat opens
+# should match the CLI's normal LaunchServices request to the running app.
+if /bin/ps -axo comm= | /usr/bin/grep -Fqx "$CAELUM_SMOKE_EXECUTABLE"; then
+  printf 'warm\t%s\n' "$3" >> "$CAELUM_SMOKE_TRACE"
+  exec /usr/bin/open -a "$CAELUM_SMOKE_APP" "$3"
+fi
+printf 'cold\t%s\n' "$3" >> "$CAELUM_SMOKE_TRACE"
 exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
   --env "HOME=$CAELUM_SMOKE_HOME" --env "CAELUM_STATE=$CAELUM_SMOKE_STATE" \
   --env "XDG_STATE_HOME=$CAELUM_SMOKE_HOME/state" --env "PATH=$PATH" \
@@ -73,7 +88,9 @@ exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
                                     remembered={str(p): i for i, p in enumerate(projects)}, project_roots={})))
     environment = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin",
                    "CAELUM_SMOKE_APP": str(app), "CAELUM_SMOKE_HOME": str(home),
-                   "CAELUM_SMOKE_STATE": str(state), "CAELUM_SMOKE_LOG": str(log)}
+                   "CAELUM_SMOKE_STATE": str(state), "CAELUM_SMOKE_LOG": str(log),
+                   "CAELUM_SMOKE_EXECUTABLE": str(executable),
+                   "CAELUM_SMOKE_TRACE": str(launch_trace)}
 
     def selected(index):
         snapshot = json.loads(state.read_text())
@@ -81,7 +98,19 @@ exec /usr/bin/open -a "$CAELUM_SMOKE_APP" \
 
     def open_project(index):
         subprocess.run([str(cli), str(projects[index])], env=environment, check=True)
-        snapshot = wait_for(lambda: selected(index), f"project {index} URL delivery")
+        try:
+            snapshot = wait_for(lambda: selected(index), f"project {index} URL delivery")
+        except RuntimeError as error:
+            current_state = json.loads(state.read_text())
+            diagnostics = {
+                "projects": [str(project) for project in projects],
+                "selected": current_state["selected"],
+                "session_projects": [session["scope"]["project"] for session in current_state["sessions"]],
+                "app_pids": pids(executable),
+                "launch_trace": launch_trace.read_text() if launch_trace.exists() else "",
+                "app_log": log.read_text() if log.exists() else "",
+            }
+            raise RuntimeError(f"{error}; diagnostics={json.dumps(diagnostics, ensure_ascii=False)}") from error
         assert [s["draft"] for s in snapshot["sessions"]] == [s["draft"] for s in sessions]
 
     def quit_app(pid):
