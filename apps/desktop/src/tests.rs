@@ -893,6 +893,37 @@ fn context_worktrees_delete_the_clicked_checkout_and_surface_failures() {
 }
 
 #[test]
+fn context_menu_can_rename_the_clicked_worktree() {
+    use caelum_core::application::{Command, Task};
+    let parent = "/projects/rune";
+    let path = "/worktrees/rune/key-navigation";
+    let row = crate::code_view::source_key(path, "checkout");
+    let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
+    rt.update(|_, tx| tx.scroll_to_y("projects-scroll", 1000.0));
+    advance(&mut rt, 0.2);
+    secondary(&mut rt, &row);
+    choose_context(&mut rt, "Rename worktree");
+    advance(&mut rt, 0.2);
+
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.overlay,
+        Some(crate::panels::Screen::Worktrees)
+    );
+    assert!(crate::worktree::is_renaming(&rt.state, path));
+    let name_key = crate::code_view::source_key(path, "rename-worktree-name");
+    let save_key = crate::code_view::source_key(path, "save-worktree-name");
+    fill(&mut rt, &name_key, "Key navigation fix");
+    click(&mut rt, &save_key);
+
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| matches!(
+        command,
+        Command::Task(Task::RenameWorktree { project, path: target, name, .. })
+            if project == parent && target == path && name == "Key navigation fix"
+    )));
+}
+
+#[test]
 fn context_worktree_deletion_rechecks_locks_mutations_and_catalog_changes() {
     use caelum_core::application::{Command, Task};
     let parent = "/projects/rune";
