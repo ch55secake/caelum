@@ -27,7 +27,6 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      native: ${{ steps.filter.outputs.native }}
       preview: ${{ steps.filter.outputs.preview }}
       bundle: ${{ steps.filter.outputs.bundle }}
     steps:
@@ -39,15 +38,6 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         with:
           filters: |
-            native:
-              - 'apps/desktop/src/**'
-              - 'apps/desktop/preview/**'
-              - 'apps/desktop/Cargo.toml'
-              - 'crates/caelum-core/**'
-              - 'crates/caelum-protocol/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
             preview:
               - 'apps/desktop/src/**'
               - 'apps/desktop/assets/**'
@@ -106,7 +96,6 @@ jobs:
   native-desktop:
     name: native-desktop-tests
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.native == 'true' || needs.changes.outputs.preview == 'true' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
