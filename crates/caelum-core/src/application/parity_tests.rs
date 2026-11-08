@@ -708,6 +708,32 @@ fn shell_tool_feed_hides_internal_ids_but_keeps_command_and_output() {
 }
 
 #[test]
+fn tool_summary_omits_unrecognized_json_arguments() {
+    let mut conversation = Conversation::default();
+    conversation.history(
+        Provider::OpenCode,
+        &[json!({
+            "id":"message",
+            "type":"assistant",
+            "content":[{
+                "id":"tool",
+                "type":"tool",
+                "name":"custom_tool",
+                "state":{
+                    "status":"completed",
+                    "input":{"options":{"enabled":true}},
+                    "content":[]
+                }
+            }]
+        })],
+        false,
+    );
+    let tool = presentation::Tool::from_entry(&conversation.entries[0], 0);
+    assert!(tool.summary.is_empty());
+    assert!(tool.input.contains("enabled"));
+}
+
+#[test]
 fn refreshing_statistics_preserves_the_same_filter_cache_and_rejects_old_ranges() {
     let mut app = workspace();
     let task = Task::Stats {
