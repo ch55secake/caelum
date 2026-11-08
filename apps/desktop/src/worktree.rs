@@ -95,13 +95,7 @@ pub fn rename_control(
         return ui::Button::new("Rename")
             .variant(ButtonVariant::GhostMuted)
             .on_press(move |s: &mut Workspace| {
-                let mut name = TextEdit::new(&current_name);
-                name.focused = true;
-                live_mut(s).panels.rename_worktree = Some(RenameForm {
-                    project: project.clone(),
-                    path: path.clone(),
-                    name,
-                });
+                begin_rename(s, project.clone(), path.clone(), current_name.clone());
             })
             .build(k)
             .key(key);
@@ -152,6 +146,16 @@ pub fn rename_control(
                 .build(k)
                 .key(cancel_key),
         )
+}
+
+pub fn begin_rename(s: &mut Workspace, project: String, path: String, current_name: String) {
+    let mut name = TextEdit::new(current_name);
+    name.focused = true;
+    live_mut(s).panels.rename_worktree = Some(RenameForm {
+        project,
+        path,
+        name,
+    });
 }
 
 pub fn is_renaming(s: &Workspace, path: &str) -> bool {
