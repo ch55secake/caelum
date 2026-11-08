@@ -459,12 +459,18 @@ pub struct OpenCodeSession {
     pub updated_at: Option<u64>,
     #[serde(default)]
     pub is_working: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// The selected project and OpenCode session shown in the desktop workspace.

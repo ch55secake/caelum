@@ -579,6 +579,103 @@ fn stale_opencode_archive_error_forgets_the_session_locally() {
 }
 
 #[test]
+fn archiving_selects_existing_context_before_a_blank_session() {
+    let mut app = Workspace::default();
+    app.projects.push(ProjectInfo {
+        path: "/project".into(),
+        name: "Project".into(),
+    });
+    let archived = app.new_session(scope(Provider::Codex, "/project"));
+    let contextual = app.new_session(scope(Provider::Codex, "/project"));
+    app.sessions[contextual].remote_id = Some("thread-with-context".into());
+    let blank = app.new_session(scope(Provider::Codex, "/project"));
+    app.select(archived);
+
+    app.archive(archived, true);
+
+    assert_eq!(app.selected, Some(contextual));
+    assert_eq!(app.sessions.len(), 3, "do not create another empty session");
+    assert!(!app.sessions[blank].archived);
+
+    app.undo_archive();
+    assert_eq!(app.selected, Some(archived));
+    assert!(!app.sessions[archived].archived);
+}
+
+#[test]
+fn deleting_archived_provider_sessions_removes_local_metadata_after_provider_success() {
+    let mut app = Workspace::default();
+    app.projects.push(ProjectInfo {
+        path: "/project".into(),
+        name: "Project".into(),
+    });
+    let index = app.new_session(scope(Provider::OpenCode, "/project"));
+    app.sessions[index].remote_id = Some("ses_archived".into());
+    app.archive(index, true);
+    let archive = app.commands().pop().unwrap().0;
+    app.apply(Event::Completed(archive, Ok(Reply::Done)));
+    assert!(app.sessions[index].archived);
+
+    assert!(app.delete_archived_session(index));
+    assert!(!app.sessions[index].forgotten, "wait for provider deletion");
+    let (request, command) = app.commands().pop().unwrap();
+    assert!(matches!(command, Command::DeleteSession(key) if key.id == "ses_archived"));
+    app.apply(Event::Completed(
+        request,
+        Err("provider does not support deletion".into()),
+    ));
+    assert!(app.sessions[index].archived);
+    assert!(!app.sessions[index].forgotten);
+    assert!(!app.sessions[index].deleting);
+
+    assert!(app.delete_archived_session(index));
+    let (request, command) = app.commands().pop().unwrap();
+    assert!(matches!(command, Command::DeleteSession(key) if key.id == "ses_archived"));
+    app.apply(Event::Completed(request, Ok(Reply::Done)));
+
+    assert!(app.sessions[index].forgotten);
+    assert!(app
+        .snapshot()
+        .sessions
+        .iter()
+        .all(|session| { session.remote_id.as_deref() != Some("ses_archived") }));
+}
+
+#[test]
+fn provider_deleted_events_forget_sessions_and_keep_the_selection_usable() {
+    let mut app = Workspace::default();
+    app.projects.push(ProjectInfo {
+        path: "/project".into(),
+        name: "Project".into(),
+    });
+    let parent = app.new_session(scope(Provider::OpenCode, "/project"));
+    app.sessions[parent].remote_id = Some("ses_parent".into());
+    app.sessions[parent].archived = true;
+    let child = app.new_session(scope(Provider::OpenCode, "/project"));
+    app.sessions[child].remote_id = Some("ses_child".into());
+    app.sessions[child].archived = true;
+    let active = app.new_session(scope(Provider::OpenCode, "/project"));
+    app.sessions[active].remote_id = Some("ses_active".into());
+    app.select(parent);
+
+    for id in ["ses_parent", "ses_child"] {
+        app.apply(Event::OpenCode(OpenCodeEvent {
+            project_path: "/project".into(),
+            event_type: "session.deleted".into(),
+            data: json!({"sessionID": id}),
+            id: None,
+            created: None,
+            location: None,
+        }));
+    }
+
+    assert!(app.sessions[parent].forgotten);
+    assert!(app.sessions[child].forgotten);
+    assert_eq!(app.selected, Some(active));
+    assert!(app.sessions[active].can_send());
+}
+
+#[test]
 fn managed_worktrees_exclude_external_checkouts_and_survive_storage_changes() {
     let mut app = Workspace::default();
     app.projects.push(ProjectInfo {

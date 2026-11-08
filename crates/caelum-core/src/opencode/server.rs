@@ -250,6 +250,13 @@ impl OpenCodeServer {
             .insert(session_id.to_owned());
     }
 
+    pub(super) fn forget_session(&self, session_id: &str) {
+        self.session_ids
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(session_id);
+    }
+
     pub(super) fn active_sessions(&self) -> Result<HashSet<String>, OpenCodeError> {
         // Activity belongs to the runtime drain, not persisted busy/idle times.
         // A running session can have no busy timestamp (or a previous idle time).
