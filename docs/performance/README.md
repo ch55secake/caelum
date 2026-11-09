@@ -38,6 +38,46 @@ The headless replay opens a patch, returns to chat, types, navigates and pastes
 independent drafts on a virtual clock. Its timing describes headless CPU work.
 Use the running application for native input, OS-menu and end-to-end latency checks.
 
+### Session hover and focus observation
+
+Rune's headless replay omits `App::on_frame_drawn`. To include Caelum's presented-focus
+observation in CPU measurements, run the opt-in profile alone:
+
+```sh
+nix develop -c cargo test --locked -p caelum-desktop session_hover_switch_profile \
+  -- --ignored --nocapture --test-threads=1
+```
+
+It replays idle, repeated session hover and 60 session switches against six
+2,000-entry histories, both with and without synthetic streaming. The reported
+frame time includes pointer dispatch, `Runtime::frame`, focus inspection and the
+state update it requests. It excludes native rendering, OS event delivery and
+provider/storage work; it is not an end-to-end latency measurement.
+
+On 9 November 2026, a 15-second sample of the running development app during native
+session hover attributed 3,431 of 11,965 main-thread samples to `live::frame_drawn`,
+almost entirely `Runtime::elements`. This diagnostic API copies the whole tree and
+walks ancestors for presentation metadata. It was being called after every drawn
+frame, even when focus and the view were unchanged. The observer now caches the
+commit/focus-presence stamp, and skips tree inspection entirely when nothing is
+focused. Pinned Rune commits pointer, keyboard and accessibility focus changes;
+regressions compare the observed key against the presented tree after navigation.
+
+Initial same-machine development-profile results (1280×1000, 360 frames per phase):
+
+| Workload | Frame + focus p50 before → after | p95 before → after |
+| --- | --- | --- |
+| Idle | 0.92 → 0.16 ms | 0.95 → 0.16 ms |
+| Hover | 0.94 → 0.17 ms | 1.94 → 1.05 ms |
+| Switching | 3.50 → 0.66 ms | 5.75 → 5.67 ms |
+| Streaming + hover | 1.04 → 0.24 ms | 3.98 → 3.08 ms |
+| Streaming + switching | 4.43 → 4.35 ms | 7.06 → 7.04 ms |
+
+The reported multi-second beachball was not reproduced in these captures. This
+removes measured redundant UI-thread work; it does not establish that the focus
+scan was the only cause of that stall. Switching frames that rebuild the view
+still inspect focus, which is reflected in their similar p95 times.
+
 ## Packaged application
 
 Build with `make app`, then launch with an isolated state directory:
