@@ -2,6 +2,8 @@ use rune::{Env, Key, KeyEvent, Mods, Runtime, runtime::ElementInfo};
 
 use super::{Workspace, spec};
 
+mod navigation;
+
 fn runtime(size: (f32, f32)) -> Runtime<Workspace> {
     let app = spec();
     let mut rt = Runtime::new((app.init)(), app.view, size, Env::new(true, 1.0));

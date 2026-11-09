@@ -47,6 +47,7 @@ pub struct Live {
     pub shell_panel: Option<crate::shells::Panel>,
     pub(crate) collapsed_shells: HashSet<usize>,
     pub focus_key: Option<String>,
+    focus_observation: Cell<Option<(u64, bool)>>,
     pub archive_hovered: bool,
     reading: Vec<Rc<Cell<ScrollPos>>>,
     last_selected: Option<usize>,
@@ -105,6 +106,7 @@ impl Live {
             shell_panel: None,
             collapsed_shells: Default::default(),
             focus_key: None,
+            focus_observation: Cell::new(None),
             archive_hovered: false,
             reading: Vec::new(),
             last_selected: None,
@@ -2093,11 +2095,22 @@ pub fn close_session_menu(s: &mut Workspace) {
 /// navigation (including Tab, pointer and accessibility moves), never from a timer.
 pub fn presented_focus(rt: &rune::Runtime<Workspace>) -> Option<Option<String>> {
     let l = rt.state.live.as_ref()?;
-    let focused = rt
-        .elements()
-        .into_iter()
-        .find(|e| e.focused && !e.exiting)
-        .and_then(|e| e.key);
+    // Pinned Rune commits pointer, keyboard and accessibility focus changes. Hover
+    // paint and animation frames don't: inspecting them copies the entire UI tree
+    // just to rediscover the same focus. Also observe blur when an exit is pruned.
+    let observation = (rt.stats.commits, rt.has_focus());
+    if l.focus_observation.replace(Some(observation)) == Some(observation) {
+        return None;
+    }
+    let focused = observation
+        .1
+        .then(|| {
+            rt.elements()
+                .into_iter()
+                .find(|e| e.focused && !e.exiting)
+                .and_then(|e| e.key)
+        })
+        .flatten();
     (l.focus_key != focused).then_some(focused)
 }
 
