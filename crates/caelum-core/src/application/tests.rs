@@ -540,6 +540,50 @@ fn scope(provider: Provider, project: &str) -> Scope {
 }
 
 #[test]
+fn refresh_open_sessions_refreshes_every_open_active_session_only() {
+    let mut app = Workspace::default();
+    app.projects.extend([
+        ProjectInfo {
+            path: "/a".into(),
+            name: "a".into(),
+        },
+        ProjectInfo {
+            path: "/b".into(),
+            name: "b".into(),
+        },
+    ]);
+    let first = app.new_session(scope(Provider::Codex, "/a"));
+    app.sessions[first].remote_id = Some("first".into());
+    let second = app.new_session(scope(Provider::OpenCode, "/a"));
+    app.sessions[second].remote_id = Some("second".into());
+    let other_project = app.new_session(scope(Provider::Codex, "/b"));
+    app.sessions[other_project].remote_id = Some("other-project".into());
+    let archived = app.new_session(scope(Provider::Codex, "/a"));
+    app.sessions[archived].remote_id = Some("archived".into());
+    app.sessions[archived].archived = true;
+    let closed_project = app.new_session(scope(Provider::Codex, "/closed"));
+    app.sessions[closed_project].remote_id = Some("closed-project".into());
+
+    app.refresh_open_sessions();
+
+    let mut resumed: Vec<_> = app
+        .commands()
+        .into_iter()
+        .filter_map(|(_, command)| match command {
+            Command::Resume(key) => Some(key.id),
+            _ => None,
+        })
+        .collect();
+    resumed.sort();
+    assert_eq!(resumed, ["first", "other-project", "second"]);
+    assert!(app.sessions[first].loading);
+    assert!(app.sessions[second].loading);
+    assert!(app.sessions[other_project].loading);
+    assert!(!app.sessions[archived].loading);
+    assert!(!app.sessions[closed_project].loading);
+}
+
+#[test]
 fn stale_opencode_archive_error_forgets_the_session_locally() {
     let mut app = Workspace::default();
     let project = "/project";

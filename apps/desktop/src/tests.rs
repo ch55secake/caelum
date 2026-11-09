@@ -2092,6 +2092,22 @@ fn models_slash_command_opens_the_picker_for_the_current_session() {
 }
 
 #[test]
+fn refresh_sessions_button_refreshes_every_open_session() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        app.sessions[0].remote_id = Some("codex-session".into());
+        app.sessions[1].remote_id = Some("opencode-session".into());
+    });
+
+    click(&mut rt, "refresh-sessions");
+
+    let app = &rt.state.live.as_ref().unwrap().app;
+    assert!(app.sessions[0].loading);
+    assert!(app.sessions[1].loading);
+}
+
+#[test]
 fn sessions_slash_command_opens_provider_history_and_resumes_a_selected_session() {
     let mut rt = live_runtime_size((800.0, 620.0));
     rt.update(|s, _| {
