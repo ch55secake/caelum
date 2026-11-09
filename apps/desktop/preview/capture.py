@@ -39,6 +39,7 @@ interactions = {
     "vercel-notifications": ("vercel-settings", [{"t": 0.25, "key": "settings-notifications"}]),
     "patch-collapsed": ("vercel-patch-multi", [{"t": 0.25, "key": "tool-0-opencode-tool-patch"}]),
     "patch-expanded": ("vercel-patch-long", [{"t": 0.8, "key": "expand-patch-0-opencode-tool-patch"}]),
+    "compaction-summary": ("compaction", [{"t": 0.25, "key": "compaction-0-opencode-compact"}]),
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
@@ -46,6 +47,7 @@ scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")
 scenes += ("patch-short", "patch-long", "patch-multi", "vercel-patch-short", "vercel-patch-long", "vercel-patch-multi")
 scenes += ("about-checking", "about-current", "about-update", "about-release", "about-ahead", "about-error", "vercel-about", "vercel-about-update")
+scenes += ("tool-running", "tool-failure", "compaction", "compaction-running", "compaction-empty", "compaction-error", "compaction-interrupted", "vercel-compaction")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):
