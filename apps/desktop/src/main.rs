@@ -658,6 +658,14 @@ fn spec() -> AppSpec<Workspace> {
             }),
             ("tool-running", |s| evaluation::scene(s, "tool-running")),
             ("tool-failure", |s| evaluation::scene(s, "tool-failure")),
+            ("tool-output-long", |s| {
+                evaluation::scene(s, "tool-output-long")
+            }),
+            ("vercel-tool-output-long", |s| {
+                evaluation::scene(s, "vercel-tool-output-long")
+            }),
+            ("tool-search", |s| evaluation::scene(s, "tool-search")),
+            ("vercel-tools", |s| evaluation::scene(s, "vercel-tools")),
             ("compaction", |s| evaluation::scene(s, "compaction")),
             ("compaction-running", |s| {
                 evaluation::scene(s, "compaction-running")
