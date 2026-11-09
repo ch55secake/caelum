@@ -9,7 +9,7 @@ use caelum_core::application::{
     presentation::{Outcome, Tool, now},
 };
 use rune::{El, col, icon, row, text};
-use rune_kit::{ButtonVariant, Kit, Markdown, ProgressCircle, glyphs};
+use rune_kit::{ButtonVariant, Kit, Markdown, ProgressCircle, ScrollBar, glyphs, syntax};
 
 pub fn session_activity(
     s: &Workspace,
@@ -191,6 +191,16 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
         header.role("group")
     };
     let mut heading = row().w_full().center_y().gap(4.0).child(header);
+    if expanded && !patch && presentation.paths.len() == 1 {
+        let path = presentation.paths[0].clone();
+        heading = heading.child(
+            quiet_button(&ui::EXTERNAL, "Open file")
+                .on_press_tx(move |s: &mut Workspace, tx| panels::open_link(s, index, &path, tx))
+                .build(k)
+                .help(&presentation.paths[0])
+                .key(format!("open-tool-file-{index}-{}", entry.id)),
+        );
+    }
     if patch && has_details {
         let details_key = entry.id.clone();
         heading = heading.child(
@@ -246,13 +256,16 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
             .collect::<Vec<_>>()
             .join("\n");
         content = content.child(
-            col().w_full().max_h(54.0).clip_rounded(0.0).child(
-                text(recent)
-                    .font(k.ty.mono)
-                    .color(k.c.text_muted)
-                    .wrap()
-                    .pl(27.0),
-            ),
+            output_rail(
+                col().w_full().max_h(60.0).clip_rounded(0.0).child(
+                    text(recent)
+                        .font(output_font(k))
+                        .color(k.c.text_muted)
+                        .wrap_anywhere(),
+                ),
+                k.c.border_muted,
+            )
+            .pl(27.0),
         );
     }
     if !presentation.patch.is_empty() {
@@ -416,7 +429,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                     .pl(27.0),
             );
         } else {
-            if !patch && !presentation.paths.is_empty() {
+            if !patch && presentation.paths.len() > 1 {
                 let mut paths = row().gap(6.0);
                 for path in &presentation.paths {
                     let path = path.clone();
@@ -429,84 +442,156 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                             .build(k),
                     );
                 }
-                content = content.child(col().w_full().scroll_x().child(paths.self_start()));
+                content =
+                    content.child(col().w_full().pl(27.0).scroll_x().child(paths.self_start()));
             }
-            for (name, value) in [
-                ("Output", &presentation.output),
-                ("Error", &presentation.error),
-            ] {
-                if value.is_empty() || (name == "Output" && value == &presentation.error) {
-                    continue;
-                }
-                let copy = value.clone();
-                let full_id = format!("{}:{name}", entry.id);
-                let full = live(s).expanded.contains(&(index, full_id.clone()));
-                let displayed = if full {
-                    value.clone()
-                } else {
-                    value.chars().take(12000).collect()
-                };
-                let mut section = col()
-                    .w_full()
-                    .gap(6.0)
-                    .child(
-                        row()
-                            .w_full()
-                            .center_y()
-                            .child(ui::caption(name, k).grow(1.0))
-                            .child(
-                                quiet_button(
-                                    &glyphs::COPY,
-                                    &format!("Copy {}", name.to_lowercase()),
-                                )
-                                .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
-                                .build(k),
-                            ),
-                    )
-                    .child(
-                        col()
-                            .w_full()
-                            .max_h(260.0)
-                            .scroll(rune::ScrollSpec {
-                                stick_bottom: false,
-                            })
-                            .child(
-                                text(displayed)
-                                    .font(k.ty.mono)
-                                    .color(if name == "Error" {
-                                        k.c.danger.fg
-                                    } else {
-                                        k.c.text_muted
-                                    })
-                                    .wrap()
-                                    .selectable(true)
-                                    .padding(10.0)
-                                    .radius(6.0)
-                                    .fill(k.c.layer_01),
-                            ),
-                    );
-                if value.chars().count() > 12000 {
-                    section = section.child(
-                        Button::new(if full {
-                            "Show less"
-                        } else {
-                            "Show full output"
-                        })
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(move |s: &mut Workspace| {
-                            let set = &mut live_mut(s).expanded;
-                            if !set.remove(&(index, full_id.clone())) {
-                                set.insert((index, full_id.clone()));
-                            }
-                        })
-                        .build(k),
-                    );
-                }
-                content = content.child(section.pl(27.0));
+            if !presentation.error.is_empty() {
+                content = content.child(tool_output(s, k, index, entry, &presentation, true));
+            }
+            if !presentation.output.is_empty() && presentation.output != presentation.error {
+                content = content.child(tool_output(s, k, index, entry, &presentation, false));
             }
         }
     }
     content
+}
+
+fn output_font(k: &Kit) -> rune::TextStyle {
+    rune::TextStyle {
+        size: 12.0,
+        line_height: 20.0,
+        ..k.ty.mono
+    }
+}
+
+fn output_rail(body: El, color: rune::Color) -> El {
+    col().w_full().child(
+        col()
+            .w_full()
+            .pl(12.0)
+            .child(
+                rune::el()
+                    .w(1.0)
+                    .fill(color)
+                    .pin(Some(0.0), Some(0.0), None, Some(0.0)),
+            )
+            .child(body),
+    )
+}
+
+fn tool_output(
+    s: &Workspace,
+    k: &Kit,
+    index: usize,
+    entry: &Entry,
+    tool: &Tool,
+    error: bool,
+) -> El {
+    let (name, value) = if error {
+        ("Error", &tool.error)
+    } else {
+        ("Output", &tool.output)
+    };
+    let key = format!("tool-output-{index}-{}-{name}", entry.id);
+    let full_id = format!("{}:{name}", entry.id);
+    let full = live(s).expanded.contains(&(index, full_id.clone()));
+    // Keep previews bounded and Unicode-safe, preferring a complete final line.
+    let cutoff = value.char_indices().nth(12_000).map(|(i, _)| i);
+    let displayed = if let Some(end) = cutoff.filter(|_| !full) {
+        &value[..value[..end].rfind('\n').filter(|i| *i > 0).unwrap_or(end)]
+    } else {
+        value.as_str()
+    };
+    let language = (!error && tool.name == "Read" && tool.paths.len() == 1)
+        .then(|| std::path::Path::new(&tool.paths[0]).extension()?.to_str())
+        .flatten();
+    let spans = syntax::SyntaxTheme::from_kit(k).spans(&syntax::highlight(language, displayed), 0);
+    let copy = value.clone();
+    let mut body = col().w_full().gap(4.0).child(
+        col()
+            .w_full()
+            .min_h(24.0)
+            .pr(32.0)
+            .children(error.then(|| ui::caption("Error", k).color(k.c.danger.fg)))
+            .child(
+                col()
+                    .key(format!("{key}-scroll"))
+                    .w_full()
+                    .max_h(260.0)
+                    .scroll(rune::ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .child(
+                        col().w_full().pr(14.0).py(2.0).child(
+                            text(displayed)
+                                .key(format!("{key}-text"))
+                                .font(output_font(k))
+                                .color(k.c.text_base)
+                                .spans(spans)
+                                .wrap_anywhere()
+                                .selectable(true)
+                                .w_full(),
+                        ),
+                    )
+                    .scroll_bar(k),
+            )
+            .child(
+                quiet_button(&glyphs::COPY, &format!("Copy {}", name.to_lowercase()))
+                    .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
+                    .build(k)
+                    .key(format!("{key}-copy"))
+                    .pin(None, Some(0.0), Some(0.0), None),
+            ),
+    );
+    let lines = value.lines().count();
+    if cutoff.is_some() || lines > 13 {
+        let count = format!("{lines} line{}", if lines == 1 { "" } else { "s" });
+        let mut footer = row().w_full().center_y().gap(8.0).child(
+            ui::caption(
+                if cutoff.is_some() && !full {
+                    format!("Preview · {count} total")
+                } else {
+                    count
+                },
+                k,
+            )
+            .grow(1.0),
+        );
+        if cutoff.is_some() {
+            let anchor = format!("{key}-expand");
+            footer = footer.child(
+                Button::new(if full {
+                    "Show less"
+                } else {
+                    "Show full output"
+                })
+                .variant(ButtonVariant::GhostMuted)
+                .on_press_tx(move |s: &mut Workspace, tx| {
+                    tx.keep_on_screen(&anchor);
+                    let set = &mut live_mut(s).expanded;
+                    if !set.remove(&(index, full_id.clone())) {
+                        set.insert((index, full_id.clone()));
+                    }
+                })
+                .build(k)
+                .h(24.0)
+                .key(format!("{key}-expand")),
+            );
+        }
+        body = body.child(footer);
+    }
+    output_rail(
+        body,
+        if error {
+            k.c.danger.fg
+        } else {
+            k.c.border_muted
+        },
+    )
+    .pl(27.0)
+    .role("group")
+    .label(format!("Tool {}", name.to_lowercase()))
+    .key(key)
 }
 
 pub fn compaction(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {

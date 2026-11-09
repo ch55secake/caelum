@@ -39,6 +39,14 @@ with raw arguments and successful exit codes omitted. Routine metadata belongs i
 expanded details; non-zero exits and failures remain visible. Compaction is a quiet
 conversation divider with an optional expandable, copyable Markdown summary. Empty
 summaries still produce a milestone, and failures survive history refreshes.
+Expanded tool output sits directly on the conversation surface beside a thin rule.
+Twelve-point monospace text uses twenty-point leading, wraps long tokens and stays
+selectable; supported file extensions receive the shared syntax palette. A compact
+copy action sits alongside the output, and single-file navigation lives in the tool
+heading. Errors lead the logs with a labelled danger-coloured rule. Long output
+has an independent 260-point scroll viewport and line-count footer; previews stop
+at a complete line within 12,000 characters where possible. Copy retains the full
+result, and full-output expansion preserves reading position.
 Model selection is an anchored searchable popover. Inline patch previews open by
 default and size to their visible file headers, code and unchanged-line gaps. Short
 patches have no expansion footer; longer patches start at a 204-point viewport and
@@ -82,6 +90,14 @@ excerpts, highlighted search and stable prompt jumps.
 | Typed tools | Continuous review |
 | --- | --- |
 | ![Native tools](previews/rune-dark-tools.png) | ![Native review](previews/rune-dark-review.png) |
+
+| Compact Vercel tool output | Expanded failure output |
+| --- | --- |
+| ![Flat output and highlighted source](previews/rune-light-vercel-tools-small.png) | ![Error summary above command logs](previews/rune-dark-tool-error-expanded-small.png) |
+
+| Long command output | Wrapped search results |
+| --- | --- |
+| ![Bounded Vercel output preview](previews/rune-dark-vercel-tool-output-long-small.png) | ![Compact search results](previews/rune-light-tool-search-small.png) |
 
 | Active tool call | Expanded context summary |
 | --- | --- |
@@ -248,7 +264,7 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **500 states**: 97 scenes and 28 headless
+The capture script writes **524 states**: 101 scenes and 30 headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
 includes all five Settings pages, models, launcher, session popovers/worktree forms, commands, shells,
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
@@ -259,7 +275,8 @@ appearance, command collapse/reopen interactions and a populated four-project,
 six-PR sidebar. Inline patches cover short, long and multiple-file changes in
 Caelum and Vercel, plus explicit collapse and expansion replays. About includes
 checking, current, available, missing-download, newer-build and error states.
-Tool activity includes running and failed commands. Compaction covers running,
+Tool activity includes running and failed commands, expanded errors, wrapped search
+results, long-output expansion and Vercel output surfaces. Compaction covers running,
 completed, empty-summary, failed and interrupted events, plus summary expansion.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,

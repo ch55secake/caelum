@@ -2277,14 +2277,7 @@ fn tool_details_are_output_first_and_keep_failures_visible() {
         "test result: ok. 190 passed; 0 failed"
     );
     click(&mut rt, "tool-0-opencode-tool-read");
-    let file = rt
-        .elements()
-        .into_iter()
-        .find(|e| {
-            !e.exiting && e.role == "button" && e.label.as_deref() == Some("src/workspace.rs")
-        })
-        .unwrap();
-    click(&mut rt, &file.path);
+    click(&mut rt, "open-tool-file-0-opencode-tool-read");
     assert_eq!(
         rt.state.live.as_ref().unwrap().app.services.checkouts["/projects/caelum"]
             .selected_file
@@ -2292,7 +2285,7 @@ fn tool_details_are_output_first_and_keep_failures_visible() {
         Some("src/workspace.rs")
     );
     assert!(rt.state.inspector.is_open());
-    let failed = design_runtime("tool-failure", (800.0, 620.0));
+    let mut failed = design_runtime("tool-failure", (800.0, 620.0));
     for label in [
         "Exit 101",
         "A workspace test failed. Open the output for details.",
@@ -2304,6 +2297,94 @@ fn tool_details_are_output_first_and_keep_failures_visible() {
                 .any(|e| !e.exiting && e.text.as_deref() == Some(label) && e.visible[3] > 0.0)
         );
     }
+    failed.use_clipboard(&clipboard);
+    click(&mut failed, "tool-0-opencode-tool-run");
+    click(&mut failed, "tool-output-0-opencode-tool-run-Output-copy");
+    assert!(clipboard.text().unwrap().contains("319 passed; 1 failed"));
+    click(&mut failed, "tool-output-0-opencode-tool-run-Error-copy");
+    assert_eq!(
+        clipboard.text().unwrap().as_str(),
+        "A workspace test failed. Open the output for details."
+    );
+    failed.update(|s, _| {
+        let entry = s.live.as_mut().unwrap().app.sessions[0]
+            .conversation
+            .entries
+            .iter_mut()
+            .find(|e| e.id == "opencode-tool-run")
+            .unwrap();
+        entry.output.clone_from(&entry.error);
+    });
+    advance(&mut failed, 0.3);
+    assert!(
+        failed
+            .find("tool-output-0-opencode-tool-run-Output-copy")
+            .is_none()
+    );
+    assert!(
+        failed
+            .find("tool-output-0-opencode-tool-run-Error-copy")
+            .is_some()
+    );
+}
+
+#[test]
+fn long_tool_output_preserves_copy_selection_scrolling_and_expansion_anchor() {
+    let _fonts = rune::text::with_families("Inter", "Inter");
+    let mut rt = design_runtime("tool-output-long", (800.0, 620.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    let raw = rt.state.live.as_ref().unwrap().app.sessions[0]
+        .conversation
+        .entries
+        .iter()
+        .find(|e| e.id == "opencode-tool-run")
+        .unwrap()
+        .output
+        .clone();
+    let text = "tool-output-0-opencode-tool-run-Output-text";
+    let copy = "tool-output-0-opencode-tool-run-Output-copy";
+    let toggle = "tool-output-0-opencode-tool-run-Output-expand";
+    let preview = element(&rt, text).text.unwrap();
+    assert!(preview.chars().count() <= 12_000);
+    assert!(raw.starts_with(&preview) && preview.len() < raw.len());
+    assert!(preview.contains("café"));
+    assert!(raw.lines().any(|line| Some(line) == preview.lines().last()));
+    click(&mut rt, copy);
+    assert_eq!(clipboard.text().unwrap().as_str(), raw);
+
+    let [x, y, _, _] = element(&rt, text).visible;
+    rt.pointer_down(x + 2.0, y + 10.0);
+    rt.pointer_move(x + 110.0, y + 10.0);
+    rt.pointer_up(x + 110.0, y + 10.0);
+    let selected = rt.selected_text().expect("tool output remains selectable");
+    assert!(!selected.is_empty() && raw.contains(&selected));
+    key(
+        &mut rt,
+        Key::Command('c'),
+        Mods {
+            cmd: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(clipboard.text().unwrap().as_str(), selected);
+
+    let header_y = element(&rt, "tool-0-opencode-tool-run").rect[1];
+    let text_y = element(&rt, text).rect[1];
+    rt.wheel(x + 30.0, y + 30.0, -120.0);
+    advance(&mut rt, 0.3);
+    assert!(element(&rt, text).rect[1] < text_y - 50.0);
+    assert!((element(&rt, "tool-0-opencode-tool-run").rect[1] - header_y).abs() < 1.0);
+
+    let toggle_y = element(&rt, toggle).rect[1];
+    click(&mut rt, toggle);
+    advance(&mut rt, 0.5);
+    assert_eq!(element(&rt, text).text.as_deref(), Some(raw.as_str()));
+    assert!((element(&rt, toggle).rect[1] - toggle_y).abs() < 1.0);
+    click(&mut rt, toggle);
+    assert_eq!(element(&rt, text).text.as_deref(), Some(preview.as_str()));
+    click(&mut rt, copy);
+    assert_eq!(clipboard.text().unwrap().as_str(), raw);
 }
 
 #[test]

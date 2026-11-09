@@ -78,6 +78,8 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         activity,
         "tool-running"
             | "tool-failure"
+            | "tool-output-long"
+            | "tool-search"
             | "compaction"
             | "compaction-running"
             | "compaction-empty"
@@ -93,10 +95,33 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         conversation.history(Provider::OpenCode, &[json!({"id":"prompt","type":"user","text":"Refine the tool calls and keep the conversation easy to follow."})], false);
         if activity.starts_with("tool-") {
             let failed = activity == "tool-failure";
+            let running = activity == "tool-running";
+            let output = match activity {
+                "tool-output-long" => format!(
+                    "Running workspace tests…\n{}\ntest result: ok. 320 passed; 0 failed\n",
+                    (0..320).map(|i| format!("test application::session_{i:03}::restores_café_draft ... ok\n")).collect::<String>()
+                ),
+                "tool-failure" => "Compiling caelum-desktop…\nRunning workspace tests…\n\ntest application::session::restores_draft ... FAILED\n\nthread 'restores_draft' panicked at src/session.rs:42:9:\nassertion `left == right` failed\n  left: \"\"\n right: \"Keep café ☁️ safe\"\n\ntest result: FAILED. 319 passed; 1 failed".into(),
+                "tool-search" => "Found 3 matches\n\nsrc/workspace.rs:42:    session.restore_draft();\nsrc/session.rs:128:    pub fn restore_draft(&mut self) {\ntests/session.rs:86:    fn restores_draft_after_switching_sessions() {".into(),
+                _ => "Compiling caelum-desktop…\nRunning workspace tests…".into(),
+            };
+            let search = activity == "tool-search";
             conversation.history(Provider::OpenCode, &[json!({"id":"work","type":"assistant","content":[
-                {"id":"run","type":"tool","name":"bash","state":{"status":if failed {"error"} else {"running"},"input":{"command":"cargo test --workspace","timeout":120000,"description":"Run the workspace tests"},"metadata":{"durationMs":2500,"exit":if failed {Some(101)} else {None}},"error":if failed {Some("A workspace test failed. Open the output for details.")} else {None},"content":[{"type":"text","text":"Compiling caelum-desktop…\nRunning workspace tests…"}]}}
+                {"id":"run","type":"tool","name":if search {"grep"} else {"bash"},"state":{"status":if failed {"error"} else if running {"running"} else {"completed"},"input":if search {json!({"pattern":"restore_draft"})} else {json!({"command":"cargo test --workspace","timeout":120000,"description":"Run the workspace tests"})},"metadata":{"durationMs":2500,"exit":if failed {Some(101)} else {None}},"error":if failed {Some("A workspace test failed. Open the output for details.")} else {None},"content":[{"type":"text","text":output}]}}
             ]})], false);
-            conversation.working = !failed;
+            if failed {
+                // Include captured stdout alongside the provider's final error.
+                conversation
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.id == "opencode-tool-run")
+                    .unwrap()
+                    .output = output;
+            }
+            conversation.working = running;
+            if !failed && !running {
+                l.expanded.insert((0, "opencode-tool-run".into()));
+            }
         } else {
             let status = match activity {
                 "compaction-running" => "running",
@@ -805,7 +830,11 @@ pub fn scene(state: &mut Workspace, name: &str) {
         l.drafts[0].replace_text(&l.app.sessions[0].draft);
         return;
     }
-    if matches!(name, "tools" | "tools-collapsed") {
+    if matches!(name, "tools" | "tools-collapsed" | "vercel-tools") {
+        if name == "vercel-tools" {
+            l.app.preferences.theme_family = "vercel".into();
+            l.app.preferences.accent_color = "theme".into();
+        }
         let session = &mut l.app.sessions[0];
         session.conversation = Default::default();
         session.conversation.history(Provider::OpenCode,&[json!({"id":"prompt","type":"user","text":"Restore native workspace parity and verify the interactions."}),json!({"id":"work","type":"assistant","content":[
@@ -815,7 +844,8 @@ pub fn scene(state: &mut Workspace, name: &str) {
             {"id":"patch","type":"tool","name":"apply_patch","state":{"status":"completed","input":{"path":"src/workspace.rs","patch":"@@ -1 +1 @@\n-restore();\n+restore_owned_draft();"},"content":[{"type":"text","text":"Updated src/workspace.rs"}],"time":{"start":4600,"end":4800}}}
         ]})],false);
         for entry in &session.conversation.entries {
-            if name == "tools" && entry.kind != caelum_core::application::EntryKind::User {
+            if name != "tools-collapsed" && entry.kind != caelum_core::application::EntryKind::User
+            {
                 l.expanded.insert((0, entry.id.clone()));
             }
         }

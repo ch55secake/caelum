@@ -47,8 +47,13 @@ appear in the transcript with tool-specific icons, status and timing. Active lab
 use a quiet left-to-right shimmer. Click a disclosure row or focus it and press
 Space to reveal output and errors. Raw input arguments are omitted; the command,
 filename or query stays in the heading. Successful commands show a tick, while
-non-zero exit codes remain visible. Patch
-previews open automatically and fit short changes to their content. Longer patches
+non-zero exit codes remain visible. Expanded results use a flat, lightly ruled
+surface with selectable monospace text; file reads use syntax highlighting when
+the language is recognised. The open icon beside the heading opens the file.
+Each result has a copy action for its complete output, including content beyond
+the preview. Long results scroll independently and offer **Show full output** /
+**Show less** when truncated. Errors appear above logs with a labelled, coloured rule.
+Patch previews open automatically and fit short changes to their content. Longer patches
 use a compact scrollable preview with **Expand preview / Compact preview** controls.
 File headers, unchanged lines and selections follow the selected theme; additions
 and removals retain their status colours. Use the file chevron to collapse a file,
