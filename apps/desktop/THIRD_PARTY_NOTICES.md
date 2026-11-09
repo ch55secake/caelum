@@ -1,6 +1,7 @@
-# Lucide Orbit icon
+# Lucide icons
 
-The Orbit mark in `src/main.rs` is from https://lucide.dev (ISC license).
+The Orbit mark in `src/main.rs` and Brain icon in `src/ui.rs` are from
+https://lucide.dev (ISC license).
 
 Copyright (c) 2026 Lucide Icons and Contributors
 

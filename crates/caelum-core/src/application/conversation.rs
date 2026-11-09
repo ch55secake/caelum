@@ -241,8 +241,16 @@ impl Conversation {
         for entry in &mut self.entries {
             if !entry.background {
                 entry.complete = true;
-                if entry.status == "running" {
-                    entry.status = "completed".into();
+                if entry.status == "running"
+                    || (entry.kind == EntryKind::Compaction
+                        && matches!(entry.status.as_str(), "pending" | "in_progress"))
+                {
+                    entry.status = if entry.kind == EntryKind::Compaction {
+                        "interrupted"
+                    } else {
+                        "completed"
+                    }
+                    .into();
                 }
             }
         }
@@ -384,7 +392,17 @@ impl Conversation {
                 .entries
                 .iter()
                 .rposition(|e| e.kind == EntryKind::Compaction);
-            if latest.is_some_and(|i| at > 0 && at < self.entries[i].started_at.unwrap_or(0)) {
+            let owner = data["inputID"].as_str().map(|id| format!("opencode-{id}"));
+            let target = if let Some(id) = &owner {
+                self.entries
+                    .iter()
+                    .position(|e| e.kind == EntryKind::Compaction && &e.id == id)
+            } else {
+                latest
+            };
+            if owner.is_none()
+                && target.is_some_and(|i| at > 0 && at < self.entries[i].started_at.unwrap_or(0))
+            {
                 return;
             }
             if method == "session.compaction.started" {
@@ -402,12 +420,20 @@ impl Conversation {
                         self.working = true;
                     }
                 }
-            } else if let Some(i) = latest.filter(|i| !self.entries[*i].complete) {
+            } else if let Some(i) = target.filter(|i| !self.entries[*i].complete) {
                 if method.ends_with("delta") {
                     let id = self.entries[i].id.clone();
-                    self.delta(id, EntryKind::Compaction, string(&data["text"]), false);
+                    self.delta(
+                        id,
+                        EntryKind::Compaction,
+                        data["text"]
+                            .as_str()
+                            .or(data["delta"].as_str())
+                            .unwrap_or_default(),
+                        false,
+                    );
                 } else if method.ends_with("ended") || method.ends_with("failed") {
-                    let entry = &mut self.entries[i];
+                    let mut entry = self.entries[i].clone();
                     entry.complete = true;
                     entry.status = if method.ends_with("failed") {
                         "failed"
@@ -415,12 +441,16 @@ impl Conversation {
                         "completed"
                     }
                     .into();
-                    if let Some(text) = data["text"].as_str() {
+                    if let Some(text) = data["text"]
+                        .as_str()
+                        .or(data["summary"].as_str())
+                        .filter(|text| !text.is_empty())
+                    {
                         entry.text = text.into();
                     }
-                    if !data["error"].is_null() {
-                        entry.output = display(&data["error"]);
-                    }
+                    entry.error = display(data["error"].get("message").unwrap_or(&data["error"]));
+                    entry.metadata = serde_json::json!({"ended": at});
+                    self.put(entry);
                 }
             }
             if method.ends_with("ended") && at >= self.usage_at {
@@ -662,6 +692,14 @@ fn merge_entry(mut snapshot: Entry, mut current: Entry) -> Entry {
         if snapshot.kind == EntryKind::Tool && snapshot.output.is_empty() {
             snapshot.output = current.output;
         }
+        if snapshot.kind == EntryKind::Compaction {
+            if snapshot.text.is_empty() {
+                snapshot.text = current.text;
+            }
+            if snapshot.error.is_empty() && snapshot.status == current.status {
+                snapshot.error = current.error;
+            }
+        }
         return snapshot_entry(snapshot);
     }
     if current.complete {
@@ -706,7 +744,7 @@ fn codex_item(item: &Value, complete: bool) -> Option<Entry> {
                 summary
             }
         }
-        EntryKind::Compaction => String::new(),
+        EntryKind::Compaction => text_content(&item["summary"]),
         _ => display(&item["text"]),
     };
     let mut entry = Entry::new(id, kind, text, complete || kind == EntryKind::User);
@@ -719,6 +757,9 @@ fn codex_item(item: &Value, complete: bool) -> Option<Entry> {
         .into();
     if item["exitCode"].as_i64().is_some_and(|code| code != 0) {
         entry.status = format!("failed (exit {})", item["exitCode"]);
+    }
+    if kind == EntryKind::Compaction {
+        entry.error = display(item["error"].get("message").unwrap_or(&item["error"]));
     }
     if kind == EntryKind::Tool {
         entry.metadata = serde_json::json!({"cwd":item["cwd"],"exitCode":item["exitCode"],"durationMs":item["durationMs"],"signal":item["signal"]});
@@ -820,12 +861,20 @@ fn opencode_message(message: &Value) -> Vec<Entry> {
             display(&message["text"]),
             true,
         )],
-        "compaction" => vec![Entry::new(
-            format!("opencode-{id}"),
-            EntryKind::Compaction,
-            display(&message["summary"]),
-            message["status"] != "running",
-        )],
+        "compaction" => {
+            let mut entry = Entry::new(
+                format!("opencode-{id}"),
+                EntryKind::Compaction,
+                text_content(&message["summary"]),
+                !matches!(message["status"].as_str(), Some("running" | "pending" | "in_progress")),
+            );
+            entry.status = message["status"].as_str().unwrap_or("completed").into();
+            entry.error = display(message["error"].get("message").unwrap_or(&message["error"]));
+            if let Some(ended) = message["time"]["completed"].as_u64() {
+                entry.metadata = serde_json::json!({"ended": ended});
+            }
+            vec![entry]
+        },
         _ => Vec::new(),
     }
 }

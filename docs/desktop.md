@@ -42,17 +42,24 @@ The anchored popover keeps its original session or Settings target while open. U
 current models and saved favourites remain visible; arrow keys navigate the
 windowed catalogue, including after Tab moves focus. Escape or an outside click
 closes it; its footer can save the current model, effort and agent as provider defaults.
-Responses, thinking, typed Read/Run/Patch rows, compaction and shell activity
-appear in the transcript with tool-specific icons, status and timing. Click a row
-or focus it and press Space to toggle **Details / Hide**. Patch
+Responses, thinking, typed Read/Run/Patch rows and shell activity
+appear in the transcript with tool-specific icons, status and timing. Active labels
+use a quiet left-to-right shimmer. Click a disclosure row or focus it and press
+Space to reveal output and errors. Raw input arguments are omitted; the command,
+filename or query stays in the heading. Successful commands show a tick, while
+non-zero exit codes remain visible. Patch
 previews open automatically and fit short changes to their content. Longer patches
 use a compact scrollable preview with **Expand preview / Compact preview** controls.
 File headers, unchanged lines and selections follow the selected theme; additions
 and removals retain their status colours. Use the file chevron to collapse a file,
-the copy icon to copy the patch, or **…** beside the tool heading for tool details.
+the open icon to view its source, the copy icon to copy the patch, or **…** beside
+the tool heading for tool details.
 Explicitly collapsed patches stay collapsed as output arrives. Internal reminders
 are hidden from rows, timeline results and copied responses, while literal code stays intact. **Load earlier messages**
 pages provider history while the visible transcript stays bounded.
+Context compaction has its own transcript divider, including when the provider
+supplies no summary. It shows running, completed, failed and interrupted states;
+click a summary-bearing divider to read and copy its formatted context summary.
 Running OpenCode background commands appear above the composer with three truncated
 output lines, elapsed time, refresh and **Stop**. **Hide** reduces them to a command-count
 row; **Show** restores the preview. Each session remembers this choice during the app
@@ -62,7 +69,8 @@ keeps its original session and retains output after completion. Completed comman
 also appear in the transcript.
 The composer pulse and agent indicator show working, thinking, responding, tools,
 retry, input, background-waiting and stopping states, including between output events.
-These indicators follow reduced-motion preferences.
+The same shimmer appears on running background commands, PR checks and update
+checks. These indicators follow reduced-motion preferences.
 
 ## Drafts, queues and requests
 

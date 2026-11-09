@@ -73,6 +73,50 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         return false;
     };
     let project = "/projects/caelum";
+    let activity = name.strip_prefix("vercel-").unwrap_or(name);
+    if matches!(
+        activity,
+        "tool-running"
+            | "tool-failure"
+            | "compaction"
+            | "compaction-running"
+            | "compaction-empty"
+            | "compaction-error"
+            | "compaction-interrupted"
+    ) {
+        if name.starts_with("vercel-") {
+            l.app.preferences.theme_family = "vercel".into();
+            l.app.preferences.accent_color = "theme".into();
+        }
+        let conversation = &mut l.app.sessions[0].conversation;
+        *conversation = Default::default();
+        conversation.history(Provider::OpenCode, &[json!({"id":"prompt","type":"user","text":"Refine the tool calls and keep the conversation easy to follow."})], false);
+        if activity.starts_with("tool-") {
+            let failed = activity == "tool-failure";
+            conversation.history(Provider::OpenCode, &[json!({"id":"work","type":"assistant","content":[
+                {"id":"run","type":"tool","name":"bash","state":{"status":if failed {"error"} else {"running"},"input":{"command":"cargo test --workspace","timeout":120000,"description":"Run the workspace tests"},"metadata":{"durationMs":2500,"exit":if failed {Some(101)} else {None}},"error":if failed {Some("A workspace test failed. Open the output for details.")} else {None},"content":[{"type":"text","text":"Compiling caelum-desktop…\nRunning workspace tests…"}]}}
+            ]})], false);
+            conversation.working = !failed;
+        } else {
+            let status = match activity {
+                "compaction-running" => "running",
+                "compaction-error" => "failed",
+                "compaction-interrupted" => "interrupted",
+                _ => "completed",
+            };
+            let summary = if activity == "compaction" {
+                "## Working context\n\nRefine the native workspace while preserving **session ownership**.\n\n- Tool calls use compact headers and output-first details.\n- Successful commands show a tick.\n- Keep drafts and reading position when switching sessions.\n\n### Next step\n\nReview `apps/desktop/src/activity.rs` and capture the light and dark layouts."
+            } else {
+                ""
+            };
+            conversation.history(Provider::OpenCode, &[json!({"id":"compact","type":"compaction","summary":summary,"status":status,"error":if status == "failed" {Some("The provider could not summarise the conversation. Your messages are still available.")} else {None}})], false);
+            conversation.working = status == "running";
+            if status == "completed" {
+                conversation.history(Provider::OpenCode, &[json!({"id":"after","type":"assistant","content":[{"type":"text","text":"The working context is ready. I’ll continue with the tool-call layout."}],"finish":"stop"})], false);
+            }
+        }
+        return true;
+    }
     let patch_scene = name.strip_prefix("vercel-").unwrap_or(name);
     if matches!(patch_scene, "patch-short" | "patch-long" | "patch-multi") {
         if name.starts_with("vercel-") {
@@ -767,7 +811,7 @@ pub fn scene(state: &mut Workspace, name: &str) {
         session.conversation.history(Provider::OpenCode,&[json!({"id":"prompt","type":"user","text":"Restore native workspace parity and verify the interactions."}),json!({"id":"work","type":"assistant","content":[
             {"id":"think","type":"reasoning","text":"Check the compact layout, preserve ownership, then verify the patch."},
             {"id":"read","type":"tool","name":"read","state":{"status":"completed","input":{"filePath":"src/workspace.rs"},"content":[{"type":"text","text":"pub fn restore_draft(session: &mut Session) {\n    session.editor.focus();\n}"}],"time":{"start":1000,"end":1250}}},
-            {"id":"run","type":"tool","name":"bash","state":{"status":"completed","input":{"command":"cargo test --workspace"},"content":[{"type":"text","text":"test result: ok. 190 passed; 0 failed"}],"time":{"start":2000,"end":4520}}},
+            {"id":"run","type":"tool","name":"bash","state":{"status":"completed","input":{"command":"cargo test --workspace","timeout":120000},"metadata":{"exit":0},"content":[{"type":"text","text":"test result: ok. 190 passed; 0 failed"}],"time":{"start":2000,"end":4520}}},
             {"id":"patch","type":"tool","name":"apply_patch","state":{"status":"completed","input":{"path":"src/workspace.rs","patch":"@@ -1 +1 @@\n-restore();\n+restore_owned_draft();"},"content":[{"type":"text","text":"Updated src/workspace.rs"}],"time":{"start":4600,"end":4800}}}
         ]})],false);
         for entry in &session.conversation.entries {

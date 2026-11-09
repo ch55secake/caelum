@@ -255,6 +255,69 @@ pub fn skeleton(label: &str, lines: usize, k: &Kit) -> El {
     body
 }
 
+/// A moving highlight over stationary ink. The two slides share a clock and cancel
+/// each other's translation; Rune holds them still under reduced motion.
+fn shimmer(base: El, highlight: El, width: f32, height: f32) -> El {
+    let band = (width * 0.45).clamp(10.0, 42.0);
+    let slide =
+        |from, to| rune::LoopSpec::slide(2.2, [from, 0.0], [to, 0.0]).easing(rune::Easing::LINEAR);
+    row()
+        .w(width)
+        .h(height)
+        .clip_rounded(0.0)
+        .child(base)
+        .child(
+            rune::el()
+                .key("shimmer-band")
+                .absolute(0.0, 0.0)
+                .size(band, height)
+                .a11y_hidden()
+                .clip_fade(band / 2.0, 0.0, band / 2.0, 0.0)
+                .looping(slide(-1.0, width / band))
+                .child(
+                    rune::el()
+                        .key("shimmer-ink")
+                        .absolute(0.0, 0.0)
+                        .size(band, height)
+                        .looping(slide(1.0, -width / band))
+                        .child(highlight.absolute(0.0, 0.0)),
+                ),
+        )
+}
+
+pub fn busy_text(value: &str, font: TextStyle, k: &Kit) -> El {
+    let (width, height) = rune::text::measure(value, &[], font, None);
+    shimmer(
+        text(value).font(font).color(k.c.text_muted),
+        text(value).font(font).color(k.c.text_base),
+        width.ceil(),
+        height.ceil(),
+    )
+    .label(value)
+}
+
+pub fn busy_icon(glyph: &'static Icon, size: f32, k: &Kit) -> El {
+    shimmer(
+        icon(glyph, size).color(k.c.icon_muted),
+        icon(glyph, size).color(k.c.icon_base),
+        size,
+        size,
+    )
+    .label("Running")
+    .key("status-running")
+}
+
+pub fn disclosure(open: bool, k: &Kit) -> El {
+    icon(&rune_kit::glyphs::CHEVRON_DOWN, 12.0)
+        .color(k.c.icon_muted)
+        .rotate(if open {
+            0.0
+        } else {
+            -std::f32::consts::FRAC_PI_2
+        })
+        .a11y_hidden()
+}
+
 pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) -> El {
     use caelum_core::application::presentation::Outcome;
     static CHECK: Icon = Icon {
@@ -279,11 +342,7 @@ pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) 
     };
     let (glyph, color, label) = match value {
         Outcome::Running => {
-            return rune_kit::Spinner::new()
-                .size(14.0)
-                .build(k)
-                .label("Running")
-                .key("status-running");
+            return busy_icon(&CLOCK, 14.0, k);
         }
         Outcome::Success => (&CHECK, k.c.success.fg, "Succeeded"),
         Outcome::Failure => (&FAIL, k.c.danger.fg, "Failed"),
@@ -321,6 +380,17 @@ pub static TOOL: Icon = Icon {
     name: "tool",
     view: 16.0,
     body: r#"<path d="M9 2a4 4 0 0 0-4 5l-3 4a1.8 1.8 0 0 0 3 2l4-4a4 4 0 0 0 5-4l-3 2-2-2 2-3Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>"#,
+};
+pub static BRAIN: Icon = Icon {
+    name: "brain",
+    view: 24.0,
+    // Lucide's Brain. See THIRD_PARTY_NOTICES.md.
+    body: r#"<path d="M12 18V5M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4M17.707 6.294A3 3 0 1 0 12 5a3 3 0 1 0-5.707 1.294M17.996 5.125a4 4 0 0 1 2.526 5.77M18 18a4 4 0 0 0 2-7.465M19.967 17.482a4 4 0 1 1-7.967.517 4 4 0 1 1-7.967-.517M6 18a4 4 0 0 1-2-7.465M6.004 5.125a4 4 0 0 0-2.526 5.77" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+pub static CLOCK: Icon = Icon {
+    name: "clock",
+    view: 16.0,
+    body: r#"<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
 pub static BRANCH: Icon = Icon {
     name: "branch",
