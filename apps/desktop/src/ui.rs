@@ -255,6 +255,69 @@ pub fn skeleton(label: &str, lines: usize, k: &Kit) -> El {
     body
 }
 
+/// A moving highlight over stationary ink. The two slides share a clock and cancel
+/// each other's translation; Rune holds them still under reduced motion.
+fn shimmer(base: El, highlight: El, width: f32, height: f32) -> El {
+    let band = (width * 0.45).clamp(10.0, 42.0);
+    let slide =
+        |from, to| rune::LoopSpec::slide(2.2, [from, 0.0], [to, 0.0]).easing(rune::Easing::LINEAR);
+    row()
+        .w(width)
+        .h(height)
+        .clip_rounded(0.0)
+        .child(base)
+        .child(
+            rune::el()
+                .key("shimmer-band")
+                .absolute(0.0, 0.0)
+                .size(band, height)
+                .a11y_hidden()
+                .clip_fade(band / 2.0, 0.0, band / 2.0, 0.0)
+                .looping(slide(-1.0, width / band))
+                .child(
+                    rune::el()
+                        .key("shimmer-ink")
+                        .absolute(0.0, 0.0)
+                        .size(band, height)
+                        .looping(slide(1.0, -width / band))
+                        .child(highlight.absolute(0.0, 0.0)),
+                ),
+        )
+}
+
+pub fn busy_text(value: &str, font: TextStyle, k: &Kit) -> El {
+    let (width, height) = rune::text::measure(value, &[], font, None);
+    shimmer(
+        text(value).font(font).color(k.c.text_muted),
+        text(value).font(font).color(k.c.text_base),
+        width.ceil(),
+        height.ceil(),
+    )
+    .label(value)
+}
+
+pub fn busy_icon(glyph: &'static Icon, size: f32, k: &Kit) -> El {
+    shimmer(
+        icon(glyph, size).color(k.c.icon_muted),
+        icon(glyph, size).color(k.c.icon_base),
+        size,
+        size,
+    )
+    .label("Running")
+    .key("status-running")
+}
+
+pub fn disclosure(open: bool, k: &Kit) -> El {
+    icon(&rune_kit::glyphs::CHEVRON_DOWN, 12.0)
+        .color(k.c.icon_muted)
+        .rotate(if open {
+            0.0
+        } else {
+            -std::f32::consts::FRAC_PI_2
+        })
+        .a11y_hidden()
+}
+
 pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) -> El {
     use caelum_core::application::presentation::Outcome;
     static CHECK: Icon = Icon {
@@ -279,11 +342,7 @@ pub fn outcome(value: caelum_core::application::presentation::Outcome, k: &Kit) 
     };
     let (glyph, color, label) = match value {
         Outcome::Running => {
-            return rune_kit::Spinner::new()
-                .size(14.0)
-                .build(k)
-                .label("Running")
-                .key("status-running");
+            return busy_icon(&crate::ORBIT, 14.0, k);
         }
         Outcome::Success => (&CHECK, k.c.success.fg, "Succeeded"),
         Outcome::Failure => (&FAIL, k.c.danger.fg, "Failed"),

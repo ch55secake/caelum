@@ -20,13 +20,21 @@ fn status(title: &str, detail: &str, outcome: Outcome, k: &Kit) -> El {
         .px(16.0)
         .py(12.0)
         .center_y()
-        .child(ui::outcome(outcome, k))
+        .child(if outcome == Outcome::Running {
+            rune::icon(&crate::ORBIT, 14.0).color(k.c.icon_muted)
+        } else {
+            ui::outcome(outcome, k)
+        })
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(3.0)
-                .child(text(title).font(k.ty.ui_medium).color(k.c.text_base).wrap())
+                .child(if outcome == Outcome::Running {
+                    ui::busy_text(title, k.ty.ui_medium, k)
+                } else {
+                    text(title).font(k.ty.ui_medium).color(k.c.text_base).wrap()
+                })
                 .child(ui::caption(detail, k)),
         )
 }
@@ -121,7 +129,11 @@ pub fn view(
                         .px(16.0)
                         .py(8.0)
                         .center_y()
-                        .child(ui::outcome(check.outcome, k))
+                        .child(if check.outcome == Outcome::Running {
+                            rune::icon(&crate::ORBIT, 14.0).color(k.c.icon_muted)
+                        } else {
+                            ui::outcome(check.outcome, k)
+                        })
                         .child(
                             text(check.name)
                                 .font(k.ty.small_medium)
@@ -131,7 +143,11 @@ pub fn view(
                                 .grow(1.0)
                                 .key(format!("check-name-{i}")),
                         )
-                        .child(
+                        .child(if check.outcome == Outcome::Running {
+                            ui::busy_text("Running", k.ty.small, k)
+                                .w(62.0)
+                                .help(check.label)
+                        } else {
                             ui::caption(
                                 match check.outcome {
                                     Outcome::Success => "Passed",
@@ -144,8 +160,8 @@ pub fn view(
                                 k,
                             )
                             .help(check.label)
-                            .w(62.0),
-                        )
+                            .w(62.0)
+                        })
                         .child(ui::caption(check.timing, k).w(60.0))
                         .child(
                             rune::icon(&ui::EXTERNAL, 12.0)

@@ -1020,7 +1020,7 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         if pending {
             item = item.status(RowStatus::Attention);
         } else if session.working() {
-            item = item.status(RowStatus::Busy);
+            item = item.status(RowStatus::Other(ui::busy_icon(&crate::ORBIT, 12.0, k)));
         } else if session.unread {
             item = item.status(RowStatus::Unread);
         }
@@ -1527,8 +1527,11 @@ fn timeline_row(
                             .render(&theme::markdown(k)),
                     );
             }
-            EntryKind::Tool | EntryKind::Reasoning | EntryKind::Compaction => {
+            EntryKind::Tool | EntryKind::Reasoning => {
                 item = item.child(crate::activity::tool(s, k, index, entry));
+            }
+            EntryKind::Compaction => {
+                item = item.child(crate::activity::compaction(s, k, index, entry));
             }
             EntryKind::Status => {
                 item = item.child(

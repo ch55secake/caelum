@@ -27,9 +27,16 @@ images also support paste.
 The final TypeScript tree at `82ca39d`, its regression tests and historical UI
 captures are the parity reference. `388d09e` adds the follow-intent unread repair.
 Shared controls now cover command panels, questions, dialogs and dropdowns, with
-tool-specific icons, quiet Details/Hide controls, green success indicators and
+tool-specific icons, compact disclosure chevrons, green success indicators and
 explicit loading, empty and error surfaces. Default surfaces stay neutral;
 colour is carried by markers, underlines, focus borders, links and solid actions.
+Active tool, reasoning, compaction, background-command, PR-check and update labels
+share a restrained 2.2-second text sheen; icon-only progress uses the same effect.
+Reduced motion holds the highlight still. Tool details focus on output and errors,
+with raw arguments and successful exit codes omitted. Routine metadata belongs in
+expanded details; non-zero exits and failures remain visible. Compaction is a quiet
+conversation divider with an optional expandable, copyable Markdown summary. Empty
+summaries still produce a milestone, and failures survive history refreshes.
 Model selection is an anchored searchable popover. Inline patch previews open by
 default and size to their visible file headers, code and unchanged-line gaps. Short
 patches have no expansion footer; longer patches start at a 204-point viewport and
@@ -73,6 +80,10 @@ excerpts, highlighted search and stable prompt jumps.
 | Typed tools | Continuous review |
 | --- | --- |
 | ![Native tools](previews/rune-dark-tools.png) | ![Native review](previews/rune-dark-review.png) |
+
+| Active tool call | Expanded context summary |
+| --- | --- |
+| ![Running command with text sheen](previews/rune-dark-tool-running-small.png) | ![Compaction summary](previews/rune-light-compaction-summary.png) |
 
 | Crowded sidebar and multiline composer | Images |
 | --- | --- |
@@ -235,7 +246,7 @@ cargo run --locked -p caelum-desktop -- \
 Pinned Rune's `--native` mode does not dispatch `--script` events. Use the
 headless commands above for scripted input and the running app for OS interaction.
 
-The capture script writes **464 states**: 89 scenes and 27 headless
+The capture script writes **500 states**: 97 scenes and 28 headless
 pointer/keyboard replays, each in light/dark and normal/compact layouts. Coverage
 includes all five Settings pages, models, launcher, session popovers/worktree forms, commands, shells,
 Files/Changes, populated PR discussion/diffs, statistics/timeline, activity states,
@@ -246,6 +257,8 @@ appearance, command collapse/reopen interactions and a populated four-project,
 six-PR sidebar. Inline patches cover short, long and multiple-file changes in
 Caelum and Vercel, plus explicit collapse and expansion replays. About includes
 checking, current, available, missing-download, newer-build and error states.
+Tool activity includes running and failed commands. Compaction covers running,
+completed, empty-summary, failed and interrupted events, plus summary expansion.
 PNGs, element-tree JSON and logs go to ignored `apps/desktop/preview-results/`. An optional output
 directory argument is relative to the current directory. With FFmpeg installed,
 replace the replay's `--at 9 --snap …` with `--video /path/to/replay.mp4 --duration auto`.

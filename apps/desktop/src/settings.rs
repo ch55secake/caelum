@@ -759,11 +759,9 @@ fn about_updates(s: &Workspace, k: &Kit) -> El {
             "Keep Caelum up to date with the latest release.".into(),
         )
     };
-    let marker = if busy {
-        rune_kit::Spinner::new().size(16.0).build(k)
-    } else if error.is_some() {
+    let marker = if !busy && error.is_some() {
         icon(&glyphs::CIRCLE_X, 16.0).color(k.c.danger.fg)
-    } else if update.is_some_and(|u| u.status == UpdateStatus::UpToDate) {
+    } else if !busy && update.is_some_and(|u| u.status == UpdateStatus::UpToDate) {
         icon(&glyphs::CHECK, 16.0).color(k.c.success.fg)
     } else {
         icon(&ui::REFRESH, 16.0).color(k.c.icon_muted)
@@ -829,7 +827,11 @@ fn about_updates(s: &Workspace, k: &Kit) -> El {
                 .gap(4.0)
                 .role("status")
                 .label(format!("{title}. {detail}"))
-                .child(text(title).font(k.ty.ui_medium).color(k.c.text_base).wrap())
+                .child(if busy {
+                    ui::busy_text(title, k.ty.ui_medium, k)
+                } else {
+                    text(title).font(k.ty.ui_medium).color(k.c.text_base).wrap()
+                })
                 .child(ui::caption(detail, k).selectable(true)),
         )
         .child(actions)
