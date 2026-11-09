@@ -20,7 +20,8 @@ custom context menus also offer archive/reconnect. Hover any session row for its
 **…** popover; actions belong to that row, including background sessions. Escape
 returns focus to its button. Use the archive icon beside
 **Sessions** to switch between active and archived sessions. **New session** uses
-the default provider chosen in Settings → Providers.
+the default provider chosen in Settings → Providers. **Refresh sessions** reloads
+active session history across all open projects.
 
 Right-click projects, sessions, messages, files, tabs and pull requests for themed
 context menus. Actions apply to the item you clicked, including background sessions
