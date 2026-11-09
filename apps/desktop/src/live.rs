@@ -1056,7 +1056,11 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         {
             item = item.on_close(move |s: &mut Workspace, _| {
                 let live = live_mut(s);
-                live.archive(index, !live.app.sessions[index].archived);
+                if live.app.sessions[index].archived {
+                    live.request_delete_session(index);
+                } else {
+                    live.archive(index, true);
+                }
             });
         }
         sessions = sessions.child(ui::selected_row(
