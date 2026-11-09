@@ -507,6 +507,7 @@ pub struct Services {
     latest: HashMap<String, u64>,
     loading: HashSet<String>,
     discovered: HashSet<(String, String)>,
+    merged_pull_requests: HashSet<String>,
     review_owners: HashMap<String, (String, String)>,
     generations: HashMap<u64, u64>,
 }
@@ -639,6 +640,7 @@ impl Services {
             }
         };
         let mut next = Vec::new();
+        let mut merged_url = None;
         self.revision += 1;
         let checkout = self.checkouts.entry(task.project().into()).or_default();
         match (task, reply) {
@@ -765,27 +767,33 @@ impl Services {
                 directory: directory.clone(),
             }),
             (Task::Discover { project, branch }, TaskReply::Discovered(Some(pr))) => {
-                if let Some(previous) = checkout.pull_requests.iter_mut().find(|p| p.url == pr.url)
-                {
-                    *previous = pr.clone();
-                } else {
-                    checkout.pull_requests.push(pr.clone());
-                }
                 self.discovered.insert((project.clone(), branch.clone()));
-                if !pr.base_ref_name.is_empty()
-                    && !self
-                        .discovered
-                        .contains(&(project.clone(), pr.base_ref_name.clone()))
-                {
-                    self.discovered
-                        .insert((project.clone(), pr.base_ref_name.clone()));
-                    next.push(Task::Discover {
-                        project: project.clone(),
-                        branch: pr.base_ref_name,
-                    });
+                if !self.merged_pull_requests.contains(&pr.url) {
+                    if let Some(previous) =
+                        checkout.pull_requests.iter_mut().find(|p| p.url == pr.url)
+                    {
+                        *previous = pr.clone();
+                    } else {
+                        checkout.pull_requests.push(pr.clone());
+                    }
+                    if !pr.base_ref_name.is_empty()
+                        && !self
+                            .discovered
+                            .contains(&(project.clone(), pr.base_ref_name.clone()))
+                    {
+                        self.discovered
+                            .insert((project.clone(), pr.base_ref_name.clone()));
+                        next.push(Task::Discover {
+                            project: project.clone(),
+                            branch: pr.base_ref_name,
+                        });
+                    }
                 }
             }
             (Task::Details { project, url }, TaskReply::Details(details)) => {
+                if details.state == "MERGED" {
+                    merged_url = Some(url.clone());
+                }
                 if self
                     .reviews
                     .get(&(project.clone(), url.clone()))
@@ -905,6 +913,9 @@ impl Services {
                 Task::Merge { project, url, .. } | Task::UpdateBranch { project, url, .. },
                 TaskReply::Done,
             ) => {
+                if matches!(task, Task::Merge { .. }) {
+                    merged_url = Some(url.clone());
+                }
                 self.reviews
                     .entry((project.clone(), url.clone()))
                     .or_default()
@@ -922,6 +933,12 @@ impl Services {
                 });
             }
             _ => {}
+        }
+        if let Some(url) = merged_url {
+            self.merged_pull_requests.insert(url.clone());
+            for checkout in self.checkouts.values_mut() {
+                checkout.pull_requests.retain(|pr| pr.url != url);
+            }
         }
         next
     }

@@ -1266,6 +1266,23 @@ impl Workspace {
         }
     }
 
+    pub fn refresh_open_sessions(&mut self) {
+        let sessions: Vec<_> = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| {
+                !session.archived
+                    && !session.forgotten
+                    && self.project_is_open(&session.scope.project)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in sessions {
+            self.refresh(index);
+        }
+    }
+
     /// Refresh both active and archived provider sessions for a picker.
     pub fn discover_sessions(&mut self, scope: Scope) {
         self.notices.remove(&scope);
