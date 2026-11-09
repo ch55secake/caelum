@@ -146,7 +146,7 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
         )
         .on_select(move |s: &mut Workspace, _| s.selected = i);
         if session.working() {
-            item = item.status(RowStatus::Busy);
+            item = item.status(RowStatus::Other(ui::busy_icon(&ui::CLOCK, 12.0, k)));
         }
         let item = ui::selected_row(
             item.build(k).key(format!("session-{i}")),
@@ -655,6 +655,24 @@ fn spec() -> AppSpec<Workspace> {
             ("files-tabs", |s| evaluation::scene(s, "files-tabs")),
             ("tools-collapsed", |s| {
                 evaluation::scene(s, "tools-collapsed")
+            }),
+            ("tool-running", |s| evaluation::scene(s, "tool-running")),
+            ("tool-failure", |s| evaluation::scene(s, "tool-failure")),
+            ("compaction", |s| evaluation::scene(s, "compaction")),
+            ("compaction-running", |s| {
+                evaluation::scene(s, "compaction-running")
+            }),
+            ("compaction-empty", |s| {
+                evaluation::scene(s, "compaction-empty")
+            }),
+            ("compaction-error", |s| {
+                evaluation::scene(s, "compaction-error")
+            }),
+            ("compaction-interrupted", |s| {
+                evaluation::scene(s, "compaction-interrupted")
+            }),
+            ("vercel-compaction", |s| {
+                evaluation::scene(s, "vercel-compaction")
             }),
             ("patch-short", |s| evaluation::scene(s, "patch-short")),
             ("patch-long", |s| evaluation::scene(s, "patch-long")),

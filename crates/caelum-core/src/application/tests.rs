@@ -1956,6 +1956,37 @@ fn discovery_during_creation_adopts_the_stable_local_session_once() {
 }
 
 #[test]
+fn provider_session_discovery_includes_archived_history() {
+    let mut workspace = Workspace::default();
+    let scope = scope(Provider::OpenCode, "/a");
+    workspace.discover_sessions(scope.clone());
+    let commands = workspace.commands();
+    let active = commands
+        .iter()
+        .find(|(_, command)| matches!(command, Command::List(current) if current == &scope))
+        .unwrap()
+        .0;
+    let archived = commands
+        .iter()
+        .find(|(_, command)| matches!(command, Command::ListArchived(current) if current == &scope))
+        .unwrap()
+        .0;
+
+    workspace.apply(Event::Completed(
+        active,
+        Ok(Reply::Sessions(vec![summary(scope.clone(), "active")])),
+    ));
+    workspace.apply(Event::Completed(
+        archived,
+        Ok(Reply::Sessions(vec![summary(scope, "archived")])),
+    ));
+
+    assert_eq!(workspace.sessions.len(), 2);
+    assert!(!workspace.sessions[0].archived);
+    assert!(workspace.sessions[1].archived);
+}
+
+#[test]
 fn initial_history_precedes_nonoverlapping_live_output_and_refresh_keeps_pagination() {
     let mut workspace = Workspace::default();
     let index = workspace.new_session(scope(Provider::Codex, "/a"));

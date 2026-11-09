@@ -157,6 +157,7 @@ enum Pending {
     Task(Task),
     Commands(Scope),
     Shells(usize, u64),
+    ListArchived(Scope),
     Archive(usize, bool, Option<(usize, u64)>, u64),
     DeleteSession(usize),
     Attachment(usize, String),
@@ -1253,6 +1254,28 @@ impl Workspace {
         }
     }
 
+    /// Refresh both active and archived provider sessions for a picker.
+    pub fn discover_sessions(&mut self, scope: Scope) {
+        self.notices.remove(&scope);
+        if !self
+            .pending
+            .values()
+            .any(|pending| matches!(pending, Pending::List(current) if current == &scope))
+        {
+            self.request(Command::List(scope.clone()), Pending::List(scope.clone()));
+        }
+        if !self
+            .pending
+            .values()
+            .any(|pending| matches!(pending, Pending::ListArchived(current) if current == &scope))
+        {
+            self.request(
+                Command::ListArchived(scope.clone()),
+                Pending::ListArchived(scope),
+            );
+        }
+    }
+
     pub fn refresh_choices(&mut self, provider: Provider) {
         let Some(project) = self.active_project.clone() else {
             return;
@@ -1629,7 +1652,7 @@ impl Workspace {
                         .collect();
                     for scope in ready {
                         if let Some(summaries) = self.deferred_lists.remove(&scope) {
-                            self.apply_summaries(&scope, summaries);
+                            self.apply_summaries(&scope, summaries, false);
                         }
                     }
                     for index in 0..self.sessions.len() {
@@ -2045,7 +2068,9 @@ impl Workspace {
                             self.error = Some(error);
                         }
                     }
-                    Pending::List(scope) | Pending::Choices(scope) => {
+                    Pending::List(scope)
+                    | Pending::ListArchived(scope)
+                    | Pending::Choices(scope) => {
                         self.notices.insert(scope, error);
                     }
                     Pending::Resume(index, _) | Pending::History(index, _, _) => {
@@ -2400,8 +2425,11 @@ impl Workspace {
                 if self.creating(&scope) {
                     self.deferred_lists.insert(scope, summaries);
                 } else {
-                    self.apply_summaries(&scope, summaries);
+                    self.apply_summaries(&scope, summaries, false);
                 }
+            }
+            (Pending::ListArchived(scope), Reply::Sessions(summaries)) => {
+                self.apply_summaries(&scope, summaries, true);
             }
             (Pending::Choices(scope), Reply::Choices(choices)) => {
                 for session in self
@@ -2522,7 +2550,7 @@ impl Workspace {
         self.pending.values().any(|pending| matches!(pending, Pending::Start(index, _) if self.sessions[*index].scope == *scope))
     }
 
-    fn apply_summaries(&mut self, scope: &Scope, summaries: Vec<Summary>) {
+    fn apply_summaries(&mut self, scope: &Scope, summaries: Vec<Summary>, archived: bool) {
         for summary in summaries
             .into_iter()
             .filter(|summary| summary.key.scope == *scope)
@@ -2535,6 +2563,9 @@ impl Workspace {
                 if session.forgotten {
                     continue;
                 }
+                if !session.archiving {
+                    session.archived = archived;
+                }
                 if session.revision == 0 {
                     session.conversation.working = summary.working;
                     update_summary(session, summary);
@@ -2544,6 +2575,7 @@ impl Workspace {
                 session.remote_id = Some(summary.key.id.clone());
                 session.loaded = false;
                 session.conversation.working = summary.working;
+                session.archived = archived;
                 update_summary(&mut session, summary);
                 self.sessions.push(session);
                 self.detail_queue.push(self.sessions.len() - 1);

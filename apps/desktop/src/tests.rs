@@ -2108,6 +2108,53 @@ fn refresh_sessions_button_refreshes_every_open_session() {
 }
 
 #[test]
+fn sessions_slash_command_opens_provider_history_and_resumes_a_selected_session() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        app.sessions[0].remote_id = Some("old-codex-session".into());
+        app.sessions[0].title = "Earlier Codex work".into();
+        app.sessions[0].loaded = false;
+    });
+    fill(&mut rt, "live-draft-0", "/sessions");
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.2);
+
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.overlay,
+        Some(crate::panels::Screen::Sessions)
+    );
+    assert!(rt.find("provider-session-0").is_some());
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| {
+        matches!(
+            command,
+            caelum_core::application::Command::ListArchived(scope)
+                if scope.project == "/project"
+                    && scope.provider == caelum_core::application::Provider::Codex
+        )
+    }));
+
+    click(&mut rt, "provider-session-0");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    assert_eq!(rt.state.live.as_ref().unwrap().panels.overlay, None);
+    assert!(
+        rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, command)| matches!(
+                command,
+                caelum_core::application::Command::Resume(key)
+                    if key.id == "old-codex-session"
+            ))
+    );
+}
+
+#[test]
 fn variants_and_effort_slash_commands_change_model_effort() {
     let mut rt = live_runtime_size((800.0, 620.0));
     rt.update(|s, _| {
@@ -2219,6 +2266,217 @@ fn reminders_are_absent_from_transcript_copy_and_timeline_with_stable_jumps() {
     advance(&mut rt, 0.5);
     assert!(rt.state.live.as_ref().unwrap().panels.overlay.is_none());
     assert!(element(&rt, "live-entry-0-opencode-prompt").visible[3] > 20.0);
+}
+
+#[test]
+fn tool_details_are_output_first_and_keep_failures_visible() {
+    let _fonts = rune::text::with_families("Inter", "Inter");
+    let mut rt = design_runtime("tools-collapsed", (1280.0, 1000.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    click(&mut rt, "tool-0-opencode-tool-run");
+    assert!(element(&rt, "tool-0-opencode-tool-run").expanded.unwrap());
+    assert!(!rt.elements().iter().any(|e| {
+        !e.exiting
+            && e.text
+                .as_deref()
+                .is_some_and(|t| t == "Input" || t.contains("timeout") || t.contains("Exit 0"))
+    }));
+    let copy = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.label.as_deref() == Some("Copy output") && !e.exiting)
+        .unwrap();
+    click(&mut rt, &copy.path);
+    assert_eq!(
+        clipboard.text().unwrap().as_str(),
+        "test result: ok. 190 passed; 0 failed"
+    );
+    click(&mut rt, "tool-0-opencode-tool-read");
+    let file = rt
+        .elements()
+        .into_iter()
+        .find(|e| {
+            !e.exiting && e.role == "button" && e.label.as_deref() == Some("src/workspace.rs")
+        })
+        .unwrap();
+    click(&mut rt, &file.path);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts["/projects/caelum"]
+            .selected_file
+            .as_deref(),
+        Some("src/workspace.rs")
+    );
+    assert!(rt.state.inspector.is_open());
+    let failed = design_runtime("tool-failure", (800.0, 620.0));
+    for label in [
+        "Exit 101",
+        "A workspace test failed. Open the output for details.",
+    ] {
+        assert!(
+            failed
+                .elements()
+                .iter()
+                .any(|e| !e.exiting && e.text.as_deref() == Some(label) && e.visible[3] > 0.0)
+        );
+    }
+}
+
+#[test]
+fn compaction_milestones_stream_expand_copy_and_survive_history_refresh() {
+    use caelum_core::application::Provider;
+    // Parallel runtimes can switch the process-wide text measurer's families.
+    let _fonts = rune::text::with_families("Inter", "Inter");
+    let mut rt = design_runtime("compaction-running", (800.0, 620.0));
+    let key = "compaction-0-opencode-compact";
+    assert_eq!(
+        element(&rt, key).label.as_deref(),
+        Some("Compacting context…")
+    );
+    assert!(!element(&rt, key).focusable);
+    let summary = "## Context\n\nKeep **drafts** intact.\n\n- Review the tool layout.";
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.sessions[0].conversation.apply(
+            Provider::OpenCode,
+            "session.compaction.delta",
+            &serde_json::json!({"inputID":"compact","text":summary,"_created":100}),
+        )
+    });
+    advance(&mut rt, 0.3);
+    click(&mut rt, key);
+    assert_eq!(element(&rt, key).expanded, Some(true));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    click(&mut rt, "copy-compaction-0-opencode-compact");
+    assert_eq!(clipboard.text().unwrap().as_str(), summary);
+    rt.update(|s, _| {
+        let c = &mut s.live.as_mut().unwrap().app.sessions[0].conversation;
+        c.apply(Provider::OpenCode, "session.compaction.ended", &serde_json::json!({"inputID":"compact","_created":200}));
+        c.history(Provider::OpenCode, &[serde_json::json!({"id":"compact","type":"compaction","summary":"","status":"completed"})], false);
+        c.working = false;
+    });
+    advance(&mut rt, 0.5);
+    assert_eq!(
+        element(&rt, key).label.as_deref(),
+        Some("Context compacted")
+    );
+    assert_eq!(element(&rt, key).expanded, Some(true));
+    assert_eq!(
+        rt.elements()
+            .iter()
+            .filter(|e| e.key.as_deref() == Some(key) && !e.exiting)
+            .count(),
+        1
+    );
+    assert!(
+        !rt.elements().iter().any(|e| e.path.contains(key)
+            && e.key.as_deref() == Some("shimmer-band")
+            && !e.exiting)
+    );
+    click(&mut rt, key);
+    assert!(rt.find("copy-compaction-0-opencode-compact").is_none());
+    for (scene, title) in [
+        ("compaction-empty", "Context compacted"),
+        ("compaction-error", "Context compaction failed"),
+        ("compaction-interrupted", "Context compaction interrupted"),
+    ] {
+        let rt = design_runtime(scene, (800.0, 620.0));
+        let milestone = element(&rt, key);
+        assert_eq!(milestone.label.as_deref(), Some(title));
+        assert!(!milestone.focusable);
+        assert!(
+            milestone
+                .rect
+                .iter()
+                .zip(milestone.visible)
+                .all(|(a, b)| (*a - b).abs() < 1.0)
+        );
+    }
+    let mut expanded = design_runtime("compaction", (800.0, 620.0));
+    let before = element(&expanded, key).rect[1];
+    click(&mut expanded, key);
+    advance(&mut expanded, 0.8);
+    let header = element(&expanded, key);
+    assert!(
+        (header.rect[1] - before).abs() < 1.0,
+        "before={before}, after={:?}, scroll={:?}",
+        header.rect,
+        header.scrolled
+    );
+    assert!((header.rect[3] - header.visible[3]).abs() < 1.0);
+}
+
+#[test]
+fn shimmer_keeps_ink_stationary_and_stops_for_reduced_motion_and_completion() {
+    let _fonts = rune::text::with_families("Inter", "Inter");
+    for dark in [false, true] {
+        for reduced in [false, true] {
+            let mut rt = Runtime::new(
+                true,
+                |running: &bool, cx: &mut rune::Cx<bool>| {
+                    let k = crate::theme::appearance(cx.system_dark(), "vercel", "theme");
+                    rune::col()
+                        .padding(12.0)
+                        .gap(8.0)
+                        .child(
+                            if *running {
+                                crate::ui::busy_text("Compacting context…", k.ty.small_medium, &k)
+                            } else {
+                                rune::text("Context compacted").font(k.ty.small_medium)
+                            }
+                            .key("label"),
+                        )
+                        .child(
+                            if *running {
+                                crate::ui::busy_icon(&crate::ui::CLOCK, 14.0, &k)
+                            } else {
+                                crate::ui::outcome(
+                                    caelum_core::application::presentation::Outcome::Success,
+                                    &k,
+                                )
+                            }
+                            .key("icon"),
+                        )
+                },
+                (400.0, 100.0),
+                Env::new(dark, 2.0),
+            );
+            rt.set_system_reduced_motion(reduced);
+            let mut positions = Vec::new();
+            for _ in 0..60 {
+                rt.frame(1.0 / 60.0);
+                let elements = rt.elements();
+                let labels: Vec<_> = elements
+                    .iter()
+                    .filter(|e| !e.exiting && e.text.as_deref() == Some("Compacting context…"))
+                    .collect();
+                assert_eq!(labels.len(), 2);
+                assert!((labels[0].rect[0] - labels[1].rect[0]).abs() < 1.0);
+                assert!((labels[0].rect[1] - labels[1].rect[1]).abs() < 1.0);
+                positions.push(
+                    elements
+                        .iter()
+                        .find(|e| e.key.as_deref() == Some("shimmer-band"))
+                        .unwrap()
+                        .rect[0],
+                );
+            }
+            if reduced {
+                assert!((positions[10] - positions[59]).abs() < 0.1, "{positions:?}");
+            } else {
+                assert!(positions[59] - positions[10] > 20.0);
+            }
+            rt.update(|running, _| *running = false);
+            for _ in 0..30 {
+                rt.frame(1.0 / 60.0);
+            }
+            assert!(
+                !rt.elements()
+                    .iter()
+                    .any(|e| !e.exiting && e.key.as_deref() == Some("shimmer-band"))
+            );
+        }
+    }
 }
 
 #[test]
@@ -2482,6 +2740,18 @@ fn inline_patch_navigation_copy_and_selection_survive_theme_changes() {
             .is_some_and(|t| t.contains("src/session.rs, src/composer.rs, src/theme.rs"))
     }));
     assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, draft);
+    click(&mut rt, "tool-0-opencode-tool-patch");
+    advance(&mut rt, 0.4);
+    rt.update(|_, tx| tx.scroll_to_y(format!("{view}/scroll"), 0.0));
+    advance(&mut rt, 0.2);
+    click(&mut rt, "open-patch-file-0-opencode-tool-patch-0");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts["/projects/caelum"]
+            .selected_file
+            .as_deref(),
+        Some("src/session.rs")
+    );
+    assert!(rt.state.inspector.is_open());
 }
 
 #[test]

@@ -1032,7 +1032,14 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         if pending {
             item = item.status(RowStatus::Attention);
         } else if session.working() {
-            item = item.status(RowStatus::Busy);
+            let thinking = crate::activity::session_activity(s, index).is_some_and(|a| {
+                a.kind == caelum_core::application::presentation::ActivityKind::Thinking
+            });
+            item = item.status(RowStatus::Other(ui::busy_icon(
+                if thinking { &ui::BRAIN } else { &ui::CLOCK },
+                12.0,
+                k,
+            )));
         } else if session.unread {
             item = item.status(RowStatus::Unread);
         }
@@ -1539,8 +1546,11 @@ fn timeline_row(
                             .render(&theme::markdown(k)),
                     );
             }
-            EntryKind::Tool | EntryKind::Reasoning | EntryKind::Compaction => {
+            EntryKind::Tool | EntryKind::Reasoning => {
                 item = item.child(crate::activity::tool(s, k, index, entry));
+            }
+            EntryKind::Compaction => {
+                item = item.child(crate::activity::compaction(s, k, index, entry));
             }
             EntryKind::Status => {
                 item = item.child(
