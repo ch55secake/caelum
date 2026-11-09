@@ -31,6 +31,7 @@ pub enum Screen {
     Review,
     Settings,
     Session,
+    Sessions,
     Timeline,
     Usage,
     Stats,
@@ -417,6 +418,7 @@ pub fn show(s: &mut Workspace, screen: Screen) {
         Screen::Settings
         | Screen::Worktrees
         | Screen::Session
+        | Screen::Sessions
         | Screen::Timeline
         | Screen::Usage
         | Screen::Stats => live.panels.overlay = Some(screen),
@@ -723,6 +725,11 @@ pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
         {
             return crate::commands::timeline_key(s, ev, tx);
         }
+        if live(s).panels.overlay == Some(Screen::Sessions)
+            && matches!(ev.key, Key::Up | Key::Down | Key::Enter)
+        {
+            return crate::commands::sessions_key(s, ev, tx);
+        }
         if ev.key == Key::Escape {
             live_mut(s).panels.overlay = None;
             live_mut(s).focus();
@@ -886,6 +893,11 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             "Find and reveal an earlier prompt.",
             crate::commands::view(s, k, screen, &mut menus),
         ),
+        Screen::Sessions => (
+            "Sessions",
+            "Browse earlier conversations from this provider.",
+            crate::commands::view(s, k, screen, &mut menus),
+        ),
         Screen::Usage => (
             "OpenCode Go usage",
             "Subscription allowances.",
@@ -914,6 +926,7 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         Screen::Worktrees => (560.0, crate::checkouts::manager_height(s)),
         Screen::CreateWorktree => (500.0, 330.0),
         Screen::Timeline => (580.0, 344.0),
+        Screen::Sessions => (580.0, 420.0),
         Screen::Stats => (720.0, 620.0),
         Screen::Image => (760.0, 480.0),
         _ => (660.0, 420.0),

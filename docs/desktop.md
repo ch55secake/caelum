@@ -103,12 +103,14 @@ provide copy, reuse and attachment actions. Up in an empty composer recalls the
 last prompt; Shift+Tab cycles available OpenCode agents. The context meter shows
 reported token usage and model capacity when available.
 
-Type **/** to discover local and provider commands. `/new`, `/models`, `/timeline`,
+Type **/** to discover local and provider commands. `/new`, `/sessions`, `/models`, `/timeline`,
 `/files`, `/changes` and `/settings` open native workflows. `/models` opens the
 searchable model picker for the current session. `/variants` or bare `/effort`
 opens the selected model’s effort choices; `/effort xhigh` selects an effort
 directly, and `/effort default` restores the model default. OpenCode also supports
 `/usage`, `/stats`, provider-discovered commands and `/btw question` (`/ask` is an alias).
+`/sessions` searches the current project's Codex or OpenCode history, including archived
+sessions; choose a result to load that conversation.
 Side questions have a separate editor, context, retry and answer-copy actions;
 they preserve the main draft and do not add a conversation turn. Timeline groups
 prompts by date, shows excerpts and highlights search matches. Use ↑/↓ and Enter to

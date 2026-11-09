@@ -2092,6 +2092,53 @@ fn models_slash_command_opens_the_picker_for_the_current_session() {
 }
 
 #[test]
+fn sessions_slash_command_opens_provider_history_and_resumes_a_selected_session() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        app.sessions[0].remote_id = Some("old-codex-session".into());
+        app.sessions[0].title = "Earlier Codex work".into();
+        app.sessions[0].loaded = false;
+    });
+    fill(&mut rt, "live-draft-0", "/sessions");
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.2);
+
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.overlay,
+        Some(crate::panels::Screen::Sessions)
+    );
+    assert!(rt.find("provider-session-0").is_some());
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| {
+        matches!(
+            command,
+            caelum_core::application::Command::ListArchived(scope)
+                if scope.project == "/project"
+                    && scope.provider == caelum_core::application::Provider::Codex
+        )
+    }));
+
+    click(&mut rt, "provider-session-0");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    assert_eq!(rt.state.live.as_ref().unwrap().panels.overlay, None);
+    assert!(
+        rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, command)| matches!(
+                command,
+                caelum_core::application::Command::Resume(key)
+                    if key.id == "old-codex-session"
+            ))
+    );
+}
+
+#[test]
 fn variants_and_effort_slash_commands_change_model_effort() {
     let mut rt = live_runtime_size((800.0, 620.0));
     rt.update(|s, _| {
