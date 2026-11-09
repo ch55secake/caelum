@@ -1236,6 +1236,23 @@ impl Workspace {
         }
     }
 
+    pub fn refresh_open_sessions(&mut self) {
+        let sessions: Vec<_> = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| {
+                !session.archived
+                    && !session.forgotten
+                    && self.project_is_open(&session.scope.project)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in sessions {
+            self.refresh(index);
+        }
+    }
+
     pub fn refresh_choices(&mut self, provider: Provider) {
         let Some(project) = self.active_project.clone() else {
             return;

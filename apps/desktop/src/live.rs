@@ -903,8 +903,20 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                     )
                     .child(
                         quiet_button(&ui::REFRESH, "Refresh sessions")
-                            .disabled(app.active_project.is_none())
-                            .on_press(|s: &mut Workspace| live_mut(s).app.refresh_project())
+                            .disabled(
+                                app.active_project.is_none()
+                                    && !app.sessions.iter().any(|session| {
+                                        !session.archived
+                                            && !session.forgotten
+                                            && session.remote_id.is_some()
+                                            && app.project_is_open(&session.scope.project)
+                                    }),
+                            )
+                            .on_press(|s: &mut Workspace| {
+                                let app = &mut live_mut(s).app;
+                                app.refresh_project();
+                                app.refresh_open_sessions();
+                            })
                             .build(k)
                             .key("refresh-sessions"),
                     ),
