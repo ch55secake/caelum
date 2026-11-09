@@ -188,3 +188,12 @@ pub fn markdown(k: &Kit) -> MarkdownStyle {
         .code_block(k.c.bg_deep, k.c.border_base)
         .list(24.0, 4.0)
 }
+
+/// Inline patches sit on the conversation surface, with the theme's own selection colour.
+pub fn inline_diff(k: &Kit) -> Kit {
+    let mut k = k.clone();
+    k.c.layer_01 = k.c.bg_base;
+    k.c.info.icon = k.c.text_accent;
+    k.c.info.fg = k.c.text_accent;
+    k
+}

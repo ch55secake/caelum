@@ -81,6 +81,15 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
     let patch = !presentation.patch.is_empty();
     let preview = patch && !live(s).collapsed_patches.contains(&(index, id.clone()));
     let open = if patch { preview } else { expanded };
+    let summary = if patch {
+        let count = live(s)
+            .patches
+            .get(&(index, id.clone()))
+            .map_or(presentation.paths.len().max(1), |p| p.diff.files().len());
+        format!("{count} file{}", if count == 1 { "" } else { "s" })
+    } else {
+        presentation.summary.clone()
+    };
     let glyph = match presentation.name.as_str() {
         "Run" => &ui::TERMINAL,
         "Read" => &ui::FILE,
@@ -104,7 +113,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                 .color(k.c.text_base),
         )
         .child(
-            text(&presentation.summary)
+            text(summary)
                 .font(if presentation.name == "Run" {
                     k.ty.mono
                 } else {
@@ -132,9 +141,23 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                 },
             ),
         )
-        .child(ui::caption(if open { "Hide" } else { "Details" }, k).pl(6.0));
-    let mut content = col().w_full().gap(6.0).child(
+        .child(
+            ui::caption(
+                if open {
+                    "Hide"
+                } else if patch {
+                    "Show patch"
+                } else {
+                    "Details"
+                },
+                k,
+            )
+            .pl(6.0),
+        );
+    let mut heading = row().w_full().center_y().gap(4.0).child(
         k.interactive(header.py(7.0).px(6.0).radius(7.0))
+            .grow(1.0)
+            .min_w(0.0)
             .role("button")
             .label(format!("{} {}", presentation.name, presentation.summary))
             .expanded(open)
@@ -152,6 +175,28 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
             })
             .key(format!("tool-{index}-{}", entry.id)),
     );
+    if patch {
+        let details_key = entry.id.clone();
+        heading = heading.child(
+            quiet_button(
+                &ui::MORE,
+                if expanded {
+                    "Hide tool details"
+                } else {
+                    "Show tool details"
+                },
+            )
+            .on_press(move |s: &mut Workspace| {
+                let set = &mut live_mut(s).expanded;
+                if !set.remove(&(index, details_key.clone())) {
+                    set.insert((index, details_key.clone()));
+                }
+            })
+            .build(k)
+            .key(format!("tool-details-{index}-{}", entry.id)),
+        );
+    }
+    let mut content = col().w_full().gap(6.0).child(heading);
     if !presentation.details.is_empty() {
         content = content.child(ui::caption(presentation.details.join(" · "), k).pl(27.0));
     }
@@ -189,27 +234,21 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
             let key = crate::code_view::source_key(&index.to_string(), &entry.id);
             let full_key = format!("{}:patch-full", entry.id);
             let full = live(s).expanded.contains(&(index, full_key.clone()));
-            let height = live(s).patches[&owner]
-                .diff
-                .files()
-                .iter()
-                .map(|f| {
-                    44.0 + f
-                        .hunks
-                        .iter()
-                        .map(|h| 24.0 + h.lines.len() as f32 * 22.0)
-                        .sum::<f32>()
-                })
-                .sum::<f32>()
-                .clamp(90.0, if full { 600.0 } else { 260.0 });
+            let natural = crate::code_view::inline_height(&live(s).patches[&owner].diff);
+            let expanded_height = rune::memo::window_layout("shell")
+                .map_or(400.0, |r| (r[3] * 0.5).clamp(240.0, 480.0));
+            let height = natural.min(if full { expanded_height } else { 204.0 });
+            let palette = theme::inline_diff(k);
             content = content.child(
                 col()
                     .w_full()
-                    .h(height)
+                    .h(height + 2.0)
                     .min_h(0.0)
-                    .radius(8.0)
-                    .clip_rounded(8.0)
-                    .border(1.0, k.c.border_base)
+                    .padding(1.0)
+                    .key(format!("patch-preview-{index}-{}", entry.id))
+                    .radius(6.0)
+                    .clip_rounded(6.0)
+                    .border(1.0, k.c.border_muted)
                     .child(
                         rune_kit::diff::DiffView::new(
                             move |s: &Workspace| &live(s).patches[&owner].diff,
@@ -226,7 +265,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                         )
                         .key(format!("tool-{key}"))
                         .header_actions({
-                            let kit = k.clone();
+                            let kit = palette.clone();
                             move |_, _| {
                                 let copy = copy.clone();
                                 quiet_button(&glyphs::COPY, "Copy patch")
@@ -234,7 +273,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                                     .build(&kit)
                             }
                         })
-                        .build(s, k)
+                        .build(s, &palette)
                         .focusable(true)
                         .on_key(move |s: &mut Workspace, ev, tx| {
                             crate::code_view::key(
@@ -245,42 +284,54 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                         }),
                     ),
             );
-            let details_key = entry.id.clone();
-            content = content.child(
-                row()
-                    .gap(4.0)
-                    .child(
-                        Button::new(if full {
-                            "Compact preview"
-                        } else {
-                            "Expand preview"
-                        })
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(move |s: &mut Workspace| {
-                            let set = &mut live_mut(s).expanded;
-                            if !set.remove(&(index, full_key.clone())) {
-                                set.insert((index, full_key.clone()));
-                            }
-                        })
-                        .build(k),
-                    )
-                    .child(
-                        Button::new(if expanded {
-                            "Hide tool details"
-                        } else {
-                            "Tool details"
-                        })
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(move |s: &mut Workspace| {
-                            let set = &mut live_mut(s).expanded;
-                            if !set.remove(&(index, details_key.clone())) {
-                                set.insert((index, details_key.clone()));
-                            }
-                        })
-                        .build(k),
-                    ),
-            );
+            if natural > 204.0 {
+                content = content.child(
+                    row()
+                        .w_full()
+                        .center_y()
+                        .gap(4.0)
+                        .child(
+                            ui::caption(
+                                if full {
+                                    "Expanded patch"
+                                } else {
+                                    "Scroll to see the full patch"
+                                },
+                                k,
+                            )
+                            .grow(1.0),
+                        )
+                        .child(
+                            Button::new(if full {
+                                "Compact preview"
+                            } else {
+                                "Expand preview"
+                            })
+                            .variant(ButtonVariant::GhostMuted)
+                            .on_press(move |s: &mut Workspace| {
+                                let set = &mut live_mut(s).expanded;
+                                if !set.remove(&(index, full_key.clone())) {
+                                    set.insert((index, full_key.clone()));
+                                }
+                            })
+                            .build(k)
+                            .key(format!("expand-patch-{index}-{}", entry.id)),
+                        ),
+                );
+            }
         } else if !preview {
+            let paths = live(s).patches.get(&owner).map_or_else(
+                || presentation.paths.join(", "),
+                |document| {
+                    document
+                        .diff
+                        .files()
+                        .iter()
+                        .map(|file| file.path())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            );
             let added = presentation
                 .patch
                 .lines()
@@ -298,12 +349,9 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
                     .center_y()
                     .child(icon(&ui::FILE, 13.0).color(k.c.icon_muted))
                     .child(
-                        ui::caption(
-                            format!("{} · +{added} −{removed}", presentation.paths.join(", ")),
-                            k,
-                        )
-                        .truncate()
-                        .grow(1.0),
+                        ui::caption(format!("{paths} · +{added} −{removed}"), k)
+                            .truncate()
+                            .grow(1.0),
                     ),
             );
         }

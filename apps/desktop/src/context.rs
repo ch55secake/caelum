@@ -399,12 +399,24 @@ pub fn worktree(el: El, project: String, path: String, origin: String) -> El {
         let directory = tree.project.path.clone();
         let project = project.clone();
         let path = path.clone();
+        let current_name = crate::checkouts::name(tree).to_owned();
+        let rename = Task::RenameWorktree {
+            project: project.clone(),
+            path: path.clone(),
+            name: current_name.clone(),
+            directory: app.preferences.worktree_directory.clone(),
+        };
         let menu = Menu::new()
             .item(Item::new("copy", "Copy worktree path").icon(&glyphs::COPY))
             .item(
                 Item::new("reveal", "Reveal in Finder")
                     .icon(&ui::FOLDER)
                     .enabled(tree.available),
+            )
+            .item(
+                Item::new("rename", "Rename worktree")
+                    .icon(&ui::EDIT)
+                    .enabled(!app.services.busy(&rename)),
             )
             .separator()
             .item(
@@ -418,6 +430,15 @@ pub fn worktree(el: El, project: String, path: String, origin: String) -> El {
                 project: directory,
                 path: ".".into(),
             }),
+            "rename" => {
+                crate::checkouts::manage(s, project.clone());
+                crate::worktree::begin_rename(
+                    s,
+                    project.clone(),
+                    path.clone(),
+                    current_name.clone(),
+                );
+            }
             "delete" => {
                 let app = &mut live_mut(s).app;
                 if let Some(task) = crate::checkouts::removal(app, &project, &path) {

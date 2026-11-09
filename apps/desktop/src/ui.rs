@@ -332,6 +332,11 @@ pub static SETTINGS: Icon = Icon {
     view: 16.0,
     body: r#"<path d="m6 2 .5-1h3L10 3l2 1 1.5-.1 1.5 2.6L14 8l.5 1.5-1.5 2.6-2-.1-1 1-.5 2h-3L6 13l-2-1-1.5.1L1 9.5 2 8l-.5-1.5L3 3.9l2 .1 1-1Z" fill="none" stroke="currentColor" stroke-width="1"/><circle cx="8" cy="8" r="2.3" fill="none" stroke="currentColor"/>"#,
 };
+pub static BELL: Icon = Icon {
+    name: "notifications",
+    view: 16.0,
+    body: r#"<path d="M12 6a4 4 0 0 0-8 0v3l-1.5 2h11L12 9V6ZM6.5 13a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
 pub static REFRESH: Icon = Icon {
     name: "refresh",
     view: 16.0,
