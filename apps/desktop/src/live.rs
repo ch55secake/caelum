@@ -2164,32 +2164,46 @@ pub fn delete_confirmation(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         )
     };
     Dialog::new("delete-session", "Delete session permanently?")
-        .description(description)
         .open(true)
         .click_outside(false)
         .width(460.0)
         .fit()
         .on_close(|s: &mut Workspace| live_mut(s).cancel_delete_session())
         .child(
-            row()
+            col()
                 .w_full()
-                .justify_end()
-                .gap(8.0)
+                .gap(16.0)
+                .px(16.0)
+                .pb(16.0)
                 .child(
-                    crate::ui::Button::new("Cancel")
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(|s: &mut Workspace| live_mut(s).cancel_delete_session())
-                        .build(k)
-                        .key("cancel-delete-session"),
+                    text(description)
+                        .key("delete-session-description")
+                        .font(k.ty.ui.lh(20.0))
+                        .color(k.c.text_muted)
+                        .wrap()
+                        .w_full(),
                 )
                 .child(
-                    crate::ui::Button::new("Delete permanently")
-                        .variant(ButtonVariant::Contrast)
-                        .on_press(move |s: &mut Workspace| {
-                            live_mut(s).confirm_delete_session(index)
-                        })
-                        .build(k)
-                        .key("confirm-delete-session"),
+                    row()
+                        .w_full()
+                        .justify_end()
+                        .gap(8.0)
+                        .child(
+                            crate::ui::Button::new("Cancel")
+                                .variant(ButtonVariant::GhostMuted)
+                                .on_press(|s: &mut Workspace| live_mut(s).cancel_delete_session())
+                                .build(k)
+                                .key("cancel-delete-session"),
+                        )
+                        .child(
+                            crate::ui::Button::new("Delete permanently")
+                                .variant(ButtonVariant::Contrast)
+                                .on_press(move |s: &mut Workspace| {
+                                    live_mut(s).confirm_delete_session(index)
+                                })
+                                .build(k)
+                                .key("confirm-delete-session"),
+                        ),
                 ),
         )
         .build(k, layers);

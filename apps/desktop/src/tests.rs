@@ -3258,6 +3258,9 @@ fn deleting_an_archived_session_requires_confirmation() {
     rt.update(|s, _| {
         let live = s.live.as_mut().unwrap();
         live.app.sessions[0].remote_id = Some("remote-session".into());
+        live.app.sessions[0].title =
+            "A very long session title that must wrap inside the permanent deletion confirmation"
+                .into();
         live.app.sessions[0].archived = true;
         live.panels.archived = true;
     });
@@ -3266,6 +3269,11 @@ fn deleting_an_archived_session_requires_confirmation() {
     click(&mut rt, "session-actions-0");
     click(&mut rt, "delete-session");
     element(&rt, "confirm-delete-session");
+    let dialog = element(&rt, "delete-session-dialog");
+    let description = element(&rt, "delete-session-description");
+    assert!(description.rect[3] > 20.0, "confirmation copy should wrap");
+    assert!(description.rect[0] >= dialog.rect[0]);
+    assert!(description.rect[0] + description.rect[2] <= dialog.rect[0] + dialog.rect[2]);
     click(&mut rt, "cancel-delete-session");
     let commands = rt.state.live.as_mut().unwrap().app.commands();
     assert!(
