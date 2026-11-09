@@ -21,6 +21,8 @@ pub struct State {
     pub stats_projects_open: bool,
     pub timeline_selected: Option<String>,
     pub timeline_current: Option<String>,
+    pub sessions_search: TextEdit,
+    pub sessions_selected: Option<String>,
     pub side_owner: Option<usize>,
     pub side_editor: TextEdit,
     pub previous_drafts: Vec<String>,
@@ -36,6 +38,8 @@ impl Default for State {
             stats_projects_open: false,
             timeline_selected: None,
             timeline_current: None,
+            sessions_search: TextEdit::new(""),
+            sessions_selected: None,
             side_owner: None,
             side_editor: TextEdit::new(""),
             previous_drafts: Vec::new(),
@@ -70,7 +74,23 @@ pub fn dispatch(s: &mut Workspace, tx: &mut Tx) -> bool {
     l.commands.search.clear();
     match command {
         LocalCommand::New => l.new_session(),
+        LocalCommand::Sessions => {
+            let scope = l.app.sessions[index].scope.clone();
+            l.commands.sessions_search.clear();
+            l.commands.sessions_selected = None;
+            l.commands.sessions_search.focused = true;
+            l.panels.overlay = Some(Screen::Sessions);
+            l.app.discover_sessions(scope);
+        }
         LocalCommand::Models => crate::models::open(s, None),
+        LocalCommand::Variants => open_variants(s, index),
+        LocalCommand::Effort => {
+            if args.is_empty() {
+                open_variants(s, index);
+            } else {
+                set_effort(s, index, args);
+            }
+        }
         LocalCommand::Files => panels::show(s, Screen::Files),
         LocalCommand::Changes => panels::show(s, Screen::Changes),
         LocalCommand::Settings => panels::show(s, Screen::Settings),
@@ -109,6 +129,94 @@ pub fn dispatch(s: &mut Workspace, tx: &mut Tx) -> bool {
         }
     }
     true
+}
+
+fn open_variants(s: &mut Workspace, index: usize) {
+    let session = &live(s).app.sessions[index];
+    let choices = live(s).app.choices.get(&session.scope);
+    let model_id = session
+        .options
+        .model
+        .as_ref()
+        .or_else(|| choices.and_then(|choices| choices.default_model.as_ref()));
+    let has_variants = choices
+        .and_then(|choices| {
+            choices
+                .models
+                .iter()
+                .find(|model| Some(&model.id) == model_id)
+        })
+        .is_some_and(|model| !model.efforts.is_empty());
+    if has_variants {
+        crate::live::open_effort(s, index);
+    } else {
+        live_mut(s).app.sessions[index].error =
+            Some("No model effort variants are available for the selected model.".into());
+    }
+}
+
+fn set_effort(s: &mut Workspace, index: usize, value: &str) {
+    let scope = live(s).app.sessions[index].scope.clone();
+    let choices = live(s).app.choices.get(&scope);
+    let model_id = live(s).app.sessions[index]
+        .options
+        .model
+        .clone()
+        .or_else(|| choices.and_then(|choices| choices.default_model.clone()));
+    let reset = matches!(
+        value.to_ascii_lowercase().as_str(),
+        "default" | "model default"
+    );
+
+    let effort = if reset {
+        Some(None)
+    } else {
+        choices
+            .and_then(|choices| {
+                choices
+                    .models
+                    .iter()
+                    .find(|model| Some(&model.id) == model_id.as_ref())
+            })
+            .and_then(|model| {
+                model
+                    .efforts
+                    .iter()
+                    .find(|effort| {
+                        effort.id.eq_ignore_ascii_case(value)
+                            || effort.name.eq_ignore_ascii_case(value)
+                    })
+                    .map(|effort| Some(effort.id.clone()))
+            })
+    };
+
+    if let Some(effort) = effort {
+        let l = live_mut(s);
+        l.app.sessions[index].options.effort = effort;
+        l.app.options_changed(index);
+        return;
+    }
+
+    let available = choices
+        .and_then(|choices| {
+            choices
+                .models
+                .iter()
+                .find(|model| Some(&model.id) == model_id.as_ref())
+        })
+        .map(|model| {
+            model
+                .efforts
+                .iter()
+                .map(|effort| effort.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| "none".into());
+    live_mut(s).app.sessions[index].error = Some(format!(
+        "Unknown effort ‘{value}’. Available efforts: {available}. Use /effort default to reset."
+    ));
 }
 
 pub fn close_side(s: &mut Workspace) {
@@ -285,10 +393,194 @@ pub fn view(s: &Workspace, k: &Kit, screen: Screen, layers: &mut Vec<El>) -> El 
     };
     match screen {
         Screen::Timeline => timeline(s, k, index),
+        Screen::Sessions => sessions(s, k, index),
         Screen::Usage => usage(s, k, index),
         Screen::Stats => stats(s, k, index, layers),
         _ => col(),
     }
+}
+
+fn session_matches(s: &Workspace, index: usize) -> Vec<usize> {
+    let l = live(s);
+    let current = &l.app.sessions[index];
+    let query = l.commands.sessions_search.text.to_lowercase();
+    let project_group = l.app.group_path(&current.scope.project);
+    let matches: Vec<_> = l
+        .app
+        .sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, session)| {
+            !session.forgotten
+                && session.remote_id.is_some()
+                && session.scope.provider == current.scope.provider
+                && l.app.group_path(&session.scope.project) == project_group
+                && format!(
+                    "{} {} {} {}",
+                    session.title,
+                    session.scope.provider.as_str(),
+                    session.scope.project,
+                    session.remote_id.as_deref().unwrap_or_default()
+                )
+                .to_lowercase()
+                .contains(&query)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    matches
+}
+
+fn sessions(s: &Workspace, k: &Kit, index: usize) -> El {
+    let l = live(s);
+    let owner = &l.app.sessions[index];
+    let project = owner.scope.project.clone();
+    let scope = owner.scope.clone();
+    let matches = session_matches(s, index);
+    let selected = l.commands.sessions_selected.clone();
+    let rows = col()
+        .w_full()
+        .gap(3.0)
+        .key("provider-sessions")
+        .role("list")
+        .focus_group();
+    let mut rows = rows;
+    for session_index in &matches {
+        let session_index = *session_index;
+        let session = &l.app.sessions[session_index];
+        let id = session.remote_id.as_deref().unwrap_or_default().to_owned();
+        let title = if session.title.trim().is_empty() {
+            "Untitled session"
+        } else {
+            &session.title
+        };
+        let project_name = session
+            .scope
+            .project
+            .rsplit('/')
+            .next()
+            .unwrap_or("Project");
+        let detail = if session.archived {
+            format!("Archived · {project_name}")
+        } else if session.working() {
+            format!("Working · {project_name}")
+        } else {
+            project_name.to_owned()
+        };
+        let selected = selected.as_deref() == Some(&id);
+        rows = rows.child(
+            ui::choice(title, &detail, selected, k)
+                .key(format!("provider-session-{session_index}"))
+                .on_press(move |s: &mut Workspace| select_provider_session(s, session_index)),
+        );
+    }
+
+    let mut body = col()
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .gap(10.0)
+        .child(
+            ui::field(
+                &l.commands.sessions_search,
+                "Search provider sessions",
+                "Search sessions…",
+                k,
+            )
+            .w_full()
+            .single_line()
+            .edit_menu_changed(
+                "provider-session-search",
+                |s| Some(&mut live_mut(s).commands.sessions_search),
+                |s, _| live_mut(s).commands.sessions_selected = None,
+            )
+            .on_input_key(sessions_key),
+        )
+        .child(
+            col()
+                .key("provider-sessions-scroll")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(rows),
+        );
+    if matches.is_empty() {
+        body = body.child(ui::empty(
+            "No matching sessions",
+            "Refresh to search this provider’s active and archived sessions.",
+            k,
+        ));
+    }
+    if let Some(error) = l.app.notices.get(&scope) {
+        body = body.child(ui::caption(error, k).color(k.c.danger.fg));
+    }
+    let refresh_scope = scope.clone();
+    body.child(ui::divider(k)).child(
+        row()
+            .w_full()
+            .center_y()
+            .justify_between()
+            .child(ui::caption(
+                format!(
+                    "{} · {} sessions · {} · ↑↓ Navigate · ↵ Open",
+                    scope.provider.as_str(),
+                    matches.len(),
+                    project
+                ),
+                k,
+            ))
+            .child(
+                Button::new("Refresh")
+                    .variant(ButtonVariant::Outline)
+                    .on_press(move |s: &mut Workspace| {
+                        live_mut(s).app.discover_sessions(refresh_scope.clone())
+                    })
+                    .build(k),
+            ),
+    )
+}
+
+fn select_provider_session(s: &mut Workspace, index: usize) {
+    let l = live_mut(s);
+    l.app.select(index);
+    l.panels.overlay = None;
+    l.panels.screen = Screen::Conversation;
+    l.commands.sessions_search.focused = false;
+    l.commands.sessions_selected = None;
+    l.current_prompt = None;
+}
+
+pub fn sessions_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    let Some(owner) = live(s).commands.owner else {
+        return false;
+    };
+    let matches = session_matches(s, owner);
+    let selected = live(s).commands.sessions_selected.as_ref();
+    let current = matches
+        .iter()
+        .position(|index| live(s).app.sessions[*index].remote_id.as_ref() == selected);
+    let at = match ev.key {
+        Key::Down => Some(current.map_or(0, |i| (i + 1).min(matches.len().saturating_sub(1)))),
+        Key::Up => Some(current.unwrap_or(0).saturating_sub(1)),
+        Key::Enter if !matches.is_empty() => {
+            let index = matches[current.unwrap_or(0)];
+            select_provider_session(s, index);
+            return true;
+        }
+        _ => return false,
+    };
+    if let Some(index) = matches.get(at.unwrap_or_default()) {
+        let id = live(s).app.sessions[*index].remote_id.clone();
+        live_mut(s).commands.sessions_selected = id;
+        live_mut(s).commands.sessions_search.focused = true;
+        tx.scroll_center_in_instant(
+            "provider-sessions-scroll",
+            format!("provider-session-{index}"),
+        );
+    }
+    true
 }
 
 fn timeline(s: &Workspace, k: &Kit, index: usize) -> El {

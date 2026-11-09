@@ -672,6 +672,54 @@ fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
 }
 
 #[test]
+fn selecting_a_session_keeps_its_worktree_group_collapsed_by_default() {
+    let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
+    let root = "/projects/caelum";
+    let selected_worktree = crate::code_view::source_key("/projects/caelum-native", "checkout");
+    let other_expanded_worktree =
+        crate::code_view::source_key("/worktrees/rune/key-navigation", "checkout");
+
+    assert!(rt.find(&selected_worktree).is_some());
+    assert!(rt.find(&other_expanded_worktree).is_some());
+    click(&mut rt, "live-session-1");
+
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(1));
+    assert_eq!(
+        element(&rt, &crate::code_view::source_key(root, "worktrees-toggle")).expanded,
+        Some(false)
+    );
+    assert!(rt.find(&selected_worktree).is_none());
+    assert!(rt.find(&other_expanded_worktree).is_some());
+}
+
+#[test]
+fn selecting_a_worktree_session_does_not_reopen_its_collapsed_group() {
+    let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
+    let root = "/projects/caelum";
+    let selected_worktree = crate::code_view::source_key("/projects/caelum-native", "checkout");
+    let other_expanded_worktree =
+        crate::code_view::source_key("/worktrees/rune/key-navigation", "checkout");
+
+    assert!(rt.find(&selected_worktree).is_some());
+    rt.update(|_, tx| tx.scroll_to_y("sidebar-scroll", 1000.0));
+    advance(&mut rt, 0.2);
+    click(&mut rt, "live-session-3");
+
+    let live = rt.state.live.as_ref().unwrap();
+    assert_eq!(live.app.selected, Some(3));
+    assert_eq!(
+        live.app.sessions[3].scope.project,
+        "/projects/caelum-native"
+    );
+    assert_eq!(
+        element(&rt, &crate::code_view::source_key(root, "worktrees-toggle")).expanded,
+        Some(false)
+    );
+    assert!(rt.find(&selected_worktree).is_none());
+    assert!(rt.find(&other_expanded_worktree).is_some());
+}
+
+#[test]
 fn worktree_management_keeps_its_project_and_missing_rows_cannot_navigate() {
     let mut rt = design_runtime("sidebar-worktrees-many", (800.0, 620.0));
     let root = "/projects/caelum";
@@ -869,6 +917,37 @@ fn context_worktrees_delete_the_clicked_checkout_and_surface_failures() {
         assert!(l.app.commands().iter().any(|(_, c)| matches!(c,
             Command::Task(Task::Worktrees { project, .. }) if project == parent)));
     }
+}
+
+#[test]
+fn context_menu_can_rename_the_clicked_worktree() {
+    use caelum_core::application::{Command, Task};
+    let parent = "/projects/rune";
+    let path = "/worktrees/rune/key-navigation";
+    let row = crate::code_view::source_key(path, "checkout");
+    let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
+    rt.update(|_, tx| tx.scroll_to_y("projects-scroll", 1000.0));
+    advance(&mut rt, 0.2);
+    secondary(&mut rt, &row);
+    choose_context(&mut rt, "Rename worktree");
+    advance(&mut rt, 0.2);
+
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.overlay,
+        Some(crate::panels::Screen::Worktrees)
+    );
+    assert!(crate::worktree::is_renaming(&rt.state, path));
+    let name_key = crate::code_view::source_key(path, "rename-worktree-name");
+    let save_key = crate::code_view::source_key(path, "save-worktree-name");
+    fill(&mut rt, &name_key, "Key navigation fix");
+    click(&mut rt, &save_key);
+
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| matches!(
+        command,
+        Command::Task(Task::RenameWorktree { project, path: target, name, .. })
+            if project == parent && target == path && name == "Key navigation fix"
+    )));
 }
 
 #[test]
@@ -2013,6 +2092,107 @@ fn models_slash_command_opens_the_picker_for_the_current_session() {
 }
 
 #[test]
+fn sessions_slash_command_opens_provider_history_and_resumes_a_selected_session() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        app.sessions[0].remote_id = Some("old-codex-session".into());
+        app.sessions[0].title = "Earlier Codex work".into();
+        app.sessions[0].loaded = false;
+    });
+    fill(&mut rt, "live-draft-0", "/sessions");
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.2);
+
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().panels.overlay,
+        Some(crate::panels::Screen::Sessions)
+    );
+    assert!(rt.find("provider-session-0").is_some());
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    assert!(commands.iter().any(|(_, command)| {
+        matches!(
+            command,
+            caelum_core::application::Command::ListArchived(scope)
+                if scope.project == "/project"
+                    && scope.provider == caelum_core::application::Provider::Codex
+        )
+    }));
+
+    click(&mut rt, "provider-session-0");
+    assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
+    assert_eq!(rt.state.live.as_ref().unwrap().panels.overlay, None);
+    assert!(
+        rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, command)| matches!(
+                command,
+                caelum_core::application::Command::Resume(key)
+                    if key.id == "old-codex-session"
+            ))
+    );
+}
+
+#[test]
+fn variants_and_effort_slash_commands_change_model_effort() {
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        let scope = app.sessions[0].scope.clone();
+        app.sessions[0].options.model = None;
+        app.choices.insert(
+            scope,
+            serde_json::from_value(serde_json::json!({
+                "models": [{
+                    "id": "model-with-efforts",
+                    "name": "Effort model",
+                    "efforts": [
+                        {"id":"medium","name":"Medium"},
+                        {"id":"xhigh","name":"Extra high"},
+                        {"id":"max","name":"Maximum"}
+                    ],
+                    "defaultEffort": "medium"
+                }],
+                "agents": [],
+                "defaultModel": "model-with-efforts"
+            }))
+            .unwrap(),
+        );
+    });
+
+    fill(&mut rt, "live-draft-0", "/variants");
+    key(&mut rt, Key::Enter, Mods::default());
+    advance(&mut rt, 0.2);
+    assert!(rt.find("effort-content").is_some());
+    key(&mut rt, Key::Escape, Mods::default());
+    advance(&mut rt, 0.2);
+
+    fill(&mut rt, "live-draft-0", "/effort xhigh");
+    key(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .effort
+            .as_deref(),
+        Some("xhigh")
+    );
+
+    fill(&mut rt, "live-draft-0", "/effort default");
+    key(&mut rt, Key::Enter, Mods::default());
+    assert!(
+        rt.state.live.as_ref().unwrap().app.sessions[0]
+            .options
+            .effort
+            .is_none()
+    );
+}
+
+#[test]
 fn reminders_are_absent_from_transcript_copy_and_timeline_with_stable_jumps() {
     let app = spec();
     let mut state = crate::evaluation::design();
@@ -2070,6 +2250,217 @@ fn reminders_are_absent_from_transcript_copy_and_timeline_with_stable_jumps() {
     advance(&mut rt, 0.5);
     assert!(rt.state.live.as_ref().unwrap().panels.overlay.is_none());
     assert!(element(&rt, "live-entry-0-opencode-prompt").visible[3] > 20.0);
+}
+
+#[test]
+fn tool_details_are_output_first_and_keep_failures_visible() {
+    let _fonts = rune::text::with_families("Inter", "Inter");
+    let mut rt = design_runtime("tools-collapsed", (1280.0, 1000.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    click(&mut rt, "tool-0-opencode-tool-run");
+    assert!(element(&rt, "tool-0-opencode-tool-run").expanded.unwrap());
+    assert!(!rt.elements().iter().any(|e| {
+        !e.exiting
+            && e.text
+                .as_deref()
+                .is_some_and(|t| t == "Input" || t.contains("timeout") || t.contains("Exit 0"))
+    }));
+    let copy = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.label.as_deref() == Some("Copy output") && !e.exiting)
+        .unwrap();
+    click(&mut rt, &copy.path);
+    assert_eq!(
+        clipboard.text().unwrap().as_str(),
+        "test result: ok. 190 passed; 0 failed"
+    );
+    click(&mut rt, "tool-0-opencode-tool-read");
+    let file = rt
+        .elements()
+        .into_iter()
+        .find(|e| {
+            !e.exiting && e.role == "button" && e.label.as_deref() == Some("src/workspace.rs")
+        })
+        .unwrap();
+    click(&mut rt, &file.path);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts["/projects/caelum"]
+            .selected_file
+            .as_deref(),
+        Some("src/workspace.rs")
+    );
+    assert!(rt.state.inspector.is_open());
+    let failed = design_runtime("tool-failure", (800.0, 620.0));
+    for label in [
+        "Exit 101",
+        "A workspace test failed. Open the output for details.",
+    ] {
+        assert!(
+            failed
+                .elements()
+                .iter()
+                .any(|e| !e.exiting && e.text.as_deref() == Some(label) && e.visible[3] > 0.0)
+        );
+    }
+}
+
+#[test]
+fn compaction_milestones_stream_expand_copy_and_survive_history_refresh() {
+    use caelum_core::application::Provider;
+    // Parallel runtimes can switch the process-wide text measurer's families.
+    let _fonts = rune::text::with_families("Inter", "Inter");
+    let mut rt = design_runtime("compaction-running", (800.0, 620.0));
+    let key = "compaction-0-opencode-compact";
+    assert_eq!(
+        element(&rt, key).label.as_deref(),
+        Some("Compacting context…")
+    );
+    assert!(!element(&rt, key).focusable);
+    let summary = "## Context\n\nKeep **drafts** intact.\n\n- Review the tool layout.";
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.sessions[0].conversation.apply(
+            Provider::OpenCode,
+            "session.compaction.delta",
+            &serde_json::json!({"inputID":"compact","text":summary,"_created":100}),
+        )
+    });
+    advance(&mut rt, 0.3);
+    click(&mut rt, key);
+    assert_eq!(element(&rt, key).expanded, Some(true));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    click(&mut rt, "copy-compaction-0-opencode-compact");
+    assert_eq!(clipboard.text().unwrap().as_str(), summary);
+    rt.update(|s, _| {
+        let c = &mut s.live.as_mut().unwrap().app.sessions[0].conversation;
+        c.apply(Provider::OpenCode, "session.compaction.ended", &serde_json::json!({"inputID":"compact","_created":200}));
+        c.history(Provider::OpenCode, &[serde_json::json!({"id":"compact","type":"compaction","summary":"","status":"completed"})], false);
+        c.working = false;
+    });
+    advance(&mut rt, 0.5);
+    assert_eq!(
+        element(&rt, key).label.as_deref(),
+        Some("Context compacted")
+    );
+    assert_eq!(element(&rt, key).expanded, Some(true));
+    assert_eq!(
+        rt.elements()
+            .iter()
+            .filter(|e| e.key.as_deref() == Some(key) && !e.exiting)
+            .count(),
+        1
+    );
+    assert!(
+        !rt.elements().iter().any(|e| e.path.contains(key)
+            && e.key.as_deref() == Some("shimmer-band")
+            && !e.exiting)
+    );
+    click(&mut rt, key);
+    assert!(rt.find("copy-compaction-0-opencode-compact").is_none());
+    for (scene, title) in [
+        ("compaction-empty", "Context compacted"),
+        ("compaction-error", "Context compaction failed"),
+        ("compaction-interrupted", "Context compaction interrupted"),
+    ] {
+        let rt = design_runtime(scene, (800.0, 620.0));
+        let milestone = element(&rt, key);
+        assert_eq!(milestone.label.as_deref(), Some(title));
+        assert!(!milestone.focusable);
+        assert!(
+            milestone
+                .rect
+                .iter()
+                .zip(milestone.visible)
+                .all(|(a, b)| (*a - b).abs() < 1.0)
+        );
+    }
+    let mut expanded = design_runtime("compaction", (800.0, 620.0));
+    let before = element(&expanded, key).rect[1];
+    click(&mut expanded, key);
+    advance(&mut expanded, 0.8);
+    let header = element(&expanded, key);
+    assert!(
+        (header.rect[1] - before).abs() < 1.0,
+        "before={before}, after={:?}, scroll={:?}",
+        header.rect,
+        header.scrolled
+    );
+    assert!((header.rect[3] - header.visible[3]).abs() < 1.0);
+}
+
+#[test]
+fn shimmer_keeps_ink_stationary_and_stops_for_reduced_motion_and_completion() {
+    let _fonts = rune::text::with_families("Inter", "Inter");
+    for dark in [false, true] {
+        for reduced in [false, true] {
+            let mut rt = Runtime::new(
+                true,
+                |running: &bool, cx: &mut rune::Cx<bool>| {
+                    let k = crate::theme::appearance(cx.system_dark(), "vercel", "theme");
+                    rune::col()
+                        .padding(12.0)
+                        .gap(8.0)
+                        .child(
+                            if *running {
+                                crate::ui::busy_text("Compacting context…", k.ty.small_medium, &k)
+                            } else {
+                                rune::text("Context compacted").font(k.ty.small_medium)
+                            }
+                            .key("label"),
+                        )
+                        .child(
+                            if *running {
+                                crate::ui::busy_icon(&crate::ui::CLOCK, 14.0, &k)
+                            } else {
+                                crate::ui::outcome(
+                                    caelum_core::application::presentation::Outcome::Success,
+                                    &k,
+                                )
+                            }
+                            .key("icon"),
+                        )
+                },
+                (400.0, 100.0),
+                Env::new(dark, 2.0),
+            );
+            rt.set_system_reduced_motion(reduced);
+            let mut positions = Vec::new();
+            for _ in 0..60 {
+                rt.frame(1.0 / 60.0);
+                let elements = rt.elements();
+                let labels: Vec<_> = elements
+                    .iter()
+                    .filter(|e| !e.exiting && e.text.as_deref() == Some("Compacting context…"))
+                    .collect();
+                assert_eq!(labels.len(), 2);
+                assert!((labels[0].rect[0] - labels[1].rect[0]).abs() < 1.0);
+                assert!((labels[0].rect[1] - labels[1].rect[1]).abs() < 1.0);
+                positions.push(
+                    elements
+                        .iter()
+                        .find(|e| e.key.as_deref() == Some("shimmer-band"))
+                        .unwrap()
+                        .rect[0],
+                );
+            }
+            if reduced {
+                assert!((positions[10] - positions[59]).abs() < 0.1, "{positions:?}");
+            } else {
+                assert!(positions[59] - positions[10] > 20.0);
+            }
+            rt.update(|running, _| *running = false);
+            for _ in 0..30 {
+                rt.frame(1.0 / 60.0);
+            }
+            assert!(
+                !rt.elements()
+                    .iter()
+                    .any(|e| !e.exiting && e.key.as_deref() == Some("shimmer-band"))
+            );
+        }
+    }
 }
 
 #[test]
@@ -2153,6 +2544,201 @@ fn default_patch_previews_are_lazy_and_explicit_collapse_survives_stream_updates
 }
 
 #[test]
+fn inline_patches_fit_short_changes_and_shrink_when_files_collapse() {
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        for scene in ["patch-short", "patch-long", "patch-multi"] {
+            let mut rt = design_runtime(scene, size);
+            advance(&mut rt, 0.6);
+            let preview = "patch-preview-0-opencode-tool-patch";
+            let expand = "expand-patch-0-opencode-tool-patch";
+            let compact = element(&rt, preview);
+            assert!(compact.rect[3] <= 206.0);
+            assert!(
+                (compact.rect[3] - compact.visible[3]).abs() < 1.0,
+                "{scene} at {size:?}: {compact:?}"
+            );
+            if scene == "patch-short" {
+                assert!(rt.find(expand).is_none());
+                let last = element(&rt, "df0.n1");
+                assert!((last.visible[3] - last.rect[3]).abs() < 1.0);
+                assert!(
+                    (compact.rect[1] + compact.rect[3] - last.rect[1] - last.rect[3] - 1.0).abs()
+                        < 1.0
+                );
+            } else {
+                click(&mut rt, expand);
+                advance(&mut rt, 0.8);
+                let expanded = element(&rt, preview);
+                assert!(expanded.rect[3] > compact.rect[3]);
+                assert!(expanded.rect[3] <= (size.1 * 0.5).min(480.0) + 2.0);
+                assert!(element(&rt, expand).visible[3] >= 30.0);
+                click(&mut rt, expand);
+                advance(&mut rt, 0.8);
+                assert!((element(&rt, preview).rect[3] - compact.rect[3]).abs() < 1.0);
+            }
+            let owner = (0, "opencode-tool-patch".to_owned());
+            let files = rt.state.live.as_ref().unwrap().patches[&owner]
+                .diff
+                .files()
+                .len();
+            for _ in 0..files {
+                let toggle = rt
+                    .elements()
+                    .into_iter()
+                    .find(|e| {
+                        !e.exiting
+                            && e.path.contains(preview)
+                            && e.label.as_deref() == Some("Collapse file")
+                    })
+                    .unwrap();
+                click(&mut rt, &toggle.path);
+                advance(&mut rt, 0.8);
+            }
+            assert!(rt.find(expand).is_none());
+            assert!(element(&rt, preview).rect[3] < compact.rect[3]);
+            assert!((0..files).all(|f| {
+                rt.state.live.as_ref().unwrap().patches[&owner]
+                    .diff
+                    .collapsed(f)
+            }));
+            let toggle = rt
+                .elements()
+                .into_iter()
+                .find(|e| {
+                    !e.exiting
+                        && e.path.contains(preview)
+                        && e.label.as_deref() == Some("Expand file")
+                })
+                .unwrap();
+            click(&mut rt, &toggle.path);
+            assert!(
+                !rt.state.live.as_ref().unwrap().patches[&owner]
+                    .diff
+                    .collapsed(0)
+            );
+        }
+    }
+}
+
+#[test]
+fn inline_patch_navigation_copy_and_selection_survive_theme_changes() {
+    use rune_kit::diff::{LineRange, LineRef, Side};
+    let mut rt = design_runtime("patch-multi", (1280.0, 1000.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    let owner = (0, "opencode-tool-patch".to_owned());
+    let view = format!("tool-{}", crate::code_view::source_key("0", &owner.1));
+    let draft = rt.state.live.as_ref().unwrap().drafts[0].text.clone();
+    click(&mut rt, &view);
+    rt.update(|s, _| {
+        s.live
+            .as_mut()
+            .unwrap()
+            .patches
+            .get_mut(&owner)
+            .unwrap()
+            .diff
+            .set_selection(Some(LineRange::line(1, LineRef::new(Side::New, 1))));
+    });
+    key(&mut rt, Key::Text("]".into()), Mods::default());
+    advance(&mut rt, 0.3);
+    let selection = rt.state.live.as_ref().unwrap().patches[&owner]
+        .diff
+        .selection()
+        .unwrap();
+    assert_eq!(selection.file, 1);
+    assert!(element(&rt, "df1").scrolled[1] > 0.0);
+    for (family, _) in crate::theme::FAMILIES {
+        for dark in [false, true] {
+            rt.update(|s, _| {
+                let p = &mut s.live.as_mut().unwrap().app.preferences;
+                p.theme = if dark { "dark" } else { "light" }.into();
+                p.theme_family = family.into();
+                p.accent_color = "theme".into();
+            });
+            advance(&mut rt, 0.8);
+            let palette = crate::theme::appearance(dark, family, "theme");
+            assert_eq!(element(&rt, &view).fill, palette.c.bg_base);
+            let header = rt
+                .elements()
+                .into_iter()
+                .find(|e| {
+                    !e.exiting
+                        && e.path.contains(&view)
+                        && e.role == "heading"
+                        && e.visible[3] > 0.0
+                })
+                .unwrap();
+            assert_eq!(header.fill, palette.c.bg_base);
+            assert_eq!(
+                rt.state.live.as_ref().unwrap().patches[&owner]
+                    .diff
+                    .selection(),
+                Some(selection)
+            );
+        }
+    }
+    key(
+        &mut rt,
+        Key::Command('c'),
+        Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    );
+    assert!(clipboard.text().unwrap().contains("MAX_HEIGHT"));
+    key(&mut rt, Key::Escape, Mods::default());
+    assert!(
+        rt.state.live.as_ref().unwrap().patches[&owner]
+            .diff
+            .selection()
+            .is_none()
+    );
+    let copy = rt
+        .elements()
+        .into_iter()
+        .find(|e| {
+            !e.exiting
+                && e.path.contains(&view)
+                && e.label.as_deref() == Some("Copy patch")
+                && e.visible[3] > 0.0
+        })
+        .unwrap();
+    click(&mut rt, &copy.path);
+    let patch = clipboard.text().unwrap();
+    assert!(patch.contains("--- a/src/session.rs") && patch.contains("--- a/src/theme.rs"));
+    click(&mut rt, "tool-details-0-opencode-tool-patch");
+    assert!(rt.state.live.as_ref().unwrap().expanded.contains(&owner));
+    click(&mut rt, "tool-0-opencode-tool-patch");
+    assert!(
+        rt.state
+            .live
+            .as_ref()
+            .unwrap()
+            .collapsed_patches
+            .contains(&owner)
+    );
+    assert!(rt.elements().iter().any(|e| {
+        e.text
+            .as_deref()
+            .is_some_and(|t| t.contains("src/session.rs, src/composer.rs, src/theme.rs"))
+    }));
+    assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, draft);
+    click(&mut rt, "tool-0-opencode-tool-patch");
+    advance(&mut rt, 0.4);
+    rt.update(|_, tx| tx.scroll_to_y(format!("{view}/scroll"), 0.0));
+    advance(&mut rt, 0.2);
+    click(&mut rt, "open-patch-file-0-opencode-tool-patch-0");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.services.checkouts["/projects/caelum"]
+            .selected_file
+            .as_deref(),
+        Some("src/session.rs")
+    );
+    assert!(rt.state.inspector.is_open());
+}
+
+#[test]
 fn compact_review_keeps_code_and_the_targeted_feedback_action_visible() {
     let app = spec();
     let mut state = crate::evaluation::design();
@@ -2183,6 +2769,218 @@ fn compact_review_keeps_code_and_the_targeted_feedback_action_visible() {
             .iter()
             .any(|e| e.text.as_deref().is_some_and(|t| t.contains("MAX_HEIGHT")))
     );
+}
+
+#[test]
+fn settings_pages_keep_controls_visible_and_reset_scrolling_on_navigation() {
+    for size in [(800.0, 620.0), (1280.0, 1000.0)] {
+        let mut rt = design_runtime("vercel-settings", size);
+        for page in [
+            "appearance",
+            "providers",
+            "worktrees",
+            "notifications",
+            "about",
+        ] {
+            click(&mut rt, &format!("settings-{page}"));
+            advance(&mut rt, 0.3);
+            for control in rt
+                .elements()
+                .into_iter()
+                .filter(|e| !e.exiting && e.focusable && e.path.contains("settings-scroll"))
+            {
+                assert!(
+                    control
+                        .rect
+                        .iter()
+                        .zip(control.visible)
+                        .all(|(a, b)| (*a - b).abs() < 1.0),
+                    "{page}: {control:?}"
+                );
+            }
+        }
+        click(&mut rt, "settings-appearance");
+        key(&mut rt, Key::Down, Mods::default());
+        assert!(element(&rt, "settings-providers").focused);
+        key(&mut rt, Key::Text(" ".into()), Mods::default());
+        assert!(element(&rt, "settings-providers").item_selected);
+        rt.update(|s, _| {
+            let app = &mut s.live.as_mut().unwrap().app;
+            let scope = app.sessions[0].scope.clone();
+            app.choices.get_mut(&scope).unwrap().models[0].name = "Friendly model name".into();
+            app.preferences
+                .providers
+                .entry("codex".into())
+                .or_default()
+                .model = Some("Test model".into());
+            app.notices
+                .insert(scope, "Provider connection needs attention.\n".repeat(24));
+        });
+        advance(&mut rt, 0.3);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|e| e.path.contains("settings-model-trigger")
+                    && e.text.as_deref() == Some("Friendly model name"))
+        );
+        rt.update(|_, tx| tx.scroll_to_y("settings-scroll", 240.0));
+        advance(&mut rt, 0.4);
+        assert!(element(&rt, "settings-model-trigger").scrolled[1] > 100.0);
+        click(&mut rt, "settings-appearance");
+        click(&mut rt, "settings-providers");
+        advance(&mut rt, 0.4);
+        let heading = rt
+            .elements()
+            .into_iter()
+            .find(|e| {
+                !e.exiting
+                    && e.path.contains("settings-scroll")
+                    && e.text.as_deref() == Some("Providers")
+            })
+            .unwrap();
+        assert!(heading.scrolled[1].abs() < 1.0 && heading.visible[3] > 0.0);
+    }
+}
+
+#[test]
+fn about_update_checks_hide_stale_downloads_and_keep_errors_scoped() {
+    use caelum_core::application::{Command, Event, Reply, Task, TaskReply};
+    use caelum_protocol::{UpdateCheck, UpdateStatus};
+    let mut rt = design_runtime("about", (800.0, 620.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    click(&mut rt, "copy-app-details");
+    let details = clipboard.text().unwrap();
+    for value in [
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        "MIT licence",
+        caelum_core::updates::REPOSITORY_URL,
+    ] {
+        assert!(details.contains(value));
+    }
+    key(&mut rt, Key::Tab, Mods::default());
+    assert!(element(&rt, "check-updates").focused);
+    key(&mut rt, Key::Text(" ".into()), Mods::default());
+    advance(&mut rt, 0.2);
+    let request = |rt: &mut Runtime<Workspace>| {
+        rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .into_iter()
+            .find_map(|(id, command)| matches!(command, Command::Task(Task::Updates)).then_some(id))
+            .unwrap()
+    };
+    let first = request(&mut rt);
+    assert!(!element(&rt, "check-updates").focusable);
+    let update = UpdateCheck {
+        current_version: env!("CARGO_PKG_VERSION").into(),
+        latest_version: "0.2.0".into(),
+        status: UpdateStatus::Available,
+        release_url: "https://github.com/ch55secake/caelum/releases/tag/v0.2.0".into(),
+        download_url: Some("https://github.com/ch55secake/caelum/releases/download/v0.2.0/Caelum-v0.2.0-aarch64.dmg".into()),
+    };
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.apply(Event::Completed(
+            first,
+            Ok(Reply::Task(TaskReply::Updates(update.clone()))),
+        ))
+    });
+    advance(&mut rt, 0.3);
+    assert!(element(&rt, "download-update").visible[3] >= 30.0);
+    click(&mut rt, "check-updates");
+    let retry = request(&mut rt);
+    assert!(rt.find("download-update").is_none());
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        app.apply(Event::Completed(
+            retry,
+            Err("Update service is offline".into()),
+        ));
+        app.task(Task::ImportSettings {
+            path: "old-settings.json".into(),
+        });
+        for (id, command) in app.commands() {
+            if matches!(command, Command::Task(Task::ImportSettings { .. })) {
+                app.apply(Event::Completed(id, Err("Invalid settings file".into())));
+            }
+        }
+    });
+    advance(&mut rt, 0.3);
+    assert!(rt.find("download-update").is_none());
+    let status = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.role == "status" && e.path.contains("about-updates"))
+        .unwrap();
+    assert!(
+        status
+            .label
+            .as_ref()
+            .unwrap()
+            .contains("Update service is offline")
+    );
+    assert!(!status.label.unwrap().contains("Invalid settings file"));
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some("Invalid settings file"))
+    );
+    click(&mut rt, "check-updates");
+    let retry = request(&mut rt);
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().app.apply(Event::Completed(
+            retry,
+            Ok(Reply::Task(TaskReply::Updates(UpdateCheck {
+                status: UpdateStatus::UpToDate,
+                latest_version: env!("CARGO_PKG_VERSION").into(),
+                ..update.clone()
+            }))),
+        ));
+    });
+    advance(&mut rt, 0.3);
+    assert!(rt.find("download-update").is_none());
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some("You’re up to date"))
+    );
+}
+
+#[test]
+fn about_release_states_fit_the_compact_dialog_and_offer_the_right_action() {
+    for scene in [
+        "about-checking",
+        "about-current",
+        "about-ahead",
+        "about-release",
+        "vercel-about-update",
+    ] {
+        let rt = design_runtime(scene, (800.0, 620.0));
+        assert_eq!(
+            rt.find("download-update").is_some(),
+            scene == "vercel-about-update"
+        );
+        assert_eq!(rt.find("view-release").is_some(), scene == "about-release");
+        for control in rt
+            .elements()
+            .into_iter()
+            .filter(|e| !e.exiting && e.focusable && e.path.contains("settings-scroll"))
+        {
+            assert!(
+                control
+                    .rect
+                    .iter()
+                    .zip(control.visible)
+                    .all(|(a, b)| (*a - b).abs() < 1.0),
+                "{scene}: {control:?}"
+            );
+        }
+    }
 }
 
 #[test]

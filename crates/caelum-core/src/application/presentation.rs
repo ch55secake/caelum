@@ -34,7 +34,8 @@ pub fn entry_text(entry: &Entry) -> String {
 }
 
 pub fn entry_visible(entry: &Entry) -> bool {
-    entry.kind == EntryKind::Tool
+    matches!(entry.kind, EntryKind::Tool | EntryKind::Compaction)
+        || (entry.kind == EntryKind::Reasoning && !entry.complete)
         || (!entry.text.contains('<') && !entry.text.trim().is_empty())
         || !entry_text(entry).trim().is_empty()
         || !entry.media.is_empty()
@@ -376,13 +377,7 @@ impl Tool {
             .find_map(|key| input[*key].as_str())
             .map(str::to_owned)
             .or_else(|| input.as_str().map(str::to_owned))
-            .unwrap_or_else(|| {
-                if !paths.is_empty() {
-                    paths.join(", ")
-                } else {
-                    entry.input.lines().next().unwrap_or_default().into()
-                }
-            })
+            .unwrap_or_else(|| paths.join(", "))
         };
         let mut details = Vec::new();
         if let Some(cwd) = input["cwd"]
@@ -398,6 +393,7 @@ impl Tool {
         if let Some(exit) = entry.metadata["exitCode"]
             .as_i64()
             .or(entry.metadata["exit"].as_i64())
+            .filter(|exit| *exit != 0)
         {
             details.push(format!("Exit {exit}"));
         }
@@ -436,7 +432,12 @@ impl Tool {
             Value::String(text) => text,
             value => serde_json::to_string_pretty(&value).unwrap_or_default(),
         };
-        let state = if !entry.error.is_empty() {
+        let state = if !entry.error.is_empty()
+            || entry.metadata["exitCode"]
+                .as_i64()
+                .or(entry.metadata["exit"].as_i64())
+                .is_some_and(|exit| exit != 0)
+        {
             Outcome::Failure
         } else {
             outcome(&entry.status, entry.complete)

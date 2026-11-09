@@ -7,7 +7,7 @@ use crate::{
 };
 use caelum_core::application::{
     Scope, Task, Workspace as Application,
-    presentation::{Outcome, duration, now},
+    presentation::{duration, now},
 };
 use caelum_protocol::OpenCodeBackgroundShell;
 use rune::{El, col, row, text};
@@ -91,14 +91,7 @@ fn header(
         .w_full()
         .center_y()
         .gap(8.0)
-        .child(ui::outcome(
-            if running {
-                Outcome::Running
-            } else {
-                Outcome::Neutral
-            },
-            k,
-        ))
+        .child(rune::icon(&ui::TERMINAL, 14.0).color(k.c.icon_muted))
         .child(
             text(&shell.command)
                 .font(k.ty.mono)
@@ -108,6 +101,7 @@ fn header(
                 .grow(1.0)
                 .help(&shell.command),
         )
+        .children(running.then(|| ui::busy_text("Running", k.ty.small, k)))
         .child(ui::caption(
             if running {
                 duration(now().saturating_sub(shell.started_at))

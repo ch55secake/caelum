@@ -146,7 +146,7 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
         )
         .on_select(move |s: &mut Workspace, _| s.selected = i);
         if session.working() {
-            item = item.status(RowStatus::Busy);
+            item = item.status(RowStatus::Other(ui::busy_icon(&ui::CLOCK, 12.0, k)));
         }
         let item = ui::selected_row(
             item.build(k).key(format!("session-{i}")),
@@ -656,6 +656,36 @@ fn spec() -> AppSpec<Workspace> {
             ("tools-collapsed", |s| {
                 evaluation::scene(s, "tools-collapsed")
             }),
+            ("tool-running", |s| evaluation::scene(s, "tool-running")),
+            ("tool-failure", |s| evaluation::scene(s, "tool-failure")),
+            ("compaction", |s| evaluation::scene(s, "compaction")),
+            ("compaction-running", |s| {
+                evaluation::scene(s, "compaction-running")
+            }),
+            ("compaction-empty", |s| {
+                evaluation::scene(s, "compaction-empty")
+            }),
+            ("compaction-error", |s| {
+                evaluation::scene(s, "compaction-error")
+            }),
+            ("compaction-interrupted", |s| {
+                evaluation::scene(s, "compaction-interrupted")
+            }),
+            ("vercel-compaction", |s| {
+                evaluation::scene(s, "vercel-compaction")
+            }),
+            ("patch-short", |s| evaluation::scene(s, "patch-short")),
+            ("patch-long", |s| evaluation::scene(s, "patch-long")),
+            ("patch-multi", |s| evaluation::scene(s, "patch-multi")),
+            ("vercel-patch-short", |s| {
+                evaluation::scene(s, "vercel-patch-short")
+            }),
+            ("vercel-patch-long", |s| {
+                evaluation::scene(s, "vercel-patch-long")
+            }),
+            ("vercel-patch-multi", |s| {
+                evaluation::scene(s, "vercel-patch-multi")
+            }),
             ("merge-ready", |s| evaluation::scene(s, "merge-ready")),
             ("merge-blocked", |s| evaluation::scene(s, "merge-blocked")),
             ("merge-pending", |s| evaluation::scene(s, "merge-pending")),
@@ -724,6 +754,16 @@ fn spec() -> AppSpec<Workspace> {
             ("notifications", |s| evaluation::scene(s, "notifications")),
             ("storage", |s| evaluation::scene(s, "storage")),
             ("about", |s| evaluation::scene(s, "about")),
+            ("about-checking", |s| evaluation::scene(s, "about-checking")),
+            ("about-current", |s| evaluation::scene(s, "about-current")),
+            ("about-update", |s| evaluation::scene(s, "about-update")),
+            ("about-release", |s| evaluation::scene(s, "about-release")),
+            ("about-ahead", |s| evaluation::scene(s, "about-ahead")),
+            ("about-error", |s| evaluation::scene(s, "about-error")),
+            ("vercel-about", |s| evaluation::scene(s, "vercel-about")),
+            ("vercel-about-update", |s| {
+                evaluation::scene(s, "vercel-about-update")
+            }),
             ("models", |s| evaluation::scene(s, "models")),
             ("launcher", |s| evaluation::scene(s, "launcher")),
             ("session", |s| evaluation::scene(s, "session")),

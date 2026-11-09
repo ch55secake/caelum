@@ -10,7 +10,7 @@ use crate::{
 use caelum_core::application::{Task, Workspace as Application};
 use caelum_protocol::GitWorktree;
 use rune::{El, ScrollSpec, col, icon, row, text};
-use rune_kit::{ButtonVariant, Kit, ScrollBar, glyphs};
+use rune_kit::{ButtonVariant, Kit, ScrollBar};
 
 #[derive(Default)]
 pub struct State {
@@ -472,17 +472,6 @@ pub fn sidebar(s: &Workspace, k: &Kit, project: &str) -> Option<(El, f32)> {
                             .center_y()
                             .radius(5.0)
                             .px(4.0)
-                            .child(
-                                icon(
-                                    if expanded {
-                                        &glyphs::CHEVRON_DOWN
-                                    } else {
-                                        &glyphs::CARET_RIGHT
-                                    },
-                                    12.0,
-                                )
-                                .color(k.c.icon_muted),
-                            )
                             .child(
                                 text("Worktrees")
                                     .font(k.ty.small)

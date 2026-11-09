@@ -129,16 +129,27 @@ impl OpenCodeProvider {
     ) -> Result<OpenCodeSessionList, OpenCodeError> {
         let project = Project::open(project_path)?;
         let server = self.server(&project)?;
-        Self::list_sessions_on(&project, &server)
+        Self::list_sessions_on(&project, &server, false)
+    }
+
+    /// Return archived OpenCode sessions for this project.
+    pub fn list_archived_sessions(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<OpenCodeSessionList, OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        Self::list_sessions_on(&project, &server, true)
     }
 
     fn list_sessions_on(
         project: &Project,
         server: &OpenCodeServer,
+        archived: bool,
     ) -> Result<OpenCodeSessionList, OpenCodeError> {
         let query = [
             ("directory", project.path().to_string_lossy().into_owned()),
-            ("archived", "false".to_owned()),
+            ("archived", archived.to_string()),
             ("order", "desc".to_owned()),
             ("limit", SESSION_LIMIT.to_owned()),
         ];
@@ -719,7 +730,7 @@ impl OpenCodeProvider {
             .map(|(path, server)| (path.clone(), Arc::clone(server)))
             .collect();
         for (path, server) in servers {
-            if Self::list_sessions_on(&Project::open(&path)?, &server)?
+            if Self::list_sessions_on(&Project::open(&path)?, &server, false)?
                 .sessions
                 .iter()
                 .any(|session| session.is_working)
@@ -1747,8 +1758,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"data": list(FORMS.values()) + [{"id": "frm_global", "sessionID": "global", "fields": []}]})
         elif path == "/api/session":
             archived = SESSION.get("time", {}).get("archived") is not None
-            assert parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["false"]
-            self.send_json({"data": [] if archived else [SESSION], "cursor": {"previous": None, "next": None}})
+            requested_archived = parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["true"]
+            self.send_json({"data": [SESSION] if archived == requested_archived else [], "cursor": {"previous": None, "next": None}})
         elif path == "/api/session/active":
             self.send_json({"data": {"ses_fake": {"type": "running"}} if os.path.exists(os.path.join(PROJECT, "busy")) else {}})
         elif path == "/api/shell":
@@ -2670,6 +2681,14 @@ server.serve_forever()
         provider
             .set_session_archived(&project_path, "ses_fake", true)
             .unwrap();
+        assert_eq!(
+            provider
+                .list_archived_sessions(&project_path)
+                .unwrap()
+                .sessions[0]
+                .id,
+            "ses_fake"
+        );
         assert!(provider
             .list_sessions(&project_path)
             .unwrap()

@@ -10,8 +10,8 @@ use caelum_core::{
     application::{Provider, Scope, Task},
     updates,
 };
-use rune::{El, FileDialogOptions, ScrollSpec, col, row, text};
-use rune_kit::{ButtonVariant, Kit, ScrollBar, SelectAppearance, Switch};
+use rune::{El, FileDialogOptions, ScrollSpec, TextStyle, col, icon, row, text};
+use rune_kit::{ButtonVariant, Kit, ScrollBar, SelectAppearance, Switch, glyphs};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Page {
@@ -23,25 +23,119 @@ pub enum Page {
     About,
 }
 
+pub fn height(s: &Workspace) -> f32 {
+    let l = live(s);
+    let height = match l.panels.settings_page {
+        Page::Appearance => 352.0,
+        Page::Providers => {
+            360.0
+                + if l.panels.settings_provider == Provider::OpenCode {
+                    56.0
+                } else {
+                    0.0
+                }
+                + if l.app.active_project.as_ref().is_some_and(|project| {
+                    l.app.notices.contains_key(&Scope {
+                        project: project.clone(),
+                        provider: l.panels.settings_provider,
+                    })
+                }) {
+                    80.0
+                } else {
+                    0.0
+                }
+        }
+        Page::Worktrees => 236.0,
+        Page::Notifications => 316.0,
+        Page::About => 360.0,
+    };
+    height
+        + if l.app.persistence_error.is_some() {
+            64.0
+        } else {
+            0.0
+        }
+}
+
+pub(crate) fn heading(title: &str, detail: &str, k: &Kit) -> El {
+    ui::section(title, detail, k).pb(8.0)
+}
+
+pub(crate) fn setting_row(title: &str, detail: &str, control: El, k: &Kit) -> El {
+    let mut label = col()
+        .grow(1.0)
+        .min_w(0.0)
+        .gap(3.0)
+        .child(text(title).font(k.ty.ui_medium).color(k.c.text_base).wrap());
+    if !detail.is_empty() {
+        label = label.child(ui::caption(detail, k));
+    }
+    row()
+        .w_full()
+        .min_h(54.0)
+        .py(10.0)
+        .gap(16.0)
+        .center_y()
+        .child(label)
+        .child(control.w(232.0))
+}
+
 pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let page = live(s).panels.settings_page;
-    let mut nav = col().w(132.0).h_full().gap(4.0).pr(12.0);
-    for (name, target) in [
-        ("Appearance", Page::Appearance),
-        ("Providers", Page::Providers),
-        ("Worktrees", Page::Worktrees),
-        ("Notifications", Page::Notifications),
-        ("About", Page::About),
+    let mut nav = col()
+        .w(128.0)
+        .h_full()
+        .gap(4.0)
+        .pr(8.0)
+        .role("tablist")
+        .label("Settings sections")
+        .focus_group()
+        .key("settings-navigation");
+    for (name, target, glyph) in [
+        ("Appearance", Page::Appearance, &crate::APPEARANCE),
+        ("Providers", Page::Providers, &ui::AGENT),
+        ("Worktrees", Page::Worktrees, &ui::BRANCH),
+        ("Notifications", Page::Notifications, &ui::BELL),
+        ("About", Page::About, &crate::ORBIT),
     ] {
         nav = nav.child(
-            ui::tab(name, page == target, k)
-                .on_press(move |s: &mut Workspace| {
-                    let p = &mut live_mut(s).panels;
-                    p.settings_page = target;
-                    p.settings_menu = None;
-                })
-                .w_full()
-                .key(format!("settings-{}", name.to_lowercase())),
+            k.interactive(
+                row()
+                    .w_full()
+                    .h(34.0)
+                    .px(8.0)
+                    .gap(8.0)
+                    .center_y()
+                    .radius(6.0)
+                    .fill(if page == target {
+                        k.c.hover
+                    } else {
+                        rune::Color::TRANSPARENT
+                    })
+                    .child(icon(glyph, 14.0).color(if page == target {
+                        k.c.icon_base
+                    } else {
+                        k.c.icon_muted
+                    }))
+                    .child(text(name).font(k.ty.ui_medium).color(if page == target {
+                        k.c.text_base
+                    } else {
+                        k.c.text_muted
+                    })),
+            )
+            .role("tab")
+            .label(name)
+            .focusable(true)
+            .focus_selected(page == target)
+            .focus_ring(1.0, 0.0, k.c.border_focus)
+            .on_press_tx(move |s: &mut Workspace, tx| {
+                let p = &mut live_mut(s).panels;
+                p.settings_page = target;
+                p.settings_menu = None;
+                tx.scroll_to_y("settings-scroll", 0.0);
+            })
+            .w_full()
+            .key(format!("settings-{}", name.to_lowercase())),
         );
     }
     let body = match page {
@@ -51,7 +145,7 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         Page::Notifications => notifications(s, k),
         Page::About => about(s, k),
     };
-    let mut content = col().w_full().gap(12.0).child(body);
+    let mut content = col().w_full().gap(12.0).pr(6.0).child(body);
     if let Some(error) = &live(s).app.persistence_error {
         content = content
             .child(ui::caption(error, k).color(k.c.danger.fg))
@@ -67,7 +161,7 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .min_h(0.0)
         .gap(16.0)
         .child(nav)
-        .child(rune::el().w(1.0).h_full().fill(k.c.border_base))
+        .child(rune::el().w(1.0).h_full().fill(k.c.border_muted))
         .child(
             col()
                 .grow(1.0)
@@ -93,7 +187,7 @@ fn picker(
 ) -> El {
     Select::new(id, values)
         .appearance(SelectAppearance::Field)
-        .width(260.0)
+        .width(232.0)
         .current(Some(current))
         .label(id)
         .open(live(s).panels.settings_menu == Some(id))
@@ -116,9 +210,9 @@ fn picker(
 fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let app = &live(s).app;
     let provider = live(s).panels.settings_provider;
-    let mut body = col().w_full().gap(12.0).child(ui::section(
+    let mut body = col().w_full().child(heading(
         "Providers",
-        "Choose the provider and defaults for new sessions.",
+        "Defaults for new sessions. Adjust each session in the composer.",
         k,
     ));
     let mut defaults = row().gap(4.0);
@@ -130,29 +224,32 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                 k,
             )
             .on_press(move |s: &mut Workspace| live_mut(s).app.preferences.default_provider = p)
+            .grow(1.0)
             .key(format!("default-provider-{}", p.as_str())),
         );
     }
-    body = body.child(
-        ui::card(k)
-            .gap(8.0)
-            .child(ui::caption("Start new sessions with", k))
-            .child(defaults),
-    );
+    body = body
+        .child(setting_row(
+            "Default provider",
+            "Start new sessions with",
+            defaults,
+            k,
+        ))
+        .child(ui::divider(k));
     let mut tabs = row().gap(6.0);
     for p in Provider::ALL {
         tabs = tabs.child(
             ui::tab(ui::provider_name(p), p == provider, k)
                 .on_press(move |s: &mut Workspace| {
                     live_mut(s).panels.settings_provider = p;
+                    live_mut(s).panels.settings_menu = None;
                     live_mut(s).app.refresh_choices(p);
                 })
                 .key(format!("settings-provider-{}", p.as_str())),
         );
     }
-    body = body.child(tabs);
     let Some(project) = &app.active_project else {
-        return body.child(ui::caption(
+        return body.child(tabs.py(10.0)).child(ui::caption(
             "Open a project to discover available models and agents.",
             k,
         ));
@@ -164,8 +261,11 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let choices = app.choices.get(&scope);
     body = body.child(
         row()
+            .w_full()
+            .py(10.0)
             .gap(8.0)
             .center_y()
+            .child(tabs)
             .child(
                 ui::caption(
                     if app.notices.contains_key(&scope) {
@@ -180,10 +280,10 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                 .grow(1.0),
             )
             .child(
-                Button::new("Refresh status")
-                    .variant(ButtonVariant::GhostMuted)
+                crate::quiet_button(&ui::REFRESH, "Refresh provider status")
                     .on_press(move |s: &mut Workspace| live_mut(s).app.refresh_choices(provider))
-                    .build(k),
+                    .build(k)
+                    .key("settings-provider-refresh"),
             ),
     );
     if let Some(error) = app.notices.get(&scope) {
@@ -195,22 +295,23 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .get(provider.as_str())
         .cloned()
         .unwrap_or_default();
-    body = body.child(ui::caption("Default model", k)).child(
-        Select::new::<&str>("settings-model", &[])
-            .appearance(SelectAppearance::Field)
-            .width(260.0)
-            .current(options.model.as_deref())
-            .placeholder("Provider default")
-            .label("Default model")
-            .open(live(s).models.is_open())
-            .on_toggle(move |s: &mut Workspace| crate::models::open(s, Some(provider)))
-            .trigger(k),
-    );
     let model = choices.and_then(|c| {
         c.models.iter().find(|m| {
             Some(m.id.as_str()) == options.model.as_deref().or(c.default_model.as_deref())
         })
     });
+    let mut model_picker = Select::new::<&str>("settings-model", &[])
+        .appearance(SelectAppearance::Field)
+        .width(232.0)
+        .current(options.model.as_deref())
+        .placeholder("Provider default")
+        .label("Default model")
+        .open(live(s).models.is_open())
+        .on_toggle(move |s: &mut Workspace| crate::models::open(s, Some(provider)));
+    if let Some(model) = model.filter(|_| options.model.is_some()) {
+        model_picker = model_picker.display(&model.name);
+    }
+    body = body.child(setting_row("Model", "", model_picker.trigger(k), k));
     let mut efforts = vec!["Model default".into()];
     if let Some(model) = model {
         efforts.extend(model.efforts.iter().map(|e| e.id.clone()));
@@ -220,35 +321,16 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     {
         efforts.push(saved.clone());
     }
-    body = body.child(ui::caption("Reasoning effort", k)).child(picker(
-        s,
-        k,
-        layers,
-        "Default effort",
-        &efforts,
-        options.effort.as_deref().unwrap_or("Model default"),
-        move |s, value| {
-            live_mut(s)
-                .app
-                .preferences
-                .providers
-                .entry(provider.as_str().into())
-                .or_default()
-                .effort = (value != "Model default").then(|| value.into());
-        },
-    ));
-    if provider == Provider::OpenCode {
-        let mut agents = vec!["Provider default".into()];
-        if let Some(choices) = choices {
-            agents.extend(choices.agents.iter().map(|a| a.id.clone()));
-        }
-        body = body.child(ui::caption("Default agent", k)).child(picker(
+    body = body.child(setting_row(
+        "Reasoning effort",
+        "",
+        picker(
             s,
             k,
             layers,
-            "Default agent",
-            &agents,
-            options.agent.as_deref().unwrap_or("Provider default"),
+            "Default effort",
+            &efforts,
+            options.effort.as_deref().unwrap_or("Model default"),
             move |s, value| {
                 live_mut(s)
                     .app
@@ -256,10 +338,40 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                     .providers
                     .entry(provider.as_str().into())
                     .or_default()
-                    .agent = (value != "Provider default").then(|| value.into());
+                    .effort = (value != "Model default").then(|| value.into());
             },
+        ),
+        k,
+    ));
+    if provider == Provider::OpenCode {
+        let mut agents = vec!["Provider default".into()];
+        if let Some(choices) = choices {
+            agents.extend(choices.agents.iter().map(|a| a.id.clone()));
+        }
+        body = body.child(setting_row(
+            "Agent",
+            "",
+            picker(
+                s,
+                k,
+                layers,
+                "Default agent",
+                &agents,
+                options.agent.as_deref().unwrap_or("Provider default"),
+                move |s, value| {
+                    live_mut(s)
+                        .app
+                        .preferences
+                        .providers
+                        .entry(provider.as_str().into())
+                        .or_default()
+                        .agent = (value != "Provider default").then(|| value.into());
+                },
+            ),
+            k,
         ));
     }
+    let mut actions = row().w_full().gap(6.0).pt(10.0);
     if let Some(model) = &options.model {
         let id = model.clone();
         let favorite = app
@@ -267,7 +379,7 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .favorite_models
             .get(provider.as_str())
             .is_some_and(|f| f.contains(model));
-        body = body.child(
+        actions = actions.child(
             Button::new(if favorite {
                 "★ Remove favourite"
             } else {
@@ -290,17 +402,19 @@ fn providers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
             .build(k),
         );
     }
-    body.child(
-        Button::new("Reset provider defaults")
-            .variant(ButtonVariant::GhostMuted)
-            .on_press(move |s: &mut Workspace| {
-                live_mut(s)
-                    .app
-                    .preferences
-                    .providers
-                    .remove(provider.as_str());
-            })
-            .build(k),
+    body.child(ui::divider(k)).child(
+        actions.child(
+            Button::new("Reset provider defaults")
+                .variant(ButtonVariant::GhostMuted)
+                .on_press(move |s: &mut Workspace| {
+                    live_mut(s)
+                        .app
+                        .preferences
+                        .providers
+                        .remove(provider.as_str());
+                })
+                .build(k),
+        ),
     )
 }
 
@@ -308,11 +422,12 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
     col()
         .w_full()
         .gap(12.0)
-        .child(ui::section(
+        .child(heading(
             "Worktrees",
             "Choose where Caelum creates independent checkouts.",
             k,
         ))
+        .child(ui::caption("Storage directory", k))
         .child(
             ui::field(
                 &live(s).panels.directory,
@@ -347,7 +462,7 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
                 )
                 .child(
                     Button::new("Save directory")
-                        .variant(ButtonVariant::Outline)
+                        .variant(ButtonVariant::Contrast)
                         .disabled(
                             live(s).panels.directory.text
                                 == live(s).app.preferences.worktree_directory,
@@ -373,28 +488,29 @@ fn worktrees(s: &Workspace, k: &Kit) -> El {
 
 fn notifications(s: &Workspace, k: &Kit) -> El {
     let p = &live(s).app.preferences;
-    let mut body = col().w_full().gap(12.0).child(ui::section(
+    let mut body = col().w_full().child(heading(
         "Notifications",
-        "A gentle sound when work finishes or needs your input.",
+        "Choose when Caelum plays a sound.",
         k,
     ));
+    let mut modes = row().gap(4.0);
     for (name, detail, mode) in [
         ("Off", "Keep the workspace quiet", "off"),
         (
-            "Background only",
+            "Background",
             "Notify when the response isn’t visible",
             "background",
         ),
         ("Always", "Notify whenever work finishes", "always"),
     ] {
-        body = body.child(
-            ui::choice(
+        modes = modes.child(
+            ui::tab(
                 name,
-                detail,
                 (p.notifications && p.notification_mode == mode)
                     || (!p.notifications && mode == "off"),
                 k,
             )
+            .help(detail)
             .on_press(move |s: &mut Workspace| {
                 let p = &mut live_mut(s).app.preferences;
                 p.notification_mode = mode.into();
@@ -403,13 +519,15 @@ fn notifications(s: &Workspace, k: &Kit) -> El {
             .key(format!("notification-{mode}")),
         );
     }
-    body = body.child(ui::caption(
-        "Background only sounds when the latest response is not visible in the foreground.",
-        k,
-    ));
-    let mut volume = row()
-        .gap(6.0)
-        .child(ui::caption(format!("Volume: {}%", p.sound_volume), k));
+    body = body
+        .child(setting_row(
+            "When to notify",
+            "Background: only when the response isn't visible.",
+            modes,
+            k,
+        ))
+        .child(ui::divider(k));
+    let mut volume = row().gap(6.0).center_y();
     for (name, delta) in [("−", -10i16), ("+", 10)] {
         volume = volume.child(
             Button::new(name)
@@ -423,15 +541,29 @@ fn notifications(s: &Workspace, k: &Kit) -> El {
                     let p = &mut live_mut(s).app.preferences;
                     p.sound_volume = (p.sound_volume as i16 + delta).clamp(0, 100) as u8;
                 })
-                .build(k),
+                .build(k)
+                .label(if delta < 0 {
+                    "Decrease volume"
+                } else {
+                    "Increase volume"
+                }),
         );
     }
-    body = body.child(volume).child(
+    volume = volume.child(
         Button::new("Test sound")
+            .variant(ButtonVariant::GhostMuted)
             .disabled(p.sound_volume == 0)
             .on_press(|s: &mut Workspace| live_mut(s).app.test_sound())
             .build(k),
     );
+    body = body
+        .child(setting_row(
+            "Volume",
+            &format!("{}%", p.sound_volume),
+            volume,
+            k,
+        ))
+        .child(ui::divider(k));
     for (name, shell) in [
         ("Background shell completions", true),
         ("Approvals and questions needing input", false),
@@ -441,28 +573,25 @@ fn notifications(s: &Workspace, k: &Kit) -> El {
         } else {
             p.input_needed
         };
-        body = body.child(
-            row()
-                .w_full()
-                .gap(12.0)
-                .py(8.0)
-                .center_y()
-                .child(ui::caption(name, k).grow(1.0))
-                .child(
-                    Switch::new(enabled)
-                        .label(name)
-                        .hide_label()
-                        .on_toggle(move |s: &mut Workspace| {
-                            let p = &mut live_mut(s).app.preferences;
-                            if shell {
-                                p.background_shells = !p.background_shells;
-                            } else {
-                                p.input_needed = !p.input_needed;
-                            }
-                        })
-                        .build(k),
-                ),
-        );
+        body = body.child(setting_row(
+            name,
+            "",
+            row().justify_end().child(
+                Switch::new(enabled)
+                    .label(name)
+                    .hide_label()
+                    .on_toggle(move |s: &mut Workspace| {
+                        let p = &mut live_mut(s).app.preferences;
+                        if shell {
+                            p.background_shells = !p.background_shells;
+                        } else {
+                            p.input_needed = !p.input_needed;
+                        }
+                    })
+                    .build(k),
+            ),
+            k,
+        ));
     }
     body
 }
@@ -475,103 +604,236 @@ fn about(s: &Workspace, k: &Kit) -> El {
         std::env::consts::ARCH,
         updates::REPOSITORY_URL
     );
-    let copy = details.clone();
-    let mut body = col()
-        .w_full()
-        .gap(12.0)
-        .child(ui::section(
-            "Caelum",
-            "A native home for AI coding agents",
-            k,
-        ))
-        .child(
-            text(details)
-                .font(k.ty.ui)
-                .color(k.c.text_base)
-                .wrap()
-                .selectable(true),
-        )
-        .child(
-            Button::new("Copy app details")
-                .variant(ButtonVariant::Outline)
-                .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
-                .build(k)
-                .key("copy-app-details"),
-        );
-    for (name, url) in [
-        ("Repository", updates::REPOSITORY_URL),
-        ("Releases", updates::RELEASES_URL),
-        ("Licence", updates::LICENSE_URL),
+    let platform = match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    };
+    let architecture = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "Apple silicon",
+        ("macos", "x86_64") => "Intel",
+        (_, "aarch64") => "ARM64",
+        (_, "x86_64") => "x64",
+        (_, other) => other,
+    };
+    let mut body = col().w_full().gap(16.0).child(
+        row()
+            .w_full()
+            .gap(16.0)
+            .center_y()
+            .py(8.0)
+            .child(
+                row()
+                    .size(64.0, 64.0)
+                    .center()
+                    .radius(14.0)
+                    .fill(k.c.bg_base)
+                    .border(1.0, k.c.border_muted)
+                    .child(icon(&crate::ORBIT, 34.0).color(k.c.text_accent)),
+            )
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(3.0)
+                    .child(
+                        text("Caelum")
+                            .font(TextStyle::new(24.0, 600.0).lh(30.0))
+                            .color(k.c.text_base),
+                    )
+                    .child(ui::caption("A native home for AI coding agents.", k))
+                    .child(
+                        row()
+                            .gap(8.0)
+                            .center_y()
+                            .child(
+                                ui::caption(format!("Version {}", env!("CARGO_PKG_VERSION")), k)
+                                    .selectable(true),
+                            )
+                            .child(ui::caption("·", k))
+                            .child(ui::caption(format!("{platform} · {architecture}"), k)),
+                    ),
+            )
+            .child(
+                crate::quiet_button(&glyphs::COPY, "Copy app details")
+                    .on_press_tx(move |_: &mut Workspace, tx| tx.copy(details.clone()))
+                    .build(k)
+                    .key("copy-app-details"),
+            ),
+    );
+    body = body.child(about_updates(s, k));
+    let mut links = row().w_full().gap(8.0);
+    for (name, url, key) in [
+        ("Source code", updates::REPOSITORY_URL, "about-repository"),
+        ("Release notes", updates::RELEASES_URL, "about-releases"),
+        ("MIT licence", updates::LICENSE_URL, "about-licence"),
     ] {
-        body = body.child(
-            Button::new(name)
-                .variant(ButtonVariant::GhostMuted)
-                .on_press_tx(move |_: &mut Workspace, tx| {
-                    let _ = tx.open_url(url);
-                })
-                .build(k),
+        links = links.child(
+            k.interactive(
+                row()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .h(32.0)
+                    .px(8.0)
+                    .gap(8.0)
+                    .center_y()
+                    .radius(6.0)
+                    .child(text(name).font(k.ty.ui).color(k.c.text_base).grow(1.0))
+                    .child(icon(&ui::EXTERNAL, 13.0).color(k.c.icon_muted)),
+            )
+            .role("link")
+            .label(name)
+            .help("Open in browser")
+            .focusable(true)
+            .focus_ring(1.0, 0.0, k.c.border_focus)
+            .on_press_tx(move |_: &mut Workspace, tx| {
+                let _ = tx.open_url(url);
+            })
+            .key(key),
         );
     }
-    let busy = live(s).app.services.busy(&Task::Updates);
-    body = body.child(
-        Button::new(if busy {
-            "Checking…"
-        } else {
-            "Check for updates"
-        })
-        .variant(ButtonVariant::Outline)
-        .disabled(busy)
-        .on_press(|s: &mut Workspace| live_mut(s).app.task(Task::Updates))
-        .build(k)
-        .key("check-updates"),
-    );
-    if let Some(update) = &live(s).app.services.update {
-        let status = match update.status {
-            caelum_protocol::UpdateStatus::Available => {
-                format!("Version {} is available", update.latest_version)
-            }
-            caelum_protocol::UpdateStatus::UpToDate => "You’re up to date".into(),
-            caelum_protocol::UpdateStatus::Ahead => {
-                "This build is newer than the latest release".into()
-            }
+    body = body.child(links).child(ui::divider(k));
+    body = body.child(setting_row(
+        "Import preferences",
+        "From a legacy Caelum settings file.",
+        row().justify_end().child(
+            Button::new("Import JSON…")
+                .variant(ButtonVariant::Outline)
+                .on_press_tx(|_: &mut Workspace, tx| {
+                    tx.open_file(
+                        FileDialogOptions::default(),
+                        |s: &mut Workspace, result, _| match result {
+                            Ok(Some(path)) => live_mut(s).app.task(Task::ImportSettings {
+                                path: path.to_string_lossy().into_owned(),
+                            }),
+                            Err(error) => live_mut(s).app.error = Some(error.to_string()),
+                            _ => {}
+                        },
+                    )
+                })
+                .build(k)
+                .key("import-settings"),
+        ),
+        k,
+    ));
+    if let Some(error) = live(s).app.services.error(&Task::ImportSettings {
+        path: String::new(),
+    }) {
+        body = body.child(ui::caption(error, k).color(k.c.danger.fg).selectable(true));
+    }
+    body
+}
+
+fn about_updates(s: &Workspace, k: &Kit) -> El {
+    use caelum_protocol::UpdateStatus;
+    let services = &live(s).app.services;
+    let busy = services.busy(&Task::Updates);
+    let error = services.error(&Task::Updates);
+    let update = services.update.as_ref();
+    let (title, detail) = if busy {
+        (
+            "Checking for updates",
+            "Looking for the latest release…".into(),
+        )
+    } else if let Some(error) = error {
+        ("Couldn’t check for updates", error.to_owned())
+    } else if let Some(update) = update {
+        match update.status {
+            UpdateStatus::Available => (
+                "Update available",
+                format!("Version {} is ready to download.", update.latest_version),
+            ),
+            UpdateStatus::UpToDate => (
+                "You’re up to date",
+                "You’re running the latest release.".into(),
+            ),
+            UpdateStatus::Ahead => (
+                "Ahead of the latest release",
+                format!("Latest stable version: {}", update.latest_version),
+            ),
+        }
+    } else {
+        (
+            "Software updates",
+            "Keep Caelum up to date with the latest release.".into(),
+        )
+    };
+    let marker = if !busy && error.is_some() {
+        icon(&glyphs::CIRCLE_X, 16.0).color(k.c.danger.fg)
+    } else if !busy && update.is_some_and(|u| u.status == UpdateStatus::UpToDate) {
+        icon(&glyphs::CHECK, 16.0).color(k.c.success.fg)
+    } else {
+        icon(&ui::REFRESH, 16.0).color(k.c.icon_muted)
+    };
+    let mut actions = row().gap(6.0).center_y();
+    if let Some(update) =
+        update.filter(|u| !busy && error.is_none() && u.status == UpdateStatus::Available)
+    {
+        let (label, url, key) = match &update.download_url {
+            Some(url) => ("Download update", url, "download-update"),
+            None => ("View release", &update.release_url, "view-release"),
         };
-        body = body.child(ui::caption(status, k));
-        if let Some(url) = &update.download_url {
-            let url = url.clone();
-            body = body.child(
-                Button::new("Download update")
+        let url = url.clone();
+        actions = actions
+            .child(
+                Button::new(label)
+                    .variant(ButtonVariant::Contrast)
                     .on_press_tx(move |_: &mut Workspace, tx| {
                         let _ = tx.open_url(&url);
                     })
-                    .build(k),
+                    .build(k)
+                    .help("Open in browser")
+                    .key(key),
+            )
+            .child(
+                crate::quiet_button(&ui::REFRESH, "Check for updates")
+                    .on_press(|s: &mut Workspace| live_mut(s).app.task(Task::Updates))
+                    .build(k)
+                    .key("check-updates"),
             );
-        }
-    }
-    if let Some(error) = live(s)
-        .app
-        .services
-        .checkouts
-        .get("")
-        .and_then(|c| c.error.as_ref())
-    {
-        body = body.child(ui::caption(error, k).color(k.c.danger.fg));
-    }
-    body.child(
-        Button::new("Import legacy settings JSON…")
-            .variant(ButtonVariant::GhostMuted)
-            .on_press_tx(|_: &mut Workspace, tx| {
-                tx.open_file(
-                    FileDialogOptions::default(),
-                    |s: &mut Workspace, result, _| match result {
-                        Ok(Some(path)) => live_mut(s).app.task(Task::ImportSettings {
-                            path: path.to_string_lossy().into_owned(),
-                        }),
-                        Err(error) => live_mut(s).app.error = Some(error.to_string()),
-                        _ => {}
-                    },
-                )
+    } else {
+        actions = actions.child(
+            Button::new(if busy {
+                "Checking…"
+            } else if error.is_some() {
+                "Try again"
+            } else if update.is_some() {
+                "Check again"
+            } else {
+                "Check for updates"
             })
+            .variant(ButtonVariant::Outline)
+            .disabled(busy)
+            .on_press(|s: &mut Workspace| live_mut(s).app.task(Task::Updates))
             .build(k)
-            .key("import-settings"),
-    )
+            .key("check-updates"),
+        );
+    }
+    row()
+        .w_full()
+        .min_h(88.0)
+        .padding(14.0)
+        .gap(12.0)
+        .center_y()
+        .radius(8.0)
+        .fill(k.c.bg_base)
+        .border(1.0, k.c.border_muted)
+        .child(marker)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(4.0)
+                .role("status")
+                .label(format!("{title}. {detail}"))
+                .child(if busy {
+                    ui::busy_text(title, k.ty.ui_medium, k)
+                } else {
+                    text(title).font(k.ty.ui_medium).color(k.c.text_base).wrap()
+                })
+                .child(ui::caption(detail, k).selectable(true)),
+        )
+        .child(actions)
+        .key("about-updates")
 }
