@@ -3,6 +3,7 @@ use super::Provider;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalCommand {
     New,
+    Sessions,
     Models,
     Variants,
     Effort,
@@ -17,6 +18,11 @@ pub enum LocalCommand {
 
 pub const COMMANDS: &[(&str, &str, LocalCommand)] = &[
     ("new", "Start a new session", LocalCommand::New),
+    (
+        "sessions",
+        "Browse earlier provider sessions",
+        LocalCommand::Sessions,
+    ),
     (
         "models",
         "Choose a model for this session",
@@ -85,6 +91,17 @@ mod tests {
                 Ok(Some((LocalCommand::Models, "")))
             );
             assert!(LocalCommand::parse("/models fast", provider).is_err());
+        }
+    }
+
+    #[test]
+    fn sessions_command_browses_both_provider_histories_without_arguments() {
+        for provider in [Provider::Codex, Provider::OpenCode] {
+            assert_eq!(
+                LocalCommand::parse("/sessions", provider),
+                Ok(Some((LocalCommand::Sessions, "")))
+            );
+            assert!(LocalCommand::parse("/sessions archived", provider).is_err());
         }
     }
 

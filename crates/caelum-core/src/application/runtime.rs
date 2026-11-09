@@ -237,6 +237,47 @@ impl ProviderRuntime {
                 };
                 return Ok(Reply::Sessions(summaries));
             }
+            Command::ListArchived(scope) => {
+                let summaries = match scope.provider {
+                    Provider::Codex => self
+                        .codex
+                        .list_archived_sessions(&scope.project)
+                        .map_err(|e| e.to_string())?
+                        .threads
+                        .into_iter()
+                        .map(|s| Summary {
+                            key: SessionKey {
+                                scope: scope.clone(),
+                                id: s.id,
+                            },
+                            title: s.name.filter(|v| !v.is_empty()).unwrap_or(s.preview),
+                            working: s.is_working,
+                            options: Options::default(),
+                        })
+                        .collect(),
+                    Provider::OpenCode => self
+                        .opencode
+                        .list_archived_sessions(&scope.project)
+                        .map_err(|e| e.to_string())?
+                        .sessions
+                        .into_iter()
+                        .map(|s| Summary {
+                            key: SessionKey {
+                                scope: scope.clone(),
+                                id: s.id,
+                            },
+                            title: s.title.unwrap_or_default(),
+                            working: s.is_working,
+                            options: Options {
+                                model: s.model,
+                                effort: s.effort,
+                                agent: s.agent,
+                            },
+                        })
+                        .collect(),
+                };
+                return Ok(Reply::Sessions(summaries));
+            }
             Command::Choices(scope) => {
                 return match scope.provider {
                     Provider::Codex => self
@@ -440,6 +481,7 @@ pub enum Command {
     Details(SessionKey),
     Open(String),
     List(Scope),
+    ListArchived(Scope),
     Choices(Scope),
     Start(Scope, Options),
     Resume(SessionKey),

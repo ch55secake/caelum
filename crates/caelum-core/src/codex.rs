@@ -136,6 +136,16 @@ impl CodexProvider {
         Self::list_sessions_on(&project, &connection, false)
     }
 
+    /// Return archived Codex threads whose working directory is this project.
+    pub fn list_archived_sessions(
+        &self,
+        project_path: impl AsRef<Path>,
+    ) -> Result<CodexSessionList, CodexError> {
+        let project = Project::open(project_path)?;
+        let connection = self.connection(&project)?;
+        Self::list_sessions_on(&project, &connection, true)
+    }
+
     fn list_sessions_on(
         project: &Project,
         connection: &CodexConnection,
@@ -1371,6 +1381,14 @@ for raw in sys.stdin:
         provider
             .set_session_archived(&project_path, "thread-existing", true)
             .unwrap();
+        assert_eq!(
+            provider
+                .list_archived_sessions(&project_path)
+                .unwrap()
+                .threads[0]
+                .id,
+            "thread-existing"
+        );
         assert!(provider
             .list_sessions(&project_path)
             .unwrap()
