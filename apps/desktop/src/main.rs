@@ -146,7 +146,7 @@ fn sidebar(s: &Workspace, k: &Kit) -> El {
         )
         .on_select(move |s: &mut Workspace, _| s.selected = i);
         if session.working() {
-            item = item.status(RowStatus::Other(ui::busy_icon(&ORBIT, 12.0, k)));
+            item = item.status(RowStatus::Other(ui::busy_icon(&ui::CLOCK, 12.0, k)));
         }
         let item = ui::selected_row(
             item.build(k).key(format!("session-{i}")),

@@ -49,7 +49,9 @@ pub fn indicator(
         .pb(6.0)
         .gap(8.0)
         .center_y()
-        .child(icon(&crate::ORBIT, 14.0).color(color))
+        .children(
+            (activity.kind == ActivityKind::Thinking).then(|| icon(&ui::BRAIN, 14.0).color(color)),
+        )
         .child(if waiting {
             text(&activity.label).font(k.ty.small_medium).color(color)
         } else {
@@ -97,7 +99,7 @@ pub fn tool(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
         "Read" => &ui::FILE,
         "Search" => &glyphs::SEARCH,
         "Patch" => &ui::EDIT,
-        "Thinking" | "Thought" => &crate::ORBIT,
+        "Thinking" | "Thought" => &ui::BRAIN,
         _ => &ui::TOOL,
     };
     let mut header = row()
@@ -527,7 +529,6 @@ pub fn compaction(s: &Workspace, k: &Kit, index: usize, entry: &Entry) -> El {
     let mut label = row()
         .gap(8.0)
         .center_y()
-        .child(icon(&crate::ORBIT, 14.0).color(k.c.icon_muted))
         .child(if outcome == Outcome::Running {
             ui::busy_text(title, k.ty.small_medium, k)
         } else {

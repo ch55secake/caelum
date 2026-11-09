@@ -32,6 +32,8 @@ explicit loading, empty and error surfaces. Default surfaces stay neutral;
 colour is carried by markers, underlines, focus borders, links and solid actions.
 Active tool, reasoning, compaction, background-command, PR-check and update labels
 share a restrained 2.2-second text sheen; icon-only progress uses the same effect.
+Thinking uses a brain glyph, while compact generic activity markers use a clock.
+Compaction and general composer activity rely on their labels to keep them quiet.
 Reduced motion holds the highlight still. Tool details focus on output and errors,
 with raw arguments and successful exit codes omitted. Routine metadata belongs in
 expanded details; non-zero exits and failures remain visible. Compaction is a quiet

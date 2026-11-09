@@ -2365,7 +2365,7 @@ fn shimmer_keeps_ink_stationary_and_stops_for_reduced_motion_and_completion() {
                         )
                         .child(
                             if *running {
-                                crate::ui::busy_icon(&crate::ORBIT, 14.0, &k)
+                                crate::ui::busy_icon(&crate::ui::CLOCK, 14.0, &k)
                             } else {
                                 crate::ui::outcome(
                                     caelum_core::application::presentation::Outcome::Success,

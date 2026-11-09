@@ -21,7 +21,7 @@ fn status(title: &str, detail: &str, outcome: Outcome, k: &Kit) -> El {
         .py(12.0)
         .center_y()
         .child(if outcome == Outcome::Running {
-            rune::icon(&crate::ORBIT, 14.0).color(k.c.icon_muted)
+            rune::icon(&ui::CLOCK, 14.0).color(k.c.icon_muted)
         } else {
             ui::outcome(outcome, k)
         })
@@ -130,7 +130,7 @@ pub fn view(
                         .py(8.0)
                         .center_y()
                         .child(if check.outcome == Outcome::Running {
-                            rune::icon(&crate::ORBIT, 14.0).color(k.c.icon_muted)
+                            rune::icon(&ui::CLOCK, 14.0).color(k.c.icon_muted)
                         } else {
                             ui::outcome(check.outcome, k)
                         })
