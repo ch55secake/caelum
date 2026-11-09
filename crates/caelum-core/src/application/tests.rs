@@ -1063,6 +1063,54 @@ fn removing_the_active_linked_checkout_returns_to_the_surviving_project() {
 }
 
 #[test]
+fn removing_a_worktree_selects_existing_context_instead_of_creating_a_draft() {
+    let mut app = Workspace::default();
+    for path in ["/main", "/linked"] {
+        app.projects.push(ProjectInfo {
+            name: path.into(),
+            path: path.into(),
+        });
+    }
+    app.project_roots.insert("/linked".into(), "/main".into());
+    let main = app.new_session(scope(Provider::Codex, "/main"));
+    app.sessions[main].remote_id = Some("thread-main".into());
+    app.sessions[main].draft = "Keep the main session context".into();
+    let linked = app.new_session(scope(Provider::Codex, "/linked"));
+    app.sessions[linked].remote_id = Some("thread-linked".into());
+    app.select(linked);
+
+    app.task(Task::RemoveWorktree {
+        project: "/linked".into(),
+        path: "/linked".into(),
+    });
+    let request = app.commands().pop().unwrap().0;
+    app.apply(Event::Completed(
+        request,
+        Ok(Reply::Task(TaskReply::Worktree(
+            caelum_protocol::GitWorktree {
+                path: "/linked".into(),
+                project: ProjectInfo {
+                    name: "Linked".into(),
+                    path: "/linked".into(),
+                },
+                label: None,
+                branch: Some("feature".into()),
+                main: false,
+                locked: None,
+                prunable: None,
+                available: true,
+            },
+        ))),
+    ));
+
+    assert!(app.sessions[linked].archived);
+    assert_eq!(app.sessions.len(), 2);
+    assert_eq!(app.active_project.as_deref(), Some("/main"));
+    assert_eq!(app.selected, Some(main));
+    assert_eq!(app.sessions[main].draft, "Keep the main session context");
+}
+
+#[test]
 fn discovering_worktrees_loads_their_provider_choices() {
     let mut app = Workspace::default();
     app.projects.push(ProjectInfo {
