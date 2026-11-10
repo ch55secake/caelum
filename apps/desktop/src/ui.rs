@@ -432,6 +432,16 @@ pub static QUEUE: Icon = Icon {
     view: 16.0,
     body: r#"<path d="M2 4h9M2 8h6M2 12h6m4-5v6m-3-3h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>"#,
 };
+pub static EXPAND_EDITOR: Icon = Icon {
+    name: "expand-editor",
+    view: 16.0,
+    body: r#"<path d="M9 2h5v5m0-5L9 7M7 14H2V9m0 5 5-5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
+pub static COLLAPSE_EDITOR: Icon = Icon {
+    name: "collapse-editor",
+    view: 16.0,
+    body: r#"<path d="M14 2 9 7m0-5v5h5M2 14l5-5m-5 0h5v5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
 pub static EXTERNAL: Icon = Icon {
     name: "external",
     view: 16.0,
@@ -572,6 +582,15 @@ pub fn user_bubble(message: &str, attachments: bool, k: &Kit) -> El {
         .fill(k.c.layer_02.mix(k.c.bg_base, 0.25))
 }
 
+pub fn composer_editor(input: El, minimum: f32, maximum: f32) -> El {
+    rune::auto_grow(input, 2, 24)
+        .key("composer-editor")
+        .px(4.0)
+        .py(4.0)
+        .min_h(minimum)
+        .max_h(maximum)
+}
+
 pub fn composer(input: El, controls: El, context: El, padding: f32, k: &Kit) -> El {
     let rim =
         k.c.border_strong
@@ -605,20 +624,12 @@ pub fn composer(input: El, controls: El, context: El, padding: f32, k: &Kit) -> 
             )
             .child(
                 context
-                    .max_h(180.0)
                     .scroll(rune::ScrollSpec {
                         stick_bottom: false,
                     })
                     .scroll_bar(k),
             )
-            .child(
-                rune::auto_grow(input, 2, 8)
-                    .key("composer-editor")
-                    .px(4.0)
-                    .py(4.0)
-                    .min_h(56.0)
-                    .max_h(180.0),
-            )
+            .child(input)
             .child(divider(k).opacity(0.5).mt(8.0).mb(8.0))
             .child(controls.min_h(32.0)),
     )

@@ -438,6 +438,140 @@ fn caret_completion_preserves_unicode_suffix_and_dismissal_unlocks_the_draft() {
 }
 
 #[test]
+fn attachment_reads_and_failures_follow_the_request_owner_and_retry() {
+    let mut app = workspace();
+    app.sessions[0].draft = "Keep this draft".into();
+    app.sessions[0].error = Some("Unrelated provider error".into());
+    app.attach_file(0, "src/café.rs".into());
+    app.attach_image(0, "Pasted image.png".into(), vec![1, 2]);
+    let reads = app.attachment_reads(0);
+    assert_eq!(
+        reads.iter().map(|(_, name)| *name).collect::<Vec<_>>(),
+        ["src/café.rs", "Pasted image.png"]
+    );
+    let ids: Vec<_> = reads.iter().map(|(id, _)| *id).collect();
+    assert_eq!(app.sessions[0].attaching, 2);
+    assert!(!app.sessions[0].can_submit());
+    app.commands();
+    app.select(1);
+    app.apply(Event::Completed(ids[1], Err("Unsupported image".into())));
+    app.apply(Event::Completed(ids[0], Ok(file())));
+    assert!(app.attachment_reads(0).is_empty());
+    assert!(app.attachment_reads(1).is_empty());
+    assert_eq!(app.sessions[0].attaching, 0);
+    assert!(app.sessions[0].can_submit());
+    assert_eq!(app.sessions[0].attachments[0].content, "fn café() {}\n");
+    assert_eq!(
+        app.sessions[0].attachment_errors,
+        [("Pasted image.png".into(), "Unsupported image".into())]
+    );
+    assert!(app.sessions[1].attachment_errors.is_empty());
+    assert!(app.sessions[1].attachments.is_empty());
+    assert_eq!(app.sessions[0].draft, "Keep this draft");
+    assert_eq!(
+        app.sessions[0].error.as_deref(),
+        Some("Unrelated provider error")
+    );
+
+    app.attach_image(0, "Pasted image.png".into(), vec![3]);
+    assert!(app.sessions[0].attachment_errors.is_empty());
+    let id = app.attachment_reads(0)[0].0;
+    app.apply(Event::Completed(
+        id,
+        Ok(Reply::Task(TaskReply::Image(
+            "data:image/png;base64,AQ==".into(),
+        ))),
+    ));
+    assert_eq!(app.sessions[0].attachments.len(), 2);
+    assert_eq!(app.sessions[0].attaching, 0);
+    assert!(app.attachment_reads(0).is_empty());
+
+    app.attach_file(0, "wrong-response.txt".into());
+    let id = app.attachment_reads(0)[0].0;
+    app.apply(Event::Completed(id, Ok(Reply::Done)));
+    assert_eq!(app.sessions[0].attaching, 0);
+    assert!(app.attachment_reads(0).is_empty());
+    assert_eq!(
+        app.sessions[0].attachment_errors[0].1,
+        "Unexpected attachment response"
+    );
+}
+
+#[test]
+fn mention_status_clears_on_cancel_and_stale_failure_does_not_touch_new_context() {
+    for stale in [false, true] {
+        let mut app = workspace();
+        app.sessions[0].draft = "Review @ca".into();
+        let token = Completion::at(&app.sessions[0].draft, 10, 10).unwrap();
+        app.complete_mention(
+            0,
+            token,
+            "src/café.rs".into(),
+            "/project".into(),
+            "@src/café.rs".into(),
+        );
+        let id = app.attachment_reads(0)[0].0;
+        app.commands();
+        if stale {
+            app.cancel_mentions(0);
+            assert!(app.attachment_reads(0).is_empty());
+            app.sessions[0].draft = "New draft".into();
+        }
+        app.apply(Event::Completed(id, Err("File was removed".into())));
+        assert!(app.attachment_reads(0).is_empty());
+        assert_eq!(app.sessions[0].attaching, 0);
+        assert_eq!(app.sessions[0].attachment_errors.is_empty(), stale);
+        assert_eq!(
+            app.sessions[0].draft,
+            if stale { "New draft" } else { "Review @ca" }
+        );
+        assert!(app.sessions[0].error.is_none());
+    }
+    let mut app = workspace();
+    app.sessions[0].side_draft = "@ca".into();
+    app.complete_side_mention(
+        0,
+        Completion::at("@ca", 3, 3).unwrap(),
+        "src/café.rs".into(),
+        "/project".into(),
+        "@src/café.rs".into(),
+    );
+    assert!(app.attachment_reads(0).is_empty());
+    let id = app.commands().pop().unwrap().0;
+    app.apply(Event::Completed(id, Err("Side context failure".into())));
+    assert!(app.sessions[0].attachment_errors.is_empty());
+    assert_eq!(
+        app.sessions[0].side_error.as_deref(),
+        Some("Side context failure")
+    );
+}
+
+#[test]
+fn attachment_limit_reports_paste_failure_without_losing_captured_context() {
+    let mut app = workspace();
+    for i in 0..16 {
+        assert!(app.attach(
+            0,
+            Attachment::new(format!("{i}.rs"), "captured".into(), None, false)
+        ));
+    }
+    app.attach_image(0, "Pasted image.png".into(), vec![1]);
+    assert_eq!(app.sessions[0].attachments.len(), 16);
+    assert!(app.attachment_reads(0).is_empty());
+    assert_eq!(app.sessions[0].attaching, 0);
+    assert_eq!(app.sessions[0].attachment_errors[0].0, "Pasted image.png");
+    assert!(app.attach(
+        0,
+        Attachment::new("0.rs".into(), "replacement".into(), None, false)
+    ));
+    assert_eq!(app.sessions[0].attachments.len(), 16);
+    assert_eq!(
+        app.sessions[0].attachments.last().unwrap().content,
+        "replacement"
+    );
+}
+
+#[test]
 fn side_questions_keep_main_context_and_reject_a_dismissed_generation() {
     let mut app = workspace();
     app.sessions[0].draft = "Main draft".into();

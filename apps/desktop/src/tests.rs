@@ -2,6 +2,7 @@ use rune::{Env, Key, KeyEvent, Mods, Runtime, runtime::ElementInfo};
 
 use super::{Workspace, spec};
 
+mod composer;
 mod navigation;
 
 fn runtime(size: (f32, f32)) -> Runtime<Workspace> {

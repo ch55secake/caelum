@@ -21,6 +21,7 @@ pub struct Live {
     pub context: crate::context::State,
     pub checkouts: crate::checkouts::State,
     pub completion: crate::completion::Menu,
+    pub composer: crate::composer::State,
     pub commands: crate::commands::State,
     pub models: crate::models::Picker,
     pub media: crate::media::State,
@@ -81,6 +82,7 @@ impl Live {
             context: Default::default(),
             checkouts: Default::default(),
             completion: Default::default(),
+            composer: Default::default(),
             commands: Default::default(),
             models: Default::default(),
             media: Default::default(),
@@ -122,6 +124,7 @@ impl Live {
         while self.drafts.len() < self.app.sessions.len() {
             let session = &self.app.sessions[self.drafts.len()];
             self.drafts.push(TextEdit::new(&session.draft));
+            self.composer.editors.push(Default::default());
             self.commands.previous_drafts.push(session.draft.clone());
             let mut position = ScrollPos::default();
             if session.reading >= 0.0 {
@@ -478,6 +481,7 @@ impl Live {
         }
         self.sync_editors();
         self.forms.sync(&self.app.questions);
+        changed |= crate::composer::sync(self, tx);
         self.panels.remember(&mut self.app);
         changed |= self.panels.sync(&self.app);
         if let Some((key, review)) = self
@@ -1723,10 +1727,10 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
                     Ok(path) => live_mut(s)
                         .app
                         .attach_file(index, path.to_string_lossy().into_owned()),
-                    Err(_) => {
-                        live_mut(s).app.sessions[index].error =
-                            Some("Drop files from this session’s project".into())
-                    }
+                    Err(_) => live_mut(s).app.sessions[index].attachment_error(
+                        path.to_string_lossy().into_owned(),
+                        "Drop files from this session’s project".into(),
+                    ),
                 }
             }
         });
@@ -1783,7 +1787,11 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .child(submit);
     let pickers = pickers(s, k, layers).min_w(0.0);
     let usage_label = wide || rune::memo::window_layout("main-pane").is_some_and(|r| r[2] > 440.0);
-    let usage = crate::activity::context(s, k, index, usage_label);
+    let usage = row()
+        .center_y()
+        .gap(4.0)
+        .child(crate::composer::toggle_button(s, k, index))
+        .child(crate::activity::context(s, k, index, usage_label));
     let controls = if wide {
         row()
             .center_y()
@@ -1817,11 +1825,16 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
             }))
             .children(has_queue.then(|| crate::panels::queue_summary(s, k, index)));
     ui::composer(
-        input,
+        crate::composer::editor(s, index, input),
         controls,
         col()
             .key(format!("composer-context-{index}"))
             .w_full()
+            .max_h(if live.composer.editors[index].expanded {
+                96.0
+            } else {
+                180.0
+            })
             .gap(6.0)
             .children((activity.is_some() || has_queue).then_some(status))
             .children((!session.shells.is_empty()).then(|| crate::activity::shells(s, k, index)))

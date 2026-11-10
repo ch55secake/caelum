@@ -83,7 +83,12 @@ checks. These indicators follow reduced-motion preferences.
 
 Enter and the primary button send when idle or queue behind earlier work;
 Shift+Enter inserts a newline. The editor grows from 56 to 180 points, then scrolls
-independently above the settings and actions. Click **2 queued** (or focus it and
+independently above the settings and actions. **Expand editor** gives long prompts
+more vertical space within the dock; **Collapse editor** returns to the compact
+height. Both preserve caret, selection, undo history and scrolling. Writing mode
+and editor position are remembered per session during the app run. The transcript
+stays above the dock and the edge remains neutral while editing.
+Click **2 queued** (or focus it and
 press Space) to expand queued messages; each session remembers its disclosure state.
 Paused, saving and failed queues remain identifiable when collapsed. Local queue
 entries capture their own settings and context; edit, reorder, remove, pause or
@@ -112,6 +117,14 @@ its file and line range. Navigation during a file read keeps the attachment with
 its originating draft. **#** finds session-related pull requests and captures their
 context. Tab/Enter accepts a mention; Escape cancels it, including an in-flight read.
 Surrounding text and Unicode caret positions are preserved.
+
+Click an attachment chip to preview the captured snapshot; its separate **×**
+removes it. Text previews are selectable and offer **Copy snapshot**, with line
+ranges and a **Partial** notice when truncated. Previews show the attached content
+even if the source changes. Closing a preview returns to the draft and its editor
+position. Pending reads name each file and disable Send/Queue until they settle;
+failed reads have a per-file error that can be dismissed. Attach again through the
+same entry point to retry.
 
 Paste or drop images for a thumbnail; open it to zoom and drag-pan the preview.
 Images remain image payloads when sent or queued. User messages use right-aligned

@@ -3,6 +3,7 @@ mod checkouts;
 mod code_view;
 mod commands;
 mod completion;
+mod composer;
 mod context;
 mod evaluation;
 mod lifecycle;
@@ -326,7 +327,13 @@ fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<E
                 .color(k.c.text_muted),
         );
     }
-    ui::composer(input, controls.child(submit), rune::el(), padding, k)
+    ui::composer(
+        ui::composer_editor(input, 56.0, 180.0),
+        controls.child(submit),
+        rune::el(),
+        padding,
+        k,
+    )
 }
 
 fn inspector(s: &Workspace, k: &Kit) -> El {
@@ -657,6 +664,18 @@ fn spec() -> AppSpec<Workspace> {
             }),
             ("composer-attachments", |s| {
                 evaluation::scene(s, "composer-attachments")
+            }),
+            ("composer-expanded", |s| {
+                evaluation::scene(s, "composer-expanded")
+            }),
+            ("composer-attachment-status", |s| {
+                evaluation::scene(s, "composer-attachment-status")
+            }),
+            ("composer-attachment-preview", |s| {
+                evaluation::scene(s, "composer-attachment-preview")
+            }),
+            ("composer-image-preview", |s| {
+                evaluation::scene(s, "composer-image-preview")
             }),
             ("files-tabs", |s| evaluation::scene(s, "files-tabs")),
             ("tools-collapsed", |s| {
