@@ -32,11 +32,12 @@ item's menu; arrows navigate, Enter chooses, and Escape or Tab dismisses it.
 Choose the model, reasoning effort and available agent in the composer. Effort
 and agent controls have distinct icons and labelled popouts with readable names,
 selected checkmarks and options to return to the model/provider default.
-The model is the primary setting; borderless labels with small chevrons wrap into
-rows in narrow panes while Send/Stop stays aligned at the lower right. Shortcut
-hints and full setting values appear in tooltips.
-Send/Stop keeps equal 12-point right and bottom insets as Queue, context usage
-and wrapped settings change; the action row takes only the space it needs.
+The composer is docked below the transcript, with a softly tinted, top-lit surface
+in light and dark themes. Conversation text ends above it. The model is the primary
+setting; borderless labels with small chevrons wrap into rows in narrow panes,
+with a separate action row below. Shortcut hints and full setting values appear
+in tooltips. The primary **Send** / **Queue** button keeps equal 12-point right and
+bottom insets. **Stop** is a separate labelled control beside it while working.
 Sending creates a provider session when needed. Later selection changes apply
 to the next message. Search models and star favourites in the model picker.
 The anchored popover keeps its original session or Settings target while open. Unavailable
@@ -73,17 +74,20 @@ run, including after navigation and output updates. Hidden commands keep running
 **Output** opens a scrollable reader; **View all** lists multiple commands. The reader
 keeps its original session and retains output after completion. Completed commands
 also appear in the transcript.
-The composer pulse and agent indicator show working, thinking, responding, tools,
+The compact composer activity label shows working, thinking, responding, tools,
 retry, input, background-waiting and stopping states, including between output events.
 The same shimmer appears on running background commands, PR checks and update
 checks. These indicators follow reduced-motion preferences.
 
 ## Drafts, queues and requests
 
-Enter sends or queues; Shift+Enter inserts a newline. The editor grows from 46 to
-180 points, then scrolls independently above the model and send/stop controls.
-Local queue entries capture their own settings and context; edit, reorder, remove,
-pause or resume them. Failed entries return to the front with their original options.
+Enter and the primary button send when idle or queue behind earlier work;
+Shift+Enter inserts a newline. The editor grows from 56 to 180 points, then scrolls
+independently above the settings and actions. Click **2 queued** (or focus it and
+press Space) to expand queued messages; each session remembers its disclosure state.
+Paused, saving and failed queues remain identifiable when collapsed. Local queue
+entries capture their own settings and context; edit, reorder, remove, pause or
+resume them. Failed entries return to the front with their original options.
 OpenCode uses its provider-owned inbox during execution when settings are unchanged.
 Those entries restore by message ID and support removal and admission/removal retry.
 **Stop** or Escape interrupts the active turn and pauses its queue. Dropdowns,

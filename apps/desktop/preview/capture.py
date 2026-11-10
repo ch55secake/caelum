@@ -24,6 +24,7 @@ interactions = {
     "worktrees-form": ("worktree-create", []),
     "composer-agent": ("composer-options", [{"t": 0.25, "key": "agent-trigger"}]),
     "composer-effort": ("composer-options", [{"t": 0.25, "key": "effort-trigger"}]),
+    "composer-queue-expanded": ("composer-queued", [{"t": 0.25, "key": "toggle-queued-messages"}]),
     "context-session": ("", [{"t": 0.25, "type": "secondary-click", "key": "live-session-1"}]),
     "context-editor": ("", [{"t": 0.15, "key": "live-draft-0"}, {"t": 0.3, "type": "key", "name": "a", "cmd": True}, {"t": 0.45, "type": "secondary-click", "key": "live-draft-0"}]),
     "context-file": ("files", [{"t": 0.25, "type": "secondary-click", "key": "file-tree-Cargo.toml"}]),
@@ -51,6 +52,7 @@ scenes += ("patch-short", "patch-long", "patch-multi", "vercel-patch-short", "ve
 scenes += ("about-checking", "about-current", "about-update", "about-release", "about-ahead", "about-error", "vercel-about", "vercel-about-update")
 scenes += ("tool-running", "tool-failure", "compaction", "compaction-running", "compaction-empty", "compaction-error", "compaction-interrupted", "vercel-compaction")
 scenes += ("tool-output-long", "vercel-tool-output-long", "tool-search", "vercel-tools")
+scenes += ("composer-empty", "composer-multiline", "composer-queued", "composer-queue-error", "composer-attachments")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

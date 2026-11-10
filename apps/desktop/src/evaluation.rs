@@ -552,7 +552,15 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
         }
         return true;
     }
-    if name == "composer-options" {
+    if matches!(
+        name,
+        "composer-options"
+            | "composer-empty"
+            | "composer-multiline"
+            | "composer-queued"
+            | "composer-queue-error"
+            | "composer-attachments"
+    ) {
         let session = &mut l.app.sessions[0];
         session.scope.provider = Provider::OpenCode;
         session.options.model = Some("model-long".into());
@@ -562,7 +570,60 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             "models":[{"id":"model-long","name":"A model with a particularly long name","efforts":[{"id":"High","name":"High"},{"id":"Low","name":"Low"}],"defaultEffort":"High"}],
             "agents":[{"id":"build","name":"Build"},{"id":"plan","name":"Plan"}],"defaultModel":"model-long"
         })).unwrap());
-        state.inspector.set_open(true);
+        state.inspector.set_open(name == "composer-options");
+        if name != "composer-options" {
+            session.options.model = Some("gpt-5.1".into());
+            let choices = l.app.choices.get_mut(&session.scope).unwrap();
+            choices.models[0].id = "gpt-5.1".into();
+            choices.models[0].name = "GPT-5.1".into();
+            choices.default_model = Some("gpt-5.1".into());
+            let prompt = match name {
+                "composer-empty" => "",
+                "composer-multiline" => {
+                    "Refine the composer’s surface and spacing.\nKeep the conversation above it.\n\nMake Send, Queue and Stop easy to tell apart.\nKeep this draft while I switch sessions."
+                }
+                "composer-attachments" => "Review these files and the design reference.",
+                _ => "Then check the compact layout in both themes.",
+            };
+            session.draft = prompt.into();
+            if matches!(name, "composer-queued" | "composer-queue-error") {
+                session.conversation.working = true;
+                session.queue = [
+                    "Review keyboard focus and session switching.",
+                    "Check attachments and multiline drafts.",
+                ]
+                .map(|text| caelum_core::application::QueuedPrompt {
+                    text: text.into(),
+                    options: session.options.clone(),
+                })
+                .into();
+                if name == "composer-queue-error" {
+                    session.conversation.working = false;
+                    session.queue_paused = true;
+                    session.error =
+                        Some("The provider is unavailable. Resume when it reconnects.".into());
+                }
+            }
+            if name == "composer-attachments" {
+                session
+                    .attachments
+                    .push(caelum_core::application::Attachment::new(
+                        "apps/desktop/src/composer.rs".into(),
+                        "fn composer() {}".into(),
+                        None,
+                        false,
+                    ));
+                session.attachments.push(
+                    caelum_core::application::Attachment::image(
+                        "Design reference.png".into(),
+                        include_bytes!("../assets/icon.png"),
+                    )
+                    .unwrap(),
+                );
+            }
+            l.sync_editors();
+            l.drafts[0].replace_text(prompt);
+        }
         return true;
     }
     if matches!(

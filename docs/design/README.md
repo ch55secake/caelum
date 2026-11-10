@@ -19,7 +19,8 @@ while retaining the user's preferred sizes. The bounded multiline editor and
 composer controls occupy separate rows; borderless model-first labels and icon-led
 effort/agent choices wrap in narrow panes. Their popouts show titles, readable
 choices and default options; the provider is chosen in Settings. The controls sit
-beside an aligned Send/Stop action. Settings lives in the top toolbar, archive
+beside a labelled Send/Queue action and a separate Stop control; narrow panes put
+actions on their own row. Settings lives in the top toolbar, archive
 filtering sits beside Sessions, and session actions belong to the clicked row.
 Archive Undo is a temporary bottom-centred notice above the composer, pausing on
 hover or keyboard focus. Files attach through mentions, the inspector or drops;
@@ -62,9 +63,14 @@ version/platform line, grouped project links and a dedicated update-status panel
 Checking, current, available, newer-build and error states share the same panel;
 downloads appear only for an available update, with a release-page fallback when
 no matching download exists. Legacy preferences import has its own labelled row.
-The composer pulse and active-agent indicator follow session state between output
-events. PR review restores Overview / Files changed, searchable file/thread
-navigation, inline feedback and a selected-feedback bar naming its destination session.
+The docked composer uses smoky/milky tint, a subtle gradient, a top-lit hairline and
+soft shadow. The edge stays neutral when editing; text and controls stay crisp.
+The transcript viewport ends above the composer. The flat background needs
+no backdrop-blur pass. A compact activity label follows session state between output
+events, and the queue count expands into bounded controls with per-session disclosure.
+Attachment chips wrap within the available width. PR review restores Overview /
+Files changed, searchable file/thread navigation, inline feedback and a
+selected-feedback bar naming its destination session.
 The overview has a centred 960-point reading column, separate review/check/branch
 rows, expandable checks and a joined GitHub-green merge button and method dropdown.
 Filename tabs in the conversation inspector have an active underline, integrated
@@ -82,6 +88,14 @@ excerpts, highlighted search and stable prompt jumps.
 | --- | --- | --- |
 | Dark workspace | ![Reference dark](previews/react-dark.png) | ![Native dark](previews/rune-dark.png) |
 | Light inspector | ![Reference inspector](previews/react-light-inspector.png) | ![Native inspector](previews/rune-light-inspector.png) |
+
+| Frosted composer · working and queued | Frosted composer · idle |
+| --- | --- |
+| ![Smoky docked composer](previews/rune-dark-composer-queued.png) | ![Milky docked composer](previews/rune-light-composer-empty.png) |
+
+| Expanded queue · compact | Attachments · compact |
+| --- | --- |
+| ![Expanded queue controls](previews/rune-dark-composer-queue-expanded-small.png) | ![Wrapped attachment chips](previews/rune-light-composer-attachments-small.png) |
 
 | Compact workspace | Settings |
 | --- | --- |

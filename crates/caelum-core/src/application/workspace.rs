@@ -146,6 +146,16 @@ impl Session {
             && !self.archiving
             && self.attaching == 0
     }
+
+    /// Whether a draft may be submitted, including to the queue while working.
+    pub fn can_submit(&self) -> bool {
+        !self.archived
+            && !self.forgotten
+            && !self.stopping
+            && !self.archiving
+            && self.attaching == 0
+            && !self.commanding
+    }
 }
 
 enum Pending {
@@ -1449,22 +1459,26 @@ impl Workspace {
         );
     }
 
+    /// Ordinary messages wait behind active work, history/inbox reads and earlier prompts.
+    pub fn will_queue(&self, index: usize) -> bool {
+        let session = &self.sessions[index];
+        session.working()
+            || session.loading
+            || !session.queue.is_empty()
+            || !session.inbox.items.is_empty()
+            || self
+                .pending
+                .values()
+                .any(|p| matches!(p, Pending::Inbox(i, _) if *i == index))
+    }
+
     pub fn send(&mut self, index: usize, prompt: String) -> bool {
         if prompt.trim().is_empty() && self.sessions[index].attachments.is_empty() {
             return false;
         }
-        let inbox_loading = self
-            .pending
-            .values()
-            .any(|p| matches!(p, Pending::Inbox(i, _) if *i == index));
+        let queued = self.will_queue(index);
         let session = &mut self.sessions[index];
-        if session.archived
-            || session.forgotten
-            || session.stopping
-            || session.archiving
-            || session.attaching > 0
-            || session.commanding
-        {
+        if !session.can_submit() {
             return false;
         }
         let native_command = prompt
@@ -1531,12 +1545,7 @@ impl Workspace {
                 return true;
             }
         }
-        if session.working()
-            || session.loading
-            || inbox_loading
-            || !session.queue.is_empty()
-            || !session.inbox.items.is_empty()
-        {
+        if queued {
             session.queue.push(QueuedPrompt {
                 text: prompt,
                 options: session.options.clone(),

@@ -44,24 +44,31 @@ pub fn indicator(
         .key("session-activity")
         .role("status")
         .label(&activity.label)
-        .w_full()
+        .min_w(0.0)
         .min_h(24.0)
-        .pb(6.0)
-        .gap(8.0)
+        .gap(6.0)
         .center_y()
-        .children(
-            (activity.kind == ActivityKind::Thinking).then(|| icon(&ui::BRAIN, 14.0).color(color)),
-        )
+        .help(format!("{} · {}", agent.unwrap_or("Agent"), activity.label))
+        .child(if activity.kind == ActivityKind::Thinking {
+            icon(&ui::BRAIN, 14.0).color(color)
+        } else {
+            rune::el()
+                .size(5.0, 5.0)
+                .radius(2.5)
+                .fill(color)
+                .a11y_hidden()
+        })
         .child(if waiting {
-            text(&activity.label).font(k.ty.small_medium).color(color)
+            text(&activity.label)
+                .font(k.ty.small_medium)
+                .color(color)
+                .truncate()
+                .min_w(0.0)
         } else {
             ui::busy_text(&activity.label, k.ty.small_medium, k)
+                .min_w(0.0)
+                .clip_rounded(0.0)
         })
-        .child(
-            ui::caption(agent.unwrap_or("Agent"), k)
-                .grow(1.0)
-                .truncate(),
-        )
 }
 
 pub fn shells(s: &Workspace, k: &Kit, index: usize) -> El {
