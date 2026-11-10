@@ -35,6 +35,8 @@ pub struct Session {
     pub inbox: super::Inbox,
     pub queue_paused: bool,
     pub archived: bool,
+    /// Discovery must have started after the last successful local archive change.
+    archive_barrier: u64,
     /// Removed from Caelum because the provider no longer associates it with
     /// this project. Kept in memory only so pending requests retain stable indices.
     pub forgotten: bool,
@@ -86,6 +88,7 @@ impl Session {
             inbox: Default::default(),
             queue_paused: false,
             archived: false,
+            archive_barrier: 0,
             forgotten: false,
             archiving: false,
             deleting: false,
@@ -229,7 +232,7 @@ pub struct Workspace {
     remembered: HashMap<String, usize>,
     remembered_checkouts: HashMap<String, usize>,
     managed_worktrees: BTreeSet<String>,
-    deferred_lists: HashMap<Scope, Vec<Summary>>,
+    deferred_lists: HashMap<Scope, (u64, Vec<Summary>)>,
     /// Closing only removes open navigation. Reject earlier discovery/open replies
     /// without invalidating the stable sessions or their in-flight work.
     closed_projects: HashMap<String, u64>,
@@ -702,6 +705,7 @@ impl Workspace {
             );
         } else {
             session.archived = archived;
+            session.archive_barrier = self.next_request;
             if archived {
                 let owns_notice = self.archived_notice(index, self.archive_revision);
                 if self.selected == Some(index) {
@@ -1688,8 +1692,8 @@ impl Workspace {
                         .cloned()
                         .collect();
                     for scope in ready {
-                        if let Some(summaries) = self.deferred_lists.remove(&scope) {
-                            self.apply_summaries(&scope, summaries, false);
+                        if let Some((request, summaries)) = self.deferred_lists.remove(&scope) {
+                            self.apply_summaries(request, &scope, summaries, false);
                         }
                     }
                     for index in 0..self.sessions.len() {
@@ -1907,6 +1911,7 @@ impl Workspace {
                     for session in &mut self.sessions {
                         if session.scope.project == worktree.project.path {
                             session.archived = true;
+                            session.archive_barrier = self.next_request;
                         }
                     }
                     self.remembered
@@ -2397,6 +2402,8 @@ impl Workspace {
             (Pending::Archive(index, archived, select, revision), Reply::Done) => {
                 self.sessions[index].archiving = false;
                 self.sessions[index].archived = archived;
+                // Lists issued while the mutation was in flight can also be stale.
+                self.sessions[index].archive_barrier = self.next_request;
                 if archived {
                     let owns_notice = self.archived_notice(index, revision);
                     if self.selected == Some(index) {
@@ -2466,13 +2473,13 @@ impl Workspace {
                 // creation reply supplies its ID. Adopt it into its stable local
                 // slot first, then reconcile discovery without duplicate rows.
                 if self.creating(&scope) {
-                    self.deferred_lists.insert(scope, summaries);
+                    self.deferred_lists.insert(scope, (request, summaries));
                 } else {
-                    self.apply_summaries(&scope, summaries, false);
+                    self.apply_summaries(request, &scope, summaries, false);
                 }
             }
             (Pending::ListArchived(scope), Reply::Sessions(summaries)) => {
-                self.apply_summaries(&scope, summaries, true);
+                self.apply_summaries(request, &scope, summaries, true);
             }
             (Pending::Choices(scope), Reply::Choices(choices)) => {
                 for session in self
@@ -2593,7 +2600,13 @@ impl Workspace {
         self.pending.values().any(|pending| matches!(pending, Pending::Start(index, _) if self.sessions[*index].scope == *scope))
     }
 
-    fn apply_summaries(&mut self, scope: &Scope, summaries: Vec<Summary>, archived: bool) {
+    fn apply_summaries(
+        &mut self,
+        request: u64,
+        scope: &Scope,
+        summaries: Vec<Summary>,
+        archived: bool,
+    ) {
         for summary in summaries
             .into_iter()
             .filter(|summary| summary.key.scope == *scope)
@@ -2606,7 +2619,7 @@ impl Workspace {
                 if session.forgotten {
                     continue;
                 }
-                if !session.archiving {
+                if !session.archiving && request > session.archive_barrier {
                     session.archived = archived;
                 }
                 if session.revision == 0 {

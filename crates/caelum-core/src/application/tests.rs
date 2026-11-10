@@ -1231,6 +1231,7 @@ fn removing_a_worktree_selects_existing_context_instead_of_creating_a_draft() {
     let linked = app.new_session(scope(Provider::Codex, "/linked"));
     app.sessions[linked].remote_id = Some("thread-linked".into());
     app.select(linked);
+    let list = discover_session_list(&mut app, &scope(Provider::Codex, "/linked"), false);
 
     app.task(Task::RemoveWorktree {
         project: "/linked".into(),
@@ -1261,6 +1262,14 @@ fn removing_a_worktree_selects_existing_context_instead_of_creating_a_draft() {
     assert_eq!(app.active_project.as_deref(), Some("/main"));
     assert_eq!(app.selected, Some(main));
     assert_eq!(app.sessions[main].draft, "Keep the main session context");
+    app.apply(Event::Completed(
+        list,
+        Ok(Reply::Sessions(vec![summary(
+            scope(Provider::Codex, "/linked"),
+            "thread-linked",
+        )])),
+    ));
+    assert!(app.sessions[linked].archived);
 }
 
 #[test]
@@ -2141,6 +2150,127 @@ fn provider_session_discovery_includes_archived_history() {
     assert_eq!(workspace.sessions.len(), 2);
     assert!(!workspace.sessions[0].archived);
     assert!(workspace.sessions[1].archived);
+}
+
+fn discover_session_list(workspace: &mut Workspace, scope: &Scope, archived: bool) -> u64 {
+    workspace.discover_sessions(scope.clone());
+    workspace
+        .commands()
+        .into_iter()
+        .find(|(_, command)| match command {
+            Command::List(current) => current == scope && !archived,
+            Command::ListArchived(current) => current == scope && archived,
+            _ => false,
+        })
+        .unwrap()
+        .0
+}
+
+#[test]
+fn discovery_started_before_archive_completion_preserves_the_new_state() {
+    for provider in Provider::ALL {
+        for archived in [false, true] {
+            for during in [false, true] {
+                let mut workspace = Workspace::default();
+                let scope = scope(provider, "/a");
+                let index = workspace.new_session(scope.clone());
+                workspace.sessions[index].remote_id = Some("changed".into());
+                workspace.sessions[index].archived = !archived;
+                let other = workspace.new_session(scope.clone());
+                workspace.sessions[other].remote_id = Some("other".into());
+                workspace.sessions[other].archived = archived;
+                let mut list = None;
+                if !during {
+                    list = Some(discover_session_list(&mut workspace, &scope, !archived));
+                }
+                workspace.archive(index, archived);
+                let archive = workspace.commands().pop().unwrap().0;
+                if during {
+                    list = Some(discover_session_list(&mut workspace, &scope, !archived));
+                }
+                workspace.apply(Event::Completed(archive, Ok(Reply::Done)));
+                assert_eq!(workspace.sessions[index].archived, archived);
+
+                workspace.apply(Event::Completed(
+                    list.unwrap(),
+                    Ok(Reply::Sessions(vec![
+                        summary(scope.clone(), "changed"),
+                        summary(scope.clone(), "other"),
+                        summary(scope.clone(), "discovered"),
+                    ])),
+                ));
+                assert_eq!(workspace.sessions[index].archived, archived);
+                assert_eq!(workspace.sessions[other].archived, !archived);
+                assert_eq!(
+                    workspace.sessions.last().unwrap().remote_id.as_deref(),
+                    Some("discovered")
+                );
+                assert_eq!(workspace.sessions.last().unwrap().archived, !archived);
+
+                // A fresh read can still reconcile a later change made outside Caelum.
+                let fresh = discover_session_list(&mut workspace, &scope, !archived);
+                workspace.apply(Event::Completed(
+                    fresh,
+                    Ok(Reply::Sessions(vec![summary(scope, "changed")])),
+                ));
+                assert_eq!(workspace.sessions[index].archived, !archived);
+            }
+        }
+    }
+}
+
+#[test]
+fn discovery_deferred_during_creation_keeps_its_original_archive_boundary() {
+    for provider in Provider::ALL {
+        let mut workspace = Workspace::default();
+        let scope = scope(provider, "/a");
+        let existing = workspace.new_session(scope.clone());
+        workspace.sessions[existing].remote_id = Some("existing".into());
+        let created = workspace.new_session(scope.clone());
+        workspace.send(created, "Hello".into());
+        let create = workspace.commands().pop().unwrap().0;
+        let list = discover_session_list(&mut workspace, &scope, false);
+        workspace.apply(Event::Completed(
+            list,
+            Ok(Reply::Sessions(vec![
+                summary(scope.clone(), "existing"),
+                summary(scope.clone(), "created"),
+            ])),
+        ));
+        workspace.archive(existing, true);
+        let archive = workspace.commands().pop().unwrap().0;
+        workspace.apply(Event::Completed(archive, Ok(Reply::Done)));
+        workspace.apply(Event::Completed(
+            create,
+            Ok(Reply::Session(summary(scope, "created"))),
+        ));
+        assert!(workspace.sessions[existing].archived);
+        assert_eq!(
+            workspace.sessions[created].remote_id.as_deref(),
+            Some("created")
+        );
+        assert_eq!(workspace.sessions.len(), 2);
+    }
+}
+
+#[test]
+fn failed_archive_changes_do_not_block_discovery_reconciliation() {
+    for archived in [false, true] {
+        let mut workspace = Workspace::default();
+        let scope = scope(Provider::OpenCode, "/a");
+        let index = workspace.new_session(scope.clone());
+        workspace.sessions[index].remote_id = Some("session".into());
+        workspace.sessions[index].archived = !archived;
+        let list = discover_session_list(&mut workspace, &scope, archived);
+        workspace.archive(index, archived);
+        let archive = workspace.commands().pop().unwrap().0;
+        workspace.apply(Event::Completed(archive, Err("Connection lost".into())));
+        workspace.apply(Event::Completed(
+            list,
+            Ok(Reply::Sessions(vec![summary(scope, "session")])),
+        ));
+        assert_eq!(workspace.sessions[index].archived, archived);
+    }
 }
 
 #[test]
