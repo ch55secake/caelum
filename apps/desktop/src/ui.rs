@@ -1,6 +1,6 @@
 //! Caelum's shared visual vocabulary, used by live views and deterministic previews.
 use rune::{El, Icon, TextStyle, col, icon, row, text};
-use rune_kit::{Kit, shell::SidebarRow};
+use rune_kit::{Kit, ScrollBar, shell::SidebarRow};
 
 /// App-sized controls, including the same keyboard and disabled treatment everywhere.
 pub struct Button(rune_kit::Button, rune_kit::ButtonVariant);
@@ -427,6 +427,11 @@ pub static AGENT: Icon = Icon {
     view: 16.0,
     body: r#"<rect x="3" y="5" width="10" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 2v3M1 8v2M15 8v2M6 11h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="6" cy="8" r=".7" fill="currentColor"/><circle cx="10" cy="8" r=".7" fill="currentColor"/>"#,
 };
+pub static QUEUE: Icon = Icon {
+    name: "queue",
+    view: 16.0,
+    body: r#"<path d="M2 4h9M2 8h6M2 12h6m4-5v6m-3-3h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>"#,
+};
 pub static EXTERNAL: Icon = Icon {
     name: "external",
     view: 16.0,
@@ -568,36 +573,18 @@ pub fn user_bubble(message: &str, attachments: bool, k: &Kit) -> El {
 }
 
 pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f32, k: &Kit) -> El {
-    composer_activity(input, controls, context, focused, padding, k, None)
-}
-
-pub fn composer_activity(
-    input: El,
-    controls: El,
-    context: El,
-    focused: bool,
-    padding: f32,
-    k: &Kit,
-    activity: Option<&caelum_core::application::presentation::Activity>,
-) -> El {
-    use caelum_core::application::presentation::ActivityKind;
-    let outline = activity.map(|a| {
-        let waiting = matches!(a.kind, ActivityKind::Background | ActivityKind::Input);
-        rune::el()
-            .key("composer-pulse")
-            .absolute(0.0, 0.0)
-            .w_full()
-            .h_full()
-            .radius(14.0)
-            .border(1.5, activity_color(a, k))
-            .a11y_hidden()
-            .looping(rune::LoopSpec::opacity(
-                if waiting { 4.5 } else { 2.8 },
-                0.0,
-                0.15,
-                if waiting { 0.4 } else { 0.6 },
-            ))
-    });
+    let rim =
+        k.c.border_strong
+            .mix(rune::Color::WHITE, if k.dark { 0.12 } else { 0.35 });
+    let edge = |color: rune::Color| {
+        if focused {
+            color.mix(k.c.border_focus, 0.55)
+        } else {
+            color
+        }
+    };
+    // The dock sits over a uniform surface. Tint and top lighting give it depth
+    // without a backdrop pass on every streamed frame.
     col().w_full().max_w(840.0).px(padding).pb(24.0).child(
         col()
             .key("message-composer")
@@ -605,25 +592,42 @@ pub fn composer_activity(
             .label("Message composer")
             .w_full()
             .padding(12.0)
-            .radius(14.0)
-            .fill(k.c.layer_02)
-            .border(
-                1.0,
-                if focused {
-                    k.c.border_focus
-                } else {
-                    k.c.border_strong
-                },
+            .radius(16.0)
+            .fill(k.alpha(k.c.layer_02, 0.94))
+            .gradient(
+                k.alpha(rune::Color::WHITE, if k.dark { 0.035 } else { 0.4 }),
+                k.alpha(k.c.bg_deep, if k.dark { 0.04 } else { 0.12 }),
             )
-            .child(context)
+            .border_gradient(1.0, edge(rim), edge(k.c.border_base))
+            .box_shadow(rune::Shadow {
+                y: 1.0,
+                color: k.alpha(rune::Color::WHITE, if k.dark { 0.045 } else { 0.8 }),
+                inset: true,
+                ..Default::default()
+            })
+            .shadow(
+                6.0,
+                24.0,
+                k.alpha(rune::Color::BLACK, if k.dark { 0.2 } else { 0.07 }),
+            )
+            .child(
+                context
+                    .max_h(180.0)
+                    .scroll(rune::ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .scroll_bar(k),
+            )
             .child(
                 rune::auto_grow(input, 2, 8)
                     .key("composer-editor")
-                    .min_h(46.0)
+                    .px(4.0)
+                    .py(4.0)
+                    .min_h(56.0)
                     .max_h(180.0),
             )
-            .child(controls.min_h(32.0).mt(10.0))
-            .children(outline),
+            .child(divider(k).opacity(0.5).mt(8.0).mb(8.0))
+            .child(controls.min_h(32.0)),
     )
 }
 

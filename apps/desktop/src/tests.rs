@@ -1238,11 +1238,11 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                 );
             }
             if working {
-                assert!(element(&rt, "queue-message").visible[2] >= 50.0);
-                assert_eq!(
-                    element(&rt, "send").label.as_deref(),
-                    Some("Stop generation")
-                );
+                assert!(element(&rt, "stop").visible[2] >= 50.0);
+                assert_eq!(element(&rt, "send").label.as_deref(), Some("Queue message"));
+            } else {
+                assert_eq!(element(&rt, "send").label.as_deref(), Some("Send message"));
+                assert!(rt.find("stop").is_none());
             }
             assert!(rt.find("provider-trigger").is_none());
             for name in ["effort", "agent"] {
@@ -1261,6 +1261,326 @@ fn narrow_composer_wraps_all_options_and_keeps_queue_and_stop_reachable() {
                 assert!(element(&rt, &trigger).focused);
             }
             assert!(!rt.state.live.as_ref().unwrap().app.sessions[0].stopping);
+        }
+    }
+}
+
+#[test]
+fn composer_submission_matches_enter_and_stop_keeps_the_next_draft() {
+    use caelum_core::application::{Attachment, Command, Provider};
+    for provider in Provider::ALL {
+        for working in [false, true] {
+            for keyboard in [false, true] {
+                for attachment_only in [false, true] {
+                    let mut rt = live_runtime_size((800.0, 620.0));
+                    rt.update(|s, _| {
+                        let l = s.live.as_mut().unwrap();
+                        let session = &mut l.app.sessions[0];
+                        session.scope.provider = provider;
+                        session.remote_id = Some("session".into());
+                        session.conversation.working = working;
+                        if attachment_only {
+                            session.attachments.push(Attachment::new(
+                                "src/main.rs".into(),
+                                "fn main() {}".into(),
+                                None,
+                                false,
+                            ));
+                        }
+                        l.app.commands();
+                    });
+                    fill(
+                        &mut rt,
+                        "live-draft-0",
+                        if attachment_only {
+                            ""
+                        } else {
+                            "Next message café"
+                        },
+                    );
+                    assert!(element(&rt, "send").focusable);
+                    assert_eq!(
+                        element(&rt, "send").label.as_deref(),
+                        Some(if working {
+                            "Queue message"
+                        } else {
+                            "Send message"
+                        })
+                    );
+                    if keyboard {
+                        key(&mut rt, Key::Enter, Mods::default());
+                    } else {
+                        click(&mut rt, "send");
+                    }
+                    let l = rt.state.live.as_mut().unwrap();
+                    let commands = l.app.commands();
+                    let prompt = if working && provider == Provider::Codex {
+                        assert_eq!(l.app.sessions[0].queue.len(), 1);
+                        l.app.sessions[0].queue[0].text.clone()
+                    } else {
+                        commands
+                            .iter()
+                            .find_map(|(_, command)| match command {
+                                Command::Enqueue(_, _, text) if working => Some(text.clone()),
+                                Command::Send(_, text, _) if !working => Some(text.clone()),
+                                _ => None,
+                            })
+                            .expect("the primary action must submit rather than cancel")
+                    };
+                    assert!(prompt.contains(if attachment_only {
+                        "fn main() {}"
+                    } else {
+                        "Next message café"
+                    }));
+                    assert!(l.drafts[0].text.is_empty());
+                    assert!(l.app.sessions[0].attachments.is_empty());
+                    assert!(!l.app.sessions[0].stopping);
+                    assert!(element(&rt, "live-draft-0").focused);
+                    if working {
+                        fill(&mut rt, "live-draft-0", "Keep this newer draft");
+                        click(&mut rt, "stop");
+                        let l = rt.state.live.as_mut().unwrap();
+                        assert_eq!(l.drafts[0].text, "Keep this newer draft");
+                        assert!(l.app.sessions[0].queue_paused);
+                        assert!(
+                            l.app
+                                .commands()
+                                .iter()
+                                .any(|(_, c)| matches!(c, Command::Cancel(_)))
+                        );
+                        assert!(!element(&rt, "send").focusable);
+                        assert!(!element(&rt, "stop").focusable);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn composer_queue_disclosure_preserves_ownership_and_restores_saved_options() {
+    let mut rt = design_runtime("composer-queued", (800.0, 620.0));
+    let draft = rt.state.live.as_ref().unwrap().drafts[0].text.clone();
+    let options = rt.state.live.as_ref().unwrap().app.sessions[0].queue[0]
+        .options
+        .clone();
+    assert_eq!(
+        element(&rt, "toggle-queued-messages").label.as_deref(),
+        Some("2 queued")
+    );
+    assert!(rt.find("queued-messages").is_none());
+    click(&mut rt, "toggle-queued-messages");
+    assert_eq!(element(&rt, "toggle-queued-messages").expanded, Some(true));
+    assert!(
+        !element(&rt, "edit-queued-0-0").focusable,
+        "editing must not overwrite a newer draft"
+    );
+    click(&mut rt, "move-queued-0-1");
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0].queue[0].text,
+        "Check attachments and multiline drafts."
+    );
+    click(&mut rt, "pause-queued-messages");
+    assert_eq!(
+        element(&rt, "toggle-queued-messages").label.as_deref(),
+        Some("2 queued · Paused")
+    );
+    click(&mut rt, "live-session-1");
+    assert!(rt.find("toggle-queued-messages").is_none());
+    click(&mut rt, "live-session-0");
+    assert_eq!(element(&rt, "toggle-queued-messages").expanded, Some(true));
+    assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, draft);
+    fill(&mut rt, "live-draft-0", "");
+    click(&mut rt, "edit-queued-0-0");
+    assert!(element(&rt, "live-draft-0").focused);
+    let l = rt.state.live.as_ref().unwrap();
+    assert_eq!(l.drafts[0].text, "Check attachments and multiline drafts.");
+    assert_eq!(l.app.sessions[0].options, options);
+    assert_eq!(l.app.sessions[0].queue.len(), 1);
+    click(&mut rt, "remove-local-queued-0-0");
+    assert!(rt.find("toggle-queued-messages").is_none());
+    assert!(rt.find("queued-messages").is_none());
+}
+
+#[test]
+fn composer_inbox_errors_stay_visible_when_collapsed_and_retry_the_same_message() {
+    use caelum_core::application::{Command, Event, Provider, Reply};
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        let session = &mut l.app.sessions[0];
+        session.scope.provider = Provider::OpenCode;
+        session.remote_id = Some("session".into());
+        session.conversation.working = true;
+        l.app.commands();
+    });
+    fill(&mut rt, "live-draft-0", "Keep this queued message");
+    click(&mut rt, "send");
+    assert_eq!(
+        element(&rt, "toggle-queued-messages").label.as_deref(),
+        Some("1 queued · Saving…")
+    );
+    let (request, id) = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .into_iter()
+        .find_map(|(request, command)| match command {
+            Command::Enqueue(_, id, _) => Some((request, id)),
+            _ => None,
+        })
+        .unwrap();
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().apply(Event::Completed(
+            request,
+            Err("Could not save the message".into()),
+        ))
+    });
+    advance(&mut rt, 0.2);
+    assert_eq!(
+        element(&rt, "toggle-queued-messages").label.as_deref(),
+        Some("1 queued · Needs attention")
+    );
+    assert!(rt.find("queued-messages").is_none());
+    click(&mut rt, "toggle-queued-messages");
+    key(&mut rt, Key::Text(" ".into()), Mods::default());
+    assert_eq!(element(&rt, "toggle-queued-messages").expanded, Some(false));
+    key(&mut rt, Key::Text(" ".into()), Mods::default());
+    click(&mut rt, &format!("retry-queued-{id}"));
+    let (retry, command) = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .into_iter()
+        .find(|(_, c)| matches!(c, Command::Enqueue(..)))
+        .unwrap();
+    assert!(matches!(command, Command::Enqueue(_, current, _) if current == id));
+    assert!(!element(&rt, &format!("remove-queued-{id}")).focusable);
+    rt.update(|s, _| {
+        s.live
+            .as_mut()
+            .unwrap()
+            .apply(Event::Completed(retry, Ok(Reply::Done)))
+    });
+    advance(&mut rt, 0.2);
+    assert_eq!(
+        element(&rt, "toggle-queued-messages").label.as_deref(),
+        Some("1 queued")
+    );
+    click(&mut rt, &format!("remove-queued-{id}"));
+    assert!(
+        rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, c)| matches!(c, Command::RemoveQueued(_, current) if current == &id))
+    );
+}
+
+#[test]
+fn composer_typing_during_streaming_preserves_transcript_reading_position() {
+    use caelum_core::application::{Event, Provider};
+    let mut rt = live_runtime_size((800.0, 620.0));
+    rt.update(|s, _| {
+        let session = &mut s.live.as_mut().unwrap().app.sessions[0];
+        session.remote_id = Some("streaming".into());
+        let turns: Vec<_> = (0..30).map(|n| serde_json::json!({"id":format!("turn-{n}"),"status":"completed","items":[
+            {"id":format!("user-{n}"),"type":"userMessage","content":[{"text":format!("Review change {n}")}]},
+            {"id":format!("reply-{n}"),"type":"agentMessage","text":"Keep each session’s draft and reading position independent."}
+        ]})).collect();
+        session.conversation.history(Provider::Codex, &turns, false);
+        session.conversation.working = true;
+    });
+    fill(&mut rt, "live-draft-0", "My next prompt");
+    let (x, y) = rt.find("live-transcript-0").unwrap();
+    rt.wheel(x, y, 240.0);
+    advance(&mut rt, 0.2);
+    assert_eq!(rt.scroll_at_bottom("live-transcript-0"), Some(false));
+    let reading = rt.state.live.as_ref().unwrap().app.sessions[0].reading;
+    for _ in 0..12 {
+        rt.update(|s, _| {
+            s.live.as_mut().unwrap().apply(Event::Codex(caelum_protocol::CodexEvent {
+                project_path: "/project".into(), method: "item/agentMessage/delta".into(),
+                params: serde_json::json!({"threadId":"streaming","itemId":"active-reply","delta":"Another streamed update. "}), request_id: None,
+            }));
+        });
+        rt.paste(" café");
+        advance(&mut rt, 0.05);
+    }
+    assert!(element(&rt, "live-draft-0").focused);
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().drafts[0].text,
+        format!("My next prompt{}", " café".repeat(12))
+    );
+    assert_eq!(
+        rt.state.live.as_ref().unwrap().app.sessions[0].reading,
+        reading
+    );
+    let transcript = element(&rt, "live-transcript-0").rect;
+    assert!(transcript[1] + transcript[3] <= element(&rt, "message-composer").rect[1] + 1.0);
+}
+
+#[test]
+fn composer_content_stays_docked_and_bounded_in_both_themes() {
+    for dark in [false, true] {
+        for scene in [
+            "composer-multiline",
+            "composer-queued",
+            "composer-attachments",
+        ] {
+            let mut rt = design_runtime(scene, (800.0, 620.0));
+            rt.update(|s, _| {
+                s.dark = Some(dark);
+                s.inspector.set_open(true);
+            });
+            advance(&mut rt, 0.4);
+            if scene == "composer-queued" {
+                click(&mut rt, "toggle-queued-messages");
+            }
+            for key in [
+                "message-composer",
+                "composer-editor",
+                "model-trigger",
+                "effort-trigger",
+                "agent-trigger",
+                "send",
+            ] {
+                let e = element(&rt, key);
+                assert!(
+                    e.rect
+                        .iter()
+                        .zip(e.visible)
+                        .all(|(a, b)| (*a - b).abs() < 1.0),
+                    "{scene}: {e:?}"
+                );
+            }
+            for attachment in rt.state.live.as_ref().unwrap().app.sessions[0]
+                .attachments
+                .iter()
+            {
+                let e = element(&rt, &format!("composer-attachment-{}", attachment.id));
+                assert!(
+                    e.rect
+                        .iter()
+                        .zip(e.visible)
+                        .all(|(a, b)| (*a - b).abs() < 1.0),
+                    "{e:?}"
+                );
+            }
+            let composer = element(&rt, "message-composer").rect;
+            let transcript = element(&rt, "live-transcript-0").rect;
+            assert!(transcript[3] > 40.0, "{scene}: {transcript:?}");
+            assert!(transcript[1] + transcript[3] <= composer[1] + 1.0);
+            assert!(element(&rt, "composer-editor").rect[3] <= 180.1);
         }
     }
 }
@@ -2642,7 +2962,8 @@ fn composer_activity_is_visible_without_sidebar_and_settles_with_reduced_motion(
             s.sidebar.set_open(false);
         });
         advance(&mut rt, 0.4);
-        assert!(element(&rt, "composer-pulse").visible[2] > 200.0);
+        assert!(element(&rt, "session-activity").visible[3] >= 24.0);
+        assert!(element(&rt, "stop").focusable);
         rt.update(|s, _| {
             let session = &mut s.live.as_mut().unwrap().app.sessions[0];
             session.submitting = false;
@@ -3502,7 +3823,7 @@ fn editing_sending_background_streaming_and_stopping_stay_session_scoped() {
     assert_eq!(rt.state.active().draft.text, "Next message");
     click(&mut rt, "send");
     advance(&mut rt, 0.5);
-    click(&mut rt, "send");
+    click(&mut rt, "stop");
     let stopped = rt.state.active().turns[1].response.clone();
     assert!(!stopped.is_empty());
     assert!(rt.state.active().turns[1].stopped);

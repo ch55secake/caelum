@@ -295,31 +295,31 @@ fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<E
         // Workspace shortcuts run before the editor's Escape-to-blur handling.
         .on_input_key(on_key)
         .on_submit(Workspace::send);
-    let submit = IconButton::new(if session.working() { &STOP } else { &SEND })
-        .variant(IconButtonVariant::Submit)
-        .disabled(!session.working() && session.draft.text.trim().is_empty())
-        .on_press_tx(|s: &mut Workspace, tx| {
-            if s.active().working() {
-                s.active_mut().stop();
-            } else {
-                s.send(tx);
-            }
-        })
+    let submit = ui::Button::new("Send")
+        .icon(&SEND)
+        .variant(ButtonVariant::Contrast)
+        .disabled(session.working() || session.draft.text.trim().is_empty())
+        .on_press_tx(Workspace::send)
         .build(k)
         .key("send")
-        .label(if session.working() {
-            "Stop generation"
-        } else {
-            "Send message"
-        })
-        .size(32.0, 32.0);
+        .label("Send message");
     let mut controls = row()
         .w_full()
         .center_y()
         .gap(8.0)
         .child(text("Demo model").font(k.ty.small).color(k.c.text_muted))
         .child(rune::el().grow(1.0));
-    if wide {
+    if session.working() {
+        controls = controls.child(
+            ui::Button::new("Stop")
+                .icon(&STOP)
+                .variant(ButtonVariant::GhostMuted)
+                .on_press(|s: &mut Workspace| s.active_mut().stop())
+                .build(k)
+                .key("stop")
+                .label("Stop generation"),
+        );
+    } else if wide {
         controls = controls.child(
             text("↵ Send · ⇧↵ Newline")
                 .font(k.ty.small)
@@ -651,6 +651,19 @@ fn spec() -> AppSpec<Workspace> {
         scenes: &[
             ("composer-options", |s| {
                 evaluation::scene(s, "composer-options")
+            }),
+            ("composer-empty", |s| evaluation::scene(s, "composer-empty")),
+            ("composer-multiline", |s| {
+                evaluation::scene(s, "composer-multiline")
+            }),
+            ("composer-queued", |s| {
+                evaluation::scene(s, "composer-queued")
+            }),
+            ("composer-queue-error", |s| {
+                evaluation::scene(s, "composer-queue-error")
+            }),
+            ("composer-attachments", |s| {
+                evaluation::scene(s, "composer-attachments")
             }),
             ("files-tabs", |s| evaluation::scene(s, "files-tabs")),
             ("tools-collapsed", |s| {

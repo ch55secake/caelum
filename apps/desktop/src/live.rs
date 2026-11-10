@@ -10,10 +10,7 @@ use rune::{
     text, text_input,
 };
 use rune_kit::shell::{RowStatus, SidebarHeader, SidebarRow};
-use rune_kit::{
-    ButtonVariant, Dialog, IconButton, IconButtonVariant, Kit, Markdown, Placement, ScrollBar,
-    glyphs,
-};
+use rune_kit::{ButtonVariant, Dialog, Kit, Markdown, Placement, ScrollBar, glyphs};
 
 use crate::context::EditMenu;
 use crate::select::{Choice, Select};
@@ -46,6 +43,7 @@ pub struct Live {
     delete_confirmation: Option<usize>,
     pub shell_panel: Option<crate::shells::Panel>,
     pub(crate) collapsed_shells: HashSet<usize>,
+    pub(crate) expanded_queues: HashSet<usize>,
     pub focus_key: Option<String>,
     focus_observation: Cell<Option<(u64, bool)>>,
     pub archive_hovered: bool,
@@ -105,6 +103,7 @@ impl Live {
             delete_confirmation: None,
             shell_panel: None,
             collapsed_shells: Default::default(),
+            expanded_queues: Default::default(),
             focus_key: None,
             focus_observation: Cell::new(None),
             archive_hovered: false,
@@ -1686,13 +1685,18 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
     };
     let session = &live.app.sessions[index];
     let draft = &live.drafts[index];
+    let queued = live.app.will_queue(index);
     let input = text_input(draft, TextStyle::new(14.0, 400.0).lh(23.0))
         .label("Message")
         .placeholder(
             "Use / for commands, @ for files, # for PRs.",
             k.c.text_muted,
         )
-        .help("Enter to send · Shift+Enter for a new line")
+        .help(if queued {
+            "Enter to queue · Shift+Enter for a new line"
+        } else {
+            "Enter to send · Shift+Enter for a new line"
+        })
         .color(k.c.text_base)
         .selection_color(k.selection())
         .w_full()
@@ -1726,79 +1730,105 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
                 }
             }
         });
-    let submit = IconButton::new(if session.working() { &STOP } else { &SEND })
-        .variant(IconButtonVariant::Submit)
+    let submit = Button::new(if queued { "Queue" } else { "Send" })
+        .icon(if queued { &ui::QUEUE } else { &SEND })
+        .variant(ButtonVariant::Contrast)
         .disabled(
-            session.stopping
-                || (!session.working()
-                    && (!session.can_send()
-                        || (draft.text.trim().is_empty() && session.attachments.is_empty()))),
+            !session.can_submit()
+                || (!queued && !session.can_send())
+                || (draft.text.trim().is_empty() && session.attachments.is_empty()),
         )
-        .on_press_tx(|s: &mut Workspace, tx| {
-            if live_mut(s).working() {
-                live_mut(s).stop();
-            } else {
+        .on_press_tx(move |s: &mut Workspace, tx| {
+            if live_mut(s).app.selected == Some(index) {
                 s.send(tx);
             }
         })
         .build(k)
         .key("send")
-        .label(if session.working() {
-            "Stop generation"
+        .label(if queued {
+            "Queue message"
         } else {
             "Send message"
         })
-        .help(if session.working() {
-            "Stop generation · Escape"
+        .help(if queued {
+            "Queue message · Enter\nRuns after earlier work · Shift+Enter for a new line"
         } else {
             "Send message · Enter\nShift+Enter for a new line"
-        })
-        .size(32.0, 32.0);
-    let mut controls = row()
+        });
+    let actions = row()
         .key("composer-actions")
         .center_y()
         .justify_end()
-        .gap(6.0);
-    if session.working() && !draft.text.trim().is_empty() {
-        controls = controls.child(
-            Button::new("Queue")
-                .variant(ButtonVariant::GhostMuted)
-                .on_press_tx(Workspace::send)
-                .build(k)
-                .h(28.0)
-                .key("queue-message"),
-        );
-    }
+        .gap(6.0)
+        .children((session.working() || session.stopping).then(|| {
+            Button::new(if session.stopping {
+                "Stopping…"
+            } else {
+                "Stop"
+            })
+            .icon(&STOP)
+            .variant(ButtonVariant::GhostMuted)
+            .disabled(session.stopping)
+            .on_press(move |s: &mut Workspace| {
+                let live = live_mut(s);
+                live.schedule();
+                live.app.cancel(index);
+            })
+            .build(k)
+            .px(8.0)
+            .key("stop")
+            .label("Stop generation")
+            .help("Stop generation and pause the queue · Escape")
+        }))
+        .child(submit);
     let pickers = pickers(s, k, layers).min_w(0.0);
-    let controls = row()
-        .key("composer-controls")
-        .w_full()
-        .gap(10.0)
-        .items_end()
-        .child(pickers.grow(1.0))
-        .child(
-            controls
-                .child(crate::activity::context(s, k, index, wide))
-                .child(submit),
-        );
+    let usage_label = wide || rune::memo::window_layout("main-pane").is_some_and(|r| r[2] > 440.0);
+    let usage = crate::activity::context(s, k, index, usage_label);
+    let controls = if wide {
+        row()
+            .center_y()
+            .gap(12.0)
+            .child(pickers.grow(1.0))
+            .child(usage)
+            .child(actions)
+    } else {
+        col().gap(8.0).child(pickers.w_full()).child(
+            row()
+                .w_full()
+                .center_y()
+                .gap(8.0)
+                .child(usage)
+                .child(rune::el().grow(1.0))
+                .child(actions),
+        )
+    }
+    .key("composer-controls")
+    .w_full();
     let activity = crate::activity::session_activity(s, index);
-    ui::composer_activity(
+    let has_queue = !session.queue.is_empty() || !session.inbox.items.is_empty();
+    let status =
+        row()
+            .w_full()
+            .flex_wrap()
+            .center_y()
+            .gap(6.0)
+            .children(activity.as_ref().map(|a| {
+                crate::activity::indicator(a, session.options.agent.as_deref(), k).grow(1.0)
+            }))
+            .children(has_queue.then(|| crate::panels::queue_summary(s, k, index)));
+    ui::composer(
         input,
         controls,
         col()
+            .key(format!("composer-context-{index}"))
             .w_full()
             .gap(6.0)
-            .children(
-                activity
-                    .as_ref()
-                    .map(|a| crate::activity::indicator(a, session.options.agent.as_deref(), k)),
-            )
-            .child(crate::activity::shells(s, k, index))
+            .children((activity.is_some() || has_queue).then_some(status))
+            .children((!session.shells.is_empty()).then(|| crate::activity::shells(s, k, index)))
             .child(crate::panels::composer_context(s, k, index)),
         draft.focused,
         padding,
         k,
-        activity.as_ref(),
     )
 }
 
