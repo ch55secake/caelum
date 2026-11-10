@@ -52,7 +52,7 @@ The renderer and templates are already merged in [`ch55secake/homebrew-tap`](htt
 3. Set the Actions repository variable `HOMEBREW_TAP_UPDATES` to `enabled`.
 4. Recover the latest published tag to generate its tap update, or wait for the next release.
 
-Merge the generated tap PR to make the version installable. The formula installs the CLI as `caelum`; the cask installs `Caelum.app` without a second executable link. Homebrew installation has the same first-launch behavior as the DMG. Prereleases do not update the stable tap.
+Merge the generated tap PR to make the version installable. Publishing a newer stable version automatically closes older version-specific tap PRs and deletes their branches, while preserving equal or newer updates. The formula installs the CLI as `caelum`; the cask installs `Caelum.app` without a second executable link. Homebrew installation has the same first-launch behavior as the DMG. Prereleases do not update the stable tap.
 
 ## Local native packaging
 
