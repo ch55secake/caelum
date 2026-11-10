@@ -28,6 +28,120 @@ fn opencode(method: &str, data: serde_json::Value) -> Event {
 }
 
 #[test]
+fn completed_outputs_keep_the_used_agent_and_full_turn_duration() {
+    use caelum_protocol::CodexEvent;
+
+    let mut app = workspace();
+    app.sessions[0].options.agent = Some("build".into());
+    assert!(app.send(0, "OpenCode prompt".into()));
+    app.sessions[0].options.agent = Some("plan".into());
+    for (method, data) in [
+        (
+            "session.execution.started",
+            json!({"sessionID":"session-0", "_created":1000}),
+        ),
+        (
+            "session.text.started",
+            json!({"sessionID":"session-0", "assistantMessageID":"message-0", "ordinal":0, "agent":"build", "_created":1200}),
+        ),
+        (
+            "session.text.delta",
+            json!({"sessionID":"session-0", "assistantMessageID":"message-0", "ordinal":0, "delta":"OpenCode answer"}),
+        ),
+        (
+            "session.text.ended",
+            json!({"sessionID":"session-0", "assistantMessageID":"message-0", "ordinal":0, "text":"OpenCode answer", "agent":"build", "_created":4000}),
+        ),
+        (
+            "session.execution.succeeded",
+            json!({"sessionID":"session-0", "_created":5000}),
+        ),
+    ] {
+        app.apply(opencode(method, data));
+    }
+    let open_code = app.sessions[0]
+        .conversation
+        .entries
+        .iter()
+        .find(|entry| entry.kind == super::EntryKind::Assistant)
+        .unwrap();
+    assert_eq!(open_code.metadata["agent"], "build");
+    assert_eq!(open_code.metadata["outputDurationMs"], 4000);
+
+    app.sessions[1].options.agent = Some("plan".into());
+    assert!(app.send(1, "Codex prompt".into()));
+    app.sessions[1].options.agent = Some("build".into());
+    let codex = |method: &str, mut params: serde_json::Value| {
+        params["threadId"] = "session-1".into();
+        Event::Codex(CodexEvent {
+            project_path: "/project".into(),
+            method: method.into(),
+            params,
+            request_id: None,
+        })
+    };
+    for (method, params) in [
+        (
+            "turn/started",
+            json!({"turn":{"id":"turn-1"}, "_created":10000}),
+        ),
+        (
+            "item/started",
+            json!({"item":{"id":"answer-1", "type":"agentMessage", "status":"inProgress"}, "_created":10200}),
+        ),
+        (
+            "item/completed",
+            json!({"item":{"id":"answer-1", "type":"agentMessage", "status":"completed", "text":"Codex answer"}, "_created":13000}),
+        ),
+        (
+            "turn/completed",
+            json!({"turn":{"id":"turn-1", "status":"completed"}, "_created":15000}),
+        ),
+    ] {
+        app.apply(codex(method, params));
+    }
+    let codex = app.sessions[1]
+        .conversation
+        .entries
+        .iter()
+        .find(|entry| entry.kind == super::EntryKind::Assistant)
+        .unwrap();
+    assert_eq!(codex.metadata["agent"], "plan");
+    assert_eq!(codex.metadata["outputDurationMs"], 5000);
+}
+
+#[test]
+fn provider_history_retains_output_agent_and_timing_when_available() {
+    let mut open_code = super::Conversation::default();
+    open_code.history(
+        Provider::OpenCode,
+        &[json!({
+            "id":"message-1", "type":"assistant", "agent":"review",
+            "time":{"created":1000, "completed":6500},
+            "content":[{"type":"text", "text":"Reviewed"}]
+        })],
+        false,
+    );
+    let entry = &open_code.entries[0];
+    assert_eq!(entry.metadata["agent"], "review");
+    assert_eq!(entry.metadata["outputDurationMs"], 5500);
+
+    let mut codex = super::Conversation::default();
+    codex.history(
+        Provider::Codex,
+        &[json!({
+            "id":"turn-1", "status":"completed", "agent":"planner",
+            "createdAt":1700000000, "completedAt":1700000005,
+            "items":[{"id":"message-1", "type":"agentMessage", "text":"Planned"}]
+        })],
+        false,
+    );
+    let entry = &codex.entries[0];
+    assert_eq!(entry.metadata["agent"], "planner");
+    assert_eq!(entry.metadata["outputDurationMs"], 5000);
+}
+
+#[test]
 fn review_summaries_distinguish_unknown_checks_and_unmergeable_states() {
     use super::presentation::{CheckSummary, MergeReadiness, Outcome};
     let checks: Vec<caelum_protocol::GitHubStatusCheck> = serde_json::from_value(json!([

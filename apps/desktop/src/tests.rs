@@ -4394,6 +4394,63 @@ fn closing_local_sessions_and_undo_keep_the_workspace_editable() {
 }
 
 #[test]
+fn completed_assistant_response_shows_agent_and_duration_below_the_output() {
+    use caelum_core::application::{Event, Provider};
+    let mut rt = live_runtime();
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        {
+            let session = &mut app.sessions[1];
+            session.remote_id = Some("session-1".into());
+            session.loaded = true;
+            session.options.agent = Some("build".into());
+            session
+                .conversation
+                .begin_turn(Some("build".into()), 1_000);
+        }
+        app.select(1);
+        for (event_type, data) in [
+            (
+                "session.execution.started",
+                serde_json::json!({"sessionID":"session-1", "_created":1000}),
+            ),
+            (
+                "session.text.started",
+                serde_json::json!({"sessionID":"session-1", "assistantMessageID":"message-1", "ordinal":0, "agent":"build", "_created":1100}),
+            ),
+            (
+                "session.text.delta",
+                serde_json::json!({"sessionID":"session-1", "assistantMessageID":"message-1", "ordinal":0, "delta":"Finished response"}),
+            ),
+            (
+                "session.text.ended",
+                serde_json::json!({"sessionID":"session-1", "assistantMessageID":"message-1", "ordinal":0, "text":"Finished response", "agent":"build", "_created":4000}),
+            ),
+            (
+                "session.execution.succeeded",
+                serde_json::json!({"sessionID":"session-1", "_created":5000}),
+            ),
+        ] {
+            app.apply(Event::OpenCode(caelum_protocol::OpenCodeEvent {
+                project_path: "/project".into(),
+                event_type: event_type.into(),
+                data,
+                id: None,
+                created: None,
+                location: None,
+            }));
+        }
+        assert_eq!(app.sessions[1].scope.provider, Provider::OpenCode);
+    });
+    advance(&mut rt, 0.3);
+
+    let output = element(&rt, "live-entry-1-opencode-message-1");
+    let details = element(&rt, "output-details-1-opencode-message-1");
+    assert_eq!(details.text.as_deref(), Some("build · 4.0s"));
+    assert!(details.rect[1] > output.rect[1]);
+}
+
+#[test]
 fn closing_provider_sessions_handles_completion_failure_and_selection_changes() {
     use caelum_core::application::{Command, Event, Provider, Reply};
     for provider in Provider::ALL {
