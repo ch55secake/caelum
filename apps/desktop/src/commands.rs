@@ -191,9 +191,7 @@ fn set_effort(s: &mut Workspace, index: usize, value: &str) {
     };
 
     if let Some(effort) = effort {
-        let l = live_mut(s);
-        l.app.sessions[index].options.effort = effort;
-        l.app.options_changed(index);
+        live_mut(s).app.set_effort(index, effort);
         return;
     }
 
