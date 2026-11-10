@@ -82,11 +82,11 @@ checks. These indicators follow reduced-motion preferences.
 ## Drafts, queues and requests
 
 Enter and the primary button send when idle or queue behind earlier work;
-Shift+Enter inserts a newline. The editor grows from 56 to 180 points, then scrolls
-independently above the settings and actions. **Expand editor** gives long prompts
-more vertical space within the dock; **Collapse editor** returns to the compact
-height. Both preserve caret, selection, undo history and scrolling. Writing mode
-and editor position are remembered per session during the app run. The transcript
+Shift+Enter inserts a newline. The editor grows naturally from 56 points as the
+draft gets longer, up to a window-aware limit of 420 points, then scrolls
+independently above the settings and actions. Shortening the draft reclaims space
+for the conversation. Caret, selection and undo history stay in the native editor;
+each session remembers its editor position during the app run. The transcript
 stays above the dock and the edge remains neutral while editing.
 Click **2 queued** (or focus it and
 press Space) to expand queued messages; each session remembers its disclosure state.
@@ -119,8 +119,10 @@ context. Tab/Enter accepts a mention; Escape cancels it, including an in-flight 
 Surrounding text and Unicode caret positions are preserved.
 
 Click an attachment chip to preview the captured snapshot; its separate **×**
-removes it. Text previews are selectable and offer **Copy snapshot**, with line
-ranges and a **Partial** notice when truncated. Previews show the attached content
+removes it. File previews have a filename/path header, syntax-highlighted source
+and line numbers matching the captured range. Short snapshots fit their content;
+longer ones scroll. Text stays selectable, and **Copy** copies the exact snapshot.
+A **Partial** label identifies truncated captures. Previews show the attached content
 even if the source changes. Closing a preview returns to the draft and its editor
 position. Pending reads name each file and disable Send/Queue until they settle;
 failed reads have a per-file error that can be dismissed. Attach again through the

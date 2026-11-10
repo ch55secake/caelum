@@ -9,10 +9,10 @@ fn position(rt: &Runtime<Workspace>, index: usize) -> f32 {
 }
 
 #[test]
-fn expanded_composer_leaves_transcript_space_and_all_controls_reachable() {
+fn growing_composer_leaves_transcript_space_and_all_controls_reachable() {
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         for inspector in [false, true] {
-            let mut rt = design_runtime("composer-expanded", size);
+            let mut rt = design_runtime("composer-long", size);
             rt.update(|s, _| {
                 s.inspector.set_open(inspector);
                 let l = s.live.as_mut().unwrap();
@@ -36,7 +36,6 @@ fn expanded_composer_leaves_transcript_space_and_all_controls_reachable() {
             for name in [
                 "message-composer",
                 "composer-editor",
-                "expand-composer",
                 "send",
                 "stop",
                 "model-trigger",
@@ -52,13 +51,28 @@ fn expanded_composer_leaves_transcript_space_and_all_controls_reachable() {
                     "{size:?}, inspector={inspector}: {e:?}"
                 );
             }
-            assert!(element(&rt, "composer-context-0").rect[3] <= 96.1);
-            let expanded = element(&rt, "composer-editor").rect[3];
-            click(&mut rt, "expand-composer");
-            advance(&mut rt, 0.3);
-            assert!(element(&rt, "composer-editor").rect[3] <= 180.1);
+            assert!(rt.find("expand-composer").is_none());
+            assert!(element(&rt, "composer-context-0").rect[3] <= 180.1);
+            let grown = element(&rt, "composer-editor").rect[3];
+            // The long input's un-clipped centre is below its scroll viewport.
+            click(&mut rt, "composer-editor");
+            key(
+                &mut rt,
+                Key::Command('a'),
+                Mods {
+                    cmd: true,
+                    ..Default::default()
+                },
+            );
+            rt.paste("Short prompt");
+            advance(&mut rt, 0.5);
+            assert_eq!(
+                rt.state.live.as_ref().unwrap().drafts[0].text,
+                "Short prompt"
+            );
+            assert!(element(&rt, "composer-editor").rect[3] <= 56.1);
             if size.1 > 620.0 {
-                assert!(expanded > 300.0);
+                assert!(grown > 300.0);
             }
         }
     }
@@ -82,11 +96,10 @@ fn composer_resize_preserves_unicode_selection_scroll_and_undo() {
     };
     let before = position(&rt, 0);
     assert!(before > 200.0);
-    for expanded in [true, false, true] {
-        click(&mut rt, "expand-composer");
+    for size in [(1280.0, 800.0), (1280.0, 1000.0), (1280.0, 760.0)] {
+        rt.set_viewport(size, 1.0);
         advance(&mut rt, 0.3);
         let l = rt.state.live.as_ref().unwrap();
-        assert_eq!(l.composer.editors[0].expanded, expanded);
         assert_eq!((l.drafts[0].anchor, l.drafts[0].focus), selection);
         assert_eq!(l.drafts[0].text, prompt);
         assert!(element(&rt, "live-draft-0").focused);
@@ -109,7 +122,7 @@ fn composer_resize_preserves_unicode_selection_scroll_and_undo() {
     );
     advance(&mut rt, 0.1);
     assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, prompt);
-    // Resizing must not replace the editor's history from before the toggle.
+    // Window-aware resizing must not replace the editor's earlier history.
     key(
         &mut rt,
         Key::Command('z'),
@@ -123,14 +136,15 @@ fn composer_resize_preserves_unicode_selection_scroll_and_undo() {
 }
 
 #[test]
-fn composer_writing_mode_and_scroll_are_session_owned() {
-    let mut rt = design_runtime("composer-expanded", (1280.0, 1000.0));
+fn composer_draft_height_and_scroll_are_session_owned() {
+    let mut rt = design_runtime("composer-long", (1280.0, 1000.0));
     fill(&mut rt, "live-draft-0", &"First draft café\n".repeat(80));
     rt.update(|_, tx| tx.scroll_to_y("composer-editor", 230.0));
     advance(&mut rt, 0.2);
     let first = position(&rt, 0);
     click(&mut rt, "live-session-1");
-    assert!(!rt.state.live.as_ref().unwrap().composer.editors[1].expanded);
+    advance(&mut rt, 0.4);
+    assert!(element(&rt, "composer-editor").rect[3] <= 56.1);
     fill(
         &mut rt,
         "live-draft-1",
@@ -141,7 +155,7 @@ fn composer_writing_mode_and_scroll_are_session_owned() {
     let second = position(&rt, 1);
     click(&mut rt, "live-session-0");
     advance(&mut rt, 0.3);
-    assert!(rt.state.live.as_ref().unwrap().composer.editors[0].expanded);
+    assert!(element(&rt, "composer-editor").rect[3] > 180.0);
     assert!(
         (position(&rt, 0) - first).abs() < 1.0,
         "first: {} -> {}",
@@ -150,7 +164,6 @@ fn composer_writing_mode_and_scroll_are_session_owned() {
     );
     click(&mut rt, "live-session-1");
     advance(&mut rt, 0.3);
-    assert!(!rt.state.live.as_ref().unwrap().composer.editors[1].expanded);
     assert!(
         (position(&rt, 1) - second).abs() < 1.0,
         "second: {} -> {}",
@@ -195,16 +208,22 @@ fn attachment_preview_copies_the_captured_snapshot_and_removal_is_separate() {
             .len(),
         2
     );
-    assert!(element(&rt, "workspace-dialog").visible[3] > 250.0);
+    let dialog = element(&rt, "workspace-dialog");
+    assert_eq!(dialog.label.as_deref(), Some("composer.rs"));
+    assert!(dialog.visible[3] < 300.0);
     let viewport = element(&rt, "attachment-preview-scroll");
     let content = element(&rt, "attachment-preview-text");
     assert!(content.path.starts_with(&format!("{}/", viewport.path)));
-    assert!((content.rect[1] - viewport.rect[1]).abs() < 1.0);
-    assert!(rt.elements().iter().any(|e| {
-        e.text
-            .as_deref()
-            .is_some_and(|t| t.contains("Partial snapshot:"))
-    }));
+    assert!((content.rect[1] - viewport.rect[1] - 12.0).abs() < 1.0);
+    assert_eq!(
+        element(&rt, "attachment-preview-lines").text.as_deref(),
+        Some("40\n41\n42\n43\n44")
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| { e.text.as_deref().is_some_and(|t| t == "Partial") })
+    );
     // Even if the original draft's attachment is replaced while the reader is
     // open, the captured preview and its Copy action must remain immutable.
     rt.update(|s, _| {
@@ -222,7 +241,12 @@ fn attachment_preview_copies_the_captured_snapshot_and_removal_is_separate() {
     assert_eq!(clipboard.text().unwrap().as_str(), snapshot.content);
     assert_eq!(
         element(&rt, "attachment-preview-text").text.as_deref(),
-        Some(snapshot.content.as_str())
+        Some(
+            snapshot
+                .content
+                .strip_suffix('\n')
+                .unwrap_or(&snapshot.content)
+        )
     );
     key(&mut rt, Key::Escape, Mods::default());
     advance(&mut rt, 0.2);

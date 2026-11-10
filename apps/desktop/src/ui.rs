@@ -432,16 +432,6 @@ pub static QUEUE: Icon = Icon {
     view: 16.0,
     body: r#"<path d="M2 4h9M2 8h6M2 12h6m4-5v6m-3-3h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>"#,
 };
-pub static EXPAND_EDITOR: Icon = Icon {
-    name: "expand-editor",
-    view: 16.0,
-    body: r#"<path d="M9 2h5v5m0-5L9 7M7 14H2V9m0 5 5-5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
-};
-pub static COLLAPSE_EDITOR: Icon = Icon {
-    name: "collapse-editor",
-    view: 16.0,
-    body: r#"<path d="M14 2 9 7m0-5v5h5M2 14l5-5m-5 0h5v5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>"#,
-};
 pub static EXTERNAL: Icon = Icon {
     name: "external",
     view: 16.0,

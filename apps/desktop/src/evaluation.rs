@@ -560,7 +560,7 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             | "composer-queued"
             | "composer-queue-error"
             | "composer-attachments"
-            | "composer-expanded"
+            | "composer-long"
             | "composer-attachment-status"
             | "composer-attachment-preview"
             | "composer-image-preview"
@@ -611,7 +611,7 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             if matches!(
                 name,
                 "composer-attachments"
-                    | "composer-expanded"
+                    | "composer-long"
                     | "composer-attachment-status"
                     | "composer-attachment-preview"
                     | "composer-image-preview"
@@ -636,13 +636,12 @@ fn polish_scene(state: &mut Workspace, name: &str) -> bool {
             }
             l.sync_editors();
             l.drafts[0].replace_text(prompt);
-            if name == "composer-expanded" {
+            if name == "composer-long" {
                 l.drafts[0].replace_text([
                     "Refine the long-prompt writing experience.\n\nKeep the conversation visible above the docked editor.\nPreserve the caret, selected text and undo history while resizing.\n",
                     "\nAttachment review\nPreview the captured file and image before sending.\nKeep removal separate from opening a preview.\nShow partial snapshots and per-file failures clearly.\n",
-                    "\nSession ownership\nRemember each session’s writing mode and scroll position.\nReturn to this draft after inspecting the context.\n\nCheck the compact layout in both themes.\n",
+                    "\nSession ownership\nRemember each session’s draft and scroll position.\nReturn to this draft after inspecting the context.\n\nCheck the compact layout in both themes.\n",
                 ].concat());
-                l.composer.editors[0].expanded = true;
             }
             if name == "composer-attachment-status" {
                 l.app.attach_file(0, "docs/design/notes.md".into());

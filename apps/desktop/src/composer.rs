@@ -1,9 +1,9 @@
-//! Session-owned writing mode and previews of the exact context attached to a draft.
+//! Session-owned editor position and previews of the exact context attached to a draft.
 use std::{cell::Cell, rc::Rc};
 
 use caelum_core::application::{Attachment, AttachmentKind};
-use rune::{El, ScrollPos, ScrollSpec, Tx, col, row, text};
-use rune_kit::{ButtonVariant, Kit, ScrollBar, glyphs};
+use rune::{El, ScrollPos, Tx, col, row};
+use rune_kit::{ButtonVariant, Kit, glyphs};
 
 use crate::{
     Workspace,
@@ -14,7 +14,6 @@ use crate::{
 
 #[derive(Default)]
 pub struct Editor {
-    pub expanded: bool,
     pub position: Rc<Cell<ScrollPos>>,
 }
 
@@ -31,66 +30,24 @@ pub struct State {
     selected: Option<usize>,
 }
 
-pub fn toggle(s: &mut Workspace, index: usize, tx: &mut Tx) {
-    let l = live_mut(s);
-    if l.app.selected != Some(index) {
-        return;
-    }
-    let editor = &mut l.composer.editors[index];
-    editor.expanded = !editor.expanded;
-    let offset = editor.position.get().offset[1];
-    l.drafts[index].focused = true;
-    // Resize the same editor and viewport; keep its native selection and undo history.
-    tx.instant();
-    tx.scroll_to_y("composer-editor", offset);
-}
-
-pub fn toggle_button(s: &Workspace, k: &Kit, index: usize) -> El {
-    let expanded = live(s).composer.editors[index].expanded;
-    let title = if expanded {
-        "Collapse editor"
-    } else {
-        "Expand editor"
-    };
-    quiet_button(
-        if expanded {
-            &ui::COLLAPSE_EDITOR
-        } else {
-            &ui::EXPAND_EDITOR
-        },
-        title,
-    )
-    .on_press_tx(move |s: &mut Workspace, tx| toggle(s, index, tx))
-    .build(k)
-    .key("expand-composer")
-    .expanded(expanded)
-    .help(title)
-}
-
 pub fn editor(s: &Workspace, index: usize, input: El) -> El {
     let state = &live(s).composer.editors[index];
     let position = state.position.clone();
     // The first frame after switching sessions still has the previous viewport's
     // offset. Wait for poll's restoration before recording this session's scroll.
     let restored = live(s).composer.selected == Some(index);
-    let height = if state.expanded {
-        let pane = rune::memo::window_layout("main-pane").map_or(700.0, |r| r[3]);
-        let controls = rune::memo::window_layout("composer-controls").map_or(102.0, |r| r[3]);
-        let support = rune::memo::window_layout(&format!("composer-context-{index}"))
-            .map_or(0.0, |r| r[3].min(96.0));
-        // Leave a readable portion of the transcript above the dock, including in
-        // a compact window with the inspector and attachment/queue rows open.
-        (pane - controls - support - 65.0 - 100.0).clamp(180.0, 520.0)
-    } else {
-        180.0
-    };
-    ui::composer_editor(input, if state.expanded { height } else { 56.0 }, height).on_scroll_offset(
-        move |at| {
-            if restored {
-                position.set(at);
-            }
-        },
-    )
+    let pane = rune::memo::window_layout("main-pane").map_or(700.0, |r| r[3]);
+    let controls = rune::memo::window_layout("composer-controls").map_or(102.0, |r| r[3]);
+    let support = rune::memo::window_layout(&format!("composer-context-{index}"))
+        .map_or(0.0, |r| r[3].min(180.0));
+    // Grow with the draft, reserving a readable part of the conversation even
+    // when attachments, queue controls or a narrow toolbar take more space.
+    let height = (pane - controls - support - 65.0 - (pane * 0.3).max(140.0)).clamp(100.0, 420.0);
+    ui::composer_editor(input, 56.0, height).on_scroll_offset(move |at| {
+        if restored {
+            position.set(at);
+        }
+    })
 }
 
 pub fn open(s: &mut Workspace, index: usize, id: &str) {
@@ -291,62 +248,96 @@ pub fn preview(s: &Workspace, k: &Kit) -> El {
     if attachment.kind == AttachmentKind::Image {
         return crate::media::view(s, k);
     }
-    let mut body = col()
+    let content = snapshot_content(attachment);
+    let count = content.lines().count();
+    let detail = attachment
+        .start_line
+        .zip(attachment.end_line)
+        .map(|(start, end)| format!("Lines {start}–{end}"))
+        .unwrap_or_else(|| format!("{count} line{}", if count == 1 { "" } else { "s" }));
+    let copy = attachment.content.clone();
+    col()
         .w_full()
         .h_full()
         .min_h(0.0)
-        .gap(10.0)
-        .child(ui::caption(attachment.label(), k).wrap())
-        .child(ui::caption(
-            attachment
-                .start_line
-                .zip(attachment.end_line)
-                .map(|(start, end)| format!("Attached snapshot · lines {start}–{end}"))
-                .unwrap_or_else(|| "Attached snapshot".into()),
+        .gap(8.0)
+        .child(crate::code_view::snapshot(
+            &content,
+            if attachment.kind == AttachmentKind::PullRequest {
+                "pull-request.json"
+            } else {
+                &attachment.path
+            },
+            attachment.start_line.unwrap_or(1),
             k,
-        ));
-    if attachment.truncated {
-        body = body.child(
-            ui::caption(
-                "Partial snapshot: only the captured content below will be sent.",
-                k,
-            )
-            .color(k.c.warning.fg),
-        );
-    }
-    let content = if attachment.kind == AttachmentKind::PullRequest {
+        ))
+        .child(
+            row()
+                .w_full()
+                .center_y()
+                .gap(8.0)
+                .child(
+                    ui::caption(format!("Snapshot · {detail}"), k)
+                        .truncate()
+                        .grow(1.0)
+                        .min_w(0.0),
+                )
+                .children(attachment.truncated.then(|| {
+                    ui::caption("Partial", k).color(k.c.warning.fg).help(
+                        "Partial snapshot: only the captured content shown here will be sent.",
+                    )
+                }))
+                .child(
+                    ui::Button::new("Copy")
+                        .icon(&glyphs::COPY)
+                        .variant(ButtonVariant::GhostMuted)
+                        .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
+                        .build(k)
+                        .key("copy-attachment-snapshot")
+                        .label("Copy snapshot")
+                        .help("Copy snapshot"),
+                ),
+        )
+}
+
+fn snapshot_content(attachment: &Attachment) -> String {
+    if attachment.kind == AttachmentKind::PullRequest {
         serde_json::from_str::<serde_json::Value>(&attachment.content)
             .ok()
             .and_then(|value| serde_json::to_string_pretty(&value).ok())
             .unwrap_or_else(|| attachment.content.clone())
     } else {
         attachment.content.clone()
+    }
+}
+
+pub fn preview_header(s: &Workspace) -> (&str, &str) {
+    let Some(preview) = &live(s).composer.preview else {
+        return ("Attachment", "");
     };
-    let copy = attachment.content.clone();
-    body.child(
-        ui::Button::new("Copy snapshot")
-            .variant(ButtonVariant::GhostMuted)
-            .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
-            .build(k)
-            .key("copy-attachment-snapshot"),
-    )
-    .child(
-        col()
-            .key("attachment-preview-scroll")
-            .w_full()
-            .grow(1.0)
-            .min_h(0.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(
-                text(content)
-                    .font(k.ty.mono)
-                    .color(k.c.text_base)
-                    .wrap()
-                    .selectable(true)
-                    .key("attachment-preview-text"),
-            )
-            .scroll_bar(k),
-    )
+    match preview.attachment.kind {
+        AttachmentKind::Image => ("Image preview", ""),
+        AttachmentKind::PullRequest => ("Pull request snapshot", &preview.attachment.path),
+        AttachmentKind::File => {
+            let (parent, name) = preview
+                .attachment
+                .path
+                .rsplit_once('/')
+                .unwrap_or(("", &preview.attachment.path));
+            (name, parent)
+        }
+    }
+}
+
+pub fn preview_height(s: &Workspace) -> f32 {
+    let Some(preview) = &live(s).composer.preview else {
+        return 120.0;
+    };
+    if preview.attachment.kind == AttachmentKind::Image {
+        return 480.0;
+    }
+    let lines = snapshot_content(&preview.attachment).lines().count();
+    // Source lines use the same 20-point leading as Files; short snapshots fit
+    // their content, while longer captures scroll below the filename header.
+    (lines as f32 * 20.0 + 24.0).clamp(84.0, 420.0) + 56.0
 }

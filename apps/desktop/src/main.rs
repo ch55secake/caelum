@@ -665,9 +665,7 @@ fn spec() -> AppSpec<Workspace> {
             ("composer-attachments", |s| {
                 evaluation::scene(s, "composer-attachments")
             }),
-            ("composer-expanded", |s| {
-                evaluation::scene(s, "composer-expanded")
-            }),
+            ("composer-long", |s| evaluation::scene(s, "composer-long")),
             ("composer-attachment-status", |s| {
                 evaluation::scene(s, "composer-attachment-status")
             }),

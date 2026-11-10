@@ -1813,11 +1813,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .child(submit);
     let pickers = pickers(s, k, layers).min_w(0.0);
     let usage_label = wide || rune::memo::window_layout("main-pane").is_some_and(|r| r[2] > 440.0);
-    let usage = row()
-        .center_y()
-        .gap(4.0)
-        .child(crate::composer::toggle_button(s, k, index))
-        .child(crate::activity::context(s, k, index, usage_label));
+    let usage = crate::activity::context(s, k, index, usage_label);
     let controls = if wide {
         row()
             .center_y()
@@ -1856,11 +1852,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         col()
             .key(format!("composer-context-{index}"))
             .w_full()
-            .max_h(if live.composer.editors[index].expanded {
-                96.0
-            } else {
-                180.0
-            })
+            .max_h(180.0)
             .gap(6.0)
             .children((activity.is_some() || has_queue).then_some(status))
             .children((!session.shells.is_empty()).then(|| crate::activity::shells(s, k, index)))

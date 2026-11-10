@@ -914,11 +914,10 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             "Fit, zoom and scroll the image.",
             crate::media::view(s, k),
         ),
-        Screen::Attachment => (
-            "Attachment preview",
-            "The snapshot captured for this message.",
-            crate::composer::preview(s, k),
-        ),
+        Screen::Attachment => {
+            let (title, description) = crate::composer::preview_header(s);
+            (title, description, crate::composer::preview(s, k))
+        }
         Screen::Launcher => (
             "New session",
             "Choose a project and provider.",
@@ -934,7 +933,8 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         Screen::Timeline => (580.0, 344.0),
         Screen::Sessions => (580.0, 420.0),
         Screen::Stats => (720.0, 620.0),
-        Screen::Image | Screen::Attachment => (760.0, 480.0),
+        Screen::Image => (760.0, 480.0),
+        Screen::Attachment => (760.0, crate::composer::preview_height(s)),
         _ => (660.0, 420.0),
     };
     let available =
@@ -959,8 +959,16 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
                 .w_full()
                 .h(height.min(available))
                 .min_h(0.0)
-                .px(24.0)
-                .pb(24.0)
+                .px(if screen == Screen::Attachment {
+                    16.0
+                } else {
+                    24.0
+                })
+                .pb(if screen == Screen::Attachment {
+                    16.0
+                } else {
+                    24.0
+                })
                 .child(body),
         )
         .build(k, layers);
