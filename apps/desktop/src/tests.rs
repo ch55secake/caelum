@@ -1310,7 +1310,8 @@ fn composer_menus_use_provider_ids_restore_defaults_and_dismiss_on_session_chang
         click(&mut rt, "option0");
     }
     let options = &rt.state.live.as_ref().unwrap().app.sessions[0].options;
-    assert!(options.effort.is_none() && options.agent.is_none());
+    assert_eq!(options.effort.as_deref(), Some(""));
+    assert!(options.agent.is_none());
     assert_eq!(rt.state.live.as_ref().unwrap().drafts[0].text, draft);
     let other = rt.state.live.as_ref().unwrap().app.sessions[1]
         .options
@@ -2208,6 +2209,72 @@ fn variants_and_effort_slash_commands_change_model_effort() {
             .effort
             .is_none()
     );
+}
+
+#[test]
+fn opencode_effort_default_controls_reset_sent_and_queued_prompts() {
+    use caelum_core::application::{Command, Provider};
+    for command in [Some("/effort default"), Some("/effort model default"), None] {
+        for working in [false, true] {
+            let mut rt = live_runtime_size((800.0, 620.0));
+            rt.update(|s, _| {
+                let app = &mut s.live.as_mut().unwrap().app;
+                let session = &mut app.sessions[0];
+                session.scope.provider = Provider::OpenCode;
+                session.remote_id = Some("ses_fake".into());
+                session.options.model = Some("local/model/a".into());
+                session.options.effort = Some("high".into());
+                session.conversation.working = working;
+                app.choices.insert(
+                    session.scope.clone(),
+                    serde_json::from_value(serde_json::json!({
+                        "models": [{
+                            "id": "local/model/a", "name": "Model A",
+                            "efforts": [{"id": "high", "name": "High"}]
+                        }],
+                        "agents": [],
+                        "defaultModel": "local/model/a"
+                    }))
+                    .unwrap(),
+                );
+                app.commands();
+            });
+            advance(&mut rt, 0.1);
+            if let Some(command) = command {
+                fill(&mut rt, "live-draft-0", command);
+                key(&mut rt, Key::Enter, Mods::default());
+            } else {
+                click(&mut rt, "effort-trigger");
+                click(&mut rt, "option0");
+            }
+            fill(
+                &mut rt,
+                "live-draft-0",
+                "Continue with model default effort",
+            );
+            key(&mut rt, Key::Enter, Mods::default());
+            let app = &mut rt.state.live.as_mut().unwrap().app;
+            let commands = app.commands();
+            let options = if working {
+                assert!(!commands.iter().any(|(_, command)| matches!(
+                    command,
+                    Command::Send(..) | Command::Enqueue(..)
+                )));
+                assert_eq!(app.sessions[0].queue.len(), 1);
+                &app.sessions[0].queue[0].options
+            } else {
+                commands
+                    .iter()
+                    .find_map(|(_, command)| match command {
+                        Command::Send(_, _, options) => Some(options),
+                        _ => None,
+                    })
+                    .expect("prompt must reach the provider")
+            };
+            assert_eq!(options.model.as_deref(), Some("local/model/a"));
+            assert_eq!(options.effort.as_deref(), Some(""));
+        }
+    }
 }
 
 #[test]
