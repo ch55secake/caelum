@@ -865,6 +865,14 @@ impl Workspace {
         self.sessions[index].options_dirty = true;
     }
 
+    pub fn set_effort(&mut self, index: usize, effort: Option<String>) {
+        let session = &mut self.sessions[index];
+        // OpenCode treats None as keeping the current variant, and "" as a reset.
+        session.options.effort =
+            effort.or_else(|| (session.scope.provider == Provider::OpenCode).then(String::new));
+        self.options_changed(index);
+    }
+
     pub fn attach(&mut self, index: usize, attachment: Attachment) -> bool {
         self.sessions[index].attachments.retain(|f| {
             !(f.kind == attachment.kind

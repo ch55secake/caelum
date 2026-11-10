@@ -2438,14 +2438,28 @@ server.serve_forever()
             )
             .is_err());
         assert_eq!(requests().len(), sent.len() + 1);
+        let mut workspace = crate::application::Workspace::default();
+        let index = workspace.new_session(crate::application::Scope {
+            project: project_path.to_string_lossy().into_owned(),
+            provider: crate::application::Provider::OpenCode,
+        });
+        workspace.sessions[index].remote_id = Some("ses_fake".into());
+        workspace.sessions[index].options.model = Some("other/model/b".into());
+        workspace.sessions[index].options.effort = Some("low".into());
+        workspace.set_effort(index, None);
+        assert!(workspace.send(index, "Default effort".into()));
+        let (_, command) = workspace.commands().pop().unwrap();
+        let crate::application::Command::Send(key, prompt, options) = command else {
+            panic!("expected a prompt with the explicit effort reset");
+        };
         provider
             .send_prompt_with_options(
-                &project_path,
-                "ses_fake",
-                "Default effort",
+                &key.scope.project,
+                &key.id,
+                &prompt,
                 None,
-                None,
-                Some(""),
+                options.model.as_deref(),
+                options.effort.as_deref(),
             )
             .unwrap();
         let sent = requests();

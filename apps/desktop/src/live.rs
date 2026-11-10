@@ -1886,9 +1886,8 @@ fn pickers(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                     .on_close(|s: &mut Workspace| live_mut(s).menu = None)
                     .on_choose(move |s: &mut Workspace, value, _| {
                         let live = live_mut(s);
-                        live.app.sessions[index].options.effort =
-                            (!value.is_empty()).then(|| value.into());
-                        live.app.options_changed(index);
+                        live.app
+                            .set_effort(index, (!value.is_empty()).then(|| value.into()));
                         live.menu = None;
                         live.focus();
                     })
