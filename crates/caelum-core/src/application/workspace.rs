@@ -1070,6 +1070,35 @@ impl Workspace {
         }
     }
 
+    fn select_open_session_or_new(&mut self, preferred_project: &str, fallback: Scope) {
+        let preferred_group = self.group_path(preferred_project).to_owned();
+        let selected = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| {
+                !session.archived
+                    && !session.forgotten
+                    && !session.archiving
+                    && !session.deleting
+                    && self.project_is_open(&session.scope.project)
+            })
+            .max_by_key(|(index, session)| {
+                (
+                    session.has_context(),
+                    self.group_path(&session.scope.project) == preferred_group,
+                    session.scope.project == preferred_project,
+                    *index,
+                )
+            })
+            .map(|(index, _)| index);
+        if let Some(index) = selected {
+            self.select(index);
+        } else {
+            self.new_session(fallback);
+        }
+    }
+
     /// Worktrees created by Caelum, scoped to their original project. Git's full
     /// catalogue is still used for branch choices and checkout availability.
     pub fn managed_worktrees<'a>(
@@ -1884,7 +1913,13 @@ impl Workspace {
                         self.active_project = None;
                         self.selected = None;
                         if let Some(path) = destination {
-                            self.select_project(&path);
+                            self.select_open_session_or_new(
+                                &path,
+                                Scope {
+                                    project: path.clone(),
+                                    provider: self.preferences.default_provider,
+                                },
+                            );
                         }
                     }
                 }
