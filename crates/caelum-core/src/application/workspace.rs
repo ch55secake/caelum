@@ -1618,6 +1618,10 @@ impl Workspace {
         session.inflight_queued = false;
         session.options_dirty = false;
         session.revision += 1;
+        session.conversation.begin_turn(
+            session.inflight_options.agent.clone(),
+            super::presentation::now(),
+        );
         session
             .conversation
             .optimistic(format!("local-{}", self.next_request + 1), prompt.clone());
@@ -2826,6 +2830,17 @@ impl Workspace {
                 }
             }
             session.revision += 1;
+            if matches!(method, "turn/started" | "session.execution.started") {
+                let agent = if session.inflight_prompt.is_some() {
+                    session.inflight_options.agent.clone()
+                } else {
+                    session.options.agent.clone()
+                };
+                session.conversation.provider_started_with_agent(
+                    agent,
+                    super::conversation::provider_started_at(data),
+                );
+            }
             session.conversation.apply(provider, method, data);
             session.unread |= activity != session.conversation.activity;
             if matches!(
