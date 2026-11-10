@@ -64,8 +64,8 @@ Checking, current, available, newer-build and error states share the same panel;
 downloads appear only for an available update, with a release-page fallback when
 no matching download exists. Legacy preferences import has its own labelled row.
 The docked composer uses smoky/milky tint, a subtle gradient, a top-lit hairline and
-soft shadow. A restrained accent edge marks editor focus; text and controls stay
-crisp. The transcript viewport ends above the composer. The flat background needs
+soft shadow. The edge stays neutral when editing; text and controls stay crisp.
+The transcript viewport ends above the composer. The flat background needs
 no backdrop-blur pass. A compact activity label follows session state between output
 events, and the queue count expands into bounded controls with per-session disclosure.
 Attachment chips wrap within the available width. PR review restores Overview /

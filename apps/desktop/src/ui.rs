@@ -572,17 +572,10 @@ pub fn user_bubble(message: &str, attachments: bool, k: &Kit) -> El {
         .fill(k.c.layer_02.mix(k.c.bg_base, 0.25))
 }
 
-pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f32, k: &Kit) -> El {
+pub fn composer(input: El, controls: El, context: El, padding: f32, k: &Kit) -> El {
     let rim =
         k.c.border_strong
             .mix(rune::Color::WHITE, if k.dark { 0.12 } else { 0.35 });
-    let edge = |color: rune::Color| {
-        if focused {
-            color.mix(k.c.border_focus, 0.55)
-        } else {
-            color
-        }
-    };
     // The dock sits over a uniform surface. Tint and top lighting give it depth
     // without a backdrop pass on every streamed frame.
     col().w_full().max_w(840.0).px(padding).pb(24.0).child(
@@ -598,7 +591,7 @@ pub fn composer(input: El, controls: El, context: El, focused: bool, padding: f3
                 k.alpha(rune::Color::WHITE, if k.dark { 0.035 } else { 0.4 }),
                 k.alpha(k.c.bg_deep, if k.dark { 0.04 } else { 0.12 }),
             )
-            .border_gradient(1.0, edge(rim), edge(k.c.border_base))
+            .border_gradient(1.0, rim, k.c.border_base)
             .box_shadow(rune::Shadow {
                 y: 1.0,
                 color: k.alpha(rune::Color::WHITE, if k.dark { 0.045 } else { 0.8 }),

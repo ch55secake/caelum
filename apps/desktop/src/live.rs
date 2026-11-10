@@ -1826,7 +1826,6 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
             .children((activity.is_some() || has_queue).then_some(status))
             .children((!session.shells.is_empty()).then(|| crate::activity::shells(s, k, index)))
             .child(crate::panels::composer_context(s, k, index)),
-        draft.focused,
         padding,
         k,
     )

@@ -326,14 +326,7 @@ fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<E
                 .color(k.c.text_muted),
         );
     }
-    ui::composer(
-        input,
-        controls.child(submit),
-        rune::el(),
-        session.draft.focused,
-        padding,
-        k,
-    )
+    ui::composer(input, controls.child(submit), rune::el(), padding, k)
 }
 
 fn inspector(s: &Workspace, k: &Kit) -> El {
