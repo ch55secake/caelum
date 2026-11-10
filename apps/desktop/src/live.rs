@@ -1550,6 +1550,32 @@ fn timeline_row(
                             })
                             .render(&theme::markdown(k)),
                     );
+                if entry.complete {
+                    let agent = entry.metadata["agent"].as_str().map(|id| {
+                        live.app
+                            .choices
+                            .get(&session.scope)
+                            .and_then(|choices| choices.agents.iter().find(|agent| agent.id == id))
+                            .map_or(id, |agent| agent.name.as_str())
+                    });
+                    let duration = entry.metadata["outputDurationMs"]
+                        .as_u64()
+                        .map(caelum_core::application::presentation::duration);
+                    let details = match (agent, duration.as_deref()) {
+                        (Some(agent), Some(duration)) => Some(format!("{agent} · {duration}")),
+                        (Some(agent), None) => Some(agent.to_owned()),
+                        (None, Some(duration)) => Some(duration.to_owned()),
+                        (None, None) => None,
+                    };
+                    if let Some(details) = details {
+                        item = item.child(
+                            text(details)
+                                .key(format!("output-details-{index}-{}", entry.id))
+                                .font(k.ty.small)
+                                .color(k.c.text_muted),
+                        );
+                    }
+                }
             }
             EntryKind::Tool | EntryKind::Reasoning => {
                 item = item.child(crate::activity::tool(s, k, index, entry));
