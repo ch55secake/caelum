@@ -151,8 +151,10 @@ The desktop now uses `Runtime::presented_focus_key()` instead of collecting
 `Runtime::elements()` to observe focus. The query returns the same non-exiting
 presented element key or link ID, including pointer, Tab and accessibility focus.
 Unmounted virtual editors and unkeyed controls return no presented key. Caelum
-pins `ch55secake/rune` at `e5e9ea9a`, a small backport on its previous `ddf1414`
-revision. Only a changed focus key is copied into application state.
+pins `ch55secake/rune` at `e5e9ea9a`, a small patch on its previous `ddf1414`
+revision. The corresponding current-Rune proposal is in
+[fork PR #1](https://github.com/ch55secake/rune/pull/1). Only a changed focus key
+is copied into application state.
 
 Provider batches still apply every event synchronously and in order. A known
 text/reasoning delta for a uniquely owned, unselected session can skip view
@@ -180,6 +182,34 @@ the timed section. Native drawing/presentation, OS input delivery and provider
 or storage I/O are excluded; these are CPU-work measurements, not end-to-end
 latency. Commit counts distinguish application view rebuilds from animation-only
 frames.
+
+On 12 November 2026, five alternating before/after release runs on the same
+macOS host compared `e953b69` plus the identical profile harness against
+`0caafab`. Builds and other tests were stopped before measurement. Medians of
+each run's percentiles, in **milliseconds**:
+
+| Workload | p50 before → after | p95 before → after |
+| --- | --- | --- |
+| Background streams | 0.965 → 0.123 | 1.090 → 0.136 |
+| Background streams + typing, all frames | 0.968 → 0.125 | 1.511 → 0.684 |
+| Typing frames only | 1.497 → 0.667 | 1.647 → 0.799 |
+| Foreground + background streams | 1.162 → 0.929 | 1.351 → 1.124 |
+| Session switching | 0.50 → 0.49 | 3.53 → 2.53 |
+| Session switching + streaming | 3.16 → 1.63 | 4.93 → 3.43 |
+
+Steady background streaming caused **360 → 0 view commits** in every run;
+with typing, **420 → 60**, retaining one commit per input. Foreground streaming
+retained all 360 commits. Navigation commit counts were unchanged. Idle and
+hover p95 remained 0.12 and 0.13 ms respectively.
+
+Streaming-switch focus observation p95 fell from 1.80 ms to below the profile's
+0.01 ms display resolution. Total streaming-switch p95 ranged from 4.87–5.46 ms
+before and 3.30–3.43 ms after; background p95 ranged from 1.072–1.375 ms before
+and 0.135–0.250 ms after. The median p95 reductions were approximately **30%**
+for streaming switches, **87%** for background streams and **51%** for typing
+frames. Raw per-run percentiles and maxima, including outliers, remain in
+ignored `apps/desktop/profile-results/focus-redraw-{before,after}.json` and
+`focus-redraw-comparison.json`.
 
 ## Packaged application
 
