@@ -80,10 +80,11 @@ pub fn open(s: &mut Workspace, index: usize, id: &str) {
 
 pub fn sync(l: &mut crate::live::Live, tx: &mut Tx) -> bool {
     let mut changed = false;
-    let selected = l
-        .app
-        .selected
-        .filter(|_| l.panels.screen != Screen::Review && l.commands.side_owner.is_none());
+    let selected = l.app.selected.filter(|&index| {
+        l.panels.screen != Screen::Review
+            && l.commands.side_owner.is_none()
+            && crate::questions::active(l, index).is_none()
+    });
     if l.composer.selected != selected {
         l.composer.selected = selected;
         if let Some(index) = selected {
