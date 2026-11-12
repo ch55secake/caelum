@@ -8,7 +8,7 @@ The shipping macOS application, built with Rune and backed by
 From the repository root with Rust 1.95.0 and Xcode Command Line Tools:
 
 ```sh
-cargo run --locked -p caelum-desktop -- --project /path/to/project
+make dev PROJECT=/path/to/project
 cargo test --locked --workspace -- --test-threads=4
 cargo clippy --locked --workspace --all-targets -- -D warnings
 bash scripts/release/package_macos_app.sh
@@ -19,6 +19,14 @@ share the root lockfile. Packaging produces an ad-hoc-signed `Caelum.app` at
 `target/<triple>/release/bundle/macos/`, preserving `dev.caelum.desktop` and the
 `caelum` project URL scheme. [Release tooling](../../docs/releasing.md) creates
 architecture-specific DMGs and CLI archives.
+
+`make dev` builds and launches `target/debug/bundle/macos/Caelum Dev.app`, with
+terminal output and environment variables preserved. The signed debug bundle has
+a stable notification identity for each checkout, distinct from the release app.
+It does not register the release app's `caelum` URL scheme. macOS asks to allow
+notifications when the first one is sent; clicking one opens the originating
+session in that same app. Bare `cargo run` remains useful for offline fixtures;
+native notifications require the app bundle.
 
 Install/authenticate Codex or OpenCode for live sessions and `gh` for GitHub.
 ⌘O opens projects; `caelum /path` also reaches a running or hidden app. The sidebar's

@@ -2,6 +2,7 @@ mod archive;
 mod completion;
 mod composer;
 mod events;
+mod notifications;
 mod persistence;
 mod projects;
 mod queue;
@@ -238,6 +239,7 @@ pub struct Workspace {
     pub opening: bool,
     pub services: Services,
     pub preferences: Preferences,
+    notifications: notifications::State,
     pub provider_commands: HashMap<Scope, Vec<caelum_protocol::OpenCodeCommandInfo>>,
     pub persistence_error: Option<String>,
     pub last_archived: Option<usize>,

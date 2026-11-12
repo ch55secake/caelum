@@ -1,5 +1,5 @@
 use super::{Pending, Workspace};
-use crate::application::{Command, Event, Provider, Task};
+use crate::application::{Command, Event, Notification, Provider, Scope, SessionKey, Task};
 use serde_json::Value;
 
 impl Workspace {
@@ -9,7 +9,15 @@ impl Workspace {
             Event::Checkout(project) => self.checkout_changed(&project),
             Event::Completed(id, result) => {
                 if let Some(pending) = self.pending.remove(&id) {
+                    let activation = matches!(pending, Pending::Load)
+                        .then(|| self.notifications.take(self.navigation))
+                        .flatten();
                     self.complete(id, pending, result);
+                    if self.store_ready {
+                        if let Some(target) = activation {
+                            self.activate_notification(target);
+                        }
+                    }
                     let ready: Vec<_> = self
                         .deferred_lists
                         .keys()
@@ -28,42 +36,50 @@ impl Workspace {
                 }
             }
             Event::Approvals(prompts) => {
-                if self.preferences.input_needed
-                    && prompts.iter().any(|p| {
-                        !self.approvals.contains(p)
-                            && self.preferences.should_notify(self.visible_request(
-                                &p.provider,
-                                &p.project_path,
-                                p.session_id.as_deref(),
-                            ))
-                    })
-                {
+                if let Some(prompt) = prompts.iter().find(|p| {
+                    self.preferences.input_needed
+                        && !self.approvals.contains(p)
+                        && self.preferences.should_notify(self.visible_request(
+                            &p.provider,
+                            &p.project_path,
+                            p.session_id.as_deref(),
+                        ))
+                }) {
                     self.request(
-                        Command::Notify(
-                            "Caelum · Approval needed".into(),
-                            "A session needs your permission".into(),
-                        ),
+                        Command::Notify(Notification {
+                            title: "Caelum · Approval needed".into(),
+                            body: "A session needs your permission".into(),
+                            target: notification_target(
+                                &prompt.provider,
+                                &prompt.project_path,
+                                prompt.session_id.as_deref(),
+                            ),
+                        }),
                         Pending::Notify,
                     );
                 }
                 self.approvals = prompts;
             }
             Event::Questions(prompts) => {
-                if self.preferences.input_needed
-                    && prompts.iter().any(|p| {
-                        !self.questions.contains(p)
-                            && self.preferences.should_notify(self.visible_request(
-                                &p.provider,
-                                &p.project_path,
-                                Some(&p.session_id),
-                            ))
-                    })
-                {
+                if let Some(prompt) = prompts.iter().find(|p| {
+                    self.preferences.input_needed
+                        && !self.questions.contains(p)
+                        && self.preferences.should_notify(self.visible_request(
+                            &p.provider,
+                            &p.project_path,
+                            Some(&p.session_id),
+                        ))
+                }) {
                     self.request(
-                        Command::Notify(
-                            "Caelum · Question".into(),
-                            "A session needs your answer".into(),
-                        ),
+                        Command::Notify(Notification {
+                            title: "Caelum · Question".into(),
+                            body: "A session needs your answer".into(),
+                            target: notification_target(
+                                &prompt.provider,
+                                &prompt.project_path,
+                                Some(&prompt.session_id),
+                            ),
+                        }),
                         Pending::Notify,
                     );
                 }
@@ -315,10 +331,11 @@ impl Workspace {
             ) && !self.sessions[index].disconnected
             {
                 self.request(
-                    Command::Notify(
-                        "Caelum · Session finished".into(),
-                        self.sessions[index].title.clone(),
-                    ),
+                    Command::Notify(Notification {
+                        title: "Caelum · Session finished".into(),
+                        body: self.sessions[index].title.clone(),
+                        target: self.sessions[index].key(),
+                    }),
                     Pending::Notify,
                 );
             }
@@ -333,10 +350,11 @@ impl Workspace {
                 ))
             {
                 self.request(
-                    Command::Notify(
-                        "Caelum · Background command finished".into(),
-                        self.sessions[index].title.clone(),
-                    ),
+                    Command::Notify(Notification {
+                        title: "Caelum · Background command finished".into(),
+                        body: self.sessions[index].title.clone(),
+                        target: self.sessions[index].key(),
+                    }),
                     Pending::Notify,
                 );
             }
@@ -356,4 +374,14 @@ impl Workspace {
             self.checkout_changed(path);
         }
     }
+}
+
+fn notification_target(provider: &str, project: &str, session: Option<&str>) -> Option<SessionKey> {
+    Some(SessionKey {
+        scope: Scope {
+            project: project.into(),
+            provider: Provider::ALL.into_iter().find(|p| p.as_str() == provider)?,
+        },
+        id: session?.into(),
+    })
 }

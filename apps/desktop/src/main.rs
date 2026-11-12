@@ -11,6 +11,7 @@ mod live;
 mod media;
 mod merge;
 mod models;
+mod notifications;
 mod panels;
 mod questions;
 mod select;
@@ -872,6 +873,8 @@ fn main() {
             .on_frame_drawn(live::frame_drawn),
     );
     let handle = app.handle();
+    let notifications =
+        notifications::State::connect(handle.clone(), !fixtures && !evaluation && !design);
     app.init(move || {
         let mut state = if design {
             evaluation::design()
@@ -882,6 +885,9 @@ fn main() {
         } else {
             Workspace::live(project)
         };
+        if let Some(live) = &mut state.live {
+            live.notifications = notifications;
+        }
         state.handle = Some(handle);
         state
     })

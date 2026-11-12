@@ -50,6 +50,8 @@ alongside these modules, with embedded fake servers in `tests/fixtures/`.
 
 - `main.rs`: entry point, shell, keyboard routing and offline render modes.
 - `lifecycle.rs`: standard macOS menus and `caelum://open?path=…` delivery.
+- `notifications.rs`: native macOS notification delivery and app/window activation;
+  core notification effects carry stable project/provider/session targets.
 - `live.rs`: editor/application synchronization and runtime wake/drain, with
   sidebar, windowed transcript, composer and session menus in `live/`.
 - `state.rs`: pane/view state and the original simulated interaction fixture.
