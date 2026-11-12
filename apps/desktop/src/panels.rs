@@ -36,6 +36,7 @@ pub enum Screen {
     Usage,
     Stats,
     Image,
+    Attachment,
     Launcher,
 }
 
@@ -913,6 +914,10 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
             "Fit, zoom and scroll the image.",
             crate::media::view(s, k),
         ),
+        Screen::Attachment => {
+            let (title, description) = crate::composer::preview_header(s);
+            (title, description, crate::composer::preview(s, k))
+        }
         Screen::Launcher => (
             "New session",
             "Choose a project and provider.",
@@ -929,6 +934,7 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         Screen::Sessions => (580.0, 420.0),
         Screen::Stats => (720.0, 620.0),
         Screen::Image => (760.0, 480.0),
+        Screen::Attachment => (760.0, crate::composer::preview_height(s)),
         _ => (660.0, 420.0),
     };
     let available =
@@ -953,8 +959,16 @@ pub fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
                 .w_full()
                 .h(height.min(available))
                 .min_h(0.0)
-                .px(24.0)
-                .pb(24.0)
+                .px(if screen == Screen::Attachment {
+                    16.0
+                } else {
+                    24.0
+                })
+                .pb(if screen == Screen::Attachment {
+                    16.0
+                } else {
+                    24.0
+                })
                 .child(body),
         )
         .build(k, layers);
@@ -2972,56 +2986,7 @@ pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {
     if let Some(error) = &live(s).app.persistence_error {
         context = context.child(label(error, k));
     }
-    let maximum =
-        rune::memo::window_layout("message-composer").map_or(220.0, |r| (r[2] - 24.0).max(80.0));
-    let mut attachments = row().w_full().flex_wrap().gap(6.0);
-    for attachment in &session.attachments {
-        let id = attachment.id.clone();
-        let title = format!(
-            "{}{}",
-            attachment.label(),
-            if attachment.truncated {
-                " (truncated)"
-            } else {
-                ""
-            }
-        );
-        attachments = attachments.child(
-            k.interactive(
-                row()
-                    .h(28.0)
-                    .px(8.0)
-                    .gap(6.0)
-                    .center_y()
-                    .radius(7.0)
-                    .w(
-                        (rune::text::measure(&title, &[], k.ty.small, None).0 + 32.0)
-                            .min(maximum.min(280.0)),
-                    )
-                    .fill(k.alpha(k.c.text_base, 0.035))
-                    .border(1.0, k.alpha(k.c.text_base, 0.06))
-                    .child(ui::caption(&title, k).truncate().grow(1.0).min_w(0.0))
-                    .child(rune::icon(&glyphs::CLOSE, 10.0).color(k.c.icon_muted)),
-            )
-            .key(format!("composer-attachment-{id}"))
-            .role("button")
-            .label(format!("Remove {title}"))
-            .help(format!("{title}\nRemove from this message"))
-            .focusable(true)
-            .focus_ring(1.5, 0.0, k.c.border_focus)
-            .on_press(move |s: &mut Workspace| {
-                live_mut(s).app.sessions[index]
-                    .attachments
-                    .retain(|f| f.id != id)
-            }),
-        );
-    }
-    if !session.attachments.is_empty() {
-        context = context.child(attachments);
-    }
-    if session.attaching > 0 {
-        context = context.child(label("Reading attachments…", k));
-    }
+    context = context.child(crate::composer::attachments(s, k, index));
     context.children(
         crate::completion::token(s)
             .is_some()

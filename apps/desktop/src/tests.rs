@@ -2,6 +2,7 @@ use rune::{Env, Key, KeyEvent, Mods, Runtime, runtime::ElementInfo};
 
 use super::{Workspace, spec};
 
+mod composer;
 mod navigation;
 
 fn runtime(size: (f32, f32)) -> Runtime<Workspace> {
@@ -1580,7 +1581,7 @@ fn composer_content_stays_docked_and_bounded_in_both_themes() {
             let transcript = element(&rt, "live-transcript-0").rect;
             assert!(transcript[3] > 40.0, "{scene}: {transcript:?}");
             assert!(transcript[1] + transcript[3] <= composer[1] + 1.0);
-            assert!(element(&rt, "composer-editor").rect[3] <= 180.1);
+            assert!(element(&rt, "composer-editor").rect[3] <= 420.1);
         }
     }
 }
@@ -3552,7 +3553,11 @@ fn long_drafts_and_crowded_sidebar_keep_controls_in_bounds() {
     }
     let editor = element(&rt, "composer-editor");
     let send = element(&rt, "send");
-    assert!(editor.rect[3] <= 180.1);
+    let transcript = element(&rt, "live-transcript-0");
+    let composer = element(&rt, "message-composer");
+    assert!(editor.rect[3] <= 420.1);
+    assert!(transcript.rect[3] >= 140.0);
+    assert!(transcript.rect[1] + transcript.rect[3] <= composer.rect[1] + 1.0);
     assert!(editor.rect[1] + editor.rect[3] <= send.rect[1] + 1.0);
     assert!(
         rt.state.live.as_ref().unwrap().drafts[0]

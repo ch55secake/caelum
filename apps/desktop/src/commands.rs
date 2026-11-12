@@ -345,6 +345,12 @@ pub fn side_view(s: &Workspace, k: &Kit, padding: f32) -> El {
     } else {
         body = body
             .child(crate::completion::view(s, k))
+            .children(
+                session
+                    .side_error
+                    .as_ref()
+                    .map(|error| ui::caption(error, k).color(k.c.danger.fg).wrap()),
+            )
             .child(rune::auto_grow(
                 text_input(&l.commands.side_editor, k.ty.ui)
                     .label("Question")

@@ -25,6 +25,9 @@ interactions = {
     "composer-agent": ("composer-options", [{"t": 0.25, "key": "agent-trigger"}]),
     "composer-effort": ("composer-options", [{"t": 0.25, "key": "effort-trigger"}]),
     "composer-queue-expanded": ("composer-queued", [{"t": 0.25, "key": "toggle-queued-messages"}]),
+    "composer-grow": ("composer-empty", [{"t": 0.15, "key": "live-draft-0"}, {"t": 0.25, "paste": "Keep the conversation visible above the editor.\nLet the draft grow naturally as I write.\nPreserve selection and undo history.\n\nReview the captured file snapshots before sending.\nUse the same syntax colours as the file viewer.\nKeep the toolbar quiet and compact.\n"}]),
+    "composer-preview": ("composer-attachment-status", [{"t": 0.25, "key": "composer-attachment-source"}]),
+    "composer-remove": ("composer-attachments", [{"t": 0.25, "key": "remove-attachment-source"}]),
     "context-session": ("", [{"t": 0.25, "type": "secondary-click", "key": "live-session-1"}]),
     "context-editor": ("", [{"t": 0.15, "key": "live-draft-0"}, {"t": 0.3, "type": "key", "name": "a", "cmd": True}, {"t": 0.45, "type": "secondary-click", "key": "live-draft-0"}]),
     "context-file": ("files", [{"t": 0.25, "type": "secondary-click", "key": "file-tree-Cargo.toml"}]),
@@ -53,6 +56,7 @@ scenes += ("about-checking", "about-current", "about-update", "about-release", "
 scenes += ("tool-running", "tool-failure", "compaction", "compaction-running", "compaction-empty", "compaction-error", "compaction-interrupted", "vercel-compaction")
 scenes += ("tool-output-long", "vercel-tool-output-long", "tool-search", "vercel-tools")
 scenes += ("composer-empty", "composer-multiline", "composer-queued", "composer-queue-error", "composer-attachments")
+scenes += ("composer-long", "composer-attachment-status", "composer-attachment-preview", "composer-image-preview")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

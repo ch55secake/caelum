@@ -59,6 +59,80 @@ pub fn source_key(project: &str, path: &str) -> String {
     format!("source-{:x}", hash.finish())
 }
 
+/// Read-only captured source, with the Files palette and line metrics. Keep the
+/// gutter outside text selection so copying never adds line numbers to a snapshot.
+pub fn snapshot(content: &str, path: &str, first: usize, k: &rune_kit::Kit) -> rune::El {
+    use rune::{ScrollSpec, TextStyle, col, row, text};
+    use rune_kit::{ScrollBar, syntax};
+    let content = content.strip_suffix('\n').unwrap_or(content);
+    let font = TextStyle {
+        size: 13.0,
+        line_height: 20.0,
+        ..k.ty.mono
+    };
+    let language = std::path::Path::new(path)
+        .extension()
+        .and_then(|v| v.to_str());
+    let spans = syntax::SyntaxTheme::from_kit(k).spans(&syntax::highlight(language, content), 0);
+    let lines = if content.is_empty() {
+        0
+    } else {
+        content.split('\n').count()
+    };
+    let numbers = (first..first.saturating_add(lines))
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let gutter = rune::text::measure(&numbers, &[], font, None).0.max(20.0) + 16.0;
+    let width = rune::text::measure(content, &[], font, None).0;
+    let source = if content.is_empty() {
+        col()
+            .w_full()
+            .padding(16.0)
+            .child(crate::ui::caption("Empty file", k))
+    } else {
+        row()
+            .w_full()
+            .min_w(gutter + 12.0 + width + 16.0)
+            .items_start()
+            .py(12.0)
+            .pr(16.0)
+            .gap(12.0)
+            .child(
+                text(numbers)
+                    .key("attachment-preview-lines")
+                    .font(font)
+                    .color(k.c.text_muted)
+                    .w(gutter)
+                    .align(rune::Align::End)
+                    .a11y_hidden(),
+            )
+            .child(
+                text(content)
+                    .key("attachment-preview-text")
+                    .font(font)
+                    .color(k.c.text_base)
+                    .spans(spans)
+                    .selection_color(k.selection())
+                    .selectable(true),
+            )
+    };
+    col()
+        .key("attachment-preview-scroll")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .radius(8.0)
+        .fill(k.c.bg_base)
+        .border(1.0, k.c.border_base)
+        .scroll_xy()
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(source)
+        .scroll_bar(k)
+}
+
 /// Pinned Rune's unwrapped row metrics: file headers, actual gaps and code lines.
 /// Inline patches have no full-file context or annotations to add extra rows.
 pub fn inline_height(diff: &DiffState) -> f32 {

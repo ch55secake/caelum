@@ -68,7 +68,17 @@ soft shadow. The edge stays neutral when editing; text and controls stay crisp.
 The transcript viewport ends above the composer. The flat background needs
 no backdrop-blur pass. A compact activity label follows session state between output
 events, and the queue count expands into bounded controls with per-session disclosure.
-Attachment chips wrap within the available width. PR review restores Overview /
+The docked editor grows naturally with its draft, up to a window-aware 420-point
+limit, and shrinks as text is removed. It preserves native selection and undo;
+each session keeps its scroll position. The height budget reserves conversation
+space above the dock. Attachment chips
+wrap within the available width, with image thumbnails, a distinct remove control
+and a visible Partial label. File previews fit short snapshots, with a compact
+filename/path header, the Files syntax palette, original line numbers and a quiet
+snapshot/Copy footer. Longer captures scroll in the code surface. Image previews
+share the zoom/pan reader. Reads and failures
+are named per file in the originating draft.
+PR review restores Overview /
 Files changed, searchable file/thread navigation, inline feedback and a
 selected-feedback bar naming its destination session.
 The overview has a centred 960-point reading column, separate review/check/branch
@@ -96,6 +106,22 @@ excerpts, highlighted search and stable prompt jumps.
 | Expanded queue · compact | Attachments · compact |
 | --- | --- |
 | ![Expanded queue controls](previews/rune-dark-composer-queue-expanded-small.png) | ![Wrapped attachment chips](previews/rune-light-composer-attachments-small.png) |
+
+| Natural prompt growth | Long prompt · compact |
+| --- | --- |
+| ![Naturally growing docked editor](previews/rune-dark-composer-long.png) | ![Compact long-prompt editor](previews/rune-light-composer-long-small.png) |
+
+| Attachment loading and failure | Captured text snapshot |
+| --- | --- |
+| ![Named attachment status](previews/rune-light-composer-attachment-status-small.png) | ![Partial snapshot preview](previews/rune-dark-composer-attachment-preview-small.png) |
+
+| Captured text snapshot · light | Captured text snapshot · dark |
+| --- | --- |
+| ![Light source snapshot reader](previews/rune-light-composer-attachment-preview-small.png) | ![Dark source snapshot reader](previews/rune-dark-composer-attachment-preview-small.png) |
+
+| Captured image snapshot | Preview and removal controls |
+| --- | --- |
+| ![Attached image viewer](previews/rune-light-composer-image-preview-small.png) | ![Separate attachment controls](previews/rune-dark-composer-attachments-small.png) |
 
 | Compact workspace | Settings |
 | --- | --- |
