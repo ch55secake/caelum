@@ -1,4 +1,5 @@
 use super::*;
+use caelum_protocol::ProviderChoices;
 
 #[test]
 fn refresh_open_sessions_refreshes_every_open_active_session_only() {
@@ -42,6 +43,75 @@ fn refresh_open_sessions_refreshes_every_open_active_session_only() {
     assert!(app.sessions[other_project].loading);
     assert!(!app.sessions[archived].loading);
     assert!(!app.sessions[closed_project].loading);
+}
+
+#[test]
+fn refresh_open_sessions_reloads_catalogues_for_each_open_scope_once() {
+    let mut app = Workspace::default();
+    for path in ["/a", "/b", "/archived", "/forgotten"] {
+        app.projects.push(ProjectInfo {
+            path: path.into(),
+            name: path.into(),
+        });
+    }
+    app.project_roots.insert("/linked".into(), "/b".into());
+    let first = app.new_session(scope(Provider::Codex, "/a"));
+    app.sessions[first].remote_id = Some("first".into());
+    let duplicate = app.new_session(scope(Provider::Codex, "/a"));
+    app.sessions[duplicate].remote_id = Some("duplicate".into());
+    let busy = app.new_session(scope(Provider::OpenCode, "/b"));
+    app.sessions[busy].remote_id = Some("busy".into());
+    app.sessions[busy].submitting = true;
+    app.new_session(scope(Provider::Codex, "/b"));
+    app.new_session(scope(Provider::OpenCode, "/linked"));
+    let archived = app.new_session(scope(Provider::OpenCode, "/archived"));
+    app.sessions[archived].archived = true;
+    let forgotten = app.new_session(scope(Provider::OpenCode, "/forgotten"));
+    app.sessions[forgotten].forgotten = true;
+    app.new_session(scope(Provider::OpenCode, "/closed"));
+    app.select(first);
+    app.sessions[first].draft = "Keep this draft".into();
+    app.sessions[first].options.model = Some("saved-model".into());
+    app.choices.insert(
+        app.sessions[first].scope.clone(),
+        ProviderChoices {
+            models: vec![],
+            agents: vec![],
+            default_model: None,
+        },
+    );
+
+    // The sidebar refreshes the active project before all open sessions.
+    app.refresh_choices_for(scope(Provider::Codex, "/a"));
+    app.refresh_project();
+    app.refresh_open_sessions();
+    app.refresh_open_sessions();
+
+    let mut catalogues: Vec<_> = app
+        .commands()
+        .into_iter()
+        .filter_map(|(_, command)| match command {
+            Command::Choices(scope) => Some((scope.project, scope.provider.as_str())),
+            _ => None,
+        })
+        .collect();
+    catalogues.sort();
+    assert_eq!(
+        catalogues,
+        [
+            ("/a".into(), "codex"),
+            ("/a".into(), "opencode"),
+            ("/b".into(), "codex"),
+            ("/b".into(), "opencode"),
+            ("/linked".into(), "opencode"),
+        ]
+    );
+    assert_eq!(app.selected, Some(first));
+    assert_eq!(app.sessions[first].draft, "Keep this draft");
+    assert_eq!(
+        app.sessions[first].options.model.as_deref(),
+        Some("saved-model")
+    );
 }
 
 #[test]

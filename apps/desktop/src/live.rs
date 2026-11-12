@@ -431,6 +431,15 @@ impl Live {
             self.patches
                 .retain(|key, _| self.visible_entries.contains(key));
         }
+        if self.last_selected != self.app.selected
+            && let Some(index) = self.app.selected
+        {
+            let scope = self.app.sessions[index].scope.clone();
+            if !self.app.choices.contains_key(&scope) {
+                // Retry missing catalogues on navigation, not on every idle poll.
+                self.app.refresh_choices_for(scope);
+            }
+        }
         if self.runtime.is_some() {
             changed |= crate::notifications::dispatch(self);
             changed |= self.checkouts.sync(&mut self.app);
