@@ -222,8 +222,10 @@ the default storage is under
 a checkout preserves its branch and commits; active work and dirty/locked Git
 checkouts prevent removal.
 
-PR review has **Overview** and **Files changed** tabs. Overview groups the description,
-checks, merge readiness and discussion. Files changed keeps searchable file/thread
+PR review has **Overview** and **Files changed** tabs. Its compact header identifies
+the reviewed repository and PR, with source → destination branches and change counts.
+Overview puts checks, review status, branch readiness and merge actions above the
+description and discussion. Files changed keeps searchable file/thread
 navigation beside the continuous diff; the file list can be collapsed in compact windows.
 Inline feedback, collapsed resolved threads, outdated context and missing/binary
 patches remain available. Open reviews refresh every 30 seconds and preserve their

@@ -6,6 +6,7 @@ mod notifications;
 mod persistence;
 mod projects;
 mod queue;
+mod review;
 mod sessions;
 mod submission;
 mod tasks;

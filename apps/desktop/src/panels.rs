@@ -584,38 +584,7 @@ pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
-    let mut surface = col()
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .gap(10.0)
-        .padding(16.0)
-        .child(
-            row()
-                .w_full()
-                .center_y()
-                .justify_between()
-                .child(ui::caption(
-                    live(s)
-                        .panels
-                        .review
-                        .as_ref()
-                        .map(|(p, _)| {
-                            format!("{} / Pull requests", p.rsplit('/').next().unwrap_or(p))
-                        })
-                        .unwrap_or_else(|| "Pull requests".into()),
-                    k,
-                ))
-                .child(
-                    Button::new("Back to session")
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(|s: &mut Workspace| {
-                            live_mut(s).panels.screen = Screen::Conversation
-                        })
-                        .build(k)
-                        .key("back-to-session"),
-                ),
-        );
+    let mut surface = col().w_full().grow(1.0).min_h(0.0).gap(10.0).padding(16.0);
     if let Some(error) = &live(s).app.persistence_error {
         surface = surface.child(label(error, k));
     }

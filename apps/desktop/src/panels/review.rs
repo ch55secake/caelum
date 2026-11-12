@@ -1,3 +1,5 @@
+mod header;
+
 use caelum_core::application::Task;
 use caelum_protocol::GitHubFeedbackKind;
 use rune::{El, ScrollSpec, col, row, text};
@@ -40,8 +42,14 @@ pub fn open_review(s: &mut Workspace, project: String, url: String) {
 }
 
 pub(super) fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
+    let mut content = col()
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .gap(12.0)
+        .child(header::view(s, k));
     let Some((project, url)) = &live(s).panels.review else {
-        return label("Choose a pull request", k);
+        return content.child(label("Choose a pull request", k));
     };
     let Some(review) = live(s)
         .app
@@ -49,12 +57,21 @@ pub(super) fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .reviews
         .get(&(project.clone(), url.clone()))
     else {
-        return ui::skeleton("Loading pull request", 6, k);
+        return content.child(ui::skeleton("Loading pull request", 6, k));
     };
-    let mut content = col().w_full().gap(12.0);
+    let mut notices = col().w_full().gap(8.0);
     if let Some(error) = &review.error {
-        content = content.child(
-            ui::notice("Review unavailable", error, k).child(
+        notices = notices.child(
+            ui::notice(
+                if review.details.is_some() {
+                    "Review request failed"
+                } else {
+                    "Review unavailable"
+                },
+                error,
+                k,
+            )
+            .child(
                 action(
                     "Retry",
                     Task::Details {
@@ -69,166 +86,55 @@ pub(super) fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         );
     }
     if let Some(notice) = &review.notice {
-        content = content.child(label(notice, k));
+        notices = notices.child(label(notice, k));
     }
     let Some(details) = &review.details else {
-        return scroll(if review.error.is_some() {
-            content
+        return content.child(scroll(if review.error.is_some() {
+            notices
         } else {
-            content.child(ui::skeleton("Loading overview", 6, k))
-        });
+            notices.child(ui::skeleton("Loading overview", 6, k))
+        }));
     };
     let head = &details.head_ref_oid;
-    let mut tabs = row().w_full().gap(6.0);
-    for (tab, name) in [
-        "Overview".to_owned(),
-        format!("Files changed ({})", details.changed_files),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        tabs = tabs.child(
-            ui::tab(&name, live(s).panels.review_tab == tab, k)
-                .on_press(move |s: &mut Workspace| live_mut(s).panels.review_tab = tab)
-                .key(format!("review-tab-{tab}")),
-        );
-    }
-    let link = url.clone();
-    let refresh_project = project.clone();
-    let refresh_url = url.clone();
-    content = content
-        .child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .child(
-                    ui::caption(
-                        if details.pull_request.is_draft {
-                            "Draft"
-                        } else {
-                            &details.state
-                        },
-                        k,
-                    )
-                    .color(match details.state.as_str() {
-                        "MERGED" => k.c.text_accent,
-                        "CLOSED" => k.c.danger.fg,
-                        _ if details.pull_request.is_draft => k.c.text_muted,
-                        _ => k.c.success.fg,
-                    })
-                    .px(8.0)
-                    .py(4.0)
-                    .radius(6.0)
-                    .fill(k.c.layer_01)
-                    .border(1.0, k.c.border_base),
-                )
-                .child(ui::caption(
-                    format!(
-                        "#{} · opened by {}",
-                        details.pull_request.number,
-                        details
-                            .author
-                            .as_ref()
-                            .map(|a| a.login.as_str())
-                            .unwrap_or("Unknown")
-                    ),
-                    k,
-                ))
-                .child(rune::el().grow(1.0))
-                .child(
-                    Button::new("GitHub")
-                        .icon(&ui::EXTERNAL)
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press_tx(move |_: &mut Workspace, tx| {
-                            let _ = tx.open_url(&link);
-                        })
-                        .build(k),
-                )
-                .child(
-                    quiet_button(&ui::REFRESH, "Refresh review")
-                        .on_press(move |s: &mut Workspace| {
-                            let l = live_mut(s);
-                            l.app
-                                .services
-                                .refresh_review(&refresh_project, &refresh_url);
-                            l.app.task(Task::Details {
-                                project: refresh_project.clone(),
-                                url: refresh_url.clone(),
-                            });
-                        })
-                        .build(k),
-                ),
-        )
-        .child(
-            text(&details.pull_request.title)
-                .font(rune::TextStyle::new(22.0, 550.0))
-                .color(k.c.text_base)
-                .wrap(),
-        )
-        .child(
-            row()
-                .w_full()
-                .gap(6.0)
-                .center_y()
-                .child(
-                    text(&details.head_ref_name)
-                        .font(k.ty.mono)
-                        .color(k.c.text_accent)
-                        .truncate()
-                        .min_w(0.0)
-                        .px(8.0)
-                        .py(4.0)
-                        .radius(5.0)
-                        .fill(k.c.layer_02),
-                )
-                .child(rune::icon(&ui::BRANCH, 14.0).color(k.c.icon_muted))
-                .child(
-                    text(&details.pull_request.base_ref_name)
-                        .font(k.ty.mono)
-                        .color(k.c.text_muted)
-                        .truncate()
-                        .min_w(0.0)
-                        .px(8.0)
-                        .py(4.0)
-                        .radius(5.0)
-                        .fill(k.c.layer_02),
-                )
-                .child(rune::el().grow(1.0))
-                .child(ui::caption(
-                    format!("+{}  −{}", details.additions, details.deletions),
-                    k,
-                )),
-        )
-        .child(tabs)
-        .child(ui::divider(k));
-    let header = content;
     if live(s).panels.review_tab == 1 {
-        return header
-            .grow(1.0)
-            .min_h(0.0)
+        if review.error.is_some() || review.notice.is_some() {
+            content = content.child(notices);
+        }
+        return content
             .child(review_files_view(s, k, project, url, review))
             .children(
                 (!review.selected_comments.is_empty())
                     .then(|| review_actions(s, k, project, url, review)),
             );
     }
-    let mut content = col().w_full().max_w(960.0).self_center().gap(24.0).pb(24.0);
-    if live(s).panels.review_tab == 0 {
-        content = content.child(
-            col().w_full().py(8.0).child(
-                Markdown::new(if details.body.trim().is_empty() {
-                    "No description provided."
-                } else {
-                    &details.body
-                })
-                .selectable(true)
-                .render(&theme::markdown(k)),
-            ),
-        );
+    let header = content.max_w(960.0).self_center();
+    let mut content = col().w_full().gap(20.0).pb(16.0);
+    if review.error.is_some() || review.notice.is_some() {
+        content = content.child(notices);
     }
     content = content
         .child(crate::merge::view(s, k, project, url, details, layers))
+        .child(
+            col()
+                .key("review-description")
+                .w_full()
+                .gap(10.0)
+                .child(
+                    text("Description")
+                        .font(k.ty.ui_medium)
+                        .color(k.c.text_muted),
+                )
+                .child(
+                    Markdown::new(if details.body.trim().is_empty() {
+                        "No description provided."
+                    } else {
+                        &details.body
+                    })
+                    .selectable(true)
+                    .render(&theme::markdown(k)),
+                ),
+        )
+        .child(ui::divider(k))
         .child(
             text("Discussion & reviews")
                 .font(k.ty.ui_medium)
@@ -275,10 +181,6 @@ pub(super) fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         }
     }
     header
-        .max_w(960.0)
-        .self_center()
-        .grow(1.0)
-        .min_h(0.0)
         .child(scroll(content).key("review-overview-scroll").scroll_bar(k))
         .children(
             (!review.selected_comments.is_empty())
