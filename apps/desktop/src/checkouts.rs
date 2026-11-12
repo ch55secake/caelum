@@ -54,6 +54,7 @@ fn refresh_task(app: &Application, project: &str) -> Task {
 
 pub fn manage(s: &mut Workspace, project: String) {
     let l = live_mut(s);
+    l.feed.close();
     let project = l.app.group_path(&project).to_owned();
     l.app.task(refresh_task(&l.app, &project));
     l.checkouts.project = Some(project);
@@ -77,6 +78,7 @@ pub fn removal(app: &Application, project: &str, path: &str) -> Option<Task> {
 
 pub fn select(s: &mut Workspace, path: &str) {
     let l = live_mut(s);
+    l.feed.close();
     if !l.app.select_checkout(path) {
         return;
     }

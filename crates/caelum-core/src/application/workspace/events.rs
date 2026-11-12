@@ -283,6 +283,13 @@ impl Workspace {
                 );
             }
             session.conversation.apply(provider, method, data);
+            if was_working != session.working() {
+                session.record_activity(
+                    data["_created"]
+                        .as_u64()
+                        .unwrap_or_else(crate::application::presentation::now),
+                );
+            }
             session.unread |= activity != session.conversation.activity;
             if matches!(
                 method,

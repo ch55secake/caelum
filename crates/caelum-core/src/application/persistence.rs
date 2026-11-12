@@ -17,6 +17,7 @@ pub struct Preferences {
     pub theme: String,
     pub theme_family: String,
     pub accent_color: String,
+    pub session_scope: super::SessionScope,
     pub default_provider: Provider,
     pub worktree_directory: String,
     pub worktree_expanded: BTreeMap<String, bool>,
@@ -36,6 +37,7 @@ impl Default for Preferences {
             theme: "system".into(),
             theme_family: "caelum".into(),
             accent_color: "violet".into(),
+            session_scope: super::SessionScope::default(),
             default_provider: Provider::Codex,
             worktree_directory: String::new(),
             worktree_expanded: BTreeMap::new(),
@@ -152,6 +154,8 @@ impl Preferences {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedSession {
+    #[serde(default)]
+    pub last_activity: Option<u64>,
     pub scope: Scope,
     pub remote_id: Option<String>,
     pub title: String,

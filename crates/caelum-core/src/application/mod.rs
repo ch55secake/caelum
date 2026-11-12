@@ -4,6 +4,7 @@
 pub mod commands;
 mod composer;
 mod conversation;
+mod feed;
 pub mod forms;
 mod inbox;
 mod notifications;
@@ -18,6 +19,7 @@ pub use composer::{
     split_context, Attachment, AttachmentKind, Completion, CompletionKind, QueuedPrompt,
 };
 pub use conversation::{Conversation, Entry, EntryKind};
+pub use feed::SessionScope;
 pub use inbox::{Inbox, InboxPrompt};
 pub use notifications::Notification;
 pub use persistence::{Preferences, SavedSession, Snapshot, Store, StoreLock};
@@ -68,6 +70,8 @@ pub struct Options {
 
 #[derive(Debug, Clone)]
 pub struct Summary {
+    /// Provider activity time in Unix milliseconds.
+    pub updated_at: Option<u64>,
     pub key: SessionKey,
     pub title: String,
     pub working: bool,

@@ -31,7 +31,9 @@ native notifications require the app bundle.
 Install/authenticate Codex or OpenCode for live sessions and `gh` for GitHub.
 ⌘O opens projects; `caelum /path` also reaches a running or hidden app. The sidebar's
 project **×** closes its checkout group and retains sessions, drafts and running work.
-Projects and Pull requests share flexible space with Sessions and scroll independently. Closing
+Compact Projects and rich Sessions sections stay visible and scroll independently.
+The session feed spans all open projects, with a project filter and a saved
+Appearance → Sidebar scope setting. Closing
 the window keeps work running; ⌘Q shuts down owned providers and saves editors.
 
 ## Offline development

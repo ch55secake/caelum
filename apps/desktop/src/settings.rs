@@ -26,7 +26,7 @@ pub enum Page {
 pub fn height(s: &Workspace) -> f32 {
     let l = live(s);
     let height = match l.panels.settings_page {
-        Page::Appearance => 352.0,
+        Page::Appearance => 460.0,
         Page::Providers => {
             360.0
                 + if l.panels.settings_provider == Provider::OpenCode {

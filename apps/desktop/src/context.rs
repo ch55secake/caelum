@@ -549,7 +549,7 @@ pub fn link(s: &mut Workspace, index: usize, url: &str, at: PointerPress, _: &mu
     });
 }
 
-pub fn pull_request(el: El, project: String, url: String, number: u64) -> El {
+pub fn pull_request(el: El, project: String, url: String) -> El {
     el.on_secondary_press(move |s: &mut Workspace, at, _| {
         let project = project.clone();
         let url = url.clone();
@@ -561,7 +561,7 @@ pub fn pull_request(el: El, project: String, url: String, number: u64) -> El {
         show(
             s,
             at,
-            format!("pull-request-{number}"),
+            crate::code_view::source_key(&url, "pull-request"),
             menu,
             move |s, pick, tx| match pick {
                 "open" => panels::open_review(s, project, url),

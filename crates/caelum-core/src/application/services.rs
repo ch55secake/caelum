@@ -506,13 +506,23 @@ pub struct Services {
     pub reviews: BTreeMap<(String, String), Review>,
     latest: HashMap<String, u64>,
     loading: HashSet<String>,
-    discovered: HashSet<(String, String)>,
+    discovered: HashMap<(String, String), Option<String>>,
     merged_pull_requests: HashSet<String>,
     review_owners: HashMap<String, (String, String)>,
     generations: HashMap<u64, u64>,
 }
 
 impl Services {
+    pub(super) fn pull_request_branches<'a>(
+        &'a self,
+        project: &'a str,
+    ) -> impl Iterator<Item = String> + 'a {
+        self.discovered
+            .keys()
+            .filter(move |(path, _)| path == project)
+            .map(|(_, branch)| branch.clone())
+    }
+
     /// A listing read from any checkout describes the same repository. Prefer
     /// the newest successful request, even if replies finish out of order.
     pub fn worktrees(&self, project: &str) -> Option<&GitWorktrees> {
@@ -766,9 +776,22 @@ impl Services {
                 project: project.clone(),
                 directory: directory.clone(),
             }),
-            (Task::Discover { project, branch }, TaskReply::Discovered(Some(pr))) => {
-                self.discovered.insert((project.clone(), branch.clone()));
-                if !self.merged_pull_requests.contains(&pr.url) {
+            (Task::Discover { project, branch }, TaskReply::Discovered(pr)) => {
+                let pr = pr.filter(|pr| !self.merged_pull_requests.contains(&pr.url));
+                let url = pr.as_ref().map(|pr| pr.url.clone());
+                if let Some(Some(previous)) = self
+                    .discovered
+                    .insert((project.clone(), branch.clone()), url.clone())
+                {
+                    if Some(&previous) != url.as_ref()
+                        && !self.discovered.iter().any(|((path, _), url)| {
+                            path == project && url.as_ref() == Some(&previous)
+                        })
+                    {
+                        checkout.pull_requests.retain(|pr| pr.url != previous);
+                    }
+                }
+                if let Some(pr) = pr {
                     if let Some(previous) =
                         checkout.pull_requests.iter_mut().find(|p| p.url == pr.url)
                     {
@@ -779,10 +802,10 @@ impl Services {
                     if !pr.base_ref_name.is_empty()
                         && !self
                             .discovered
-                            .contains(&(project.clone(), pr.base_ref_name.clone()))
+                            .contains_key(&(project.clone(), pr.base_ref_name.clone()))
                     {
                         self.discovered
-                            .insert((project.clone(), pr.base_ref_name.clone()));
+                            .insert((project.clone(), pr.base_ref_name.clone()), None);
                         next.push(Task::Discover {
                             project: project.clone(),
                             branch: pr.base_ref_name,
