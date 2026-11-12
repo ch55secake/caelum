@@ -4407,16 +4407,17 @@ fn completed_assistant_response_shows_agent_and_duration_below_the_output() {
             session
                 .conversation
                 .begin_turn(Some("build".into()), 1_000);
+            session.conversation.optimistic("local-1".into(), "Build this".into());
         }
         app.select(1);
         for (event_type, data) in [
             (
                 "session.execution.started",
-                serde_json::json!({"sessionID":"session-1", "_created":1000}),
+                serde_json::json!({"sessionID":"session-1", "_created":2000}),
             ),
             (
                 "session.text.started",
-                serde_json::json!({"sessionID":"session-1", "assistantMessageID":"message-1", "ordinal":0, "agent":"build", "_created":1100}),
+                serde_json::json!({"sessionID":"session-1", "assistantMessageID":"message-1", "ordinal":0, "agent":"build", "_created":3000}),
             ),
             (
                 "session.text.delta",
@@ -4448,6 +4449,35 @@ fn completed_assistant_response_shows_agent_and_duration_below_the_output() {
     let details = element(&rt, "output-details-1-opencode-message-1");
     assert_eq!(details.text.as_deref(), Some("build · 4.0s"));
     assert!(details.rect[1] > output.rect[1]);
+}
+
+#[test]
+fn restored_response_duration_includes_work_before_the_final_answer() {
+    use caelum_core::application::Provider;
+    let mut rt = live_runtime();
+    rt.update(|s, _| {
+        let app = &mut s.live.as_mut().unwrap().app;
+        let session = &mut app.sessions[1];
+        session.remote_id = Some("session-1".into());
+        session.loaded = true;
+        session.conversation = Default::default();
+        session.conversation.history(Provider::OpenCode, &[
+            serde_json::json!({"id":"prompt", "type":"user", "text":"Build this", "time":{"created":1000}}),
+            serde_json::json!({"id":"work", "type":"assistant", "time":{"created":2000,"completed":120000}, "content":[
+                {"id":"build", "type":"tool", "name":"bash", "state":{"status":"completed", "input":{"command":"cargo build"}, "content":[{"type":"text","text":"Build finished"}]}}
+            ]}),
+            serde_json::json!({"id":"answer", "type":"assistant", "agent":"build", "time":{"created":121000,"completed":129000}, "content":[{"type":"text","text":"Finished response"}]}),
+            serde_json::json!({"id":"idle", "type":"idle", "outcome":"succeeded", "time":{"created":130000}}),
+        ], false);
+        app.select(1);
+    });
+    advance(&mut rt, 0.3);
+    assert_eq!(
+        element(&rt, "output-details-1-opencode-answer")
+            .text
+            .as_deref(),
+        Some("build · 2m 9s")
+    );
 }
 
 #[test]

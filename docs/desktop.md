@@ -44,6 +44,10 @@ The anchored popover keeps its original session or Settings target while open. U
 current models and saved favourites remain visible; arrow keys navigate the
 windowed catalogue, including after Tab moves focus. Escape or an outside click
 closes it; its footer can save the current model, effort and agent as provider defaults.
+The duration beside the agent below a completed response measures elapsed time from the
+original message through completion, including thinking, tool work and retries.
+Restored responses use the original prompt's timestamp; loading earlier messages
+fills in the duration when that prompt is outside the current history page.
 Responses, thinking, typed Read/Run/Patch rows and shell activity
 appear in the transcript with tool-specific icons, status and timing. Active labels
 use a quiet left-to-right shimmer. Click a disclosure row or focus it and press
