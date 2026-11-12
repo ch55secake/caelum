@@ -9,6 +9,11 @@ use crate::{SEND, STOP, Workspace, on_key, ui};
 use super::{live, live_mut};
 
 pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut Vec<El>) -> El {
+    if let Some(index) = live(s).app.selected
+        && let Some(prompt) = crate::questions::active(live(s), index)
+    {
+        return crate::questions::view(s, k, index, prompt, padding);
+    }
     if live(s).commands.side_owner == live(s).app.selected && live(s).commands.side_owner.is_some()
     {
         return crate::commands::side_view(s, k, padding);

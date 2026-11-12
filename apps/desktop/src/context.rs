@@ -37,6 +37,7 @@ struct Scope {
     settings: crate::settings::Page,
     models: bool,
     side: Option<usize>,
+    question: Option<String>,
     file: Option<String>,
     review: Option<(String, String)>,
     background: bool,
@@ -53,6 +54,10 @@ impl Scope {
             settings: l.panels.settings_page,
             models: l.models.is_open(),
             side: l.commands.side_owner,
+            question: l
+                .app
+                .selected
+                .and_then(|index| crate::questions::active(l, index).map(|p| p.request_id.clone())),
             file: l
                 .app
                 .active_project

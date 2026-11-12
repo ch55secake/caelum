@@ -1,4 +1,5 @@
 mod activity;
+mod app;
 mod checkouts;
 mod code_view;
 mod commands;
@@ -26,8 +27,8 @@ mod worktree;
 mod tests;
 
 use rune::{
-    AppSpec, Chrome, Cx, El, Icon, Key, KeyEvent, ScrollSpec, Spring, TextStyle, Tx, col, icon,
-    row, text, text_input,
+    Chrome, Cx, El, Icon, Key, KeyEvent, ScrollSpec, Spring, TextStyle, Tx, col, icon, row, text,
+    text_input,
 };
 use rune_kit::diff::{DiffMode, DiffView};
 use rune_kit::shell::{
@@ -617,7 +618,8 @@ fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return panels::on_key(s, ev, tx);
     }
     if s.live.is_some()
-        && (live::sidebar_key(s, ev, tx)
+        && (questions::on_key(s, ev, tx)
+            || live::sidebar_key(s, ev, tx)
             || completion::on_key(s, ev, tx)
             || panels::on_key(s, ev, tx)
             || commands::side_key(s, ev, tx))
@@ -643,16 +645,8 @@ fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
     true
 }
 
-fn spec() -> AppSpec<Workspace> {
-    AppSpec {
-        min_size: Some((800.0, 620.0)),
-        families: ("system-ui", "ui-monospace"),
-        poll: Some(state::poll),
-        setup: Some(live::setup),
-        on_key: Some(on_key),
-        scenes: evaluation::SCENES,
-        ..AppSpec::new("Caelum", (1280.0, 1000.0), Workspace::new, view)
-    }
+fn spec() -> rune::AppSpec<Workspace> {
+    app::spec()
 }
 
 fn main() {
