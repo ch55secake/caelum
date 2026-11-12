@@ -9,9 +9,10 @@ use std::{
 use caelum_protocol::{ApprovalDecision, CodexEvent};
 use serde_json::{json, Value};
 
+use super::requests::{handle_server_request, request_question};
 use super::{
-    handle_server_request, id_key, project_key, request_id_string, request_question,
-    CodexConnection, CodexError, EventSubscribers, ReaderContext, PROVIDER_NAME, REQUEST_TIMEOUT,
+    id_key, project_key, request_id_string, CodexConnection, CodexError, EventSubscribers,
+    ReaderContext, PROVIDER_NAME, REQUEST_TIMEOUT,
 };
 
 impl CodexConnection {

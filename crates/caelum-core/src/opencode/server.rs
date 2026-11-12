@@ -15,7 +15,10 @@ use reqwest::{blocking::Client, Method, Url};
 use serde_json::Value;
 
 use super::{
-    find_opencode_executable, reserve_local_port, spawn_event_listener, sync_questions,
+    events::spawn_event_listener,
+    find_opencode_executable,
+    questions::sync_questions,
+    reserve_local_port,
     transport::{api_url, capture_server_password, decode_json_response},
     OpenCodeError, OpenCodeProvider, OpenCodeServer, SERVER_START_TIMEOUT,
 };
