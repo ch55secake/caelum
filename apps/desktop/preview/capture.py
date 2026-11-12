@@ -45,6 +45,7 @@ interactions = {
     "review-navigation": ("review", [{"t": 0.25, "key": "review-nav-toggle"}]),
     "shells-hide": ("shells-many", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "shells-reopen": ("shells-collapsed", [{"t": 0.25, "key": "toggle-background-shells"}]),
+    "composer-shell-commands": ("shells-many", [{"t": 0.15, "key": "live-draft-0"}, {"t": 0.25, "type": "key", "name": "a", "cmd": True}, {"t": 0.4, "paste": "/"}]),
     "vercel-select": ("settings", [{"t": 0.25, "key": "family-vercel"}]),
     "vercel-providers": ("vercel-settings", [{"t": 0.25, "key": "settings-providers"}]),
     "vercel-notifications": ("vercel-settings", [{"t": 0.25, "key": "settings-notifications"}]),

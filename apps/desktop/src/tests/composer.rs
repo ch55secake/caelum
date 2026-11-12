@@ -1,6 +1,7 @@
 use super::*;
 use caelum_core::application::{Attachment, Event};
 
+mod completion;
 mod controls;
 mod editing;
 
