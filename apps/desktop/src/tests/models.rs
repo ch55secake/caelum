@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn selecting_a_session_loads_its_model_effort_and_agent_controls() {
+    use caelum_core::application::{Command, Event, Provider, Reply, Scope};
+
+    let mut rt = live_runtime();
+    rt.update(|s, _| {
+        let l = s.live.as_mut().unwrap();
+        l.app.projects.push(caelum_protocol::ProjectInfo {
+            path: "/background".into(),
+            name: "Background".into(),
+        });
+        let index = l.app.new_session(Scope {
+            project: "/background".into(),
+            provider: Provider::OpenCode,
+        });
+        let session = &mut l.app.sessions[index];
+        session.remote_id = Some("restored-session".into());
+        session.loaded = true;
+        session.draft = "Keep this café draft".into();
+        session.options.model = Some("local/model".into());
+        session.options.effort = Some("low".into());
+        session.options.agent = Some("build".into());
+        l.sync_editors();
+    });
+    advance(&mut rt, 0.3);
+    let commands = rt.state.live.as_mut().unwrap().app.commands();
+    let requests: Vec<_> = commands
+        .iter()
+        .filter_map(|(id, command)| match command {
+            Command::Choices(scope) if scope.project == "/background" => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(requests.len(), 1, "navigation must load the catalogue");
+
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().apply(Event::Completed(
+            requests[0],
+            Err("Provider unavailable".into()),
+        ));
+    });
+    advance(&mut rt, 1.0);
+    assert!(rt.state.live.as_mut().unwrap().app.commands().is_empty());
+
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(0));
+    advance(&mut rt, 0.1);
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(2));
+    advance(&mut rt, 0.1);
+    let retry = rt
+        .state
+        .live
+        .as_mut()
+        .unwrap()
+        .app
+        .commands()
+        .into_iter()
+        .find_map(|(id, command)| match command {
+            Command::Choices(scope) if scope.project == "/background" => Some(id),
+            _ => None,
+        })
+        .expect("revisiting the session must retry a missing catalogue");
+    rt.update(|s, _| {
+        s.live.as_mut().unwrap().apply(Event::Completed(
+            retry,
+            Ok(Reply::Choices(
+                serde_json::from_value(serde_json::json!({
+                    "models": [{
+                        "id": "local/model", "name": "Local model",
+                        "efforts": [{"id":"low","name":"Low"}, {"id":"high","name":"High"}]
+                    }],
+                    "agents": [{"id":"build","name":"Build"}, {"id":"plan","name":"Plan"}],
+                    "defaultModel": "local/model"
+                }))
+                .unwrap(),
+            )),
+        ));
+    });
+    advance(&mut rt, 0.2);
+    assert!(rt.find("model-trigger").is_some());
+    assert!(rt.find("effort-trigger").is_some());
+    assert!(rt.find("agent-trigger").is_some());
+    click(&mut rt, "effort-trigger");
+    key(&mut rt, Key::End, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    click(&mut rt, "agent-trigger");
+    key(&mut rt, Key::End, Mods::default());
+    key(&mut rt, Key::Enter, Mods::default());
+    let l = rt.state.live.as_ref().unwrap();
+    assert_eq!(l.app.selected, Some(2));
+    assert_eq!(l.drafts[2].text, "Keep this café draft");
+    assert_eq!(l.app.sessions[2].options.effort.as_deref(), Some("high"));
+    assert_eq!(l.app.sessions[2].options.agent.as_deref(), Some("plan"));
+
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(0));
+    advance(&mut rt, 0.1);
+    rt.update(|s, _| s.live.as_mut().unwrap().app.select(2));
+    advance(&mut rt, 0.1);
+    assert!(rt.state.live.as_mut().unwrap().app.commands().is_empty());
+}
+
+#[test]
 fn native_shortcuts_and_large_model_catalogue_keep_the_captured_owner() {
     let mut rt = live_runtime_size((800.0, 620.0));
     rt.update(|s, _| {

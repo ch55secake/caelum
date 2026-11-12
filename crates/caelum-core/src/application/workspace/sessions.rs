@@ -15,6 +15,7 @@ impl Workspace {
             .map(|(index, _)| index)
             .collect();
         for index in sessions {
+            self.refresh_choices_for(self.sessions[index].scope.clone());
             self.refresh(index);
         }
     }

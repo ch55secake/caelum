@@ -71,18 +71,37 @@ fn archive_toast_pauses_for_presented_keyboard_focus_then_expires() {
 
 #[test]
 fn refresh_sessions_button_refreshes_every_open_session() {
+    use caelum_core::application::{Command, Provider, Scope};
     let mut rt = live_runtime_size((800.0, 620.0));
     rt.update(|s, _| {
-        let app = &mut s.live.as_mut().unwrap().app;
+        let l = s.live.as_mut().unwrap();
+        let app = &mut l.app;
         app.sessions[0].remote_id = Some("codex-session".into());
         app.sessions[1].remote_id = Some("opencode-session".into());
+        app.projects.push(caelum_protocol::ProjectInfo {
+            path: "/background".into(),
+            name: "Background".into(),
+        });
+        let background = app.new_session(Scope {
+            project: "/background".into(),
+            provider: Provider::OpenCode,
+        });
+        app.sessions[background].remote_id = Some("background-session".into());
+        app.select(0);
+        l.sync_editors();
     });
 
     click(&mut rt, "refresh-sessions");
 
-    let app = &rt.state.live.as_ref().unwrap().app;
+    let app = &mut rt.state.live.as_mut().unwrap().app;
     assert!(app.sessions[0].loading);
     assert!(app.sessions[1].loading);
+    assert!(app.sessions[2].loading);
+    assert!(app.commands().iter().any(|(_, command)| {
+        matches!(command, Command::Choices(scope)
+            if scope.project == "/background" && scope.provider == Provider::OpenCode)
+    }));
+    assert_eq!(app.selected, Some(0));
 }
 
 #[test]
