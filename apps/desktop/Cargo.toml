@@ -8,8 +8,9 @@ license = "MIT"
 description = "Caelum's native coding workspace"
 
 [dependencies]
-rune = { git = "https://github.com/anomalyco/rune", rev = "ddf14140253bd1b963993895e3fa025d1ec58537", default-features = false, features = ["accessibility", "metal-backend", "native-file-dialog"] }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "ddf14140253bd1b963993895e3fa025d1ec58537", features = ["markdown"] }
+# Focus-query backport on the existing Rune pin; see docs/performance/README.md.
+rune = { git = "https://github.com/ch55secake/rune", rev = "e5e9ea9abacd20ddfa878cf5e5988430e121aba4", default-features = false, features = ["accessibility", "metal-backend", "native-file-dialog"] }
+rune-kit = { git = "https://github.com/ch55secake/rune", rev = "e5e9ea9abacd20ddfa878cf5e5988430e121aba4", features = ["markdown"] }
 serde.workspace = true
 serde_json.workspace = true
 caelum-core = { path = "../../crates/caelum-core" }

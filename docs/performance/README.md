@@ -58,9 +58,9 @@ On 9 November 2026, a 15-second sample of the running development app during nat
 session hover attributed 3,431 of 11,965 main-thread samples to `live::frame_drawn`,
 almost entirely `Runtime::elements`. This diagnostic API copies the whole tree and
 walks ancestors for presentation metadata. It was being called after every drawn
-frame, even when focus and the view were unchanged. The observer now caches the
-commit/focus-presence stamp, and skips tree inspection entirely when nothing is
-focused. Pinned Rune commits pointer, keyboard and accessibility focus changes;
+frame, even when focus and the view were unchanged. The first observer change
+cached the commit/focus-presence stamp and skipped tree inspection entirely when
+nothing was focused. Pinned Rune commits pointer, keyboard and accessibility focus changes;
 regressions compare the observed key against the presented tree after navigation.
 
 Initial same-machine development-profile results (1280×1000, 360 frames per phase):
@@ -75,8 +75,9 @@ Initial same-machine development-profile results (1280×1000, 360 frames per pha
 
 The reported multi-second beachball was not reproduced in these captures. This
 removes measured redundant UI-thread work; it does not establish that the focus
-scan was the only cause of that stall. Switching frames that rebuild the view
-still inspect focus, which is reflected in their similar p95 times.
+scan was the only cause of that stall. Switching frames that rebuilt the view
+still inspected the full tree at that point, reflected in their similar p95 times.
+The narrow query below removes that remaining inspection cost.
 
 ### Preview and persistence polling
 
@@ -139,10 +140,46 @@ snapshot. Sub-microsecond results are close to clock granularity.
 
 The separate 1280×1000 frame/focus profile still measured streaming-switch p95
 at 4.82 → 4.87 ms, with focus inspection at 1.77 → 1.82 ms: no material change.
-This pass removes redundant polling work; native drawing and committed-frame
-focus inspection remain follow-up targets for general responsiveness. Raw local
+That pass removed redundant polling work; native drawing and committed-frame
+focus inspection remained follow-up targets for general responsiveness. Raw local
 JSON is retained under `apps/desktop/profile-results/idle-polling-{before,after}.json`
 and `apps/desktop/profile-results/navigation-{before,after}.json` (ignored).
+
+### Focus lookup and background redraws
+
+The desktop now uses `Runtime::presented_focus_key()` instead of collecting
+`Runtime::elements()` to observe focus. The query returns the same non-exiting
+presented element key or link ID, including pointer, Tab and accessibility focus.
+Unmounted virtual editors and unkeyed controls return no presented key. Caelum
+pins `ch55secake/rune` at `e5e9ea9a`, a small backport on its previous `ddf1414`
+revision. Only a changed focus key is copied into application state.
+
+Provider batches still apply every event synchronously and in order. A known
+text/reasoning delta for a uniquely owned, unselected session can skip view
+invalidation when its title, working/retry state, unread flag and last-activity
+time remain unchanged. Selected-session updates, bundled history, ambiguous or
+unknown ownership, permissions, errors and lifecycle events keep the regular
+invalidation path. Navigation immediately reads the accumulated transcript.
+
+Run the background-streaming profile and the navigation profile separately from
+builds and other tests:
+
+```sh
+nix develop -c cargo test --locked --release -p caelum-desktop background_redraw_profile \
+  -- --ignored --nocapture --test-threads=1
+nix develop -c cargo test --locked --release -p caelum-desktop session_hover_switch_profile \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The background profile uses six 2,000-entry histories at 1280×1000. After first
+activity has landed, it measures 360 frames with five background deltas per
+frame, with and without typing every sixth frame. A foreground control updates
+all six sessions. Timing includes event application, input dispatch, headless
+frames and presented-focus observation. Synthetic event construction is outside
+the timed section. Native drawing/presentation, OS input delivery and provider
+or storage I/O are excluded; these are CPU-work measurements, not end-to-end
+latency. Commit counts distinguish application view rebuilds from animation-only
+frames.
 
 ## Packaged application
 
