@@ -49,7 +49,7 @@ fn long_descriptions_leave_readiness_visible_and_checks_reachable_in_both_themes
 }
 
 #[test]
-fn header_identity_and_refresh_follow_the_review_while_back_restores_the_selected_draft() {
+fn header_identity_refresh_and_back_follow_the_review_and_restore_its_session_draft() {
     use caelum_core::application::{Command, Provider, Scope, Task};
 
     let mut rt = design_runtime("overview", (800.0, 620.0));
@@ -66,6 +66,14 @@ fn header_identity_and_refresh_follow_the_review_while_back_restores_the_selecte
         details.pull_request.number = 42;
         details.pull_request.is_draft = true;
         details.state = "CLOSED".into();
+        l.app.sessions[0].details = Some(caelum_protocol::SessionDetails {
+            branch: Some("feature/follow-up".into()),
+            branches: vec![details.head_ref_name.clone()],
+            branch_is_current: false,
+            changes: None,
+        });
+        l.drafts[0].replace_text("Continue the PR's café draft");
+        l.drafts[0].set_selection(9, 17);
         l.app.services.reviews.insert(target.clone(), review);
         l.panels.review = Some(target.clone());
         l.app.projects.push(caelum_protocol::ProjectInfo {
@@ -116,15 +124,19 @@ fn header_identity_and_refresh_follow_the_review_while_back_restores_the_selecte
     }
     click(&mut rt, "back-to-session");
     let l = rt.state.live.as_ref().unwrap();
-    assert_eq!(l.app.selected, Some(index));
+    assert_eq!(l.app.selected, Some(0));
+    assert_eq!(l.app.active_project.as_deref(), Some("/projects/caelum"));
+    assert_eq!(l.drafts[0].text, "Continue the PR's café draft");
+    assert_eq!((l.drafts[0].anchor, l.drafts[0].focus), (9, 17));
     assert_eq!(l.drafts[index].text, "Keep this other project's draft");
-    assert!(element(&rt, &format!("live-draft-{index}")).focused);
+    assert!(element(&rt, "live-draft-0").focused);
 }
 
 #[test]
 fn loading_and_failed_reviews_keep_navigation_and_retained_content_accessible() {
     for scene in ["review-loading", "review-error", "overview-stale"] {
         let mut rt = design_runtime(scene, (800.0, 620.0));
+        let selected = rt.state.live.as_ref().unwrap().app.selected;
         assert!(element(&rt, "review-number").visible[2] > 0.0);
         assert!(element(&rt, "review-refresh").focusable);
         if scene == "overview-stale" {
@@ -146,5 +158,7 @@ fn loading_and_failed_reviews_keep_navigation_and_retained_content_accessible() 
             rt.state.live.as_ref().unwrap().panels.screen,
             crate::panels::Screen::Conversation
         );
+        assert_eq!(rt.state.live.as_ref().unwrap().app.selected, selected);
+        assert!(element(&rt, &format!("live-draft-{}", selected.unwrap())).focused);
     }
 }

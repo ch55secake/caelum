@@ -20,7 +20,17 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
         quiet_button(&ui::BACK, "Back to session")
             .on_press(|s: &mut Workspace| {
                 let l = live_mut(s);
+                if let Some(index) = l
+                    .panels
+                    .review
+                    .as_ref()
+                    .and_then(|(project, url)| l.app.pull_request_session(project, url))
+                {
+                    l.app.select(index);
+                    l.panels.archived = l.app.sessions[index].archived;
+                }
                 l.panels.screen = Screen::Conversation;
+                l.sync_editors();
                 l.focus();
             })
             .build(k)

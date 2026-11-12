@@ -10,8 +10,12 @@ execution and preserves it across restarts and archive/undo. Concurrent sessions
 sharing a checkout do not claim ambiguous branch changes; linked worktrees are
 independent.
 
-Select a PR to open the main review screen. **Back to session** restores the
-conversation and draft. A compact header identifies the reviewed repository and PR,
+Select a PR to open the main review screen. **Back to session** opens the session
+associated with the PR's source branch and restores its conversation and draft,
+including sessions in linked worktrees and earlier recorded branches. Among matching
+sessions, active sessions take priority, followed by the selected session and recent
+activity. If no association is known, Back returns to the selected session.
+A compact header identifies the reviewed repository and PR,
 with its state, title, author, source → destination branches and change counts.
 Long titles use at most two lines; hover truncated titles or branches for the full
 text. The header keeps Back, GitHub and Refresh available while loading or retrying.
