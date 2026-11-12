@@ -1,6 +1,7 @@
 mod activity;
 mod archive;
 mod composer;
+mod notifications;
 mod queue;
 mod review;
 mod tools;

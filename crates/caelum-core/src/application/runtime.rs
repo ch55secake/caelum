@@ -18,7 +18,9 @@ use crate::{
     processes::ProcessRegistry, projects::Project, questions::QuestionBroker,
 };
 
-use super::{Options, Provider, Scope, SessionKey, Snapshot, Store, Summary, Task, TaskReply};
+use super::{
+    Notification, Options, Provider, Scope, SessionKey, Snapshot, Store, Summary, Task, TaskReply,
+};
 
 #[path = "checkout_watch.rs"]
 mod checkout_watch;
@@ -110,15 +112,7 @@ impl ProviderRuntime {
                 let _ = volume;
                 Ok(())
             }
-            Command::Notify(title, body) => {
-                #[cfg(target_os = "macos")]
-                {
-                    let _ = std::process::Command::new("/usr/bin/osascript").args(["-e", "on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run", title, body]).status();
-                }
-                #[cfg(not(target_os = "macos"))]
-                let _ = (title, body);
-                Ok(())
-            }
+            Command::Notify(_) => Err("Desktop notifications require a desktop handler".into()),
             Command::Task(task) => return task.execute(self).map(Reply::Task),
             Command::Load(store) => {
                 store.migrate_default()?;
@@ -469,7 +463,7 @@ pub enum Command {
     Enqueue(SessionKey, String, String),
     RemoveQueued(SessionKey, String),
     Generate(SessionKey, String),
-    Notify(String, String),
+    Notify(Notification),
     Sound(u8),
     Task(Task),
     Load(Store),

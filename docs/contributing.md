@@ -35,6 +35,7 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace -- --test-threads=4
 python3 -m unittest discover -s scripts/release -p 'test_*.py'
 python3 -m unittest discover -s scripts/profile -p 'test_*.py'
+python3 -m unittest discover -s scripts/dev -p 'test_*.py'
 ```
 
 On Linux, select `-p caelum-core -p caelum-protocol -p caelum-cli` in place of
