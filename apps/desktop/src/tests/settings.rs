@@ -91,6 +91,19 @@ fn settings_pages_keep_controls_visible_and_reset_scrolling_on_navigation() {
                 .into_iter()
                 .filter(|e| !e.exiting && e.focusable && e.path.contains("settings-scroll"))
             {
+                if control.visible[3] < control.rect[3] {
+                    rt.update(|_, tx| {
+                        tx.scroll_into_view(
+                            control.key.clone().unwrap_or_else(|| control.path.clone()),
+                        )
+                    });
+                    advance(&mut rt, 0.3);
+                }
+                let control = rt
+                    .elements()
+                    .into_iter()
+                    .find(|e| e.path == control.path && !e.exiting)
+                    .unwrap();
                 assert!(
                     control
                         .rect

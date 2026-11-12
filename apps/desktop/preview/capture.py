@@ -14,6 +14,9 @@ scenes = ("", "inspector", "compact", "settings", "providers", "provider-error",
 interactions = {
     "question-invalid": ("questions", [{"t": 0.25, "key": "question-fixture-target-0"}, {"t": 0.5, "key": "question-submit-fixture"}]),
     "question-pending": ("questions", [{"t": 0.25, "key": "question-submit-fixture"}]),
+    "session-feed-filter": ("session-feed", [{"t": 0.25, "key": "session-project-filter-trigger"}]),
+    "session-feed-search": ("session-feed", [{"t": 0.25, "key": "session-search"}, {"t": 0.4, "paste": "focus"}]),
+    "session-feed-project": ("session-feed", [{"t": 0.25, "key": "session-project-filter-trigger"}, {"t": 0.5, "key": "option2"}]),
     "composer-focus": ("", [{"t": 0.25, "key": "live-draft-0"}]),
     "check-details": ("merge-ready", [{"t": 0.25, "key": "review-checks-toggle"}]),
     "worktree-base": ("worktree-create", [{"t": 0.25, "key": "worktree-base-trigger"}]),
@@ -52,6 +55,7 @@ interactions = {
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
+scenes += ("session-feed", "session-feed-current", "session-feed-empty", "session-feed-many", "session-feed-colours")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")
 scenes += ("patch-short", "patch-long", "patch-multi", "vercel-patch-short", "vercel-patch-long", "vercel-patch-multi")
 scenes += ("about-checking", "about-current", "about-update", "about-release", "about-ahead", "about-error", "vercel-about", "vercel-about-update")

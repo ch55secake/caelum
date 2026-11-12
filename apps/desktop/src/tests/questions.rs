@@ -431,6 +431,7 @@ fn native_side_questions_preserve_main_draft_focus_and_reject_late_answers() {
 fn native_question_forms_send_scoped_values_and_keep_invalid_answers_editable() {
     use caelum_core::application::{Command, Event};
     let mut rt = live_runtime();
+    rt.state.live.as_mut().unwrap().app.commands();
     rt.update(|s, _| {
         let live = s.live.as_mut().unwrap(); live.app.sessions[0].remote_id = Some("thread".into());
         live.app.apply(Event::Questions(vec![caelum_protocol::QuestionPrompt { provider: "codex".into(), project_path: "/project".into(), session_id: "thread".into(), request_id: "question".into(), title: "Choose a branch".into(), fields: vec![serde_json::json!({"key":"branch","type":"string","required":true,"options":[{"label":"Main","value":"main"},{"label":"Feature","value":"feature"}]})] }]));

@@ -12,6 +12,7 @@ pub(crate) use menus::archive_disabled;
 pub use menus::close_session_menu;
 pub use menus::delete_confirmation;
 pub use menus::overlays;
+pub use sidebar::on_key as sidebar_key;
 pub use sidebar::sidebar;
 pub use transcript::transcript;
 
@@ -23,6 +24,7 @@ use rune::{FileDialogOptions, ScrollPos, TextEdit, Tx, Waker};
 use crate::Workspace;
 
 pub struct Live {
+    pub feed: sidebar::State,
     pub context: crate::context::State,
     pub checkouts: crate::checkouts::State,
     pub completion: crate::completion::Menu,
@@ -85,6 +87,7 @@ impl Live {
             app.open_project(project);
         }
         Self {
+            feed: Default::default(),
             context: Default::default(),
             checkouts: Default::default(),
             completion: Default::default(),
@@ -144,6 +147,10 @@ impl Live {
 
     pub fn new_session(&mut self) {
         self.schedule();
+        self.feed.project = None;
+        self.feed.close();
+        self.panels.sessions.clear();
+        self.panels.archived = false;
         let Some(project) = self.app.active_project.clone() else {
             self.panels.overlay = Some(crate::panels::Screen::Launcher);
             return;
@@ -325,6 +332,13 @@ impl Live {
         self.app.conversation_hidden = self.panels.screen != crate::panels::Screen::Conversation
             || self.panels.overlay.is_some();
         let mut changed = self.media.poll();
+        changed |= self.feed.poll(
+            &mut self.app,
+            &self.panels.sessions.text,
+            self.panels.archived,
+            tx,
+            !self.fixture,
+        );
         if let Some(panel) = &mut self.shell_panel {
             panel.sync(&self.app);
         }
@@ -442,6 +456,7 @@ impl Live {
         }
         if self.runtime.is_some() {
             changed |= crate::notifications::dispatch(self);
+            self.feed.discover(&mut self.app);
             changed |= self.checkouts.sync(&mut self.app);
             self.runtime
                 .as_mut()

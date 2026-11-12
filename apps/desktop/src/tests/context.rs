@@ -254,6 +254,7 @@ fn context_paths_preserve_the_open_file_and_project_until_chosen() {
     });
     fill(&mut rt, "live-draft-0", "Keep my project draft");
     let other = crate::code_view::source_key("/other", "project");
+    reveal(&mut rt, &other);
     secondary(&mut rt, &other);
     choose_context(&mut rt, "Copy project path");
     assert_eq!(
@@ -463,6 +464,7 @@ fn context_worktree_deletion_rechecks_locks_mutations_and_catalog_changes() {
     let row = crate::code_view::source_key(path, "checkout");
     for changed in ["locked", "busy", "removed"] {
         let mut rt = design_runtime("sidebar-worktrees-projects", (1280.0, 1000.0));
+        reveal(&mut rt, &row);
         secondary(&mut rt, &row);
         assert!(context_item(&rt, "Delete worktree").focusable);
         rt.update(|s, _| {
@@ -508,6 +510,10 @@ fn context_worktree_deletion_rechecks_locks_mutations_and_catalog_changes() {
         }
     }
     let mut rt = design_runtime("sidebar-worktrees", (800.0, 620.0));
+    reveal(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum-native", "checkout"),
+    );
     secondary(
         &mut rt,
         &crate::code_view::source_key("/projects/caelum-native", "checkout"),

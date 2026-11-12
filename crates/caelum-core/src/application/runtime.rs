@@ -204,6 +204,7 @@ impl ProviderRuntime {
                                 id: s.id,
                             },
                             title: s.name.filter(|v| !v.is_empty()).unwrap_or(s.preview),
+                            updated_at: s.updated_at.map(|at| at.saturating_mul(1000)),
                             working: s.is_working,
                             options: Options::default(),
                         })
@@ -220,6 +221,7 @@ impl ProviderRuntime {
                                 id: s.id,
                             },
                             title: s.title.unwrap_or_default(),
+                            updated_at: s.updated_at,
                             working: s.is_working,
                             options: Options {
                                 model: s.model,
@@ -245,6 +247,7 @@ impl ProviderRuntime {
                                 id: s.id,
                             },
                             title: s.name.filter(|v| !v.is_empty()).unwrap_or(s.preview),
+                            updated_at: s.updated_at.map(|at| at.saturating_mul(1000)),
                             working: s.is_working,
                             options: Options::default(),
                         })
@@ -261,6 +264,7 @@ impl ProviderRuntime {
                                 id: s.id,
                             },
                             title: s.title.unwrap_or_default(),
+                            updated_at: s.updated_at,
                             working: s.is_working,
                             options: Options {
                                 model: s.model,
@@ -296,6 +300,7 @@ impl ProviderRuntime {
                                 id: s.thread.id,
                             },
                             title: s.thread.name.unwrap_or(s.thread.preview),
+                            updated_at: s.thread.updated_at.map(|at| at.saturating_mul(1000)),
                             working: s.thread.is_working,
                             options: Options {
                                 model: s.model,
@@ -317,6 +322,7 @@ impl ProviderRuntime {
                                 id: s.session.id,
                             },
                             title: s.session.title.unwrap_or_default(),
+                            updated_at: s.session.updated_at,
                             working: s.session.is_working,
                             options: Options {
                                 model: s.session.model,
@@ -336,6 +342,7 @@ impl ProviderRuntime {
                         .map(|s| Summary {
                             key: key.clone(),
                             title: s.thread.name.unwrap_or(s.thread.preview),
+                            updated_at: s.thread.updated_at.map(|at| at.saturating_mul(1000)),
                             working: s.thread.is_working,
                             options: Options {
                                 model: s.model,
@@ -350,6 +357,7 @@ impl ProviderRuntime {
                         .map(|s| Summary {
                             key: key.clone(),
                             title: s.session.title.unwrap_or_default(),
+                            updated_at: s.session.updated_at,
                             working: s.session.is_working,
                             options: Options {
                                 model: s.session.model,

@@ -156,6 +156,7 @@ impl Workspace {
             return false;
         }
         session.submitting = true;
+        session.record_activity(crate::application::presentation::now());
         session.error = None;
         session.inflight_prompt = Some(prompt.clone());
         session.inflight_options = session.options.clone();

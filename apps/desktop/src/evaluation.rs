@@ -1,4 +1,5 @@
 //! Deterministic demanding workload, explicitly opt-in and isolated from user data.
+mod feed;
 use crate::Workspace;
 use caelum_core::application::{Event, Provider, Scope};
 use serde_json::json;
@@ -874,6 +875,7 @@ pub fn design() -> Workspace {
     for title in [&sample.title, "OpenCode session", &sample.secondary_title] {
         let i = live.app.new_session(scope.clone());
         live.app.sessions[i].title = title.into();
+        live.app.sessions[i].last_activity = Some(live.feed.now - (i as u64 + 1) * 900_000);
     }
     let session = &mut live.app.sessions[0];
     session.loaded = true;
@@ -909,6 +911,9 @@ pub fn design() -> Workspace {
 
 /// Populated regression scenes share the production renderer and use no services.
 pub fn scene(state: &mut Workspace, name: &str) {
+    if feed::scene(state, name) {
+        return;
+    }
     if polish_scene(state, name) {
         return;
     }

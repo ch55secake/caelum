@@ -27,6 +27,7 @@ fn scope(provider: Provider, project: &str) -> Scope {
 
 fn summary(scope: Scope, id: &str) -> Summary {
     Summary {
+        updated_at: None,
         key: SessionKey {
             scope,
             id: id.into(),

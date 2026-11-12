@@ -618,6 +618,7 @@ fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if s.live.is_some()
         && (questions::on_key(s, ev, tx)
+            || live::sidebar_key(s, ev, tx)
             || completion::on_key(s, ev, tx)
             || panels::on_key(s, ev, tx)
             || commands::side_key(s, ev, tx))
@@ -743,6 +744,19 @@ fn spec() -> AppSpec<Workspace> {
             }),
             ("sidebar-projects", |s| {
                 evaluation::scene(s, "sidebar-projects")
+            }),
+            ("session-feed", |s| evaluation::scene(s, "session-feed")),
+            ("session-feed-colours", |s| {
+                evaluation::scene(s, "session-feed-colours")
+            }),
+            ("session-feed-current", |s| {
+                evaluation::scene(s, "session-feed-current")
+            }),
+            ("session-feed-empty", |s| {
+                evaluation::scene(s, "session-feed-empty")
+            }),
+            ("session-feed-many", |s| {
+                evaluation::scene(s, "session-feed-many")
             }),
             ("messages", |s| evaluation::scene(s, "messages")),
             ("archive", |s| evaluation::scene(s, "archive")),
