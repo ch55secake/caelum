@@ -6,7 +6,11 @@ const NOW: u64 = 1_800_000_000_000;
 pub(super) fn scene(state: &mut Workspace, name: &str) -> bool {
     if !matches!(
         name,
-        "session-feed" | "session-feed-current" | "session-feed-empty" | "session-feed-many"
+        "session-feed"
+            | "session-feed-current"
+            | "session-feed-empty"
+            | "session-feed-many"
+            | "session-feed-colours"
     ) {
         return false;
     }
@@ -15,7 +19,7 @@ pub(super) fn scene(state: &mut Workspace, name: &str) -> bool {
     for (i, session) in l.app.sessions.iter_mut().enumerate() {
         session.last_activity = Some(NOW - (i as u64 + 1) * 900_000);
     }
-    for (path, name, title, branch, provider, age) in [
+    let mut projects = vec![
         (
             "/projects/rune",
             "rune",
@@ -40,7 +44,28 @@ pub(super) fn scene(state: &mut Workspace, name: &str) -> bool {
             Provider::Codex,
             45,
         ),
-    ] {
+    ];
+    if name == "session-feed-colours" {
+        projects.extend([
+            (
+                "/projects/glance",
+                "glance",
+                "Polish the dashboard",
+                "feat/dashboard",
+                Provider::Codex,
+                1,
+            ),
+            (
+                "/projects/singularity",
+                "singularity",
+                "Keep workspace state consistent",
+                "fix/state",
+                Provider::OpenCode,
+                3,
+            ),
+        ]);
+    }
+    for (path, name, title, branch, provider, age) in projects {
         l.app.projects.push(caelum_protocol::ProjectInfo {
             name: name.into(),
             path: path.into(),

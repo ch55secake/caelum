@@ -745,6 +745,9 @@ fn spec() -> AppSpec<Workspace> {
                 evaluation::scene(s, "sidebar-projects")
             }),
             ("session-feed", |s| evaluation::scene(s, "session-feed")),
+            ("session-feed-colours", |s| {
+                evaluation::scene(s, "session-feed-colours")
+            }),
             ("session-feed-current", |s| {
                 evaluation::scene(s, "session-feed-current")
             }),

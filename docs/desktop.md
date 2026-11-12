@@ -11,7 +11,9 @@ attachments, queues and running work are retained; reopening the folder returns 
 the remembered session. Closing the final project returns to the welcome screen.
 Arrow keys navigate each list; Tab enters a project's actions and Left/Right
 moves between Create worktree and Close.
-Project and session rows share initial badges with a stable colour for each project.
+Project and session rows share initial badges. Colours are assigned from a varied
+palette, avoiding colours already used by open projects and keeping each project's
+colour stable while it stays open.
 
 The session feed shows all open projects by default, with project identity, session
 title, branch/worktree, provider, status and relative activity time. Change
@@ -35,9 +37,10 @@ keyboard-focused or restoring. Undo preserves newer navigation. Session actions 
 custom context menus also offer archive/reconnect. Hover any session row for its
 **…** popover; actions belong to that row, including background sessions. Escape
 returns focus to its button. Use the archive icon beside
-**Sessions** to switch between active and archived sessions. **New session** uses
-the default provider chosen in Settings → Providers. **Refresh sessions** reloads
-active session history across all open projects.
+**Sessions** to switch between active and archived sessions. The **+** beside
+**Sessions**, just before the archive icon, starts a session with the default
+provider chosen in Settings → Providers. **Refresh sessions** reloads active
+session history across all open projects.
 
 Right-click projects, sessions, messages, files, tabs and pull requests for themed
 context menus. Actions apply to the item you clicked, including background sessions

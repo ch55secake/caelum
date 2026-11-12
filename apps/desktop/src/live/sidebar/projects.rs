@@ -52,7 +52,8 @@ pub(super) fn filter(s: &Workspace) -> Select {
 }
 
 pub(super) fn view(s: &Workspace, k: &Kit) -> El {
-    let app = &live(s).app;
+    let l = live(s);
+    let app = &l.app;
     let roots: Vec<_> = app
         .projects
         .iter()
@@ -92,7 +93,7 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
                         } else {
                             rune::Color::TRANSPARENT
                         })
-                        .child(super::badge::view(app, &path, k))
+                        .child(l.feed.badges.view(app, &path, k))
                         .child(
                             text(&project.name)
                                 .font(k.ty.ui_medium)
@@ -174,13 +175,15 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
             })
             .count(roots.len())
             .action(
-                quiet_button(&PLUS, "Open project")
-                    .on_press_tx(|s: &mut Workspace, tx| {
-                        live_mut(s).feed.menu = Menu::Closed;
-                        super::super::open_project(s, tx);
-                    })
-                    .build(k)
-                    .key("open-project"),
+                row().gap(1.0).child(crate::panels::navigation(s, k)).child(
+                    quiet_button(&PLUS, "Open project")
+                        .on_press_tx(|s: &mut Workspace, tx| {
+                            live_mut(s).feed.menu = Menu::Closed;
+                            super::super::open_project(s, tx);
+                        })
+                        .build(k)
+                        .key("open-project"),
+                ),
             )
             .build(k)
             .key("projects-heading"),

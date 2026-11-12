@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use caelum_core::application::{SessionScope, Workspace as Application};
 use rune::{El, Key, KeyEvent, ScrollSpec, Tx, col, icon, row, text, text_input};
-use rune_kit::{ButtonVariant, Kit, ScrollBar, glyphs, shell::SidebarHeader};
+use rune_kit::{Kit, ScrollBar, glyphs, shell::SidebarHeader};
 
 use super::{live, live_mut};
 use crate::{PLUS, Workspace, context::EditMenu, quiet_button, ui};
@@ -21,6 +21,7 @@ enum Menu {
 }
 
 pub struct State {
+    badges: badge::State,
     discovered: std::collections::HashSet<caelum_core::application::Scope>,
     pub project: Option<String>,
     menu: Menu,
@@ -35,6 +36,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            badges: Default::default(),
             discovered: Default::default(),
             project: None,
             menu: Menu::Closed,
@@ -86,7 +88,7 @@ impl State {
         tx: &mut Tx,
         clock: bool,
     ) -> bool {
-        let mut changed = false;
+        let mut changed = self.badges.sync(app);
         if self
             .project
             .as_ref()
@@ -234,24 +236,6 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         .child(projects::view(s, k))
         .child(ui::divider(k))
         .child(
-            row()
-                .w_full()
-                .gap(4.0)
-                .center_y()
-                .my(4.0)
-                .child(
-                    ui::Button::new("New session")
-                        .icon(&PLUS)
-                        .variant(ButtonVariant::Outline)
-                        .on_press(|s: &mut Workspace| s.new_session())
-                        .build(k)
-                        .key("new-session")
-                        .h(32.0)
-                        .grow(1.0),
-                )
-                .child(crate::panels::navigation(s, k)),
-        )
-        .child(
             SidebarHeader::new(if l.panels.archived {
                 "Archived sessions"
             } else {
@@ -261,6 +245,12 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
             .action(
                 row()
                     .gap(1.0)
+                    .child(
+                        quiet_button(&PLUS, "New session · ⌘N")
+                            .on_press(|s: &mut Workspace| s.new_session())
+                            .build(k)
+                            .key("new-session"),
+                    )
                     .child(
                         quiet_button(
                             &ui::ARCHIVE,

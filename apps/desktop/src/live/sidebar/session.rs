@@ -120,7 +120,7 @@ pub(super) fn view(s: &Workspace, k: &Kit, index: usize, position: usize, count:
                         .w_full()
                         .gap(5.0)
                         .center_y()
-                        .child(super::badge::view(app, &session.scope.project, k))
+                        .child(l.feed.badges.view(app, &session.scope.project, k))
                         .child(
                             text(project)
                                 .font(k.ty.small)
