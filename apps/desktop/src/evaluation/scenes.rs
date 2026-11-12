@@ -53,6 +53,8 @@ pub(crate) const SCENES: &[Scene] = &[
     ("merge-draft", |s| scene(s, "merge-draft")),
     ("merge-merged", |s| scene(s, "merge-merged")),
     ("merge-closed", |s| scene(s, "merge-closed")),
+    ("merge-auto-enabled", |s| scene(s, "merge-auto-enabled")),
+    ("merge-auto-error", |s| scene(s, "merge-auto-error")),
     ("worktree-create", |s| scene(s, "worktree-create")),
     ("shell-output", |s| scene(s, "shell-output")),
     ("shells-many", |s| scene(s, "shells-many")),
