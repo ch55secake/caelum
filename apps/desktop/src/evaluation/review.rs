@@ -3,6 +3,27 @@ use crate::Workspace;
 use serde_json::json;
 
 pub(super) fn scene(state: &mut Workspace, name: &str) {
+    if matches!(name, "overview-long" | "overview-stale") {
+        scene(state, "overview-blocked");
+        let l = state.live.as_mut().unwrap();
+        let owner = l.panels.review.as_ref().unwrap();
+        let review = l.app.services.reviews.get_mut(owner).unwrap();
+        if name == "overview-stale" {
+            review.error = Some("GitHub is unavailable. Showing the last loaded review.".into());
+        } else {
+            let details = review.details.as_mut().unwrap();
+            details.pull_request.title = "Keep navigation, drafts and review context consistent across multiple projects and linked worktrees".into();
+            details.head_ref_name =
+                "feature/preserve-session-context-during-background-review-refresh".into();
+            details.pull_request.base_ref_name =
+                "release/native-workspace-and-provider-parity".into();
+            details.body = (1..=12)
+                .map(|i| format!("### Review area {i}\n\nPreserve the selected session, its draft and reading position while background changes arrive. Keep long branch names readable and make failed checks easy to find before reviewing the description.\n\n- Keep each response with its requesting checkout.\n- Restore the selected file after refreshing a review.\n\n"))
+                .collect();
+        }
+        l.app.services.revision += 1;
+        return;
+    }
     let l = state.live.as_mut().unwrap();
     let project = "/projects/caelum";
     let url = "https://github.com/ch55secake/caelum/pull/95";

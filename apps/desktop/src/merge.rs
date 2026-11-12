@@ -16,9 +16,9 @@ use rune_kit::{ButtonVariant, Kit, SelectAppearance, glyphs};
 fn status(title: &str, detail: &str, outcome: Outcome, k: &Kit) -> El {
     row()
         .w_full()
-        .gap(12.0)
-        .px(16.0)
-        .py(12.0)
+        .gap(10.0)
+        .px(12.0)
+        .py(9.0)
         .center_y()
         .child(if outcome == Outcome::Running {
             rune::icon(&ui::CLOCK, 14.0).color(k.c.icon_muted)
@@ -29,7 +29,7 @@ fn status(title: &str, detail: &str, outcome: Outcome, k: &Kit) -> El {
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .gap(3.0)
+                .gap(2.0)
                 .child(if outcome == Outcome::Running {
                     ui::busy_text(title, k.ty.ui_medium, k)
                 } else {
@@ -126,7 +126,7 @@ pub fn view(
                     row()
                         .w_full()
                         .gap(8.0)
-                        .px(16.0)
+                        .px(12.0)
                         .py(8.0)
                         .center_y()
                         .child(if check.outcome == Outcome::Running {
@@ -246,7 +246,7 @@ pub fn view(
         .fill(green)
         .border(0.0, rune::Color::TRANSPARENT);
     body.child(ui::divider(k)).child(
-        row().w_full().px(16.0).py(12.0).child(
+        row().w_full().px(12.0).py(10.0).child(
             row()
                 .key("merge-controls")
                 .h(34.0)

@@ -70,6 +70,8 @@ pub(crate) const SCENES: &[Scene] = &[
     ("overview", |s| scene(s, "overview")),
     ("overview-empty", |s| scene(s, "overview-empty")),
     ("overview-blocked", |s| scene(s, "overview-blocked")),
+    ("overview-long", |s| scene(s, "overview-long")),
+    ("overview-stale", |s| scene(s, "overview-stale")),
     ("worktrees", |s| scene(s, "worktrees")),
     ("sidebar-worktrees", |s| scene(s, "sidebar-worktrees")),
     ("sidebar-worktrees-many", |s| {

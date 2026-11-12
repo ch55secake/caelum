@@ -1,3 +1,5 @@
+mod overview;
+
 use super::*;
 
 #[test]
@@ -189,7 +191,7 @@ fn compact_review_keeps_code_and_the_targeted_feedback_action_visible() {
         .find(|e| e.path.ends_with("/diff/scroll") && !e.exiting)
         .unwrap();
     assert!(
-        diff.visible[3] >= 170.0,
+        diff.visible[3] >= 240.0,
         "compact code viewport: {:?}",
         diff.visible
     );
