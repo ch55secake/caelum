@@ -3,6 +3,9 @@
 
 mod composer;
 mod menus;
+mod patches;
+#[cfg(test)]
+mod polling_tests;
 mod sidebar;
 mod transcript;
 
@@ -47,6 +50,7 @@ pub struct Live {
     visible_entries: HashSet<(usize, String)>,
     pub current_prompt: Option<String>,
     pub(crate) patches: std::collections::HashMap<(usize, String), crate::code_view::Document>,
+    patch_inputs: patches::Inputs,
     menu: Option<(&'static str, usize)>,
     pub session_menu: Option<usize>,
     delete_confirmation: Option<usize>,
@@ -110,6 +114,7 @@ impl Live {
             visible_entries: Default::default(),
             current_prompt: None,
             patches: Default::default(),
+            patch_inputs: Default::default(),
             menu: None,
             session_menu: None,
             delete_confirmation: None,
@@ -422,29 +427,7 @@ impl Live {
             self.apply(event);
         }
         changed |= self.app.acknowledge();
-        for (index, id) in &self.visible_entries {
-            if self.collapsed_patches.contains(&(*index, id.clone())) {
-                continue;
-            }
-            if let Some(entry) = self.app.sessions[*index]
-                .conversation
-                .entries
-                .iter()
-                .find(|e| &e.id == id)
-            {
-                let tool = caelum_core::application::presentation::Tool::from_entry(entry, 0);
-                if !tool.patch.is_empty() {
-                    changed |= self.patches.entry((*index, id.clone())).or_default().patch(
-                        tool.paths.first().map(String::as_str).unwrap_or("Patch"),
-                        &tool.patch,
-                    );
-                }
-            }
-        }
-        if self.patches.len() > 48 {
-            self.patches
-                .retain(|key, _| self.visible_entries.contains(key));
-        }
+        changed |= self.sync_patches();
         if self.last_selected != self.app.selected
             && let Some(index) = self.app.selected
         {
