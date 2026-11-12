@@ -10,6 +10,7 @@ mod lifecycle;
 mod models;
 mod navigation;
 mod questions;
+mod redraw;
 mod review;
 mod session_feed;
 mod sessions;

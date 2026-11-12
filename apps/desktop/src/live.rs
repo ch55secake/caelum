@@ -2,6 +2,7 @@
 //! provider activity and history reconciliation live in caelum-core.
 
 mod composer;
+mod events;
 mod menus;
 mod patches;
 #[cfg(test)]
@@ -422,10 +423,7 @@ impl Live {
             }
         }
         let events = self.runtime.as_ref().map_or_else(Vec::new, Runtime::drain);
-        changed |= !events.is_empty();
-        for event in events {
-            self.apply(event);
-        }
+        changed |= self.apply_events(events);
         changed |= self.app.acknowledge();
         changed |= self.sync_patches();
         if self.last_selected != self.app.selected
@@ -666,23 +664,14 @@ pub fn open_project(_: &mut Workspace, tx: &mut Tx) {
 /// navigation (including Tab, pointer and accessibility moves), never from a timer.
 pub fn presented_focus(rt: &rune::Runtime<Workspace>) -> Option<Option<String>> {
     let l = rt.state.live.as_ref()?;
-    // Pinned Rune commits pointer, keyboard and accessibility focus changes. Hover
-    // paint and animation frames don't: inspecting them copies the entire UI tree
-    // just to rediscover the same focus. Also observe blur when an exit is pruned.
+    // Rune commits pointer, keyboard and accessibility focus changes. Paint-only
+    // frames keep the same focus. Also observe blur when an exit is pruned.
     let observation = (rt.stats.commits, rt.has_focus());
     if l.focus_observation.replace(Some(observation)) == Some(observation) {
         return None;
     }
-    let focused = observation
-        .1
-        .then(|| {
-            rt.elements()
-                .into_iter()
-                .find(|e| e.focused && !e.exiting)
-                .and_then(|e| e.key)
-        })
-        .flatten();
-    (l.focus_key != focused).then_some(focused)
+    let focused = rt.presented_focus_key();
+    (l.focus_key.as_deref() != focused).then(|| focused.map(str::to_owned))
 }
 
 pub fn frame_drawn(rt: &rune::Runtime<Workspace>) {
