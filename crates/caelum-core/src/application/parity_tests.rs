@@ -115,16 +115,19 @@ fn provider_history_retains_output_agent_and_timing_when_available() {
     let mut open_code = super::Conversation::default();
     open_code.history(
         Provider::OpenCode,
-        &[json!({
-            "id":"message-1", "type":"assistant", "agent":"review",
-            "time":{"created":1000, "completed":6500},
-            "content":[{"type":"text", "text":"Reviewed"}]
-        })],
+        &[
+            json!({"id":"prompt-1", "type":"user", "text":"Review", "time":{"created":500}}),
+            json!({
+                "id":"message-1", "type":"assistant", "agent":"review",
+                "time":{"created":1000, "completed":6500},
+                "content":[{"type":"text", "text":"Reviewed"}]
+            }),
+        ],
         false,
     );
-    let entry = &open_code.entries[0];
+    let entry = &open_code.entries[1];
     assert_eq!(entry.metadata["agent"], "review");
-    assert_eq!(entry.metadata["outputDurationMs"], 5500);
+    assert_eq!(entry.metadata["outputDurationMs"], 6000);
 
     let mut codex = super::Conversation::default();
     codex.history(
