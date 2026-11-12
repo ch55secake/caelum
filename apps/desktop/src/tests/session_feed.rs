@@ -6,6 +6,7 @@ fn feed_filters_and_scope_keep_session_identity_drafts_and_saved_preferences() {
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         let mut rt = design_runtime("session-feed", size);
         fill(&mut rt, "live-draft-0", "Keep café draft");
+        reveal(&mut rt, "live-session-3");
         click(&mut rt, "live-session-3");
         assert_eq!(
             rt.state
@@ -82,6 +83,7 @@ fn thousands_of_sessions_mount_only_a_window_and_keyboard_reaches_later_rows() {
         .unwrap()
         .app
         .session_feed(None, "", false);
+    reveal(&mut rt, &format!("live-session-{}", order[0]));
     click(&mut rt, &format!("live-session-{}", order[0]));
     for _ in 0..35 {
         key(&mut rt, Key::Down, Mods::default());

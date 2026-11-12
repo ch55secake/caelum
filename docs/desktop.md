@@ -2,9 +2,10 @@
 
 ## Projects and sessions
 
-Open a project with **⌘O**, the **+** in the sidebar's project picker, or
-`caelum /path/to/project`. The compact picker holds project and worktree navigation,
-creation and management. Use a project's **×** or
+Open a project with **⌘O**, the **+** beside **Projects**, or
+`caelum /path/to/project`. The sidebar keeps separate, independently scrollable
+**Projects** and **Sessions** sections. Compact project rows hold project and
+worktree navigation, creation and management. Use a project's **×** or
 right-click → **Close project** to close its checkout group. Sessions, drafts,
 attachments, queues and running work are retained; reopening the folder returns to
 the remembered session. Closing the final project returns to the welcome screen.
@@ -182,14 +183,14 @@ in-flight refresh schedules another read. Linked-worktree Git metadata is watche
 Select lines and choose **Add selection** to attach them to the prompt. Files, local staged/unstaged/untracked
 changes and continuous PR review share the same native code/diff surfaces.
 
-Open the project picker and expand **Worktrees** beneath a project to see the worktrees created
+Expand **Worktrees** beneath a project to see the worktrees created
 through Caelum. The section is hidden when that project has no Caelum worktrees.
 Indented folder names and a connecting line show which project
 owns each worktree. Rows show the current worktree and working, queued or unread
 activity; hover for the branch and full path. Click the project card to return to
 its original folder, or a worktree to restore its session, draft and reading position.
 Arrow keys and Enter also navigate the list. Disclosure choices persist.
-Right-click a worktree in the project picker, manager or new-session launcher and choose
+Right-click a worktree in the sidebar, manager or new-session launcher and choose
 **Delete worktree** to remove it.
 Caelum remembers created worktrees across restarts and storage-directory changes,
 and recognises older worktrees in that project's Caelum storage folder.

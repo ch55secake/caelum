@@ -53,6 +53,13 @@ fn click(rt: &mut Runtime<Workspace>, key: &str) {
     advance(rt, 0.1);
 }
 
+fn reveal(rt: &mut Runtime<Workspace>, key: &str) {
+    rt.update(|_, tx| tx.scroll_into_view(key));
+    advance(rt, 0.2);
+    let row = element(rt, key);
+    assert!(row.visible[3] >= row.rect[3] - 1.0, "{row:?}");
+}
+
 fn key(rt: &mut Runtime<Workspace>, key: Key, mods: Mods) {
     rt.key(KeyEvent { key, mods });
     rt.frame(1.0 / 60.0);

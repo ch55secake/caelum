@@ -254,7 +254,7 @@ fn context_paths_preserve_the_open_file_and_project_until_chosen() {
     });
     fill(&mut rt, "live-draft-0", "Keep my project draft");
     let other = crate::code_view::source_key("/other", "project");
-    click(&mut rt, "project-picker-trigger");
+    reveal(&mut rt, &other);
     secondary(&mut rt, &other);
     choose_context(&mut rt, "Copy project path");
     assert_eq!(
@@ -321,10 +321,7 @@ fn context_worktrees_delete_the_clicked_checkout_and_surface_failures() {
                 advance(&mut rt, 0.2);
                 fill(&mut rt, "launch-search", "key-navigation");
             }
-            _ => {
-                click(&mut rt, "project-picker-trigger");
-                rt.update(|_, tx| tx.scroll_to_y("projects-scroll", 1000.0));
-            }
+            _ => rt.update(|_, tx| tx.scroll_to_y("projects-scroll", 1000.0)),
         }
         rt.update(|s, _| {
             let app = &mut s.live.as_mut().unwrap().app;
@@ -435,7 +432,6 @@ fn context_menu_can_rename_the_clicked_worktree() {
     let path = "/worktrees/rune/key-navigation";
     let row = crate::code_view::source_key(path, "checkout");
     let mut rt = design_runtime("sidebar-worktrees-projects", (800.0, 620.0));
-    click(&mut rt, "project-picker-trigger");
     rt.update(|_, tx| tx.scroll_to_y("projects-scroll", 1000.0));
     advance(&mut rt, 0.2);
     secondary(&mut rt, &row);
@@ -468,7 +464,7 @@ fn context_worktree_deletion_rechecks_locks_mutations_and_catalog_changes() {
     let row = crate::code_view::source_key(path, "checkout");
     for changed in ["locked", "busy", "removed"] {
         let mut rt = design_runtime("sidebar-worktrees-projects", (1280.0, 1000.0));
-        click(&mut rt, "project-picker-trigger");
+        reveal(&mut rt, &row);
         secondary(&mut rt, &row);
         assert!(context_item(&rt, "Delete worktree").focusable);
         rt.update(|s, _| {
@@ -514,7 +510,10 @@ fn context_worktree_deletion_rechecks_locks_mutations_and_catalog_changes() {
         }
     }
     let mut rt = design_runtime("sidebar-worktrees", (800.0, 620.0));
-    click(&mut rt, "project-picker-trigger");
+    reveal(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum-native", "checkout"),
+    );
     secondary(
         &mut rt,
         &crate::code_view::source_key("/projects/caelum-native", "checkout"),

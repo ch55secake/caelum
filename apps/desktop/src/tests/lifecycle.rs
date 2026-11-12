@@ -6,15 +6,18 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
     let mut rt = design_runtime("sidebar-projects", (800.0, 620.0));
     fill(&mut rt, "live-draft-0", "Retain this project draft café");
     let project = crate::code_view::source_key("/projects/rune", "project");
-    click(&mut rt, "project-picker-trigger");
+    reveal(&mut rt, &project);
     click(&mut rt, &project);
-    click(&mut rt, "project-picker-trigger");
+    reveal(
+        &mut rt,
+        &crate::code_view::source_key("/projects/caelum", "project"),
+    );
     click(
         &mut rt,
         &crate::code_view::source_key("/projects/caelum", "project"),
     );
     let close = crate::code_view::source_key("/projects/rune", "close-project");
-    click(&mut rt, "project-picker-trigger");
+    reveal(&mut rt, &close);
     click(&mut rt, &close);
     assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
     let first = crate::code_view::source_key("/projects/caelum", "project");
@@ -76,9 +79,10 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
         "Retain this project draft café"
     );
     for path in ["/projects/website", "/projects/tools", "/projects/caelum"] {
-        if rt.find("project-picker").is_none() {
-            click(&mut rt, "project-picker-trigger");
-        }
+        reveal(
+            &mut rt,
+            &crate::code_view::source_key(path, "close-project"),
+        );
         click(
             &mut rt,
             &crate::code_view::source_key(path, "close-project"),
@@ -86,7 +90,7 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
         advance(&mut rt, 0.4);
     }
     assert!(rt.state.live.as_ref().unwrap().app.selected.is_none());
-    assert!(element(&rt, "project-picker-trigger").focusable);
+    assert!(element(&rt, "open-project").focused);
     assert!(rt.find("welcome-open").is_some());
     assert!(rt.find("message-composer").is_none());
 }

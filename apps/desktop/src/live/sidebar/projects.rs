@@ -5,40 +5,7 @@ use crate::{
     ui,
 };
 use rune::{El, ScrollSpec, col, icon, row, text};
-use rune_kit::{Kit, Placement, ScrollBar, glyphs, shell::SidebarHeader};
-
-pub(super) fn trigger(s: &Workspace, k: &Kit) -> El {
-    let app = &live(s).app;
-    let path = app.active_project.as_deref();
-    let name = path
-        .map(|p| crate::checkouts::project_name(app, app.group_path(p)))
-        .unwrap_or("Choose project");
-    let display = path.filter(|p| app.group_path(p) != *p).map_or_else(
-        || name.to_owned(),
-        |p| format!("{name} / {}", crate::checkouts::project_name(app, p)),
-    );
-    Select::new::<&str>("project-picker", &[])
-        .display(if app.opening {
-            "Opening project…"
-        } else {
-            &display
-        })
-        .label("Projects and worktrees")
-        .icon(&ui::FOLDER)
-        .prominent()
-        .open(live(s).feed.menu == Menu::Projects)
-        .on_toggle(|s: &mut Workspace| {
-            let l = live_mut(s);
-            l.feed.menu = if l.feed.menu == Menu::Projects {
-                Menu::Closed
-            } else {
-                Menu::Projects
-            };
-        })
-        .trigger(k)
-        .w_full()
-        .help(path.unwrap_or("Open or choose a project"))
-}
+use rune_kit::{Kit, ScrollBar, glyphs, shell::SidebarHeader};
 
 pub(super) fn filter(s: &Workspace) -> Select {
     let l = live(s);
@@ -84,24 +51,28 @@ pub(super) fn filter(s: &Workspace) -> Select {
         })
 }
 
-pub(super) fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
+pub(super) fn view(s: &Workspace, k: &Kit) -> El {
     let app = &live(s).app;
+    let roots: Vec<_> = app
+        .projects
+        .iter()
+        .filter(|p| app.group_path(&p.path) == p.path)
+        .collect();
     let mut projects = col()
         .key("projects-list")
         .role("list")
         .w_full()
         .gap(4.0)
         .focus_group();
-    for project in app
-        .projects
-        .iter()
-        .filter(|p| app.group_path(&p.path) == p.path)
-    {
+    let mut height = (roots.len() as f32 * 36.0 - 4.0).max(32.0);
+    for project in &roots {
         let path = project.path.clone();
         let selected = app
             .active_project
             .as_ref()
             .is_some_and(|p| app.group_path(p) == path);
+        let create_key = crate::code_view::source_key(&path, "create-worktree");
+        let close_key = crate::code_view::source_key(&path, "close-project");
         let mut group = col()
             .w_full()
             .key(crate::code_view::source_key(&path, "project-group"))
@@ -111,27 +82,28 @@ pub(super) fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
                 k.interactive(
                     row()
                         .w_full()
-                        .h(46.0)
+                        .h(32.0)
                         .px(8.0)
                         .gap(7.0)
                         .center_y()
                         .radius(6.0)
+                        .fill(if selected {
+                            k.c.hover
+                        } else {
+                            rune::Color::TRANSPARENT
+                        })
                         .child(icon(&ui::FOLDER, 14.0).color(if selected {
                             k.c.icon_accent
                         } else {
                             k.c.icon_muted
                         }))
                         .child(
-                            col()
-                                .min_w(0.0)
+                            text(&project.name)
+                                .font(k.ty.ui_medium)
+                                .color(k.c.text_base)
+                                .truncate()
                                 .grow(1.0)
-                                .child(
-                                    text(&project.name)
-                                        .font(k.ty.ui_medium)
-                                        .color(k.c.text_base)
-                                        .truncate(),
-                                )
-                                .child(ui::caption("Project folder", k)),
+                                .min_w(0.0),
                         )
                         .child(
                             quiet_button(&ui::BRANCH, "Create worktree")
@@ -148,7 +120,7 @@ pub(super) fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
                                 })
                                 .build(k)
                                 .size(22.0, 24.0)
-                                .key(crate::code_view::source_key(&path, "create-worktree")),
+                                .key(create_key),
                         )
                         .child(
                             quiet_button(&glyphs::CLOSE, "Close project")
@@ -158,7 +130,7 @@ pub(super) fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
                                 })
                                 .build(k)
                                 .size(22.0, 24.0)
-                                .key(crate::code_view::source_key(&path, "close-project"))
+                                .key(close_key)
                                 .label(format!("Close {}", project.name)),
                         ),
                 )
@@ -168,7 +140,12 @@ pub(super) fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
                 .help(&path)
                 .focus_group()
                 .focusable(true)
-                .focus_return("project-picker-trigger")
+                .focus_selected(selected)
+                .focus_return(if roots.len() == 1 {
+                    "open-project"
+                } else {
+                    "projects-list"
+                })
                 .focus_ring(1.0, 0.0, k.c.border_focus)
                 .key(crate::code_view::source_key(&path, "project"))
                 .on_press({
@@ -180,47 +157,52 @@ pub(super) fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
                 }),
                 path.clone(),
             ));
-        if let Some((trees, _)) = crate::checkouts::sidebar(s, k, &path) {
+        if let Some((trees, tree_height)) = crate::checkouts::sidebar(s, k, &path) {
             group = group.child(trees);
+            height += tree_height;
         }
         projects = projects.child(group);
     }
-    let content = col()
-        .w(340.0)
+    col()
+        .key("projects-section")
+        .w_full()
+        .grow(0.65)
+        .min_h((height + 32.0).min(100.0))
+        .max_h((height + 32.0).min(280.0))
         .gap(4.0)
         .child(
-            SidebarHeader::new("Projects")
-                .action(
-                    quiet_button(&PLUS, "Open project")
-                        .on_press_tx(|s: &mut Workspace, tx| {
-                            live_mut(s).feed.menu = Menu::Closed;
-                            super::super::open_project(s, tx);
-                        })
-                        .build(k)
-                        .key("open-project"),
-                )
-                .build(k)
-                .key("projects-heading"),
+            SidebarHeader::new(if app.opening {
+                "Opening project…"
+            } else {
+                "Projects"
+            })
+            .count(roots.len())
+            .action(
+                quiet_button(&PLUS, "Open project")
+                    .on_press_tx(|s: &mut Workspace, tx| {
+                        live_mut(s).feed.menu = Menu::Closed;
+                        super::super::open_project(s, tx);
+                    })
+                    .build(k)
+                    .key("open-project"),
+            )
+            .build(k)
+            .key("projects-heading"),
         )
         .child(
             col()
                 .key("projects-scroll")
                 .w_full()
-                .max_h(350.0)
-                .min_h(40.0)
+                .grow(1.0)
+                .min_h(0.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
-                .child(projects)
+                .child(if roots.is_empty() {
+                    ui::caption("Open a project to get started", k).padding(8.0)
+                } else {
+                    projects
+                })
                 .scroll_bar(k),
-        );
-    ui::popup(
-        "project-picker",
-        "project-picker-trigger",
-        content,
-        Placement::BottomStart,
-        |s: &mut Workspace| live_mut(s).feed.menu = Menu::Closed,
-        k,
-        layers,
-    );
+        )
 }

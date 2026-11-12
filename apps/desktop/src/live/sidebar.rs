@@ -16,7 +16,6 @@ use crate::{PLUS, Workspace, context::EditMenu, quiet_button, ui};
 enum Menu {
     #[default]
     Closed,
-    Projects,
     Filter,
 }
 
@@ -218,7 +217,8 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         .gap(4.0)
         .label("Projects and sessions")
         .child(ui::brand(s, k))
-        .child(projects::trigger(s, k))
+        .child(projects::view(s, k))
+        .child(ui::divider(k))
         .child(
             row()
                 .w_full()
@@ -315,7 +315,6 @@ pub(super) fn overlays(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
         return;
     }
     match live(s).feed.menu {
-        Menu::Projects => projects::overlay(s, k, layers),
         Menu::Filter => {
             projects::filter(s).build(k, layers);
         }
