@@ -1,6 +1,9 @@
 use super::*;
 use caelum_core::application::{Attachment, Event};
 
+mod controls;
+mod editing;
+
 fn position(rt: &Runtime<Workspace>, index: usize) -> f32 {
     rt.state.live.as_ref().unwrap().composer.editors[index]
         .position

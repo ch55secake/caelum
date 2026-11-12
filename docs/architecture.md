@@ -37,14 +37,16 @@ Only owned processes are terminated on shutdown. See [Codex](codex.md),
 
 - `main.rs`: entry point, shell, keyboard routing and offline render modes.
 - `lifecycle.rs`: standard macOS menus and `caelum://open?path=…` delivery.
-- `live.rs`: editor/application synchronization, runtime wake/drain, sidebar,
-  windowed transcript and composer controls.
+- `live.rs`: editor/application synchronization and runtime wake/drain, with
+  sidebar, windowed transcript, composer and session menus in `live/`.
 - `state.rs`: pane/view state and the original simulated interaction fixture.
-- `panels.rs`: file/change inspector, worktree/settings/session dialogs and
-  main-screen PR review. Local and review diffs have independent state.
+- `panels.rs`: panel state, synchronization and routing. `panels/` owns the
+  file/change inspector, review/feedback, appearance, launcher, queue and overlay
+  views. Local and review diffs have independent state.
 - `questions.rs`: form editors backed by shared Rust validation.
 - `theme.rs` / `ui.rs`: semantic palettes, typography and shared surfaces.
 - `evaluation.rs`: offline design and demanding-workload fixtures.
+- `tests.rs`: shared native-runtime helpers, with capability suites in `tests/`.
 
 Each session has an independent native editor and reading position. Settings,
 worktree and session dialogs scope focus. Long transcripts, file previews and
