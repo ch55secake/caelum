@@ -4,6 +4,10 @@ use serde_json::Value;
 
 use super::Provider;
 
+mod timing;
+#[cfg(test)]
+mod timing_tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
     User,
@@ -81,6 +85,7 @@ pub struct Conversation {
     turn_agent_captured: bool,
     turn_assistant_ids: Vec<String>,
     turn_provider_started: bool,
+    output_history: timing::History,
 }
 
 impl Conversation {
@@ -110,6 +115,7 @@ impl Conversation {
             return;
         }
         if !self.working || self.turn_started_at.is_none() {
+            self.turn_started_at = Some(started_at);
             self.turn_assistant_ids.clear();
             self.turn_agent = agent.clone();
             self.turn_agent_captured = true;
@@ -117,8 +123,9 @@ impl Conversation {
             self.turn_agent = agent.clone();
             self.turn_agent_captured = true;
         }
-        // Replace the local submit timestamp with the provider's accepted start.
-        self.turn_started_at = Some(started_at);
+        // Admission and session startup belong to the original prompt too. A
+        // later provider start must not discard time already spent waiting.
+        self.turn_started_at = self.turn_started_at.map(|at| at.min(started_at));
         self.turn_provider_started = true;
     }
 
@@ -204,6 +211,14 @@ impl Conversation {
                 .collect(),
         };
         self.merge(entries, older);
+        if provider == Provider::OpenCode {
+            let timings = self.output_history.update(data, older);
+            for entry in &mut self.entries {
+                if let Some(&(start, end)) = timings.get(&entry.id) {
+                    set_output_duration(entry, start, end);
+                }
+            }
+        }
     }
 
     fn merge(&mut self, history: Vec<Entry>, older: bool) {
@@ -325,7 +340,7 @@ impl Conversation {
                     }
                 }
                 entry.metadata["ended"] = ended_at.into();
-                entry.metadata["outputDurationMs"] = ended_at.saturating_sub(started_at).into();
+                set_output_duration(entry, started_at, ended_at);
             }
         }
         self.turn_started_at = None;
@@ -757,7 +772,11 @@ impl Conversation {
             }
         }
         if data["message"]["type"].is_string() {
-            self.merge(opencode_message(&data["message"]), false);
+            self.history(
+                Provider::OpenCode,
+                std::slice::from_ref(&data["message"]),
+                false,
+            );
         }
         match method {
             "session.execution.started" | "session.step.started" | "session.retry.scheduled" => {
@@ -828,6 +847,20 @@ fn set_metadata(entry: &mut Entry, key: &str, value: impl Into<Value>) {
         entry.metadata = serde_json::json!({});
     }
     entry.metadata[key] = value.into();
+}
+
+fn set_output_duration(entry: &mut Entry, start: u64, end: u64) {
+    // A history refresh may know an earlier prompt or a later execution end,
+    // but must not shorten a complete duration captured from live events.
+    let start = entry.metadata["outputStartedAt"]
+        .as_u64()
+        .map_or(start, |at| at.min(start));
+    let end = entry.metadata["outputEndedAt"]
+        .as_u64()
+        .map_or(end, |at| at.max(end));
+    set_metadata(entry, "outputStartedAt", start);
+    set_metadata(entry, "outputEndedAt", end);
+    set_metadata(entry, "outputDurationMs", end.saturating_sub(start));
 }
 
 fn overlay_metadata(target: &mut Value, source: &Value) {
@@ -1032,16 +1065,8 @@ fn opencode_message(message: &Value) -> Vec<Entry> {
                             }
                         }
                         if entry_kind == EntryKind::Assistant {
-                            if let (Some(start), Some(end)) = (
-                                entry.started_at,
-                                message["time"]["completed"].as_u64(),
-                            ) {
+                            if let Some(end) = message["time"]["completed"].as_u64() {
                                 set_metadata(&mut entry, "ended", Value::from(end));
-                                set_metadata(
-                                    &mut entry,
-                                    "outputDurationMs",
-                                    Value::from(end.saturating_sub(start)),
-                                );
                             }
                         }
                         *ordinal += 1;
