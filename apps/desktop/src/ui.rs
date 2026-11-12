@@ -523,7 +523,7 @@ pub fn session_row(title: &str, subtitle: &str, selected: bool, k: &Kit) -> Side
 pub fn selected_row(element: El, selected: bool, k: &Kit) -> El {
     let element = element.radius(10.0);
     if selected {
-        element.fill(k.c.hover)
+        element.fill(k.c.pressed)
     } else {
         element
     }
