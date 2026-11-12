@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Rust size and capability-folder guardrails, inspired by anomalyco/rune.
 
-Existing exceptions may shrink or disappear; CI compares them with the PR base.
-Only tracked and non-ignored new Rust files under apps/ and crates/ are measured.
+Changed Rust source files must stay under 800 non-test lines. Existing oversized
+files are grandfathered only while unchanged or shrinking; exceptions may shrink
+or disappear. Only tracked and non-ignored Rust files under apps/ and crates/ are measured.
 """
 import argparse
 import os
@@ -16,7 +17,7 @@ from rust import is_test, measure
 
 ROOT = Path(__file__).resolve().parents[2]
 EXCEPTIONS = "scripts/structure/exceptions.txt"
-SOURCE_SOFT, SOURCE_HARD, TEST_HARD = 800, 1500, 1000
+SOURCE_LIMIT, TEST_HARD = 800, 1000
 FOLDER_SOFT, FOLDER_HARD = 40, 60
 
 
@@ -68,7 +69,7 @@ def inventory(root, paths):
     result = folder_sizes(paths)
     for path in paths:
         size = measure(path, (root / path).read_text())
-        if size.source > SOURCE_SOFT:
+        if size.source > SOURCE_LIMIT:
             result[("source", path)] = size.source
         if size.tests > TEST_HARD:
             result[("tests", path)] = size.tests
@@ -76,20 +77,61 @@ def inventory(root, paths):
 
 
 def hard_limit(kind):
-    return {"source": SOURCE_HARD, "tests": TEST_HARD,
+    return {"source": SOURCE_LIMIT, "tests": TEST_HARD,
             "folder": FOLDER_HARD, "family": 0}[kind]
 
 
-def diagnostics(sizes, exceptions):
+def diagnostics(sizes, exceptions, baseline_sizes=None, changed_paths=None):
+    baseline_sizes = baseline_sizes or {}
+    changed_paths = changed_paths or set()
     rows = []
     for (kind, path), count in sorted(sizes.items()):
         limit = exceptions.get((kind, path), hard_limit(kind))
-        level = "error" if count > limit else "warning"
+        level = "warning"
+        if kind == "source" and count > SOURCE_LIMIT and (kind, path) not in exceptions:
+            baseline = baseline_sizes.get(path)
+            legacy_not_growing = baseline is not None and baseline > SOURCE_LIMIT and count <= baseline
+            if not legacy_not_growing or (path in changed_paths and count == baseline):
+                level = "error"
+        elif count > limit:
+            level = "error"
         detail = {"source": "non-test lines", "tests": "test lines",
                   "folder": "source files", "family": "prefixed siblings"}[kind]
         hint = "group this capability into a folder" if kind in {"folder", "family"} else "extract a focused module"
-        rows.append((level, path, f"{count} {detail}; ceiling {limit}: {hint}"))
+        if kind == "source" and count > SOURCE_LIMIT and level == "warning":
+            message = f"{count} {detail}; existing over-limit file must shrink when changed: {hint}"
+        else:
+            message = f"{count} {detail}; blocking limit {limit}: {hint}"
+        rows.append((level, path, message))
     return rows
+
+
+def changed_paths(root, base):
+    result = subprocess.run(
+        ["git", "diff", "--name-only", base, "--"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"cannot diff against {base}")
+    return set(result.stdout.splitlines())
+
+
+def baseline_source_sizes(root, base, sizes):
+    result = {}
+    for (kind, path), _ in sizes.items():
+        if kind != "source":
+            continue
+        previous = subprocess.run(
+            ["git", "show", f"{base}:{path}"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        if previous.returncode == 0:
+            result[path] = measure(path, previous.stdout).source
+    return result
 
 
 def tighten(exceptions, sizes):
@@ -124,9 +166,16 @@ def main():
     for key, ceiling in exceptions.items():
         if sizes.get(key, 0) < ceiling:
             errors.append(f"lower or remove resolved exception: {' '.join(key)}; run --update-exceptions")
+    try:
+        changed = changed_paths(ROOT, args.base)
+        baseline_sizes = baseline_source_sizes(ROOT, args.base, sizes)
+    except RuntimeError as error:
+        errors.append(str(error))
+        changed = set()
+        baseline_sizes = {}
     for error in errors:
         print(f"ERROR {error}")
-    rows = diagnostics(sizes, exceptions)
+    rows = diagnostics(sizes, exceptions, baseline_sizes, changed)
     for level, path, message in rows:
         print(f"{level.upper():7} {path}: {message}")
         if os.environ.get("GITHUB_ACTIONS") == "true":
