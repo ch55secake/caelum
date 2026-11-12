@@ -50,7 +50,11 @@ fn context_menus_keep_background_session_ownership_and_keyboard_focus() {
     let l = rt.state.live.as_mut().unwrap();
     let commands = l.app.commands();
     assert!(commands.iter().any(|(_, c)| matches!(c, caelum_core::application::Command::Resume(key) if key.id == "background")));
-    assert!(commands.iter().any(|(_, c)| matches!(c, caelum_core::application::Command::RegenerateTitle(key) if key.id == "background")));
+    assert!(
+        !commands
+            .iter()
+            .any(|(_, c)| matches!(c, caelum_core::application::Command::RegenerateTitle(_)))
+    );
     assert_eq!(l.app.selected, Some(0));
 }
 
