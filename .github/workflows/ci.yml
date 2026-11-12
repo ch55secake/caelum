@@ -64,7 +64,7 @@ jobs:
         with:
           ref: ${{ inputs.revision || github.sha }}
           fetch-depth: 0
-      - name: Check module sizes and exception ratchet
+      - name: Block new or growing Rust modules over 800 lines
         env:
           BASE_REVISION: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
         run: python3 scripts/structure/check.py --base "$BASE_REVISION"
