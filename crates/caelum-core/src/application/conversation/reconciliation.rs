@@ -1,6 +1,7 @@
 //! Merge provider history snapshots with the conversation's live stream.
 use std::collections::{BTreeMap, HashSet};
 
+use super::super::AttachmentKind;
 use super::{Conversation, Entry, EntryKind};
 
 pub(super) fn merge(conversation: &mut Conversation, history: Vec<Entry>, older: bool) {
@@ -16,12 +17,12 @@ pub(super) fn merge(conversation: &mut Conversation, history: Vec<Entry>, older:
             .and_then(|index| {
                 history
                     .iter()
-                    .rposition(|entry| {
-                        entry.kind == EntryKind::User && entry.text == live[index].text
-                    })
+                    .rposition(|entry| optimistic_matches(entry, &live[index]))
                     .map(|history_index| (index, history_index))
             })
     };
+    let optimistic_context =
+        optimistic.map(|(live_index, history_index)| (history_index, live[live_index].clone()));
     let insertion = live
         .iter()
         .position(|entry| ids.contains(entry.id.as_str()))
@@ -41,7 +42,12 @@ pub(super) fn merge(conversation: &mut Conversation, history: Vec<Entry>, older:
             }
         }
     }
-    for snapshot in history {
+    for (index, mut snapshot) in history.into_iter().enumerate() {
+        if let Some((history_index, optimistic)) = &optimistic_context {
+            if *history_index == index {
+                preserve_optimistic_context(&mut snapshot, optimistic);
+            }
+        }
         let entry = match existing.remove(&snapshot.id) {
             Some(current) => merge_entry(snapshot, current),
             None => snapshot_entry(snapshot),
@@ -50,6 +56,61 @@ pub(super) fn merge(conversation: &mut Conversation, history: Vec<Entry>, older:
     }
     before.extend(after);
     conversation.entries = before;
+}
+
+fn optimistic_matches(history: &Entry, optimistic: &Entry) -> bool {
+    if history.kind != EntryKind::User || optimistic.kind != EntryKind::User {
+        return false;
+    }
+    if history.text == optimistic.text {
+        return true;
+    }
+    let (history_text, _) = super::super::split_context(&history.text);
+    let (optimistic_text, attachments) = super::super::split_context(&optimistic.text);
+    if history_text != optimistic_text
+        || !attachments
+            .iter()
+            .any(|attachment| attachment.kind == AttachmentKind::Image)
+    {
+        return false;
+    }
+    let recent = history
+        .started_at
+        .zip(optimistic.started_at)
+        .is_some_and(|(history, submitted)| history >= submitted);
+    let image_matches = attachments
+        .iter()
+        .filter(|attachment| attachment.kind == AttachmentKind::Image)
+        .all(|attachment| {
+            history
+                .media
+                .iter()
+                .any(|media| media.source == attachment.content || media.name == attachment.path)
+        });
+    recent || (history.started_at.is_none() && image_matches)
+}
+
+fn preserve_optimistic_context(history: &mut Entry, optimistic: &Entry) {
+    let (history_text, mut attachments) = super::super::split_context(&history.text);
+    let (_, optimistic_attachments) = super::super::split_context(&optimistic.text);
+    for attachment in optimistic_attachments {
+        if attachments
+            .iter()
+            .any(|existing| existing.id == attachment.id)
+        {
+            continue;
+        }
+        if attachment.kind == AttachmentKind::Image
+            && history
+                .media
+                .iter()
+                .any(|media| media.source == attachment.content || media.name == attachment.path)
+        {
+            continue;
+        }
+        attachments.push(attachment);
+    }
+    history.text = super::super::composer::with_context(history_text, &attachments);
 }
 
 fn snapshot_entry(mut entry: Entry) -> Entry {
