@@ -36,10 +36,18 @@ impl Default for State {
 }
 impl State {
     pub fn new(wake: Waker) -> Self {
+        let changed = Arc::new(AtomicBool::new(false));
+        let decoded = changed.clone();
+        let redraw = wake.clone();
         Self {
-            cache: Arc::new(ImageCache::new(wake.clone())),
+            cache: Arc::new(ImageCache::new(Arc::new(move || {
+                // Loading/error elements need a new view after decoding, even
+                // when no image pixels have been mounted yet.
+                decoded.store(true, Ordering::Release);
+                redraw();
+            }))),
             decoded: Default::default(),
-            changed: Default::default(),
+            changed,
             wake,
             selected: None,
             zoom: None,
@@ -60,7 +68,8 @@ impl State {
             *used = generation;
             return result.clone().transpose();
         }
-        if decoded.len() >= 12
+        // A draft can show 16 images alongside transcript thumbnails.
+        if decoded.len() >= 32
             && let Some(oldest) = decoded
                 .iter()
                 .min_by_key(|(_, (used, _))| used)
@@ -94,6 +103,7 @@ impl State {
         }
     }
 }
+
 fn data<'a>(s: &'a Workspace, project: &str, source: &'a str) -> Option<&'a str> {
     if source.starts_with("data:image/") {
         Some(source)
@@ -179,6 +189,45 @@ pub fn thumbnail(s: &Workspace, k: &Kit, project: &str, media: &Media) -> El {
             l.panels.overlay = Some(Screen::Image);
         })
 }
+pub fn attachment_thumbnail(s: &Workspace, k: &Kit, attachment: &Attachment) -> El {
+    let image = match live(s).media.image(&attachment.content, live(s).fixture) {
+        Ok(Some(image)) => image,
+        Ok(None) => {
+            return ui::caption("…", k)
+                .label("Loading image preview")
+                .size(22.0, 22.0);
+        }
+        Err(error) => {
+            return ui::caption("!", k)
+                .color(k.c.danger.fg)
+                .label("Image preview unavailable")
+                .help(error)
+                .size(22.0, 22.0);
+        }
+    };
+    if live(s).fixture {
+        let _ = image.wait();
+    }
+    if !image.is_ready() {
+        return ui::caption("…", k)
+            .label("Loading image preview")
+            .size(22.0, 22.0);
+    }
+    if let Some(error) = image.error() {
+        return ui::caption("!", k)
+            .color(k.c.danger.fg)
+            .label("Image preview unavailable")
+            .help(error.to_string())
+            .size(22.0, 22.0);
+    }
+    rune::el()
+        .size(22.0, 22.0)
+        .radius(3.0)
+        .pixels_fit(image.pixels(), SurfaceFit::Fit)
+        .label(&attachment.path)
+        .role("img")
+}
+
 pub fn view(s: &Workspace, k: &Kit) -> El {
     let Some((project, media)) = &live(s).media.selected else {
         return col();
@@ -191,6 +240,15 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
         Ok(None) => return ui::skeleton("Loading image", 3, k),
         Err(error) => return ui::notice("Image unavailable", &error, k),
     };
+    if live(s).fixture {
+        let _ = image.wait();
+    }
+    if !image.is_ready() {
+        return ui::skeleton("Loading image", 3, k);
+    }
+    if let Some(error) = image.error() {
+        return ui::notice("Image unavailable", &error.to_string(), k);
+    }
     let [width, height] = image.size().unwrap_or([640, 400]);
     let canvas = rune::memo::window_layout("image-canvas").unwrap_or([0.0, 0.0, 640.0, 340.0]);
     let fit = (canvas[2] / width as f32)
@@ -261,4 +319,32 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
                         .role("img"),
                 ),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_decode_completion_wakes_loading_and_error_previews() {
+        let (send, receive) = std::sync::mpsc::channel();
+        let state = State::new(Arc::new(move || {
+            let _ = send.send(());
+        }));
+        for (bytes, fails) in [
+            (include_bytes!("../assets/icon.png").as_slice(), false),
+            (&[1u8][..], true),
+        ] {
+            assert!(!state.poll());
+            let image = state
+                .cache
+                .load_mime(bytes.to_vec(), "image/png", 900.0, 2.0);
+            receive
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            assert!(state.poll(), "decoder completion must request a new view");
+            assert!(image.is_ready());
+            assert_eq!(image.error().is_some(), fails);
+        }
+    }
 }

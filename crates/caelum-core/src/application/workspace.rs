@@ -29,6 +29,7 @@ pub struct Session {
     pub draft: String,
     pub attachments: Vec<Attachment>,
     pub attaching: usize,
+    pub attachment_errors: Vec<(String, String)>,
     pub completion_caret: Option<usize>,
     pub completion_generation: u64,
     pub queue: Vec<QueuedPrompt>,
@@ -82,6 +83,7 @@ impl Session {
             draft: String::new(),
             attachments: Vec::new(),
             attaching: 0,
+            attachment_errors: Vec::new(),
             completion_caret: None,
             completion_generation: 0,
             queue: Vec::new(),
@@ -123,6 +125,14 @@ impl Session {
 
     pub fn working(&self) -> bool {
         self.submitting || self.conversation.working
+    }
+
+    pub fn attachment_error(&mut self, name: String, error: String) {
+        self.attachment_errors.retain(|(path, _)| *path != name);
+        if self.attachment_errors.len() == 16 {
+            self.attachment_errors.remove(0);
+        }
+        self.attachment_errors.push((name, error));
     }
 
     fn has_context(&self) -> bool {
@@ -177,6 +187,7 @@ enum Pending {
     Mention {
         index: usize,
         side: bool,
+        name: String,
         generation: u64,
         draft: String,
         token: super::Completion,
@@ -894,25 +905,50 @@ impl Workspace {
                         && f.end_line == attachment.end_line
                 })
         });
-        if self.sessions[index]
-            .attachments
-            .iter()
-            .filter(|f| f.kind == attachment.kind)
-            .count()
-            >= 16
-        {
-            self.sessions[index].error = Some("Attach at most 16 files per message".into());
+        if self.sessions[index].attachments.len() >= 16 {
+            self.sessions[index].attachment_error(
+                attachment.path,
+                "Attach at most 16 items per message".into(),
+            );
             return false;
         }
+        self.sessions[index]
+            .attachment_errors
+            .retain(|(path, _)| *path != attachment.path);
         self.sessions[index].attachments.push(attachment);
         true
     }
 
+    /// Pending reads for this draft, in request order. Side-question completions
+    /// have their own presentation and must not appear in the main composer.
+    pub fn attachment_reads(&self, index: usize) -> Vec<(u64, &str)> {
+        let mut reads: Vec<_> = self
+            .pending
+            .iter()
+            .filter_map(|(request, pending)| match pending {
+                Pending::Attachment(owner, name)
+                | Pending::Mention {
+                    index: owner,
+                    name,
+                    side: false,
+                    ..
+                } if *owner == index => Some((*request, name.as_str())),
+                _ => None,
+            })
+            .collect();
+        reads.sort_unstable_by_key(|(request, _)| *request);
+        reads
+    }
+
     pub fn attach_file(&mut self, index: usize, path: String) {
         if self.sessions[index].attaching + self.sessions[index].attachments.len() >= 16 {
-            self.sessions[index].error = Some("Attach at most 16 files per message".into());
+            self.sessions[index]
+                .attachment_error(path, "Attach at most 16 items per message".into());
             return;
         }
+        self.sessions[index]
+            .attachment_errors
+            .retain(|(name, _)| *name != path);
         self.sessions[index].attaching += 1;
         let project = self.sessions[index].scope.project.clone();
         let name = path.clone();
@@ -929,8 +965,13 @@ impl Workspace {
 
     pub fn attach_image(&mut self, index: usize, name: String, bytes: Vec<u8>) {
         if self.sessions[index].attaching + self.sessions[index].attachments.len() >= 16 {
+            self.sessions[index]
+                .attachment_error(name, "Attach at most 16 items per message".into());
             return;
         }
+        self.sessions[index]
+            .attachment_errors
+            .retain(|(path, _)| *path != name);
         self.sessions[index].attaching += 1;
         let task = Task::EncodeImage {
             project: self.sessions[index].scope.project.clone(),
@@ -983,11 +1024,16 @@ impl Workspace {
             return;
         }
         session.attaching += 1;
-        session.error = None;
+        if side {
+            session.side_error = None;
+        } else {
+            session.attachment_errors.retain(|(name, _)| *name != path);
+        }
         session.completion_generation += 1;
         let pending = Pending::Mention {
             index,
             side,
+            name: path.clone(),
             generation: session.completion_generation,
             draft: draft.clone(),
             token: token.clone(),
@@ -1783,9 +1829,35 @@ impl Workspace {
     }
 
     fn complete(&mut self, request: u64, pending: Pending, result: Result<Reply, String>) {
+        if let Pending::Attachment(index, name) = pending {
+            self.sessions[index].attaching = self.sessions[index].attaching.saturating_sub(1);
+            let attachment = match result {
+                Ok(Reply::Task(TaskReply::File(file))) => {
+                    Attachment::new(file.path, file.content, None, file.truncated)
+                }
+                Ok(Reply::Task(TaskReply::Image(data))) => {
+                    let mut attachment = Attachment::new(name, String::new(), None, false);
+                    attachment.kind = super::AttachmentKind::Image;
+                    attachment.content = data;
+                    attachment
+                }
+                result => {
+                    self.sessions[index].attachment_error(
+                        name,
+                        result
+                            .err()
+                            .unwrap_or_else(|| "Unexpected attachment response".into()),
+                    );
+                    return;
+                }
+            };
+            self.attach(index, attachment);
+            return;
+        }
         if let Pending::Mention {
             index,
             side,
+            name,
             generation,
             draft,
             token,
@@ -1812,12 +1884,15 @@ impl Workspace {
                     Attachment::new(file.path, file.content, None, file.truncated)
                 }
                 Ok(Reply::Task(TaskReply::Details(details))) => Attachment::pull_request(&details),
-                Err(error) => {
-                    session.error = Some(error);
-                    return;
-                }
-                _ => {
-                    session.error = Some("Unexpected context response".into());
+                result => {
+                    let error = result
+                        .err()
+                        .unwrap_or_else(|| "Unexpected context response".into());
+                    if side {
+                        session.side_error = Some(error);
+                    } else {
+                        session.attachment_error(name, error);
+                    }
                     return;
                 }
             };
@@ -2094,7 +2169,9 @@ impl Workspace {
                         self.durable_outgoing = commands;
                         self.persistence_error = Some(error);
                     }
-                    Pending::Task(_) | Pending::Mention { .. } => unreachable!(),
+                    Pending::Task(_) | Pending::Mention { .. } | Pending::Attachment(..) => {
+                        unreachable!()
+                    }
                     Pending::Commands(scope) => {
                         self.notices.insert(scope, error);
                     }
@@ -2115,11 +2192,6 @@ impl Workspace {
                     }
                     Pending::DeleteSession(index) => {
                         self.sessions[index].deleting = false;
-                        self.sessions[index].error = Some(error);
-                    }
-                    Pending::Attachment(index, _) => {
-                        self.sessions[index].attaching =
-                            self.sessions[index].attaching.saturating_sub(1);
                         self.sessions[index].error = Some(error);
                     }
                     Pending::Details(_) => {}
@@ -2252,20 +2324,6 @@ impl Workspace {
                     });
                 }
                 self.sessions[index].details = Some(details);
-            }
-            (Pending::Attachment(index, _), Reply::Task(TaskReply::File(file))) => {
-                self.sessions[index].attaching = self.sessions[index].attaching.saturating_sub(1);
-                self.attach(
-                    index,
-                    Attachment::new(file.path, file.content, None, file.truncated),
-                );
-            }
-            (Pending::Attachment(index, name), Reply::Task(TaskReply::Image(data))) => {
-                self.sessions[index].attaching = self.sessions[index].attaching.saturating_sub(1);
-                let mut attachment = Attachment::new(name, String::new(), None, false);
-                attachment.kind = super::AttachmentKind::Image;
-                attachment.content = data;
-                self.attach(index, attachment);
             }
             (Pending::Load, Reply::Snapshot(snapshot)) => {
                 self.store_ready = true;
