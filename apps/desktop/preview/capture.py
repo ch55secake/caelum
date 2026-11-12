@@ -21,7 +21,9 @@ interactions = {
     "check-details": ("merge-ready", [{"t": 0.25, "key": "review-checks-toggle"}]),
     "worktree-base": ("worktree-create", [{"t": 0.25, "key": "worktree-base-trigger"}]),
     "user-copy": ("messages", [{"t": 0.25, "type": "move", "key": "copy-user-0-opencode-formatted"}]),
-    "merge-method": ("checks", [{"t": 0.15, "type": "scroll", "key": "review-overview-scroll", "dy": -130, "dur": 0.1}, {"t": 0.5, "key": "merge-method-trigger"}]),
+    "merge-method": ("checks", [{"t": 0.25, "key": "merge-method-trigger"}]),
+    "overview-long-checks": ("overview-long", [{"t": 0.25, "key": "review-checks-toggle"}]),
+    "overview-inspector": ("overview", [{"t": 0.25, "key": "inspector-toggle"}]),
     "provider-dropdown": ("providers", [{"t": 0.25, "key": "Default effort-trigger"}]),
     "model-hover": ("models", [{"t": 0.25, "type": "move", "key": "model-favorite-1"}]),
     "model-focus": ("models", [{"t": 0.25, "type": "key", "name": "Tab"}]),
@@ -52,7 +54,7 @@ interactions = {
     "tool-error-expanded": ("tool-failure", [{"t": 0.25, "key": "tool-0-opencode-tool-run"}, {"t": 0.5, "type": "move", "x": 0, "y": 0}]),
     "tool-output-full": ("tool-output-long", [{"t": 0.25, "key": "tool-output-0-opencode-tool-run-Output-expand"}]),
 }
-scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
+scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked", "overview-long", "overview-stale")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 scenes += ("session-feed", "session-feed-current", "session-feed-empty", "session-feed-many", "session-feed-colours")
