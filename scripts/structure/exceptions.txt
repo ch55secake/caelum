@@ -1,0 +1,8 @@
+# kind path ceiling; existing violations only, ceilings may only decrease.
+source apps/desktop/src/live.rs 2343
+source apps/desktop/src/panels.rs 3147
+source crates/caelum-core/src/application/workspace.rs 3016
+tests apps/desktop/src/tests.rs 5445
+tests crates/caelum-core/src/application/parity_tests.rs 1227
+tests crates/caelum-core/src/application/tests.rs 2438
+tests crates/caelum-core/src/opencode.rs 1532
