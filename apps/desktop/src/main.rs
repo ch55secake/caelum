@@ -616,7 +616,8 @@ fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return panels::on_key(s, ev, tx);
     }
     if s.live.is_some()
-        && (completion::on_key(s, ev, tx)
+        && (questions::on_key(s, ev, tx)
+            || completion::on_key(s, ev, tx)
             || panels::on_key(s, ev, tx)
             || commands::side_key(s, ev, tx))
     {

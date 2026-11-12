@@ -107,6 +107,12 @@ Failed submissions stay separate from newer typing. Recovery retries once;
 **Refresh session** explicitly retries again. Approvals and question
 forms belong to the requesting session, including when another session is selected.
 Permission choices are **Allow once** and **Deny**.
+Agent questions temporarily take over the composer's glass dock. Answer choices and
+custom fields scroll inside it while **Submit answers** and **Dismiss** stay visible.
+Tab and arrow keys navigate the form, **⌘Enter** submits, and Escape dismisses the
+question. Multiple requests appear one at a time. Failed answers stay editable for
+retry; once the provider resolves the question, the message draft returns with its
+selection, undo history, attachments and reading position.
 
 Drafts and pending sends save atomically before dispatch. Restored local queues pause.
 An unacknowledged submission returns to the front of the paused queue; inspect

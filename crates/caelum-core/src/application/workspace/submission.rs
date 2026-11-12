@@ -220,11 +220,15 @@ impl Workspace {
         self.request(Command::Approve(prompt, decision), owner);
     }
 
-    pub fn answer(&mut self, prompt: QuestionPrompt, answer: Option<crate::questions::Answer>) {
+    pub fn answer(
+        &mut self,
+        prompt: QuestionPrompt,
+        answer: Option<crate::questions::Answer>,
+    ) -> Option<u64> {
         if let Some(answer) = &answer {
             let checked = crate::application::forms::validate(&prompt, answer);
             if !checked.errors.is_empty() {
-                return;
+                return None;
             }
         }
         let owner = Pending::Request {
@@ -232,6 +236,6 @@ impl Workspace {
             project: prompt.project_path.clone(),
             session: Some(prompt.session_id.clone()),
         };
-        self.request(Command::Answer(prompt, answer), owner);
+        Some(self.request(Command::Answer(prompt, answer), owner))
     }
 }

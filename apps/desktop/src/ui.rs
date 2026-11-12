@@ -582,16 +582,35 @@ pub fn composer_editor(input: El, minimum: f32, maximum: f32) -> El {
 }
 
 pub fn composer(input: El, controls: El, context: El, padding: f32, k: &Kit) -> El {
+    composer_dock(
+        col()
+            .key("message-composer")
+            .role("form")
+            .label("Message composer")
+            .focus_return("question-composer")
+            .child(
+                context
+                    .scroll(rune::ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .scroll_bar(k),
+            )
+            .child(input)
+            .child(divider(k).opacity(0.5).mt(8.0).mb(8.0))
+            .child(controls.min_h(32.0)),
+        padding,
+        k,
+    )
+}
+
+pub fn composer_dock(content: El, padding: f32, k: &Kit) -> El {
     let rim =
         k.c.border_strong
             .mix(rune::Color::WHITE, if k.dark { 0.12 } else { 0.35 });
     // The dock sits over a uniform surface. Tint and top lighting give it depth
     // without a backdrop pass on every streamed frame.
     col().w_full().max_w(840.0).px(padding).pb(24.0).child(
-        col()
-            .key("message-composer")
-            .role("form")
-            .label("Message composer")
+        content
             .w_full()
             .padding(12.0)
             .radius(16.0)
@@ -611,17 +630,7 @@ pub fn composer(input: El, controls: El, context: El, padding: f32, k: &Kit) -> 
                 6.0,
                 24.0,
                 k.alpha(rune::Color::BLACK, if k.dark { 0.2 } else { 0.07 }),
-            )
-            .child(
-                context
-                    .scroll(rune::ScrollSpec {
-                        stick_bottom: false,
-                    })
-                    .scroll_bar(k),
-            )
-            .child(input)
-            .child(divider(k).opacity(0.5).mt(8.0).mb(8.0))
-            .child(controls.min_h(32.0)),
+            ),
     )
 }
 
