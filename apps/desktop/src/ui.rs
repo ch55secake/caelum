@@ -523,14 +523,7 @@ pub fn session_row(title: &str, subtitle: &str, selected: bool, k: &Kit) -> Side
 pub fn selected_row(element: El, selected: bool, k: &Kit) -> El {
     let element = element.radius(10.0);
     if selected {
-        element.fill(k.c.hover).border(1.0, k.c.border_base).child(
-            rune::el().w(3.0).radius(1.5).fill(k.c.text_accent).pin(
-                Some(0.0),
-                Some(14.0),
-                None,
-                Some(14.0),
-            ),
-        )
+        element.fill(k.c.pressed)
     } else {
         element
     }
