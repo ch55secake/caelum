@@ -78,6 +78,72 @@ removes measured redundant UI-thread work; it does not establish that the focus
 scan was the only cause of that stall. Switching frames that rebuild the view
 still inspect focus, which is reflected in their similar p95 times.
 
+### Preview and persistence polling
+
+Run the isolated UI-thread polling workload in release mode, separately from
+builds and other tests:
+
+```sh
+nix develop -c cargo test --locked --release -p caelum-desktop idle_polling_profile \
+  -- --ignored --nocapture --test-threads=1
+```
+
+It reports JSON p50/p95/max for `Live::poll` and `Workspace::commands` separately,
+after 20 warmup polls and over 360 measured polls. Run it five times and compare
+the medians/ranges. It uses the six 2,000-entry histories from the evaluation
+fixture, with these variations:
+
+- Idle: six settled sessions with persistence enabled.
+- Tools: eight mounted entries, four 100-line patch inputs and four shell calls;
+  each tool has 64 KiB of output.
+- Background stream: the same tool rows while text grows in five other sessions.
+- Populated: 120 sessions, each with a 7 KiB draft and a 64 KiB attachment,
+  alongside the same histories and mounted tools.
+
+The mounted-entry set is supplied directly; this measures polling, not viewport
+layout or native input latency. Load/save replies are completed in memory, with
+no provider process, filesystem writes or native rendering. Background text
+changes happen outside the timed section. The session-navigation profile above
+remains the separate frame/focus workload.
+
+Preview polling caches the exact entry kind, tool name and input, including
+negative results. Output/status/timing changes need no patch update. Cache source
+strings are limited to 48 entries and 4 MiB and released when entries leave the
+mounted set; oversized inputs use the uncached path. Cached history positions
+are checked against entry IDs and rediscovered after history insertion/removal.
+Persistence compares the effective saved projection by reference, including live
+file-tab overrides and forgotten-session index remapping, and allocates a
+snapshot only when it differs.
+
+On 12 November 2026, five alternating before/after runs on the same macOS host
+in the optimized release profile produced the following results. The baseline
+was `facc3be` with the identical polling harness added; the after build includes
+the input/position cache and borrowed persistence comparison. No builds or other
+tests ran alongside the measurements. Values below are medians of each run's
+percentiles, in **microseconds**:
+
+| Workload / measured work | p50 before → after | p95 before → after |
+| --- | --- | --- |
+| Idle / persistence check | 0.88 → 0.13 | 1.00 → 0.13 |
+| Tools / live polling | 34.67 → 0.58 | 38.08 → 0.58 |
+| Background stream / live polling | 34.71 → 0.58 | 36.29 → 0.63 |
+| Populated / live polling | 52.67 → 16.46 | 59.50 → 19.17 |
+| Populated / persistence check | 321.17 → 171.92 | 352.00 → 189.46 |
+
+Tool-polling p50 ranged from 34.08–36.58 µs before and 0.54–0.67 µs after;
+populated persistence p50 ranged from 317.08–328.42 µs before and
+171.50–172.38 µs after. These are about 98% and 46% reductions respectively in
+the isolated work. The remaining populated persistence cost includes comparing
+the attachment contents; unchanged polling no longer copies them into a new
+snapshot. Sub-microsecond results are close to clock granularity.
+
+The separate 1280×1000 frame/focus profile still measured streaming-switch p95
+at 4.82 → 4.87 ms, with focus inspection at 1.77 → 1.82 ms: no material change.
+This pass removes redundant polling work; native drawing and committed-frame
+focus inspection remain follow-up targets for general responsiveness. Raw local
+JSON is retained under `apps/desktop/profile-results/idle-polling-{before,after}.json`
+and `apps/desktop/profile-results/navigation-{before,after}.json` (ignored).
+
 ## Packaged application
 
 Build with `make app`, then launch with an isolated state directory:

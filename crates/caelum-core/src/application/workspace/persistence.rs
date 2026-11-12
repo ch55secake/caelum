@@ -1,10 +1,12 @@
+mod compare;
+
 use super::{Pending, Workspace};
 use crate::application::{Command, QueuedPrompt, SavedSession, Snapshot, Store, Task};
 use std::collections::HashMap;
 
 impl Workspace {
     pub fn commands(&mut self) -> Vec<(u64, Command)> {
-        let Some(store) = self.store.clone() else {
+        let Some(store) = self.store.as_ref() else {
             return std::mem::take(&mut self.outgoing);
         };
         let mut immediate = std::mem::take(&mut self.ready_outgoing);
@@ -33,12 +35,16 @@ impl Workspace {
         if !self.store_ready || self.saving || self.persistence_error.is_some() {
             return immediate;
         }
-        let snapshot = self.snapshot();
-        if self.saved.as_ref() != Some(&snapshot) {
+        if self
+            .saved
+            .as_ref()
+            .is_none_or(|saved| !self.matches_snapshot(saved))
+        {
+            let snapshot = self.snapshot();
             self.saving = true;
             let commands = std::mem::take(&mut self.durable_outgoing);
             self.request(
-                Command::Save(store, Box::new(snapshot.clone())),
+                Command::Save(store.clone(), Box::new(snapshot.clone())),
                 Pending::Save(Box::new(snapshot), commands),
             );
             immediate.append(&mut self.outgoing);
