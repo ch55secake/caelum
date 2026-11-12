@@ -3,6 +3,26 @@ use crate::application::{Command, Provider, Reply, Scope, Task, TaskReply};
 
 impl Workspace {
     pub fn task(&mut self, task: Task) {
+        if let Task::SetAutoMerge {
+            project,
+            url,
+            head,
+            method,
+        } = &task
+        {
+            let details = self
+                .services
+                .reviews
+                .get(&(project.clone(), url.clone()))
+                .and_then(|review| review.details.as_ref());
+            if details.is_none_or(|details| {
+                details.head_ref_oid != *head
+                    || details.state != "OPEN"
+                    || (method.is_some() && details.pull_request.is_draft)
+            }) {
+                return;
+            }
+        }
         if let Task::RemoveWorktree { path, project } = &task {
             if self.sessions.iter().any(|s| {
                 std::path::Path::new(&s.scope.project).starts_with(path)

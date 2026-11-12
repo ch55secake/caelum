@@ -93,9 +93,14 @@ pub(super) fn scene(state: &mut Workspace, name: &str) {
         let details = review.details.as_mut().unwrap();
         details.body = "A focused native workspace refinement, ready for review.".into();
         match name {
-            "merge-blocked" => {
+            "merge-blocked" | "merge-auto-enabled" | "merge-auto-error" => {
                 details.merge_state_status = "BLOCKED".into();
                 details.review_decision = Some("REVIEW_REQUIRED".into());
+                if name == "merge-auto-enabled" {
+                    details.auto_merge_request = Some(caelum_protocol::GitHubAutoMergeRequest {
+                        merge_method: caelum_protocol::GitHubMergeMethod::Squash,
+                    });
+                }
             }
             "merge-pending" => {
                 details.merge_state_status = "UNKNOWN".into();
@@ -153,7 +158,7 @@ pub(super) fn scene(state: &mut Workspace, name: &str) {
             r.files_loaded = false;
             l.app.services.revision += 1;
         }
-        if name == "review-error" {
+        if matches!(name, "review-error" | "merge-auto-error") {
             let l = state.live.as_mut().unwrap();
             let r = l
                 .app
@@ -161,8 +166,15 @@ pub(super) fn scene(state: &mut Workspace, name: &str) {
                 .reviews
                 .get_mut(&(project.into(), url.into()))
                 .unwrap();
-            r.details = None;
-            r.error = Some("GitHub is unavailable. Check your connection and try again.".into());
+            if name == "review-error" {
+                r.details = None;
+                r.error =
+                    Some("GitHub is unavailable. Check your connection and try again.".into());
+            } else {
+                r.error = Some(
+                    "GitHub request failed: Auto-merge is not enabled for this repository.".into(),
+                );
+            }
             l.app.services.revision += 1;
         }
         if name != "review-loading" {

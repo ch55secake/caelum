@@ -1,3 +1,4 @@
+mod auto_merge;
 mod overview;
 
 use super::*;
@@ -18,6 +19,7 @@ fn merge_states_expose_only_available_actions_in_the_compact_overview() {
         let mut rt = design_runtime(scene, (800.0, 620.0));
         let present = !matches!(scene, "merge-draft" | "merge-merged" | "merge-closed");
         assert_eq!(rt.find("merge-pull-request").is_some(), present, "{scene}");
+        assert_eq!(rt.find("set-auto-merge").is_some(), present, "{scene}");
         if present {
             let e = element(&rt, "merge-pull-request");
             assert!(e.visible[3] >= 33.0, "{scene} merge clipped: {e:?}");

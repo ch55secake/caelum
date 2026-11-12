@@ -22,6 +22,8 @@ interactions = {
     "worktree-base": ("worktree-create", [{"t": 0.25, "key": "worktree-base-trigger"}]),
     "user-copy": ("messages", [{"t": 0.25, "type": "move", "key": "copy-user-0-opencode-formatted"}]),
     "merge-method": ("checks", [{"t": 0.25, "key": "merge-method-trigger"}]),
+    "auto-merge-enabling": ("merge-blocked", [{"t": 0.25, "key": "set-auto-merge"}]),
+    "auto-merge-disabling": ("merge-auto-enabled", [{"t": 0.25, "key": "set-auto-merge"}]),
     "overview-long-checks": ("overview-long", [{"t": 0.25, "key": "review-checks-toggle"}]),
     "overview-inspector": ("overview", [{"t": 0.25, "key": "inspector-toggle"}]),
     "provider-dropdown": ("providers", [{"t": 0.25, "key": "Default effort-trigger"}]),
@@ -46,6 +48,7 @@ interactions = {
     "shells-waiting-session": ("shells-many", [{"t": 0.25, "key": "live-session-1"}, {"t": 0.5, "type": "move", "x": 0, "y": 0}]),
     "shells-hide": ("shells-many", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "shells-reopen": ("shells-collapsed", [{"t": 0.25, "key": "toggle-background-shells"}]),
+    "composer-shell-commands": ("shells-many", [{"t": 0.15, "key": "live-draft-0"}, {"t": 0.25, "type": "key", "name": "a", "cmd": True}, {"t": 0.4, "paste": "/"}]),
     "vercel-select": ("settings", [{"t": 0.25, "key": "family-vercel"}]),
     "vercel-providers": ("vercel-settings", [{"t": 0.25, "key": "settings-providers"}]),
     "vercel-notifications": ("vercel-settings", [{"t": 0.25, "key": "settings-notifications"}]),
@@ -57,6 +60,7 @@ interactions = {
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked", "overview-long", "overview-stale")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
+scenes += ("merge-auto-enabled", "merge-auto-error")
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 scenes += ("session-feed", "session-feed-current", "session-feed-empty", "session-feed-many", "session-feed-colours")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")

@@ -22,6 +22,7 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
     let Some(index) = live.app.selected else {
         return col();
     };
+    crate::completion::overlay(s, k, layers);
     let session = &live.app.sessions[index];
     let draft = &live.drafts[index];
     let queued = live.app.will_queue(index);

@@ -245,8 +245,19 @@ pub fn view(
         .radius(0.0)
         .fill(green)
         .border(0.0, rune::Color::TRANSPARENT);
-    body.child(ui::divider(k)).child(
-        row().w_full().px(12.0).py(10.0).child(
+    let auto_merge = Task::SetAutoMerge {
+        project: project.into(),
+        url: url.into(),
+        head: details.head_ref_oid.clone(),
+        method: details.auto_merge_request.is_none().then_some(method),
+    };
+    let auto_label = if details.auto_merge_request.is_some() {
+        "Disable auto-merge"
+    } else {
+        "Enable auto-merge"
+    };
+    let mut controls = col().w_full().px(12.0).py(10.0).gap(8.0).child(
+        row().w_full().flex_wrap().gap(8.0).center_y().child(
             row()
                 .key("merge-controls")
                 .h(34.0)
@@ -270,6 +281,30 @@ pub fn view(
                         .fill(k.alpha(rune::Color::WHITE, 0.25)),
                 )
                 .child(selector),
+        ).child(
+            ui::Button::new(if busy { "Working…" } else { auto_label })
+                .disabled(busy)
+                .on_press(move |s: &mut Workspace| live_mut(s).app.task(auto_merge.clone()))
+                .build(k)
+                .key("set-auto-merge")
+                .label(auto_label)
+                .help("Auto-merge uses the selected merge method once GitHub's requirements are met.")
+                .h(34.0),
         ),
-    )
+    );
+    if let Some(request) = &details.auto_merge_request {
+        let method = match request.merge_method {
+            GitHubMergeMethod::Merge => "merge commit",
+            GitHubMergeMethod::Squash => "squash",
+            GitHubMergeMethod::Rebase => "rebase",
+        };
+        controls = controls.child(
+            ui::caption(
+                format!("Auto-merge enabled · {method}. Waiting for GitHub's requirements."),
+                k,
+            )
+            .key("auto-merge-status"),
+        );
+    }
+    body.child(ui::divider(k)).child(controls)
 }

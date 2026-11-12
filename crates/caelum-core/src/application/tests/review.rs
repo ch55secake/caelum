@@ -1,3 +1,5 @@
+mod auto_merge;
+
 use super::*;
 
 #[test]
