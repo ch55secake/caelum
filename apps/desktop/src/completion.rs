@@ -6,7 +6,7 @@ use crate::{
 };
 use caelum_core::application::{Completion, CompletionKind, Provider, Task};
 use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, col};
-use rune_kit::Kit;
+use rune_kit::{Kit, Placement, popover};
 
 #[derive(Default)]
 pub struct Menu {
@@ -349,6 +349,24 @@ pub fn on_key(s: &mut Workspace, event: &KeyEvent, tx: &mut Tx) -> bool {
     false
 }
 
+pub fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
+    if token(s).is_none() {
+        return;
+    }
+    let Some([_, _, width, _]) = rune::memo::window_layout("composer-editor") else {
+        return;
+    };
+    // Keep suggestions out of the context scroller so background output and
+    // attachments cannot clip them or move the editor while the user types.
+    layers.push(popover::anchored(
+        k,
+        popover::raised(k, view(s, k).w(width), 8.0),
+        "composer-editor",
+        Placement::TopStart,
+        4.0,
+    ));
+}
+
 pub fn view(s: &Workspace, k: &Kit) -> El {
     let Some(token) = token(s) else {
         return col();
@@ -360,7 +378,11 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
         CompletionKind::File => "Files · Tab / Enter Attach",
         CompletionKind::PullRequest => "Session pull requests · Tab / Enter Attach",
     };
-    let mut content = col().w_full().gap(3.0).child(ui::caption(title, k));
+    let mut content = col()
+        .w_full()
+        .min_h(0.0)
+        .gap(3.0)
+        .child(ui::caption(title, k).truncate());
     let l = live(s);
     let index = l.app.selected.unwrap();
     let project = &l.app.sessions[index].scope.project;
@@ -404,6 +426,8 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
         .child(
             col()
                 .w_full()
+                .shrink()
+                .min_h(0.0)
                 .max_h(170.0)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
@@ -414,5 +438,8 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
         .fill(k.c.layer_01)
         .border(1.0, k.c.border_base)
         .radius(8.0)
+        // A press must keep the editor's token alive until the choice is released.
+        .keeps_text_selection()
+        .on_press(|_: &mut Workspace| {})
         .key("completion-menu")
 }

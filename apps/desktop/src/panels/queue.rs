@@ -76,12 +76,7 @@ pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {
     if let Some(error) = &live(s).app.persistence_error {
         context = context.child(label(error, k));
     }
-    context = context.child(crate::composer::attachments(s, k, index));
-    context.children(
-        crate::completion::token(s)
-            .is_some()
-            .then(|| crate::completion::view(s, k)),
-    )
+    context.child(crate::composer::attachments(s, k, index))
 }
 
 fn queued_preview(text: &str) -> &str {
