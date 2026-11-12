@@ -96,6 +96,10 @@ impl ProviderRuntime {
                     .map(Reply::Generated)
                     .map_err(|e| e.to_string())
             }
+            Command::RegenerateTitle(key) => self
+                .opencode
+                .regenerate_title(&key.scope.project, &key.id)
+                .map_err(|e| e.to_string()),
             Command::Sound(volume) => {
                 #[cfg(target_os = "macos")]
                 if *volume > 0 {
@@ -471,6 +475,7 @@ pub enum Command {
     Enqueue(SessionKey, String, String),
     RemoveQueued(SessionKey, String),
     Generate(SessionKey, String),
+    RegenerateTitle(SessionKey),
     Notify(Notification),
     Sound(u8),
     Task(Task),

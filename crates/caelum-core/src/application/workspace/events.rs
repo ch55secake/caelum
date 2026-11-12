@@ -1,4 +1,4 @@
-use super::{Pending, Workspace};
+use super::{titles::Refresh, Pending, Workspace};
 use crate::application::{Command, Event, Notification, Provider, Scope, SessionKey, Task};
 use serde_json::Value;
 
@@ -180,6 +180,7 @@ impl Workspace {
         };
         let mut completed = Vec::new();
         let mut shells_completed = Vec::new();
+        let mut titles_completed = Vec::new();
         for (index, session) in self.sessions.iter_mut().enumerate() {
             if session.scope.project != path || session.scope.provider != provider {
                 continue;
@@ -290,6 +291,10 @@ impl Workspace {
                         .unwrap_or_else(crate::application::presentation::now),
                 );
             }
+            if provider == Provider::OpenCode && method == "session.execution.succeeded" {
+                session.title_state.completed_turn();
+                titles_completed.push(index);
+            }
             session.unread |= activity != session.conversation.activity;
             if matches!(
                 method,
@@ -327,6 +332,16 @@ impl Workspace {
                 });
             if let Some(title) = title.filter(|title| !title.is_empty()) {
                 session.title = title.into();
+                session.title_state.barrier = self.next_request;
+                if provider == Provider::OpenCode
+                    && matches!(method, "session.renamed" | "session.title.updated")
+                {
+                    session.title_state.refreshed(
+                        data["_created"]
+                            .as_u64()
+                            .unwrap_or_else(crate::application::presentation::now),
+                    );
+                }
             }
         }
         for index in completed {
@@ -347,6 +362,9 @@ impl Workspace {
                 );
             }
             self.refresh(index);
+        }
+        for index in titles_completed {
+            self.refresh_title(index, Refresh::Automatic);
         }
         for index in shells_completed {
             if self.preferences.background_shells

@@ -1,6 +1,7 @@
 mod managed;
 mod registered;
 mod smoke;
+mod titles;
 
 use super::*;
 use super::{

@@ -8,6 +8,7 @@ mod review;
 mod runtime;
 mod sessions;
 mod submission;
+mod titles;
 mod worktrees;
 
 use std::sync::{mpsc, Arc, Mutex};

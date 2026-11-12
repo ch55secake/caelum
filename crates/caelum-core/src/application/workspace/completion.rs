@@ -1,4 +1,4 @@
-use super::{update_summary, Pending, Session, Workspace};
+use super::{titles::Refresh, update_summary, Pending, Session, Workspace};
 use crate::application::{
     Attachment, Command, Provider, QueuedPrompt, Reply, Scope, Task, TaskReply,
 };
@@ -10,6 +10,19 @@ impl Workspace {
         pending: Pending,
         result: Result<Reply, String>,
     ) {
+        if let Pending::RegenerateTitle(index, key) = pending {
+            // The provider publishes the new title through session.renamed.
+            // A failed request must not disturb chat, drafts or queued work.
+            if self.sessions[index].key().as_ref() == Some(&key) {
+                if matches!(result, Ok(Reply::Done)) {
+                    self.sessions[index]
+                        .title_state
+                        .refreshed(crate::application::presentation::now());
+                }
+                self.refresh_title(index, Refresh::Automatic);
+            }
+            return;
+        }
         if let Pending::Attachment(index, name) = pending {
             self.sessions[index].attaching = self.sessions[index].attaching.saturating_sub(1);
             let attachment = match result {
@@ -138,7 +151,10 @@ impl Workspace {
                         self.durable_outgoing = commands;
                         self.persistence_error = Some(error);
                     }
-                    Pending::Task(_) | Pending::Mention { .. } | Pending::Attachment(..) => {
+                    Pending::Task(_)
+                    | Pending::Mention { .. }
+                    | Pending::Attachment(..)
+                    | Pending::RegenerateTitle(..) => {
                         unreachable!()
                     }
                     Pending::Commands(scope) => {
@@ -335,6 +351,8 @@ impl Workspace {
                                 session.remote_id = saved.remote_id;
                                 session.title = saved.title;
                                 session.last_activity = saved.last_activity;
+                                session.title_state.turns = saved.title_refresh_turns;
+                                session.title_state.refreshed_at = saved.title_refreshed_at;
                                 session.options = saved.options;
                                 session.options_dirty = true;
                                 session.draft = saved.draft;
@@ -545,7 +563,7 @@ impl Workspace {
                 if session.revision == revision {
                     session.conversation.working = summary.working;
                 }
-                update_summary(session, summary);
+                update_summary(session, summary, request);
                 let key = session.key().expect("resumed session");
                 if key.scope.provider == Provider::OpenCode {
                     self.request(
