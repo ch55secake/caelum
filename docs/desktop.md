@@ -21,7 +21,8 @@ custom context menus also offer archive/reconnect. Hover any session row for its
 returns focus to its button. Use the archive icon beside
 **Sessions** to switch between active and archived sessions. **New session** uses
 the default provider chosen in Settings → Providers. **Refresh sessions** reloads
-active session history across all open projects.
+active session history and model, effort and agent catalogues across all open
+projects and their worktrees, including catalogues for drafts and busy sessions.
 
 Right-click projects, sessions, messages, files, tabs and pull requests for themed
 context menus. Actions apply to the item you clicked, including background sessions
@@ -29,8 +30,9 @@ and files. Text fields offer Undo, Redo, Cut, Copy, Paste and Select all, preser
 their selection and editing history. **⇧F10** or the Menu key opens the focused
 item's menu; arrows navigate, Enter chooses, and Escape or Tab dismisses it.
 
-Choose the model, reasoning effort and available agent in the composer. Effort
-and agent controls have distinct icons and labelled popouts with readable names,
+Choose the model, reasoning effort and available agent in the composer. Selecting
+a session automatically loads its catalogue when missing, including after a restart.
+Effort and agent controls have distinct icons and labelled popouts with readable names,
 selected checkmarks and options to return to the model/provider default.
 The composer is docked below the transcript, with a softly tinted, top-lit surface
 in light and dark themes. Conversation text ends above it. The model is the primary
