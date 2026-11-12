@@ -63,11 +63,24 @@ fn release_only() {}
 class GuardrailTests(unittest.TestCase):
     def test_source_and_test_caps_and_existing_ceilings(self):
         sizes = {("source", "large.rs"): 1501, ("source", "medium.rs"): 801, ("tests", "tests.rs"): 1001}
-        self.assertEqual([row[0] for row in diagnostics(sizes, {})], ["error", "warning", "error"])
+        self.assertEqual([row[0] for row in diagnostics(sizes, {})], ["error", "error", "error"])
         exceptions = {("source", "large.rs"): 1501, ("tests", "tests.rs"): 1001}
-        self.assertTrue(all(row[0] == "warning" for row in diagnostics(sizes, exceptions)))
+        self.assertEqual(
+            [row[0] for row in diagnostics(sizes, exceptions)],
+            ["warning", "error", "warning"],
+        )
         sizes[("source", "large.rs")] += 1
         self.assertEqual(diagnostics(sizes, exceptions)[0][0], "error")
+
+    def test_over_800_line_sources_block_changes_but_allow_legacy_shrinks(self):
+        legacy = ("source", "legacy.rs")
+        sizes = {legacy: 900}
+        baseline = {"legacy.rs": 900}
+        self.assertEqual(diagnostics(sizes, {}, baseline, set())[0][0], "warning")
+        self.assertEqual(diagnostics(sizes, {}, baseline, {"legacy.rs"})[0][0], "error")
+        self.assertEqual(diagnostics({legacy: 850}, {}, baseline, {"legacy.rs"})[0][0], "warning")
+        self.assertEqual(diagnostics({legacy: 901}, {}, baseline, {"legacy.rs"})[0][0], "error")
+        self.assertEqual(diagnostics({legacy: 801}, {}, {}, {"legacy.rs"})[0][0], "error")
 
     def test_ratchet_refuses_new_and_raised_exceptions(self):
         old = parse_exceptions("# baseline\nsource big.rs 2000\ntests tests.rs 1500\n")
