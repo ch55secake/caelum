@@ -43,6 +43,7 @@ interactions = {
     "stats-projects": ("stats", [{"t": 0.25, "key": "stats-project-trigger"}]),
     "timeline-search": ("timeline", [{"t": 0.25, "key": "timeline-search"}, {"t": 0.3, "paste": "draft"}]),
     "review-navigation": ("review", [{"t": 0.25, "key": "review-nav-toggle"}]),
+    "shells-waiting-session": ("shells-many", [{"t": 0.25, "key": "live-session-1"}, {"t": 0.5, "type": "move", "x": 0, "y": 0}]),
     "shells-hide": ("shells-many", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "shells-reopen": ("shells-collapsed", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "composer-shell-commands": ("shells-many", [{"t": 0.15, "key": "live-draft-0"}, {"t": 0.25, "type": "key", "name": "a", "cmd": True}, {"t": 0.4, "paste": "/"}]),
