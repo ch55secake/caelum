@@ -33,7 +33,11 @@ fn session_popover_roves_without_selecting_its_background_owner() {
     click(&mut rt, "refresh-history");
     let commands = rt.state.live.as_mut().unwrap().app.commands();
     assert!(commands.iter().any(|(_, c)| matches!(c, caelum_core::application::Command::Resume(key) if key.id == "background")));
-    assert!(commands.iter().any(|(_, c)| matches!(c, caelum_core::application::Command::RegenerateTitle(key) if key.id == "background")));
+    assert!(
+        !commands
+            .iter()
+            .any(|(_, c)| matches!(c, caelum_core::application::Command::RegenerateTitle(_)))
+    );
     assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
 }
 
@@ -103,15 +107,11 @@ fn refresh_sessions_button_refreshes_every_open_session() {
         matches!(command, Command::Choices(scope)
             if scope.project == "/background" && scope.provider == Provider::OpenCode)
     }));
-    let mut titles: Vec<_> = commands
-        .iter()
-        .filter_map(|(_, command)| match command {
-            Command::RegenerateTitle(key) => Some(key.id.as_str()),
-            _ => None,
-        })
-        .collect();
-    titles.sort();
-    assert_eq!(titles, ["background-session", "opencode-session"]);
+    assert!(
+        !commands
+            .iter()
+            .any(|(_, command)| matches!(command, Command::RegenerateTitle(_)))
+    );
     assert_eq!(app.selected, Some(0));
 }
 

@@ -54,147 +54,50 @@ fn requests(app: &mut Workspace) -> Vec<(u64, SessionKey)> {
 }
 
 #[test]
-fn manual_title_refreshes_cover_only_eligible_open_opencode_sessions() {
-    let mut app = Workspace::default();
-    for project in ["/a", "/b"] {
-        app.projects.push(ProjectInfo {
-            path: project.into(),
-            name: project.into(),
-        });
-    }
-    app.project_roots.insert("/linked".into(), "/a".into());
-    let eligible: Vec<_> = ["/a", "/b", "/linked"]
-        .into_iter()
-        .map(|project| connected(&mut app, Provider::OpenCode, project, "one"))
-        .collect();
-    for state in [
-        "archived",
-        "archiving",
-        "forgotten",
-        "deleting",
-        "disconnected",
-    ] {
-        let index = connected(&mut app, Provider::OpenCode, "/a", state);
-        let session = &mut app.sessions[index];
-        match state {
-            "archived" => session.archived = true,
-            "archiving" => session.archiving = true,
-            "forgotten" => session.forgotten = true,
-            "deleting" => session.deleting = true,
-            "disconnected" => session.disconnected = true,
-            _ => unreachable!(),
-        }
-    }
-    connected(&mut app, Provider::OpenCode, "/closed", "one");
-    app.new_session(scope(Provider::OpenCode, "/a"));
-    let selected = connected(&mut app, Provider::Codex, "/a", "one");
-    app.sessions[selected].draft = "Keep editing".into();
-
-    app.refresh_open_sessions();
-    let pending = requests(&mut app);
-    assert_eq!(pending.len(), eligible.len());
-    for index in eligible {
-        assert!(pending
-            .iter()
-            .any(|(_, key)| Some(key) == app.sessions[index].key().as_ref()));
-    }
-    assert_eq!(app.selected, Some(selected));
-    assert_eq!(app.sessions[selected].draft, "Keep editing");
-    app.refresh_open_sessions();
-    assert!(requests(&mut app).is_empty());
-}
-
-#[test]
-fn manual_title_refreshes_coalesce_and_restart_the_automatic_cadence() {
-    let mut app = Workspace::default();
-    let index = connected(&mut app, Provider::OpenCode, "/a", "one");
-    succeeded(&mut app, index, 1);
-    succeeded(&mut app, index, 2);
-    app.sessions[index].draft = "Unsent draft".into();
-    app.refresh_session(index);
-    let pending = requests(&mut app);
-    assert_eq!(pending.len(), 1);
-
-    app.refresh_session(index);
-    succeeded(&mut app, index, 3);
-    assert!(requests(&mut app).is_empty());
-    let before = app.snapshot();
-    app.apply(Event::Completed(
-        pending[0].0,
-        Err("title model unavailable".into()),
-    ));
-    assert_eq!(app.snapshot(), before);
-    assert!(app.sessions[index].error.is_none());
-    app.refresh_session(index);
-    assert!(requests(&mut app).is_empty());
-    succeeded(&mut app, index, 4);
-    assert!(requests(&mut app).is_empty());
-    succeeded(&mut app, index, 5);
-    assert_eq!(requests(&mut app).len(), 1);
-    assert_eq!(app.sessions[index].draft, "Unsent draft");
-}
-
-#[test]
-fn manual_title_refreshes_skip_recent_automatic_updates_and_streamed_renames() {
-    for automatic in [false, true] {
+fn explicit_refreshes_reload_history_without_requesting_titles_or_resetting_the_turn_cadence() {
+    for all_sessions in [false, true] {
         let mut app = Workspace::default();
+        app.projects.push(ProjectInfo {
+            path: "/a".into(),
+            name: "Project".into(),
+        });
         let index = connected(&mut app, Provider::OpenCode, "/a", "one");
-        if automatic {
-            for turn in 1..=3 {
-                succeeded(&mut app, index, turn);
-            }
-            let request = requests(&mut app)[0].0;
-            // A successful request counts even when the title stays the same
-            // and no rename event arrives.
-            app.apply(Event::Completed(request, Ok(Reply::Done)));
-        } else {
-            app.apply(event(
-                "/a",
-                "one",
-                "rename",
-                "session.renamed",
-                json!({"title":"Original title"}),
-            ));
-        }
-        assert!(app.snapshot().sessions[index].title_refreshed_at.is_some());
-        app.refresh_session(index);
+        succeeded(&mut app, index, 1);
+        succeeded(&mut app, index, 2);
         assert!(requests(&mut app).is_empty());
-    }
-}
+        app.sessions[index].draft = "Unsent draft".into();
+        let refresh = |app: &mut Workspace| {
+            if all_sessions {
+                app.refresh_open_sessions();
+            } else {
+                app.refresh_session(index);
+            }
+        };
+        refresh(&mut app);
+        let commands = app.commands();
+        assert!(commands
+            .iter()
+            .any(|(_, command)| matches!(command, Command::Resume(key) if key.id == "one")));
+        assert!(!commands
+            .iter()
+            .any(|(_, command)| matches!(command, Command::RegenerateTitle(_))));
+        refresh(&mut app);
+        assert!(requests(&mut app).is_empty());
+        assert_eq!(app.sessions[index].title, "Original title");
+        assert_eq!(app.sessions[index].draft, "Unsent draft");
 
-#[test]
-fn manual_title_refresh_cooldown_survives_restart_and_expires() {
-    let mut app = Workspace::default();
-    let index = connected(&mut app, Provider::OpenCode, "/a", "one");
-    app.refresh_session(index);
-    let request = requests(&mut app)[0].0;
-    app.apply(Event::Completed(request, Ok(Reply::Done)));
-    let snapshot = app.snapshot();
-    let refreshed_at = snapshot.sessions[index].title_refreshed_at.unwrap();
-
-    for expired in [false, true] {
-        let mut saved = snapshot.clone();
-        if expired {
-            saved.sessions[index].title_refreshed_at = Some(refreshed_at - 61_000);
+        succeeded(&mut app, index, 3);
+        let pending = requests(&mut app);
+        assert_eq!(pending.len(), 1);
+        app.apply(Event::Completed(pending[0].0, Ok(Reply::Done)));
+        refresh(&mut app);
+        assert!(requests(&mut app).is_empty());
+        for turn in 4..=5 {
+            succeeded(&mut app, index, turn);
+            assert!(requests(&mut app).is_empty());
         }
-        let saved: Snapshot = serde_json::from_value(serde_json::to_value(saved).unwrap()).unwrap();
-        let expected = saved.sessions[index].title_refreshed_at;
-        let mut restored = Workspace::default();
-        restored.enable_store("/unused-in-reducer-test".into());
-        let load = restored.commands().pop().unwrap().0;
-        restored.apply(Event::Completed(
-            load,
-            Ok(Reply::Snapshot(Some(Box::new(saved)))),
-        ));
-        assert_eq!(
-            restored.snapshot().sessions[index].title_refreshed_at,
-            expected
-        );
-        // Restoring and ordinary history refreshes never regenerate a title.
-        restored.refresh(index);
-        assert!(requests(&mut restored).is_empty());
-        restored.refresh_session(index);
-        assert_eq!(requests(&mut restored).len(), usize::from(expired));
+        succeeded(&mut app, index, 6);
+        assert_eq!(requests(&mut app).len(), 1);
     }
 }
 
@@ -453,6 +356,8 @@ fn title_cadence_survives_restart_and_old_snapshots_default_to_zero() {
     succeeded(&mut app, index, 1);
     succeeded(&mut app, index, 2);
     let mut saved = serde_json::to_value(app.snapshot()).unwrap();
+    // Snapshots from manual title refreshes may still contain the old cooldown.
+    saved["sessions"][index]["title_refreshed_at"] = json!(1_000);
     let snapshot: Snapshot = serde_json::from_value(saved.clone()).unwrap();
     let mut restored = Workspace::default();
     restored.enable_store("/unused-in-reducer-test".into());
@@ -461,6 +366,8 @@ fn title_cadence_survives_restart_and_old_snapshots_default_to_zero() {
         load,
         Ok(Reply::Snapshot(Some(Box::new(snapshot)))),
     ));
+    restored.refresh_session(index);
+    assert!(requests(&mut restored).is_empty());
     succeeded(&mut restored, index, 3);
     let save = restored
         .commands()
@@ -475,11 +382,6 @@ fn title_cadence_survives_restart_and_old_snapshots_default_to_zero() {
         .as_object_mut()
         .unwrap()
         .remove("title_refresh_turns");
-    saved["sessions"][index]
-        .as_object_mut()
-        .unwrap()
-        .remove("title_refreshed_at");
     let legacy: Snapshot = serde_json::from_value(saved).unwrap();
     assert_eq!(legacy.sessions[index].title_refresh_turns, 0);
-    assert_eq!(legacy.sessions[index].title_refreshed_at, None);
 }
