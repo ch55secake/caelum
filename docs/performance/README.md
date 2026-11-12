@@ -156,6 +156,11 @@ revision. The corresponding current-Rune proposal is in
 [fork PR #1](https://github.com/ch55secake/rune/pull/1). Only a changed focus key
 is copied into application state.
 
+[Rune #833](https://github.com/anomalyco/rune/issues/833) requests the upstream
+API. [Caelum #167](https://github.com/ch55secake/caelum/issues/167) tracks both
+keeping the temporary fork current with relevant upstream fixes and returning
+both dependencies to an upstream revision once the API is available.
+
 Provider batches still apply every event synchronously and in order. A known
 text/reasoning delta for a uniquely owned, unselected session can skip view
 invalidation when its title, working/retry state, unread flag and last-activity
