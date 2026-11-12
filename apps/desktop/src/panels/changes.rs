@@ -121,6 +121,7 @@ pub(super) fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                             let _ = tx.open_url(&url);
                         })
                         .build(&action_kit)
+                        .self_center()
                         .help("Binary or omitted by GitHub. Open GitHub for the full file.")
                         .key(format!("unavailable-patch-{path}"));
                 }
@@ -159,6 +160,7 @@ pub(super) fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                     .variant(ButtonVariant::GhostMuted)
                     .on_press_tx(move |_: &mut Workspace, tx| tx.copy(copy.clone()))
                     .build(&action_kit)
+                    .self_center()
                     .key(format!("patch-context-{path}")),
                     project.clone(),
                     path.clone(),
