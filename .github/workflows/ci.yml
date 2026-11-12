@@ -33,7 +33,7 @@ jobs:
       - name: Keep reusable CI unfiltered
         if: ${{ github.event_name != 'pull_request' }}
         run: echo "Running full reusable CI checks."
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         if: ${{ github.event_name == 'pull_request' }}
         with:
