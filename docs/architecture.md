@@ -22,6 +22,13 @@ Request generations reject stale history, project, file and review responses.
 `Conversation` reconciles provider history with live text, reasoning and tool
 events without duplicating or overwriting newer activity.
 
+`application/workspace.rs` defines the coordinator and stable session state.
+Its `workspace/` modules own project navigation, session discovery/history,
+archival, composer context, queues/submission, persistence, service tasks and
+provider events. Completion routing preserves each request's original owner and
+generation. The application and parity suites are grouped by capability under
+`application/tests/` and `application/parity_tests/`.
+
 `Runtime` uses eight normal workers, two control workers, bounded command queues,
 a 1,024-event inbox and 256-event UI drains. Arrival wakes Rune; provider I/O
 does not run on the UI thread. Cancellation and permission replies bypass the
