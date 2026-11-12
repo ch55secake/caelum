@@ -43,6 +43,7 @@ interactions = {
     "stats-projects": ("stats", [{"t": 0.25, "key": "stats-project-trigger"}]),
     "timeline-search": ("timeline", [{"t": 0.25, "key": "timeline-search"}, {"t": 0.3, "paste": "draft"}]),
     "review-navigation": ("review", [{"t": 0.25, "key": "review-nav-toggle"}]),
+    "shells-waiting-session": ("shells-many", [{"t": 0.25, "key": "live-session-1"}, {"t": 0.5, "type": "move", "x": 0, "y": 0}]),
     "shells-hide": ("shells-many", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "shells-reopen": ("shells-collapsed", [{"t": 0.25, "key": "toggle-background-shells"}]),
     "vercel-select": ("settings", [{"t": 0.25, "key": "family-vercel"}]),
