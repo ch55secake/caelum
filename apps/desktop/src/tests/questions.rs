@@ -54,7 +54,16 @@ fn native_question_forms_send_scoped_values_and_keep_invalid_answers_editable() 
     });
     advance(&mut rt, 0.3);
     click(&mut rt, "question-submit-question");
-    assert!(rt.state.live.as_mut().unwrap().app.commands().is_empty());
+    assert!(
+        !rt.state
+            .live
+            .as_mut()
+            .unwrap()
+            .app
+            .commands()
+            .iter()
+            .any(|(_, command)| matches!(command, Command::Answer(..)))
+    );
     click(&mut rt, "question-question-branch-1");
     click(&mut rt, "question-submit-question");
     assert!(

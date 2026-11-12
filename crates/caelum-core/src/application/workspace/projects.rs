@@ -214,6 +214,7 @@ impl Workspace {
                     project: path.clone(),
                     provider,
                 };
+                self.refresh_choices_for(scope.clone());
                 // A repeated refresh does not accumulate duplicate network calls.
                 if self
                     .pending
@@ -223,14 +224,7 @@ impl Workspace {
                     continue;
                 }
                 self.notices.remove(&scope);
-                self.request(Command::List(scope.clone()), Pending::List(scope.clone()));
-                self.request(
-                    Command::Choices(scope.clone()),
-                    Pending::Choices(scope.clone()),
-                );
-                if provider == Provider::OpenCode {
-                    self.request(Command::Commands(scope.clone()), Pending::Commands(scope));
-                }
+                self.request(Command::List(scope.clone()), Pending::List(scope));
             }
         }
     }
