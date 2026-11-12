@@ -510,6 +510,5 @@ pub(super) fn timeline_row(
                 ),
         );
     }
-    content = content.child(crate::questions::view(s, k, index));
     content
 }

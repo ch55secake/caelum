@@ -164,6 +164,9 @@ impl Live {
     }
 
     pub fn focus(&mut self) {
+        if crate::questions::focus(self) {
+            return;
+        }
         if let Some(index) = self.app.selected {
             self.drafts[index].focused = true;
         }
@@ -239,12 +242,17 @@ impl Live {
     }
 
     pub(crate) fn apply(&mut self, event: Event) {
+        self.forms.apply(&event);
+        let questions_changed = matches!(&event, Event::Questions(_));
         if let Some(panel) = &mut self.shell_panel {
             panel.sync(&self.app);
         }
         let selected = self.app.selected;
         let was_archived = selected.is_some_and(|i| self.app.sessions[i].archived);
         self.app.apply(event);
+        if questions_changed {
+            self.forms.sync(&self.app.questions);
+        }
         self.sync_editors();
         for (index, session) in self.app.sessions.iter_mut().enumerate() {
             if let Some(caret) = session.completion_caret.take() {
@@ -520,6 +528,10 @@ impl Live {
         }
         self.sync_editors();
         self.forms.sync(&self.app.questions);
+        if crate::questions::sync(self, tx) {
+            self.menu = None;
+            changed = true;
+        }
         changed |= crate::composer::sync(self, tx);
         self.panels.remember(&mut self.app);
         changed |= self.panels.sync(&self.app);

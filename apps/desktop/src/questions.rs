@@ -1,16 +1,19 @@
-use crate::context::EditMenu;
-use crate::ui::Button;
+//! Session-owned answer drafts and the question mode of the composer dock.
+mod view;
+
+pub use view::view;
+
+use std::{cell::Cell, collections::HashMap, rc::Rc};
+
 use crate::{
     Workspace,
-    live::{live, live_mut},
-    ui,
+    live::{Live, live, live_mut},
+    panels::Screen,
 };
-use caelum_core::application::forms;
+use caelum_core::application::{Event, forms};
 use caelum_protocol::QuestionPrompt;
-use rune::{El, TextEdit, col, row, text, text_input};
-use rune_kit::{ButtonVariant, Kit};
+use rune::{Key as InputKey, KeyEvent, ScrollPos, TextEdit, Tx};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
 
 type Key = (String, String, String, String);
 fn key(p: &QuestionPrompt) -> Key {
@@ -22,86 +25,279 @@ fn key(p: &QuestionPrompt) -> Key {
     )
 }
 
+fn matches_key(p: &QuestionPrompt, key: &Key) -> bool {
+    p.provider == key.0 && p.project_path == key.1 && p.session_id == key.2 && p.request_id == key.3
+}
+
 #[derive(Default)]
 pub struct Forms {
     drafts: HashMap<Key, Draft>,
+    order: Vec<Key>,
+    shown: Option<(usize, Key)>,
 }
+
+#[derive(Default)]
+enum Status {
+    #[default]
+    Editing,
+    Invalid,
+    Submitting {
+        request: u64,
+        dismiss: bool,
+    },
+    Failed(String),
+}
+
 struct Draft {
     values: Map<String, Value>,
     editors: HashMap<String, TextEdit>,
-    attempted: bool,
+    status: Status,
+    position: Rc<Cell<ScrollPos>>,
+}
+
+impl Draft {
+    fn submitting(&self) -> bool {
+        matches!(self.status, Status::Submitting { .. })
+    }
 }
 
 impl Forms {
     pub fn sync(&mut self, prompts: &[QuestionPrompt]) {
         self.drafts
-            .retain(|k, _| prompts.iter().any(|p| key(p) == *k));
+            .retain(|k, _| prompts.iter().any(|p| matches_key(p, k)));
+        self.order.retain(|k| self.drafts.contains_key(k));
         for prompt in prompts {
-            self.drafts.entry(key(prompt)).or_insert_with(|| {
-                let mut values = forms::defaults(prompt);
-                let editors = prompt
-                    .fields
-                    .iter()
-                    .filter_map(|field| {
-                        let name = field["key"].as_str()?;
-                        let value = values.get(name).cloned();
-                        let text = if field["options"].as_array().is_some_and(|v| !v.is_empty()) {
-                            if field["custom"] == true {
-                                let listed = |v: &Value| {
-                                    field["options"]
-                                        .as_array()
-                                        .unwrap()
-                                        .iter()
-                                        .any(|option| option["value"] == *v)
-                                };
-                                if let Some(Value::Array(items)) = &value {
-                                    values.insert(
-                                        name.into(),
-                                        Value::Array(
-                                            items.iter().filter(|v| listed(v)).cloned().collect(),
-                                        ),
-                                    );
-                                    items
-                                        .iter()
-                                        .filter(|v| !listed(v))
-                                        .filter_map(Value::as_str)
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                } else {
-                                    value
-                                        .as_ref()
-                                        .filter(|v| !listed(v))
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .into()
-                                }
+            let owner = key(prompt);
+            if self.drafts.contains_key(&owner) {
+                continue;
+            }
+            self.order.push(owner.clone());
+            let mut values = forms::defaults(prompt);
+            let editors = prompt
+                .fields
+                .iter()
+                .filter_map(|field| {
+                    let name = field["key"].as_str()?;
+                    let value = values.get(name).cloned();
+                    let text = if field["options"].as_array().is_some_and(|v| !v.is_empty()) {
+                        if field["custom"] == true {
+                            let listed = |v: &Value| {
+                                field["options"]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .any(|o| o["value"] == *v)
+                            };
+                            if let Some(Value::Array(items)) = &value {
+                                values.insert(
+                                    name.into(),
+                                    Value::Array(
+                                        items.iter().filter(|v| listed(v)).cloned().collect(),
+                                    ),
+                                );
+                                items
+                                    .iter()
+                                    .filter(|v| !listed(v))
+                                    .filter_map(Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
                             } else {
-                                String::new()
+                                value
+                                    .as_ref()
+                                    .filter(|v| !listed(v))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .into()
                             }
                         } else {
-                            value
-                                .as_ref()
-                                .and_then(Value::as_str)
-                                .map(str::to_owned)
-                                .or_else(|| {
-                                    value
-                                        .as_ref()
-                                        .filter(|v| v.is_number())
-                                        .map(Value::to_string)
-                                })
-                                .unwrap_or_default()
-                        };
-                        Some((name.into(), TextEdit::new(text)))
-                    })
-                    .collect();
+                            String::new()
+                        }
+                    } else {
+                        value
+                            .as_ref()
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .or_else(|| {
+                                value
+                                    .as_ref()
+                                    .filter(|v| v.is_number())
+                                    .map(Value::to_string)
+                            })
+                            .unwrap_or_default()
+                    };
+                    Some((name.into(), TextEdit::new(text)))
+                })
+                .collect();
+            self.drafts.insert(
+                owner,
                 Draft {
                     values,
                     editors,
-                    attempted: false,
-                }
-            });
+                    status: Status::Editing,
+                    position: Default::default(),
+                },
+            );
         }
     }
+
+    pub fn apply(&mut self, event: &Event) {
+        if let Event::Completed(id, Err(error)) = event {
+            for draft in self.drafts.values_mut() {
+                if matches!(draft.status, Status::Submitting { request, .. } if request == *id) {
+                    draft.status = Status::Failed(error.clone());
+                }
+            }
+        }
+    }
+}
+
+fn belongs(prompt: &QuestionPrompt, session: &caelum_core::application::Session) -> bool {
+    prompt.provider == session.scope.provider.as_str()
+        && prompt.project_path == session.scope.project
+        && Some(&prompt.session_id) == session.remote_id.as_ref()
+}
+
+pub fn active(l: &Live, index: usize) -> Option<&QuestionPrompt> {
+    let session = l.app.sessions.get(index)?;
+    // Keep arrival order even when a provider's next snapshot sorts requests differently.
+    l.forms
+        .order
+        .iter()
+        .find_map(|owner| {
+            l.app
+                .questions
+                .iter()
+                .find(|p| matches_key(p, owner) && belongs(p, session))
+        })
+        .or_else(|| l.app.questions.iter().find(|p| belongs(p, session)))
+}
+
+fn scroll_key(index: usize, prompt: &QuestionPrompt) -> String {
+    format!("question-fields-{index}-{}", prompt.request_id)
+}
+
+pub fn sync(l: &mut Live, tx: &mut Tx) -> bool {
+    let next = l
+        .app
+        .selected
+        .filter(|_| l.panels.screen != Screen::Review && l.panels.overlay.is_none())
+        .and_then(|index| active(l, index).map(|p| (index, key(p))));
+    if l.forms.shown == next {
+        return false;
+    }
+    let previous = std::mem::replace(&mut l.forms.shown, next.clone());
+    for draft in l.forms.drafts.values_mut() {
+        for editor in draft.editors.values_mut() {
+            editor.focused = false;
+        }
+    }
+    if let Some((index, owner)) = next {
+        l.drafts[index].focused = false;
+        l.commands.side_editor.focused = false;
+        l.models = Default::default();
+        if let Some((pending, ..)) = l.completion.pending.take() {
+            l.app.cancel_mentions(pending);
+        }
+        if let Some(prompt) = active(l, index) {
+            tx.scroll_to_y(
+                scroll_key(index, prompt),
+                l.forms.drafts[&owner].position.get().offset[1],
+            );
+        }
+        focus(l);
+    } else if previous.is_some_and(|(index, _)| Some(index) == l.app.selected)
+        && l.panels.screen != Screen::Review
+        && l.panels.overlay.is_none()
+    {
+        if l.commands.side_owner == l.app.selected && l.commands.side_owner.is_some() {
+            l.commands.side_editor.focused = true;
+        } else {
+            l.focus();
+        }
+    }
+    true
+}
+
+pub fn focus(l: &mut Live) -> bool {
+    let Some(index) = l.app.selected else {
+        return false;
+    };
+    let Some(prompt) = active(l, index).cloned() else {
+        return false;
+    };
+    l.drafts[index].focused = false;
+    let Some(draft) = l.forms.drafts.get_mut(&key(&prompt)) else {
+        return true;
+    };
+    let checked = answer(&prompt, draft);
+    // Text-only questions focus their first active field. Choice groups use
+    // Rune's focus handoff from the replaced message composer and native arrows.
+    if let Some(field) = prompt.fields.iter().find(|field| {
+        field["key"]
+            .as_str()
+            .is_some_and(|name| checked.active.iter().any(|k| k == name))
+    }) && has_input(field)
+        && !has_options(field)
+        && !draft.submitting()
+        && let Some(editor) = field["key"]
+            .as_str()
+            .and_then(|name| draft.editors.get_mut(name))
+    {
+        editor.focused = true;
+    }
+    true
+}
+
+pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
+    let l = live(s);
+    if l.panels.screen == Screen::Review || l.panels.overlay.is_some() {
+        return false;
+    }
+    let Some(prompt) = l.app.selected.and_then(|index| active(l, index)).cloned() else {
+        return false;
+    };
+    if ev.key == InputKey::Escape || (ev.key == InputKey::Enter && ev.mods.cmd) {
+        submit(s, &prompt, ev.key == InputKey::Escape, tx);
+        true
+    } else {
+        false
+    }
+}
+
+fn submit(s: &mut Workspace, prompt: &QuestionPrompt, dismiss: bool, tx: &mut Tx) {
+    let l = live_mut(s);
+    let owner = key(prompt);
+    if !l.app.questions.iter().any(|p| matches_key(p, &owner)) {
+        return;
+    }
+    let Some(draft) = l.forms.drafts.get_mut(&owner) else {
+        return;
+    };
+    if draft.submitting() {
+        return;
+    }
+    let checked = answer(prompt, draft);
+    if !dismiss && !checked.errors.is_empty() {
+        draft.status = Status::Invalid;
+        if let Some(index) = l.app.selected {
+            tx.scroll_to_y(scroll_key(index, prompt), 0.0);
+        }
+        return;
+    }
+    if let Some(request) = l
+        .app
+        .answer(prompt.clone(), (!dismiss).then_some(checked.values))
+    {
+        draft.status = Status::Submitting { request, dismiss };
+    }
+}
+
+fn has_options(field: &Value) -> bool {
+    field["type"] == "boolean" || field["options"].as_array().is_some_and(|v| !v.is_empty())
+}
+
+fn has_input(field: &Value) -> bool {
+    field["type"] != "external" && (!has_options(field) || field["custom"] == true)
 }
 
 fn answer(prompt: &QuestionPrompt, draft: &Draft) -> forms::Answer {
@@ -113,10 +309,9 @@ fn answer(prompt: &QuestionPrompt, draft: &Draft) -> forms::Answer {
         let Some(editor) = draft.editors.get(name) else {
             continue;
         };
-        let has_options = field["options"].as_array().is_some_and(|v| !v.is_empty());
         match field["type"].as_str().unwrap_or_default() {
             "string" | "number" | "integer"
-                if !has_options || (field["custom"] == true && !editor.text.is_empty()) =>
+                if !has_options(field) || (field["custom"] == true && !editor.text.is_empty()) =>
             {
                 values.insert(name.into(), Value::String(editor.text.clone()));
             }
@@ -142,235 +337,4 @@ fn answer(prompt: &QuestionPrompt, draft: &Draft) -> forms::Answer {
         }
     }
     forms::validate(prompt, &values)
-}
-
-pub fn view(s: &Workspace, k: &Kit, index: usize) -> El {
-    let app = &live(s).app;
-    let session = &app.sessions[index];
-    let mut content = col().w_full().gap(16.0);
-    for prompt in app.questions.iter().filter(|p| {
-        p.provider == session.scope.provider.as_str()
-            && p.project_path == session.scope.project
-            && Some(&p.session_id) == session.remote_id.as_ref()
-    }) {
-        let owner = key(prompt);
-        let Some(draft) = live(s).forms.drafts.get(&owner) else {
-            continue;
-        };
-        let checked = answer(prompt, draft);
-        let mut form = col()
-            .w_full()
-            .gap(12.0)
-            .padding(16.0)
-            .radius(10.0)
-            .fill(k.c.layer_02)
-            .border(1.0, k.c.border_focus)
-            .child(
-                text(&prompt.title)
-                    .font(k.ty.ui_medium)
-                    .color(k.c.text_base)
-                    .wrap(),
-            );
-        for field in &prompt.fields {
-            let name = field["key"].as_str().unwrap_or_default();
-            if !checked.active.iter().any(|key| key == name) {
-                continue;
-            }
-            form = form.child(
-                text(
-                    field["label"]
-                        .as_str()
-                        .or(field["title"].as_str())
-                        .unwrap_or(name),
-                )
-                .font(k.ty.ui_medium)
-                .color(k.c.text_base)
-                .wrap(),
-            );
-            if let Some(description) = field["description"].as_str() {
-                form = form.child(
-                    text(description)
-                        .font(k.ty.small)
-                        .color(k.c.text_muted)
-                        .wrap(),
-                );
-            }
-            let mut choices = col().w_full().gap(4.0);
-            let options = if field["type"] == "boolean" {
-                vec![
-                    serde_json::json!({"label":"Yes", "value":true}),
-                    serde_json::json!({"label":"No", "value":false}),
-                ]
-            } else {
-                field["options"].as_array().cloned().unwrap_or_default()
-            };
-            for (i, option) in options.iter().enumerate() {
-                let value = option["value"].clone();
-                let owner = owner.clone();
-                let name = name.to_owned();
-                let multiple = field["type"] == "multiselect";
-                let selected = draft.values.get(&name).is_some_and(|v| {
-                    *v == value || v.as_array().is_some_and(|v| v.contains(&value))
-                });
-                let label = option["label"]
-                    .as_str()
-                    .or(option["value"].as_str())
-                    .unwrap_or("Answer");
-                let element_key = format!("question-{}-{name}-{i}", prompt.request_id);
-                choices = choices.child(
-                    ui::choice(
-                        label,
-                        option["description"].as_str().unwrap_or(if multiple {
-                            "Select any that apply"
-                        } else {
-                            "Choose this answer"
-                        }),
-                        selected,
-                        k,
-                    )
-                    .role(if multiple { "checkbox" } else { "radio" })
-                    .on_press(move |s: &mut Workspace| {
-                        let draft = live_mut(s)
-                            .forms
-                            .drafts
-                            .get_mut(&owner)
-                            .expect("active question");
-                        if multiple {
-                            let mut values = draft
-                                .values
-                                .get(&name)
-                                .and_then(Value::as_array)
-                                .cloned()
-                                .unwrap_or_default();
-                            if values.contains(&value) {
-                                values.retain(|v| v != &value);
-                            } else {
-                                values.push(value.clone());
-                            }
-                            draft.values.insert(name.clone(), Value::Array(values));
-                        } else {
-                            draft.values.insert(name.clone(), value.clone());
-                            draft.editors.get_mut(&name).unwrap().clear();
-                        }
-                    })
-                    .key(element_key)
-                    .w_full()
-                    .radius(8.0)
-                    .fill(if selected { k.c.hover } else { k.c.bg_base })
-                    .border(
-                        1.0,
-                        if selected {
-                            k.c.border_focus
-                        } else {
-                            k.c.border_base
-                        },
-                    ),
-                );
-            }
-            form = form.child(choices);
-            if field["type"] == "external" {
-                if let Some(url) = field["url"]
-                    .as_str()
-                    .filter(|v| v.starts_with("https://") || v.starts_with("http://"))
-                {
-                    let url = url.to_owned();
-                    form = form.child(
-                        Button::new("Open link")
-                            .variant(ButtonVariant::Outline)
-                            .on_press_tx(move |_: &mut Workspace, tx| {
-                                let _ = tx.open_url(&url);
-                            })
-                            .build(k),
-                    );
-                }
-            } else if options.is_empty() && field["type"] != "boolean" || field["custom"] == true {
-                let owner = owner.clone();
-                let name = name.to_owned();
-                form = form.child(
-                    text_input(&draft.editors[&name], k.ty.ui)
-                        .label(if field["custom"] == true {
-                            "Custom answer"
-                        } else {
-                            "Answer"
-                        })
-                        .placeholder(
-                            if field["custom"] == true {
-                                "Other answer…"
-                            } else {
-                                "Your answer…"
-                            },
-                            k.c.text_muted,
-                        )
-                        .color(k.c.text_base)
-                        .w_full()
-                        .selection_color(k.selection())
-                        .min_h(32.0)
-                        .padding(8.0)
-                        .radius(7.0)
-                        .fill(k.c.bg_base)
-                        .border(
-                            1.0,
-                            if draft.editors[&name].focused {
-                                k.c.border_focus
-                            } else {
-                                k.c.border_base
-                            },
-                        )
-                        .edit_menu(
-                            format!("question-input-{}-{name}", prompt.request_id),
-                            move |s| {
-                                live_mut(s)
-                                    .forms
-                                    .drafts
-                                    .get_mut(&owner)?
-                                    .editors
-                                    .get_mut(&name)
-                            },
-                        ),
-                );
-            }
-            if draft.attempted
-                && let Some(error) = checked.errors.get(name)
-            {
-                form = form.child(
-                    text(error)
-                        .font(k.ty.small)
-                        .color(k.c.danger.fg)
-                        .wrap()
-                        .role("alert"),
-                );
-            }
-        }
-        let submit = prompt.clone();
-        let dismiss = prompt.clone();
-        form = form.child(
-            row()
-                .gap(8.0)
-                .child(
-                    Button::new("Submit answers")
-                        .variant(ButtonVariant::Outline)
-                        .on_press(move |s: &mut Workspace| {
-                            let live = live_mut(s);
-                            let draft = live.forms.drafts.get_mut(&key(&submit)).unwrap();
-                            draft.attempted = true;
-                            let checked = answer(&submit, draft);
-                            if checked.errors.is_empty() {
-                                live.app.answer(submit.clone(), Some(checked.values));
-                            }
-                        })
-                        .build(k)
-                        .key(format!("question-submit-{}", prompt.request_id)),
-                )
-                .child(
-                    Button::new("Dismiss")
-                        .variant(ButtonVariant::GhostMuted)
-                        .on_press(move |s: &mut Workspace| {
-                            live_mut(s).app.answer(dismiss.clone(), None)
-                        })
-                        .build(k),
-                ),
-        );
-        content = content.child(form);
-    }
-    content
 }
