@@ -89,7 +89,9 @@ Shared dropdowns keep field controls distinct from quiet
 inline composer choices. Worktree creation provides a selected suggested branch,
 searchable base and automatic location preview. Background commands show three
 visual lines and open a captured-session output reader. Hide/Show collapses them to
-a command-count row, remembered per session during the app run. User messages use
+a command-count row, remembered per session during the app run. Sessions waiting on
+background commands show an amber waiting label in the sidebar until foreground
+work resumes or the last command finishes. User messages use
 content-sized neutral Markdown bubbles with grouped attachments and copy actions.
 Statistics uses summary/chart/token/model sections; timeline has date groups,
 excerpts, highlighted search and stable prompt jumps.

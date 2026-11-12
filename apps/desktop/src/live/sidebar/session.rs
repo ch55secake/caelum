@@ -1,5 +1,6 @@
 use super::live;
 use crate::{Workspace, quiet_button, ui};
+use caelum_core::application::presentation::{self, ActivityKind};
 use rune::{El, col, icon, row, text};
 use rune_kit::{Kit, glyphs};
 
@@ -24,6 +25,11 @@ pub(super) fn view(s: &Workspace, k: &Kit, index: usize, position: usize, count:
             && p.provider == session.scope.provider.as_str()
             && Some(&p.session_id) == session.remote_id.as_ref()
     });
+    let waiting = !session.shells.is_empty()
+        && !session.archiving
+        && !session.deleting
+        && presentation::activity(session, pending)
+            .is_some_and(|activity| activity.kind == ActivityKind::Background);
     let status = if pending {
         "Needs input"
     } else if session.archiving {
@@ -32,6 +38,8 @@ pub(super) fn view(s: &Workspace, k: &Kit, index: usize, position: usize, count:
         "Deleting…"
     } else if session.stopping {
         "Stopping…"
+    } else if waiting {
+        "Waiting for background commands"
     } else if session.working() {
         "Working…"
     } else if session.error.is_some() {
@@ -45,41 +53,53 @@ pub(super) fn view(s: &Workspace, k: &Kit, index: usize, position: usize, count:
     };
     let provider = ui::provider_name(session.scope.provider);
     let age = super::age(session.last_activity, l.feed.now).0;
-    let ink = if pending {
+    let ink = if pending || waiting {
         k.c.warning.icon
     } else if session.error.is_some() {
         k.c.danger.fg
     } else {
         k.c.text_muted
     };
-    let mark = if session.working() && !pending {
+    let mark = if session.working() && !pending && !waiting {
         ui::busy_icon(&ui::CLOCK, 10.0, k)
     } else {
-        rune::el().size(5.0, 5.0).radius(3.0).fill(if pending {
-            k.c.warning.icon
-        } else if session.error.is_some() {
-            k.c.danger.fg
-        } else {
-            k.c.text_accent
-        })
+        rune::el()
+            .size(5.0, 5.0)
+            .radius(3.0)
+            .fill(if pending || waiting {
+                k.c.warning.icon
+            } else if session.error.is_some() {
+                k.c.danger.fg
+            } else {
+                k.c.text_accent
+            })
     };
     let action_visible = selected
         || l.focus_key
             .as_ref()
             .is_some_and(|key| key.ends_with(&format!("session-actions-{index}")));
+    let detail = if waiting {
+        text("Waiting on commands")
+            .key(format!("session-waiting-{index}"))
+            .role("status")
+            .label(status)
+            .help(status)
+            .color(k.c.warning.fg)
+    } else {
+        text(&branch).color(k.c.text_muted)
+    };
     let mut bottom = row()
         .w_full()
         .gap(4.0)
         .center_y()
-        .child(icon(&ui::BRANCH, 11.0).color(k.c.icon_muted))
         .child(
-            text(&branch)
-                .font(k.ty.small)
-                .color(k.c.text_muted)
-                .truncate()
-                .min_w(0.0)
-                .grow(1.0),
+            icon(if waiting { &ui::CLOCK } else { &ui::BRANCH }, 11.0).color(if waiting {
+                k.c.warning.icon
+            } else {
+                k.c.icon_muted
+            }),
         )
+        .child(detail.font(k.ty.small).truncate().min_w(0.0).grow(1.0))
         .child(
             quiet_button(&ui::MORE, "Session actions")
                 .on_press(move |s: &mut Workspace| super::live_mut(s).session_menu = Some(index))

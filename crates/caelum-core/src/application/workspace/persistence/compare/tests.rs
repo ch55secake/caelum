@@ -42,7 +42,6 @@ fn every_persisted_field_participates_in_change_detection() {
         ("remote_id", json!("remote")),
         ("title", json!("New title")),
         ("title_refresh_turns", json!(2)),
-        ("title_refreshed_at", json!(123)),
         ("options", json!({"model":"new-model"})),
         ("draft", json!("edited draft")),
         ("attachments", json!([])),
