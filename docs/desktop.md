@@ -44,6 +44,10 @@ The anchored popover keeps its original session or Settings target while open. U
 current models and saved favourites remain visible; arrow keys navigate the
 windowed catalogue, including after Tab moves focus. Escape or an outside click
 closes it; its footer can save the current model, effort and agent as provider defaults.
+The duration beside the agent below a completed response measures elapsed time from the
+original message through completion, including thinking, tool work and retries.
+Restored responses use the original prompt's timestamp; loading earlier messages
+fills in the duration when that prompt is outside the current history page.
 Responses, thinking, typed Read/Run/Patch rows and shell activity
 appear in the transcript with tool-specific icons, status and timing. Active labels
 use a quiet left-to-right shimmer. Click a disclosure row or focus it and press
@@ -82,8 +86,13 @@ checks. These indicators follow reduced-motion preferences.
 ## Drafts, queues and requests
 
 Enter and the primary button send when idle or queue behind earlier work;
-Shift+Enter inserts a newline. The editor grows from 56 to 180 points, then scrolls
-independently above the settings and actions. Click **2 queued** (or focus it and
+Shift+Enter inserts a newline. The editor grows naturally from 56 points as the
+draft gets longer, up to a window-aware limit of 420 points, then scrolls
+independently above the settings and actions. Shortening the draft reclaims space
+for the conversation. Caret, selection and undo history stay in the native editor;
+each session remembers its editor position during the app run. The transcript
+stays above the dock and the edge remains neutral while editing.
+Click **2 queued** (or focus it and
 press Space) to expand queued messages; each session remembers its disclosure state.
 Paused, saving and failed queues remain identifiable when collapsed. Local queue
 entries capture their own settings and context; edit, reorder, remove, pause or
@@ -112,6 +121,16 @@ its file and line range. Navigation during a file read keeps the attachment with
 its originating draft. **#** finds session-related pull requests and captures their
 context. Tab/Enter accepts a mention; Escape cancels it, including an in-flight read.
 Surrounding text and Unicode caret positions are preserved.
+
+Click an attachment chip to preview the captured snapshot; its separate **×**
+removes it. File previews have a filename/path header, syntax-highlighted source
+and line numbers matching the captured range. Short snapshots fit their content;
+longer ones scroll. Text stays selectable, and **Copy** copies the exact snapshot.
+A **Partial** label identifies truncated captures. Previews show the attached content
+even if the source changes. Closing a preview returns to the draft and its editor
+position. Pending reads name each file and disable Send/Queue until they settle;
+failed reads have a per-file error that can be dismissed. Attach again through the
+same entry point to retry.
 
 Paste or drop images for a thumbnail; open it to zoom and drag-pan the preview.
 Images remain image payloads when sent or queued. User messages use right-aligned

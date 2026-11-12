@@ -572,6 +572,15 @@ pub fn user_bubble(message: &str, attachments: bool, k: &Kit) -> El {
         .fill(k.c.layer_02.mix(k.c.bg_base, 0.25))
 }
 
+pub fn composer_editor(input: El, minimum: f32, maximum: f32) -> El {
+    rune::auto_grow(input, 2, 24)
+        .key("composer-editor")
+        .px(4.0)
+        .py(4.0)
+        .min_h(minimum)
+        .max_h(maximum)
+}
+
 pub fn composer(input: El, controls: El, context: El, padding: f32, k: &Kit) -> El {
     let rim =
         k.c.border_strong
@@ -605,20 +614,12 @@ pub fn composer(input: El, controls: El, context: El, padding: f32, k: &Kit) -> 
             )
             .child(
                 context
-                    .max_h(180.0)
                     .scroll(rune::ScrollSpec {
                         stick_bottom: false,
                     })
                     .scroll_bar(k),
             )
-            .child(
-                rune::auto_grow(input, 2, 8)
-                    .key("composer-editor")
-                    .px(4.0)
-                    .py(4.0)
-                    .min_h(56.0)
-                    .max_h(180.0),
-            )
+            .child(input)
             .child(divider(k).opacity(0.5).mt(8.0).mb(8.0))
             .child(controls.min_h(32.0)),
     )

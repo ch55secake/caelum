@@ -22,6 +22,13 @@ Request generations reject stale history, project, file and review responses.
 `Conversation` reconciles provider history with live text, reasoning and tool
 events without duplicating or overwriting newer activity.
 
+`application/workspace.rs` defines the coordinator and stable session state.
+Its `workspace/` modules own project navigation, session discovery/history,
+archival, composer context, queues/submission, persistence, service tasks and
+provider events. Completion routing preserves each request's original owner and
+generation. The application and parity suites are grouped by capability under
+`application/tests/` and `application/parity_tests/`.
+
 `Runtime` uses eight normal workers, two control workers, bounded command queues,
 a 1,024-event inbox and 256-event UI drains. Arrival wakes Rune; provider I/O
 does not run on the UI thread. Cancellation and permission replies bypass the
@@ -33,18 +40,26 @@ OpenCode uses its verified local registered service or an owned loopback server.
 Only owned processes are terminated on shutdown. See [Codex](codex.md),
 [OpenCode](opencode.md) and [security boundaries](security.md).
 
+Provider roots own connection/server lifetimes. `codex/` separates session
+operations, inbound approval/question requests and JSONL transport; `opencode/`
+separates sessions, events, permissions, questions, server startup and transport
+alongside its shell, statistics and generation capabilities. Provider tests live
+alongside these modules, with embedded fake servers in `tests/fixtures/`.
+
 ## Desktop modules
 
 - `main.rs`: entry point, shell, keyboard routing and offline render modes.
 - `lifecycle.rs`: standard macOS menus and `caelum://open?path=…` delivery.
-- `live.rs`: editor/application synchronization, runtime wake/drain, sidebar,
-  windowed transcript and composer controls.
+- `live.rs`: editor/application synchronization and runtime wake/drain, with
+  sidebar, windowed transcript, composer and session menus in `live/`.
 - `state.rs`: pane/view state and the original simulated interaction fixture.
-- `panels.rs`: file/change inspector, worktree/settings/session dialogs and
-  main-screen PR review. Local and review diffs have independent state.
+- `panels.rs`: panel state, synchronization and routing. `panels/` owns the
+  file/change inspector, review/feedback, appearance, launcher, queue and overlay
+  views. Local and review diffs have independent state.
 - `questions.rs`: form editors backed by shared Rust validation.
 - `theme.rs` / `ui.rs`: semantic palettes, typography and shared surfaces.
 - `evaluation.rs`: offline design and demanding-workload fixtures.
+- `tests.rs`: shared native-runtime helpers, with capability suites in `tests/`.
 
 Each session has an independent native editor and reading position. Settings,
 worktree and session dialogs scope focus. Long transcripts, file previews and
