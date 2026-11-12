@@ -39,7 +39,7 @@ fn session_actions(s: &Workspace, k: &Kit) -> El {
                 },
             )
             .on_press(move |s: &mut Workspace| {
-                live_mut(s).app.refresh(index);
+                live_mut(s).app.refresh_session(index);
                 close_session_menu(s);
             })
             .role("menuitem")

@@ -1,4 +1,4 @@
-use super::{update_summary, Pending, Session, Workspace};
+use super::{titles::Refresh, update_summary, Pending, Session, Workspace};
 use crate::application::{Command, Provider, Scope, Summary};
 
 impl Workspace {
@@ -16,8 +16,14 @@ impl Workspace {
             .collect();
         for index in sessions {
             self.refresh_choices_for(self.sessions[index].scope.clone());
-            self.refresh(index);
+            self.refresh_session(index);
         }
+    }
+
+    /// Explicit user refresh of history and, unless recently refreshed, the title.
+    pub fn refresh_session(&mut self, index: usize) {
+        self.refresh(index);
+        self.refresh_title(index, Refresh::Manual);
     }
 
     /// Refresh both active and archived provider sessions for a picker.

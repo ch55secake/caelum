@@ -625,7 +625,7 @@ pub fn session(el: El, index: usize) -> El {
             move |s, pick, tx| match pick {
                 "copy" => tx.copy(title.clone()),
                 "id" => tx.copy(id.unwrap_or_default()),
-                "refresh" => live_mut(s).app.refresh(index),
+                "refresh" => live_mut(s).app.refresh_session(index),
                 "archive" if !crate::live::archive_disabled(live(s), index) => {
                     live_mut(s).archive(index, !archived)
                 }

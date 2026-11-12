@@ -1,4 +1,4 @@
-use super::{Pending, Workspace};
+use super::{titles::Refresh, Pending, Workspace};
 use crate::application::{Command, Event, Notification, Provider, Scope, SessionKey, Task};
 use serde_json::Value;
 
@@ -333,6 +333,15 @@ impl Workspace {
             if let Some(title) = title.filter(|title| !title.is_empty()) {
                 session.title = title.into();
                 session.title_state.barrier = self.next_request;
+                if provider == Provider::OpenCode
+                    && matches!(method, "session.renamed" | "session.title.updated")
+                {
+                    session.title_state.refreshed(
+                        data["_created"]
+                            .as_u64()
+                            .unwrap_or_else(crate::application::presentation::now),
+                    );
+                }
             }
         }
         for index in completed {
@@ -355,7 +364,7 @@ impl Workspace {
             self.refresh(index);
         }
         for index in titles_completed {
-            self.refresh_title(index);
+            self.refresh_title(index, Refresh::Automatic);
         }
         for index in shells_completed {
             if self.preferences.background_shells

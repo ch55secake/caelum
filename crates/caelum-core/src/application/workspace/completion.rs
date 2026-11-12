@@ -1,4 +1,4 @@
-use super::{update_summary, Pending, Session, Workspace};
+use super::{titles::Refresh, update_summary, Pending, Session, Workspace};
 use crate::application::{
     Attachment, Command, Provider, QueuedPrompt, Reply, Scope, Task, TaskReply,
 };
@@ -14,7 +14,12 @@ impl Workspace {
             // The provider publishes the new title through session.renamed.
             // A failed request must not disturb chat, drafts or queued work.
             if self.sessions[index].key().as_ref() == Some(&key) {
-                self.refresh_title(index);
+                if matches!(result, Ok(Reply::Done)) {
+                    self.sessions[index]
+                        .title_state
+                        .refreshed(crate::application::presentation::now());
+                }
+                self.refresh_title(index, Refresh::Automatic);
             }
             return;
         }
@@ -347,6 +352,7 @@ impl Workspace {
                                 session.title = saved.title;
                                 session.last_activity = saved.last_activity;
                                 session.title_state.turns = saved.title_refresh_turns;
+                                session.title_state.refreshed_at = saved.title_refreshed_at;
                                 session.options = saved.options;
                                 session.options_dirty = true;
                                 session.draft = saved.draft;
