@@ -473,6 +473,7 @@ fn live_creation_streaming_and_failed_submissions_preserve_independent_editors()
         s.live.as_mut().unwrap().app.apply(Event::Completed(
             request,
             Ok(Reply::Session(Summary {
+                updated_at: None,
                 key: SessionKey {
                     scope,
                     id: "thread-1".into(),

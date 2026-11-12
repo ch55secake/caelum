@@ -114,10 +114,43 @@ pub(crate) fn appearance_settings(s: &Workspace, k: &Kit) -> El {
             .key(format!("accent-{accent}")),
         );
     }
-    content.child(crate::settings::setting_row(
+    content = content.child(crate::settings::setting_row(
         "Accent colour",
         "Highlights and active controls.",
         accents,
         k,
-    ))
+    ));
+    let mut scopes = row().gap(4.0);
+    for (scope, key, label) in [
+        (
+            caelum_core::application::SessionScope::AllProjects,
+            "all",
+            "All projects",
+        ),
+        (
+            caelum_core::application::SessionScope::CurrentProject,
+            "current",
+            "Current project",
+        ),
+    ] {
+        scopes = scopes.child(
+            ui::tab(label, preferences.session_scope == scope, k)
+                .key(format!("session-scope-{key}"))
+                .grow(1.0)
+                .on_press(move |s: &mut Workspace| {
+                    let l = live_mut(s);
+                    l.app.preferences.session_scope = scope;
+                    l.feed.project = None;
+                }),
+        );
+    }
+    content
+        .child(ui::divider(k).mt(8.0))
+        .child(ui::caption("Sidebar", k).pt(8.0))
+        .child(crate::settings::setting_row(
+            "Session scope",
+            "All projects or the current project.",
+            scopes,
+            k,
+        ))
 }

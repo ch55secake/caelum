@@ -6,16 +6,19 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
     let mut rt = design_runtime("sidebar-projects", (800.0, 620.0));
     fill(&mut rt, "live-draft-0", "Retain this project draft café");
     let project = crate::code_view::source_key("/projects/rune", "project");
+    click(&mut rt, "project-picker-trigger");
     click(&mut rt, &project);
+    click(&mut rt, "project-picker-trigger");
     click(
         &mut rt,
         &crate::code_view::source_key("/projects/caelum", "project"),
     );
     let close = crate::code_view::source_key("/projects/rune", "close-project");
+    click(&mut rt, "project-picker-trigger");
     click(&mut rt, &close);
     assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
     let first = crate::code_view::source_key("/projects/caelum", "project");
-    click(&mut rt, &first);
+    assert!(rt.accessibility_action(&first, rune::accesskit::Action::Focus, None));
     key(&mut rt, Key::Tab, Mods::default());
     key(&mut rt, Key::Right, Mods::default());
     advance(&mut rt, 0.2);
@@ -46,7 +49,6 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
         rt.state.live.as_ref().unwrap().drafts[0].text,
         "Retain this project draft café"
     );
-    click(&mut rt, "search-sessions");
     fill(&mut rt, "session-search", "Refine");
     assert!(rt.find("live-session-0").is_none());
     rt.update(|s, _| {
@@ -74,6 +76,9 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
         "Retain this project draft café"
     );
     for path in ["/projects/website", "/projects/tools", "/projects/caelum"] {
+        if rt.find("project-picker").is_none() {
+            click(&mut rt, "project-picker-trigger");
+        }
         click(
             &mut rt,
             &crate::code_view::source_key(path, "close-project"),
@@ -81,7 +86,7 @@ fn closing_projects_by_keyboard_preserves_drafts_and_keeps_navigation_usable() {
         advance(&mut rt, 0.4);
     }
     assert!(rt.state.live.as_ref().unwrap().app.selected.is_none());
-    assert!(element(&rt, "open-project").focused);
+    assert!(element(&rt, "project-picker-trigger").focusable);
     assert!(rt.find("welcome-open").is_some());
     assert!(rt.find("message-composer").is_none());
 }

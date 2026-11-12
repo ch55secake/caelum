@@ -1,9 +1,12 @@
 use super::*;
 
 #[test]
-fn populated_sidebar_shares_space_and_scrolls_projects_and_pull_requests_independently() {
+fn compact_project_picker_leaves_room_for_sessions_and_pull_requests() {
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         let mut rt = design_runtime("sidebar-projects", size);
+        assert!(rt.find("projects-scroll").is_none());
+        assert!(element(&rt, "sidebar-scroll").visible[3] >= 140.0);
+        click(&mut rt, "project-picker-trigger");
         let projects = element(&rt, "projects-scroll");
         let requests = element(&rt, "requests-scroll");
         assert!(projects.visible[3] > 130.0, "{projects:?}");
@@ -12,7 +15,7 @@ fn populated_sidebar_shares_space_and_scrolls_projects_and_pull_requests_indepen
         assert!(requests.rect[1] + requests.rect[3] <= size.1);
         let owner = rt.state.live.as_ref().unwrap().app.selected;
         let first = crate::code_view::source_key("/projects/caelum", "project");
-        click(&mut rt, &first);
+        assert!(rt.accessibility_action(&first, rune::accesskit::Action::Focus, None));
         for _ in 0..3 {
             key(&mut rt, Key::Down, Mods::default());
         }
@@ -21,8 +24,9 @@ fn populated_sidebar_shares_space_and_scrolls_projects_and_pull_requests_indepen
             &rt,
             &crate::code_view::source_key("/projects/tools", "project"),
         );
-        assert!(last.focused && last.visible[3] >= 69.0, "{last:?}");
+        assert!(last.focused && last.visible[3] >= 45.0, "{last:?}");
         assert_eq!(rt.state.live.as_ref().unwrap().app.selected, owner);
+        key(&mut rt, Key::Escape, Mods::default());
         click(&mut rt, "pull-request-101");
         for _ in 0..5 {
             key(&mut rt, Key::Down, Mods::default());

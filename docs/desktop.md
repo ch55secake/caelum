@@ -2,14 +2,26 @@
 
 ## Projects and sessions
 
-Open a project with **⌘O**, the sidebar's **+**, or `caelum /path/to/project`.
-The sidebar gives Projects, Sessions and Pull requests independently scrollable
-space that adapts to their contents and window height. Use a project's **×** or
+Open a project with **⌘O**, the **+** in the sidebar's project picker, or
+`caelum /path/to/project`. The compact picker holds project and worktree navigation,
+creation and management. Use a project's **×** or
 right-click → **Close project** to close its checkout group. Sessions, drafts,
 attachments, queues and running work are retained; reopening the folder returns to
 the remembered session. Closing the final project returns to the welcome screen.
-Arrow keys navigate each section; Tab enters a project's actions and Left/Right
-moves between Create worktree and Close. **⌘K** searches sessions in open projects.
+Arrow keys navigate each list; Tab enters a project's actions and Left/Right
+moves between Create worktree and Close.
+
+The session feed shows all open projects by default, with project identity, session
+title, branch/worktree, provider, status and relative activity time. Change
+**Settings → Appearance → Sidebar → Session scope** to **Current project** to
+follow the selected project and its worktrees. This preference survives restarts.
+The project filter above the feed temporarily narrows its scope. **⌘K** focuses
+search, which matches titles, projects, providers, branches and worktrees within
+that scope; Escape clears it. Closed projects and archived sessions stay out of
+the active feed. Recent activity is saved, and streaming tokens or selecting a
+session do not change its recency. Pull requests below the feed follow the active
+project.
+
 **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that project's
 draft for the default provider chosen in Settings. Each session retains an
 independent draft and reading position. Hover a
@@ -170,14 +182,14 @@ in-flight refresh schedules another read. Linked-worktree Git metadata is watche
 Select lines and choose **Add selection** to attach them to the prompt. Files, local staged/unstaged/untracked
 changes and continuous PR review share the same native code/diff surfaces.
 
-Expand **Worktrees** beneath a project to see the worktrees created
+Open the project picker and expand **Worktrees** beneath a project to see the worktrees created
 through Caelum. The section is hidden when that project has no Caelum worktrees.
 Indented folder names and a connecting line show which project
 owns each worktree. Rows show the current worktree and working, queued or unread
 activity; hover for the branch and full path. Click the project card to return to
 its original folder, or a worktree to restore its session, draft and reading position.
 Arrow keys and Enter also navigate the list. Disclosure choices persist.
-Right-click a worktree in the sidebar, manager or new-session launcher and choose
+Right-click a worktree in the project picker, manager or new-session launcher and choose
 **Delete worktree** to remove it.
 Caelum remembers created worktrees across restarts and storage-directory changes,
 and recognises older worktrees in that project's Caelum storage folder.

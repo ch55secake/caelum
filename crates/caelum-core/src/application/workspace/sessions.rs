@@ -75,6 +75,7 @@ impl Workspace {
 
     pub fn new_session(&mut self, scope: Scope) -> usize {
         let mut session = Session::new(scope.clone());
+        session.record_activity(crate::application::presentation::now());
         session.options = self
             .preferences
             .providers

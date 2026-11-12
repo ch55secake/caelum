@@ -12,6 +12,8 @@ subprocess.run(["cargo", "build", "--locked", "-p", "caelum-desktop"], check=Tru
 binary = root / "target/debug/caelum-desktop"
 scenes = ("", "inspector", "compact", "settings", "providers", "provider-error", "notifications", "storage", "about", "models", "models-empty", "launcher", "session", "timeline", "timeline-empty", "usage", "usage-loading", "stats", "stats-empty", "stats-loading", "stats-error", "commands", "shells", "working", "thinking", "retrying", "stopping", "empty", "error", "review-loading", "review-error", "discussion", "tools", "review", "checks", "mentions", "images", "image-preview", "files", "files-loading", "changes-empty", "approval", "questions", "crowded", "worktrees", "worktrees-loading", "worktrees-error")
 interactions = {
+    "project-picker": ("sidebar-worktrees-projects", [{"t": 0.25, "key": "project-picker-trigger"}]),
+    "session-feed-filter": ("session-feed", [{"t": 0.25, "key": "session-project-filter-trigger"}]),
     "composer-focus": ("", [{"t": 0.25, "key": "live-draft-0"}]),
     "check-details": ("merge-ready", [{"t": 0.25, "key": "review-checks-toggle"}]),
     "worktree-base": ("worktree-create", [{"t": 0.25, "key": "worktree-base-trigger"}]),
@@ -50,6 +52,7 @@ interactions = {
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
+scenes += ("session-feed", "session-feed-current", "session-feed-empty", "session-feed-many")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")
 scenes += ("patch-short", "patch-long", "patch-multi", "vercel-patch-short", "vercel-patch-long", "vercel-patch-multi")
 scenes += ("about-checking", "about-current", "about-update", "about-release", "about-ahead", "about-error", "vercel-about", "vercel-about-update")

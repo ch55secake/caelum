@@ -23,6 +23,8 @@ pub struct Session {
     pub scope: Scope,
     pub remote_id: Option<String>,
     pub title: String,
+    /// Last meaningful activity in Unix milliseconds; selection and token deltas do not bump it.
+    pub last_activity: Option<u64>,
     pub conversation: Conversation,
     pub options: Options,
     pub loading: bool,
@@ -79,6 +81,7 @@ impl Session {
             scope,
             remote_id: None,
             title: "New session".into(),
+            last_activity: None,
             conversation: Conversation::default(),
             options: Options::default(),
             loading: false,
@@ -134,6 +137,10 @@ impl Session {
 
     pub fn working(&self) -> bool {
         self.submitting || self.conversation.working
+    }
+
+    fn record_activity(&mut self, at: u64) {
+        self.last_activity = Some(self.last_activity.unwrap_or_default().max(at));
     }
 
     pub fn attachment_error(&mut self, name: String, error: String) {
@@ -286,6 +293,12 @@ impl Workspace {
 }
 
 fn update_summary(session: &mut Session, summary: Summary) {
+    // A refresh during execution must not reorder rows on every streamed update.
+    if !session.working() || session.last_activity.is_none() || session.revision == 0 {
+        if let Some(at) = summary.updated_at {
+            session.record_activity(at);
+        }
+    }
     if !summary.title.trim().is_empty() {
         session.title = summary.title;
     }

@@ -5,6 +5,7 @@ fn managed_worktrees_keep_parent_groups_in_navigation_search_and_actions() {
     use caelum_core::application::{Command, Task};
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         let mut rt = design_runtime("sidebar-worktrees-projects", size);
+        click(&mut rt, "project-picker-trigger");
         for (parent, child) in [
             ("/projects/caelum", "/projects/caelum-native"),
             ("/projects/rune", "/worktrees/rune/key-navigation"),
@@ -172,10 +173,11 @@ fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
         let linked = "/projects/caelum-native";
         let main_key = crate::code_view::source_key(root, "project");
         let linked_key = crate::code_view::source_key(linked, "checkout");
+        fill(&mut rt, "live-draft-0", "Keep the main draft");
+        click(&mut rt, "project-picker-trigger");
         let linked_path = element(&rt, &linked_key).path;
         assert!(rt.elements().iter().any(|e| e.path.starts_with(&linked_path)
             && e.text.as_deref() == Some("1 working")));
-        fill(&mut rt, "live-draft-0", "Keep the main draft");
         click(&mut rt, &linked_key);
         let index = rt.state.live.as_ref().unwrap().app.selected.unwrap();
         assert_eq!(
@@ -192,12 +194,14 @@ fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
             rt.state.live.as_ref().unwrap().drafts[0].text,
             "Keep the main draft"
         );
+        click(&mut rt, "project-picker-trigger");
         click(&mut rt, &main_key);
         assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
         assert!(rt.state.live.as_ref().unwrap().app.sessions[index].working());
         assert!(!rt.state.live.as_ref().unwrap().app.sessions[index].stopping);
         assert!(element(&rt, "sidebar-scroll").visible[3] >= 80.0);
         let toggle = crate::code_view::source_key(root, "worktrees-toggle");
+        click(&mut rt, "project-picker-trigger");
         click(&mut rt, &toggle);
         assert!(rt.find(&linked_key).is_none());
         assert_eq!(
@@ -215,7 +219,7 @@ fn sidebar_worktrees_switch_exact_checkouts_and_keep_background_work() {
         advance(&mut rt, 0.3);
         assert!(rt.find(&linked_key).is_some());
         let next_key = crate::code_view::source_key("/projects/caelum-providers", "checkout");
-        click(&mut rt, &next_key);
+        assert!(rt.accessibility_action(&next_key, rune::accesskit::Action::Focus, None));
         key(&mut rt, Key::Up, Mods::default());
         advance(&mut rt, 0.2);
         assert!(element(&rt, &linked_key).focused);
@@ -233,9 +237,15 @@ fn selecting_a_session_keeps_its_worktree_group_collapsed_by_default() {
     let other_expanded_worktree =
         crate::code_view::source_key("/worktrees/rune/key-navigation", "checkout");
 
+    click(&mut rt, "project-picker-trigger");
     assert!(rt.find(&selected_worktree).is_some());
     assert!(rt.find(&other_expanded_worktree).is_some());
+    key(&mut rt, Key::Escape, Mods::default());
+    rt.update(|_, tx| tx.scroll_into_view("live-session-1"));
+    advance(&mut rt, 0.2);
+    assert!(element(&rt, "live-session-1").visible[3] >= 80.0);
     click(&mut rt, "live-session-1");
+    click(&mut rt, "project-picker-trigger");
 
     assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(1));
     assert_eq!(
@@ -254,10 +264,14 @@ fn selecting_a_worktree_session_does_not_reopen_its_collapsed_group() {
     let other_expanded_worktree =
         crate::code_view::source_key("/worktrees/rune/key-navigation", "checkout");
 
+    click(&mut rt, "project-picker-trigger");
     assert!(rt.find(&selected_worktree).is_some());
-    rt.update(|_, tx| tx.scroll_to_y("sidebar-scroll", 1000.0));
+    key(&mut rt, Key::Escape, Mods::default());
+    rt.update(|_, tx| tx.scroll_into_view("live-session-3"));
     advance(&mut rt, 0.2);
+    assert!(element(&rt, "live-session-3").visible[3] >= 80.0);
     click(&mut rt, "live-session-3");
+    click(&mut rt, "project-picker-trigger");
 
     let live = rt.state.live.as_ref().unwrap();
     assert_eq!(live.app.selected, Some(3));
@@ -278,12 +292,14 @@ fn worktree_management_keeps_its_project_and_missing_rows_cannot_navigate() {
     let mut rt = design_runtime("sidebar-worktrees-many", (800.0, 620.0));
     let root = "/projects/caelum";
     let missing = crate::code_view::source_key("/projects/caelum-task-11", "checkout");
+    click(&mut rt, "project-picker-trigger");
     assert!(!element(&rt, &missing).focusable);
     let last = crate::code_view::source_key("/projects/caelum-task-10", "checkout");
-    click(
-        &mut rt,
+    assert!(rt.accessibility_action(
         &crate::code_view::source_key("/projects/caelum-native", "checkout"),
-    );
+        rune::accesskit::Action::Focus,
+        None
+    ));
     let selected = rt.state.live.as_ref().unwrap().app.selected;
     for _ in 0..12 {
         key(&mut rt, Key::Down, Mods::default());
@@ -354,6 +370,7 @@ fn worktree_discovery_loads_background_projects_once_and_refreshes_without_navig
     });
     assert_eq!(rt.state.live.as_ref().unwrap().app.selected, Some(0));
     let mut rt = design_runtime("sidebar-worktrees", (1280.0, 1000.0));
+    click(&mut rt, "project-picker-trigger");
     click(
         &mut rt,
         &crate::code_view::source_key("/projects/caelum", "refresh-worktrees"),

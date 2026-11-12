@@ -11,6 +11,7 @@ mod models;
 mod navigation;
 mod questions;
 mod review;
+mod session_feed;
 mod sessions;
 mod settings;
 mod smoke;
@@ -143,9 +144,15 @@ fn live_runtime_size(size: (f32, f32)) -> Runtime<Workspace> {
 }
 
 fn close_session(rt: &mut Runtime<Workspace>, index: usize) {
-    let [x, y, width, height] = element(rt, &format!("live-session-{index}")).rect;
-    // The hover close control is the trailing 20-point slot of this row.
-    let (x, y) = (x + width - 18.0, y + height / 2.0);
+    advance(rt, 0.05);
+    let owner = element(rt, &format!("live-session-{index}")).path;
+    let close = rt
+        .elements()
+        .into_iter()
+        .find(|e| !e.exiting && e.key.as_deref() == Some("close") && e.path.starts_with(&owner))
+        .unwrap();
+    let [x, y, width, height] = close.rect;
+    let (x, y) = (x + width / 2.0, y + height / 2.0);
     rt.pointer_move(x, y);
     rt.frame(1.0 / 60.0);
     rt.pointer_down(x, y);
