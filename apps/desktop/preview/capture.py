@@ -22,6 +22,8 @@ interactions = {
     "worktree-base": ("worktree-create", [{"t": 0.25, "key": "worktree-base-trigger"}]),
     "user-copy": ("messages", [{"t": 0.25, "type": "move", "key": "copy-user-0-opencode-formatted"}]),
     "merge-method": ("checks", [{"t": 0.25, "key": "merge-method-trigger"}]),
+    "auto-merge-enabling": ("merge-blocked", [{"t": 0.25, "key": "set-auto-merge"}]),
+    "auto-merge-disabling": ("merge-auto-enabled", [{"t": 0.25, "key": "set-auto-merge"}]),
     "overview-long-checks": ("overview-long", [{"t": 0.25, "key": "review-checks-toggle"}]),
     "overview-inspector": ("overview", [{"t": 0.25, "key": "inspector-toggle"}]),
     "provider-dropdown": ("providers", [{"t": 0.25, "key": "Default effort-trigger"}]),
@@ -58,6 +60,7 @@ interactions = {
 }
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked", "overview-long", "overview-stale")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
+scenes += ("merge-auto-enabled", "merge-auto-error")
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 scenes += ("session-feed", "session-feed-current", "session-feed-empty", "session-feed-many", "session-feed-colours")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")

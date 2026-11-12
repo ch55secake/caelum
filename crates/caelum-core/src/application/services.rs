@@ -112,6 +112,13 @@ pub enum Task {
         head: String,
         method: GitHubMergeMethod,
     },
+    SetAutoMerge {
+        project: String,
+        url: String,
+        head: String,
+        /// `Some(method)` enables auto-merge; `None` disables it.
+        method: Option<GitHubMergeMethod>,
+    },
     UpdateBranch {
         project: String,
         url: String,
@@ -140,13 +147,17 @@ pub enum TaskReply {
     Details(GitHubPullRequestDetails),
     ReviewFiles(GitHubPullRequestFiles),
     Feedback(GitHubPullRequestFeedback),
+    AutoMerge(GitHubAutoMergeResult),
     Preferences(Preferences),
     Done,
 }
 
 impl Task {
     fn mutates_review(&self) -> bool {
-        matches!(self, Self::Merge { .. } | Self::UpdateBranch { .. })
+        matches!(
+            self,
+            Self::Merge { .. } | Self::SetAutoMerge { .. } | Self::UpdateBranch { .. }
+        )
     }
     pub fn project(&self) -> &str {
         match self {
@@ -172,6 +183,7 @@ impl Task {
             | Self::ReviewFiles { project, .. }
             | Self::Feedback { project, .. }
             | Self::Merge { project, .. }
+            | Self::SetAutoMerge { project, .. }
             | Self::UpdateBranch { project, .. } => project,
             Self::ImportSettings { .. } | Self::Updates => "",
         }
@@ -182,6 +194,7 @@ impl Task {
             Self::ReviewFiles { url, head, .. }
             | Self::Feedback { url, head, .. }
             | Self::Merge { url, head, .. }
+            | Self::SetAutoMerge { url, head, .. }
             | Self::UpdateBranch { url, head, .. } => Some((url, Some(head))),
             _ => None,
         }
@@ -215,7 +228,9 @@ impl Task {
             Self::Feedback {
                 url, kind, thread, ..
             } => format!("feedback:{url}:{kind:?}:{thread:?}"),
-            Self::Merge { url, .. } | Self::UpdateBranch { url, .. } => format!("mutation:{url}"),
+            Self::Merge { url, .. }
+            | Self::SetAutoMerge { url, .. }
+            | Self::UpdateBranch { url, .. } => format!("mutation:{url}"),
             Self::ImportSettings { .. } => "settings".into(),
         };
         serde_json::json!([self.project(), part]).to_string()
@@ -405,6 +420,15 @@ impl Task {
             } => github::merge_pull_request(project, url, *method, head)
                 .map(|()| TaskReply::Done)
                 .map_err(|e| e.to_string()),
+            Self::SetAutoMerge {
+                project,
+                url,
+                head,
+                method,
+            } => reply!(
+                github::set_pull_request_auto_merge(project, url, head, *method),
+                AutoMerge
+            ),
             Self::UpdateBranch { project, url, head } => {
                 github::update_pull_request_branch(project, url, head)
                     .map(|()| TaskReply::Done)
@@ -597,6 +621,13 @@ impl Services {
     }
     pub(super) fn start(&mut self, task: &Task, id: u64) {
         self.errors.remove(&task.slot());
+        if let Task::SetAutoMerge { project, url, .. } = task {
+            self.invalidate_details(project, url);
+            self.reviews
+                .entry((project.clone(), url.clone()))
+                .or_default()
+                .notice = None;
+        }
         if let Task::Stats { filter, .. } = task {
             let checkout = self.checkouts.entry(task.project().into()).or_default();
             let key = serde_json::to_string(filter).unwrap_or_default();
@@ -618,5 +649,15 @@ impl Services {
             self.generations.insert(id, review.generation);
             self.review_owners.insert(task.slot(), key);
         }
+    }
+
+    fn invalidate_details(&mut self, project: &str, url: &str) {
+        let slot = Task::Details {
+            project: project.into(),
+            url: url.into(),
+        }
+        .slot();
+        self.latest.remove(&slot);
+        self.loading.remove(&slot);
     }
 }

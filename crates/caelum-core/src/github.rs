@@ -14,7 +14,9 @@ use thiserror::Error;
 
 use crate::projects::{Project, ProjectError};
 
+mod auto_merge;
 mod review;
+pub use auto_merge::set_pull_request_auto_merge;
 pub use review::{pull_request_feedback, pull_request_files};
 
 /// Uses gh's existing authentication and repository/remote selection. Network
@@ -49,7 +51,7 @@ fn query_details(
     pull_request_url(url)?;
     let project = Project::open(project_path)?;
     let mut command = github_command(executable, project.path());
-    command.args(["pr", "view", url, "--json", "number,title,url,isDraft,body,state,author,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,additions,deletions,changedFiles,reviewDecision,statusCheckRollup"]);
+    command.args(["pr", "view", url, "--json", "number,title,url,isDraft,body,state,author,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,autoMergeRequest"]);
     let output = checked_output(command, timeout)?;
     let details: GitHubPullRequestDetails = serde_json::from_slice(&output.stdout)?;
     if details.pull_request.url != url {

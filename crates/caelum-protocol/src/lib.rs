@@ -124,6 +124,7 @@ pub struct GitHubPullRequestDetails {
     pub changed_files: u64,
     pub review_decision: Option<String>,
     pub status_check_rollup: Option<Vec<GitHubStatusCheck>>,
+    pub auto_merge_request: Option<GitHubAutoMergeRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,9 +223,27 @@ pub enum GitHubStatusCheck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GitHubMergeMethod {
+    #[serde(alias = "MERGE")]
     Merge,
+    #[serde(alias = "SQUASH")]
     Squash,
+    #[serde(alias = "REBASE")]
     Rebase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAutoMergeRequest {
+    pub merge_method: GitHubMergeMethod,
+}
+
+/// Confirmed remote state after changing a pull request's auto-merge setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAutoMergeResult {
+    pub head_ref_oid: String,
+    pub state: String,
+    pub auto_merge_request: Option<GitHubAutoMergeRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

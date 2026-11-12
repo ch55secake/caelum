@@ -316,6 +316,40 @@ impl Services {
                     }
                 }
             }
+            (Task::SetAutoMerge { project, url, .. }, TaskReply::AutoMerge(result)) => {
+                // Refreshes started before or during the mutation cannot restore
+                // the previous setting after GitHub has confirmed the change.
+                self.invalidate_details(project, url);
+                if result.state == "MERGED" {
+                    merged_url = Some(url.clone());
+                }
+                let review = self
+                    .reviews
+                    .entry((project.clone(), url.clone()))
+                    .or_default();
+                review.notice = Some(
+                    if result.state == "MERGED" {
+                        "Pull request merged."
+                    } else if result.auto_merge_request.is_some() {
+                        "Auto-merge enabled. GitHub will merge when requirements are met."
+                    } else {
+                        "Auto-merge disabled."
+                    }
+                    .into(),
+                );
+                if let Some(details) = review
+                    .details
+                    .as_mut()
+                    .filter(|details| details.head_ref_oid == result.head_ref_oid)
+                {
+                    details.state = result.state;
+                    details.auto_merge_request = result.auto_merge_request;
+                }
+                next.push(Task::Details {
+                    project: project.clone(),
+                    url: url.clone(),
+                });
+            }
             (
                 Task::Merge { project, url, .. } | Task::UpdateBranch { project, url, .. },
                 TaskReply::Done,
