@@ -2,14 +2,32 @@
 
 ## Projects and sessions
 
-Open a project with **⌘O**, the sidebar's **+**, or `caelum /path/to/project`.
-The sidebar gives Projects, Sessions and Pull requests independently scrollable
-space that adapts to their contents and window height. Use a project's **×** or
+Open a project with **⌘O**, the **+** beside **Projects**, or
+`caelum /path/to/project`. The sidebar keeps separate, independently scrollable
+**Projects** and **Sessions** sections. Compact project rows hold project and
+worktree navigation, creation and management. Use a project's **×** or
 right-click → **Close project** to close its checkout group. Sessions, drafts,
 attachments, queues and running work are retained; reopening the folder returns to
 the remembered session. Closing the final project returns to the welcome screen.
-Arrow keys navigate each section; Tab enters a project's actions and Left/Right
-moves between Create worktree and Close. **⌘K** searches sessions in open projects.
+Arrow keys navigate each list; Tab enters a project's actions and Left/Right
+moves between Create worktree and Close.
+Project and session rows share initial badges. Colours are assigned from a varied
+palette, avoiding colours already used by open projects and keeping each project's
+colour stable while it stays open.
+
+The session feed shows all open projects by default, with project identity, session
+title, branch/worktree, provider, status and relative activity time. Change
+**Settings → Appearance → Sidebar → Session scope** to **Current project** to
+follow the selected project and its worktrees. This preference survives restarts.
+The project filter above the feed temporarily narrows its scope. **⌘K** focuses
+search, which matches titles, projects, providers, branches and worktrees within
+that scope; Escape clears it. Closed projects and archived sessions stay out of
+the active feed. Recent activity is saved, and streaming tokens or selecting a
+session do not change its recency. Pull requests below the feed follow the same
+project scope, including **All projects**, and refresh when the project filter
+changes. Switching projects or sessions refreshes that project's scoped PRs too.
+Search text filters sessions only.
+
 **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that project's
 draft for the default provider chosen in Settings. Each session retains an
 independent draft and reading position. Hover a
@@ -19,9 +37,10 @@ keyboard-focused or restoring. Undo preserves newer navigation. Session actions 
 custom context menus also offer archive/reconnect. Hover any session row for its
 **…** popover; actions belong to that row, including background sessions. Escape
 returns focus to its button. Use the archive icon beside
-**Sessions** to switch between active and archived sessions. **New session** uses
-the default provider chosen in Settings → Providers. **Refresh sessions** reloads
-active session history and model, effort and agent catalogues across all open
+**Sessions** to switch between active and archived sessions. The **+** beside
+**Sessions**, just before the archive icon, starts a session with the default
+provider chosen in Settings → Providers. **Refresh sessions** reloads active
+session history and model, effort and agent catalogues across all open
 projects and their worktrees, including catalogues for drafts and busy sessions.
 
 Right-click projects, sessions, messages, files, tabs and pull requests for themed

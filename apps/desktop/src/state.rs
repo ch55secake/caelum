@@ -206,6 +206,9 @@ impl Workspace {
 // Advance every session, including those currently hidden behind another selection.
 pub fn poll(s: &mut Workspace, now: f64, tx: &mut Tx) -> bool {
     if let Some(live) = &mut s.live {
+        if !s.sidebar.is_open() {
+            live.feed.hidden();
+        }
         let changed = live.poll(tx);
         return crate::context::sync(live, tx) || changed;
     }

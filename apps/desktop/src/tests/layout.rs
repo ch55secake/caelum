@@ -1,18 +1,20 @@
 use super::*;
 
 #[test]
-fn populated_sidebar_shares_space_and_scrolls_projects_and_pull_requests_independently() {
+fn separate_projects_and_sessions_scroll_independently_with_compact_rows() {
     for size in [(800.0, 620.0), (1280.0, 1000.0)] {
         let mut rt = design_runtime("sidebar-projects", size);
         let projects = element(&rt, "projects-scroll");
         let requests = element(&rt, "requests-scroll");
-        assert!(projects.visible[3] > 130.0, "{projects:?}");
+        let sessions = element(&rt, "sidebar-scroll");
+        assert!(projects.visible[3] >= 64.0, "{projects:?}");
         assert!(requests.visible[3] > 130.0, "{requests:?}");
-        assert!(element(&rt, "sidebar-scroll").visible[3] >= 100.0);
+        assert!(sessions.visible[3] >= 88.0, "{sessions:?}");
+        assert!(projects.rect[1] + projects.rect[3] < element(&rt, "sessions-heading").rect[1]);
         assert!(requests.rect[1] + requests.rect[3] <= size.1);
         let owner = rt.state.live.as_ref().unwrap().app.selected;
         let first = crate::code_view::source_key("/projects/caelum", "project");
-        click(&mut rt, &first);
+        assert!(rt.accessibility_action(&first, rune::accesskit::Action::Focus, None));
         for _ in 0..3 {
             key(&mut rt, Key::Down, Mods::default());
         }
@@ -21,15 +23,30 @@ fn populated_sidebar_shares_space_and_scrolls_projects_and_pull_requests_indepen
             &rt,
             &crate::code_view::source_key("/projects/tools", "project"),
         );
-        assert!(last.focused && last.visible[3] >= 69.0, "{last:?}");
+        assert!(last.focused && last.visible[3] >= 31.0, "{last:?}");
         assert_eq!(rt.state.live.as_ref().unwrap().app.selected, owner);
-        click(&mut rt, "pull-request-101");
+        assert_eq!(element(&rt, "sidebar-scroll").scrolled, sessions.scrolled);
+        let projects_offset = element(&rt, "projects-scroll").scrolled;
+        click(
+            &mut rt,
+            &crate::code_view::source_key(
+                "https://github.com/ch55secake/caelum/pull/101",
+                "pull-request",
+            ),
+        );
         for _ in 0..5 {
             key(&mut rt, Key::Down, Mods::default());
         }
         advance(&mut rt, 0.3);
-        let last = element(&rt, "pull-request-106");
+        let last = element(
+            &rt,
+            &crate::code_view::source_key(
+                "https://github.com/ch55secake/caelum/pull/106",
+                "pull-request",
+            ),
+        );
         assert!(last.focused && last.visible[3] >= 51.0, "{last:?}");
+        assert_eq!(element(&rt, "projects-scroll").scrolled, projects_offset);
         key(&mut rt, Key::Enter, Mods::default());
         advance(&mut rt, 0.2);
         assert_eq!(

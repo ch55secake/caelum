@@ -334,6 +334,7 @@ impl Workspace {
                                 session.loaded = saved.remote_id.is_none();
                                 session.remote_id = saved.remote_id;
                                 session.title = saved.title;
+                                session.last_activity = saved.last_activity;
                                 session.options = saved.options;
                                 session.options_dirty = true;
                                 session.draft = saved.draft;
