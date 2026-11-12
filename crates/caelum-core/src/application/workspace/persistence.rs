@@ -86,6 +86,7 @@ impl Workspace {
                     scope: s.scope.clone(),
                     remote_id: s.remote_id.clone(),
                     title: s.title.clone(),
+                    title_refresh_turns: s.title_state.turns,
                     options: s.options.clone(),
                     draft: s.draft.clone(),
                     attachments: s.attachments.clone(),

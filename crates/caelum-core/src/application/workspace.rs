@@ -9,6 +9,7 @@ mod queue;
 mod sessions;
 mod submission;
 mod tasks;
+mod titles;
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -23,6 +24,7 @@ pub struct Session {
     pub scope: Scope,
     pub remote_id: Option<String>,
     pub title: String,
+    title_state: titles::TitleState,
     /// Last meaningful activity in Unix milliseconds; selection and token deltas do not bump it.
     pub last_activity: Option<u64>,
     pub conversation: Conversation,
@@ -81,6 +83,7 @@ impl Session {
             scope,
             remote_id: None,
             title: "New session".into(),
+            title_state: Default::default(),
             last_activity: None,
             conversation: Conversation::default(),
             options: Options::default(),
@@ -190,6 +193,7 @@ enum Pending {
     RemoveQueued(usize, String),
     Control(usize, String),
     Generate(usize, String, u64),
+    RegenerateTitle(usize, SessionKey),
     Notify,
     Load,
     Save(Box<Snapshot>, Vec<(u64, Command)>),
@@ -292,14 +296,14 @@ impl Workspace {
     }
 }
 
-fn update_summary(session: &mut Session, summary: Summary) {
+fn update_summary(session: &mut Session, summary: Summary, request: u64) {
     // A refresh during execution must not reorder rows on every streamed update.
     if !session.working() || session.last_activity.is_none() || session.revision == 0 {
         if let Some(at) = summary.updated_at {
             session.record_activity(at);
         }
     }
-    if !summary.title.trim().is_empty() {
+    if request > session.title_state.barrier && !summary.title.trim().is_empty() {
         session.title = summary.title;
     }
     if summary.options.model.is_some() && !session.options_dirty {

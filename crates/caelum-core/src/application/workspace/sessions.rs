@@ -204,7 +204,7 @@ impl Workspace {
                 }
                 if session.revision == 0 {
                     session.conversation.working = summary.working;
-                    update_summary(session, summary);
+                    update_summary(session, summary, request);
                 }
             } else {
                 let mut session = Session::new(scope.clone());
@@ -212,7 +212,7 @@ impl Workspace {
                 session.loaded = false;
                 session.conversation.working = summary.working;
                 session.archived = archived;
-                update_summary(&mut session, summary);
+                update_summary(&mut session, summary, request);
                 self.sessions.push(session);
                 self.detail_queue.push(self.sessions.len() - 1);
             }

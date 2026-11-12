@@ -159,6 +159,8 @@ pub struct SavedSession {
     pub scope: Scope,
     pub remote_id: Option<String>,
     pub title: String,
+    #[serde(default)]
+    pub title_refresh_turns: u8,
     pub options: Options,
     pub draft: String,
     pub attachments: Vec<Attachment>,

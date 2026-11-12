@@ -2,6 +2,7 @@
 import json
 import base64
 import os
+import queue
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +12,7 @@ PROJECT = os.getcwd()
 PASSWORD = os.environ.get("OPENCODE_SERVER_PASSWORD") or "fake-secret"
 SESSION = {"id": "ses_fake", "title": "Fake session", "time": {"updated": 123}, "location": {"directory": PROJECT}, "model": {"providerID": "local", "id": "original"}, "agent": "build"}
 INBOX = {}
+TITLE_EVENTS = queue.Queue()
 FORMS = {name: {"id": name, "sessionID": "ses_fake", "title": "Questions", "fields": [
     {"key": "q0", "type": "multiselect", "title": "Targets", "custom": True, "options": [{"label": "macOS", "value": "macOS"}], "required": True}
 ]} for name in ["frm_live", "frm_saved", "frm_external", "frm_cancelled"]}
@@ -55,6 +57,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 while True:
                     time.sleep(0.05)
+                    while not TITLE_EVENTS.empty():
+                        event = TITLE_EVENTS.get_nowait()
+                        self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
                     marker = os.path.join(PROJECT, "external-form-resolution")
                     if os.path.exists(marker):
                         os.unlink(marker)
@@ -178,6 +183,18 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized(): return
         assert urlsplit(self.path).path == "/api/session/ses_fake"
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if "title" in body:
+            assert body == {"title": ""}
+            with open(os.path.join(PROJECT, "title-requests.jsonl"), "a") as requests:
+                requests.write(json.dumps({"path": self.path, "body": body}) + "\n")
+            if os.path.exists(os.path.join(PROJECT, "title-error")):
+                self.send_error(503)
+                return
+            SESSION["title"] = "Regenerated session"
+            TITLE_EVENTS.put({"id": "evt_rename", "type": "session.renamed", "data": {"sessionID": "ses_fake", "title": SESSION["title"]}})
+            self.send_response(204)
+            self.end_headers()
+            return
         assert set(body) == {"archived"} and isinstance(body["archived"], bool)
         if os.path.exists(os.path.join(PROJECT, "archive-error")):
             self.send_error(500)

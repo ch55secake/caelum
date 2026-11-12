@@ -126,6 +126,24 @@ impl OpenCodeProvider {
         })
     }
 
+    /// Ask OpenCode's title agent to rename a session using its conversation.
+    pub fn regenerate_title(
+        &self,
+        project_path: impl AsRef<Path>,
+        session_id: &str,
+    ) -> Result<(), OpenCodeError> {
+        let project = Project::open(project_path)?;
+        let server = self.server(&project)?;
+        self.session(&server, &project, session_id)?;
+        server.request_json(
+            Method::PATCH,
+            &format!("/api/session/{session_id}"),
+            &[],
+            Some(json!({ "title": "" })),
+        )?;
+        Ok(())
+    }
+
     pub fn session_history(
         &self,
         project_path: impl AsRef<Path>,
