@@ -119,6 +119,7 @@ impl Workspace {
     }
 
     pub fn select(&mut self, index: usize) {
+        self.notifications.cancel();
         if index >= self.sessions.len() || self.sessions[index].forgotten {
             return;
         }

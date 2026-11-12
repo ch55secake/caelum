@@ -560,7 +560,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "caelum-cli"
-version = "0.1.53"
+version = "0.1.55"
 dependencies = [
  "caelum-core",
  "caelum-protocol",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "caelum-core"
-version = "0.1.53"
+version = "0.1.55"
 dependencies = [
  "base64 0.23.1",
  "caelum-protocol",
@@ -587,10 +587,14 @@ dependencies = [
 
 [[package]]
 name = "caelum-desktop"
-version = "0.1.53"
+version = "0.1.55"
 dependencies = [
+ "block2 0.6.2",
  "caelum-core",
  "caelum-protocol",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "objc2-user-notifications 0.3.2",
  "rune",
  "rune-kit",
  "serde",
@@ -599,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "caelum-protocol"
-version = "0.1.53"
+version = "0.1.55"
 dependencies = [
  "serde",
  "serde_json",
@@ -2435,7 +2439,7 @@ dependencies = [
  "objc2-quartz-core 0.2.2",
  "objc2-symbols",
  "objc2-uniform-type-identifiers",
- "objc2-user-notifications",
+ "objc2-user-notifications 0.2.2",
 ]
 
 [[package]]
@@ -2460,6 +2464,18 @@ dependencies = [
  "objc2 0.5.3",
  "objc2-core-location",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "objc2-user-notifications"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]

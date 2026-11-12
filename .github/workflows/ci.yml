@@ -121,6 +121,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked -p caelum-desktop --all-targets -- -D warnings
       - run: cargo test --locked -p caelum-desktop -- --test-threads=4
+      - run: python3 scripts/dev/macos_app.py --build-only
       - run: python3 apps/desktop/preview/capture.py
         if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.preview == 'true' }}
       - uses: actions/upload-artifact@v7
@@ -162,4 +163,5 @@ jobs:
           ref: ${{ inputs.revision || github.sha }}
       - run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
       - run: python3 -m unittest discover -s scripts/profile -p 'test_*.py'
+      - run: python3 -m unittest discover -s scripts/dev -p 'test_*.py'
       - run: bash -n scripts/release/package_macos_assets.sh scripts/release/package_macos_app.sh scripts/release/macos_libraries.sh

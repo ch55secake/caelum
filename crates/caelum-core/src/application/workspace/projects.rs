@@ -3,12 +3,14 @@ use crate::application::{Command, Provider, Scope, Task};
 
 impl Workspace {
     pub fn open_project(&mut self, path: String) {
+        self.notifications.cancel();
         self.opening = true;
         self.error = None;
         self.latest_open = self.request(Command::Open(path), Pending::Open(None, self.navigation));
     }
 
     pub fn launch_project(&mut self, path: String, provider: Provider) {
+        self.notifications.cancel();
         self.opening = true;
         self.error = None;
         self.latest_open = self.request(

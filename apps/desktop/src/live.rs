@@ -29,6 +29,7 @@ pub struct Live {
     pub composer: crate::composer::State,
     pub commands: crate::commands::State,
     pub models: crate::models::Picker,
+    pub notifications: crate::notifications::State,
     pub media: crate::media::State,
     pub app: Application,
     pub drafts: Vec<TextEdit>,
@@ -90,6 +91,7 @@ impl Live {
             composer: Default::default(),
             commands: Default::default(),
             models: Default::default(),
+            notifications: Default::default(),
             media: Default::default(),
             app,
             drafts: Vec::new(),
@@ -431,6 +433,7 @@ impl Live {
             }
         }
         if self.runtime.is_some() {
+            changed |= crate::notifications::dispatch(self);
             changed |= self.checkouts.sync(&mut self.app);
             self.runtime
                 .as_mut()
@@ -487,6 +490,13 @@ impl Live {
                 self.review_refresh = None;
             }
             for (id, command) in self.app.commands() {
+                if let caelum_core::application::Command::Notify(notification) = command {
+                    if let Err(error) = self.notifications.send(id, notification) {
+                        eprintln!("Notification: {error}");
+                        self.apply(Event::Completed(id, Err(error)));
+                    }
+                    continue;
+                }
                 if let Err(error) = self.runtime.as_mut().unwrap().submit(id, command) {
                     self.apply(Event::Completed(id, Err(error)));
                     changed = true;

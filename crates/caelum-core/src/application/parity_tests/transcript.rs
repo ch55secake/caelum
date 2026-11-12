@@ -60,3 +60,48 @@ fn reminder_fragments_never_enter_presented_rows_or_copied_text() {
         .filter(|e| e.kind == EntryKind::Status)
         .all(|e| !presentation::entry_visible(e)));
 }
+
+#[test]
+fn image_prompt_history_adopts_the_optimistic_user_message_once() {
+    let image = Attachment::image("screenshot.png".into(), b"\x89PNG\r\n\x1a\n").unwrap();
+    for provider in [Provider::Codex, Provider::OpenCode] {
+        let prompt =
+            super::super::composer::with_context("Describe this", std::slice::from_ref(&image));
+        let mut conversation = Conversation::default();
+        conversation.optimistic("local-prompt".into(), prompt);
+        let message = match provider {
+            Provider::Codex => json!({
+                "status":"completed",
+                "items":[{"id":"user-message", "type":"userMessage", "content":[
+                    {"type":"text", "text":"Describe this"},
+                    {"type":"image", "url":image.content.clone(), "name":image.path.clone()}
+                ]}]
+            }),
+            Provider::OpenCode => json!({
+                "id":"user-message", "type":"user", "text":"Describe this",
+                "files":[{"mime":"image/png", "uri":image.content.clone(), "name":image.path.clone()}]
+            }),
+        };
+        match provider {
+            Provider::Codex => conversation.apply(
+                provider,
+                "item/started",
+                &json!({"item":message["items"][0].clone()}),
+            ),
+            Provider::OpenCode => conversation.apply(
+                provider,
+                "session.message.updated",
+                &json!({"message":message.clone()}),
+            ),
+        }
+        assert_eq!(conversation.entries.len(), 1, "live event {provider:?}");
+        conversation.history(provider, &[message], false);
+
+        assert_eq!(conversation.entries.len(), 1, "{provider:?}");
+        let entry = &conversation.entries[0];
+        assert_eq!(entry.kind, EntryKind::User);
+        assert_eq!(presentation::entry_text(entry), "Describe this");
+        assert_eq!(entry.media.len(), 1, "{provider:?}");
+        assert_eq!(entry.media[0].source, image.content);
+    }
+}

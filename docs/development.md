@@ -28,5 +28,11 @@ or `--evaluation-workload` for the long-history/concurrent-stream fixture. Use
 `CAELUM_STATE=/absolute/path/to/isolated/workspace.json` for live development with
 separate saved data. Close the window to keep sessions running; quit with ⌘Q.
 
+On macOS, `make dev` runs a signed debug `Caelum Dev.app` with a checkout-specific
+bundle identity, so native notifications belong to the running development app.
+The release app keeps its separate notification permissions and URL registration.
+Use `python3 scripts/dev/macos_app.py --build-only` to prepare the debug bundle,
+or pass application arguments after `--` to build and run it directly.
+
 See [contributing](contributing.md), [architecture](architecture.md),
 [performance](performance/README.md) and [releasing](releasing.md).

@@ -6,6 +6,7 @@ mod composer;
 mod conversation;
 pub mod forms;
 mod inbox;
+mod notifications;
 mod persistence;
 pub mod presentation;
 mod runtime;
@@ -18,6 +19,7 @@ pub use composer::{
 };
 pub use conversation::{Conversation, Entry, EntryKind};
 pub use inbox::{Inbox, InboxPrompt};
+pub use notifications::Notification;
 pub use persistence::{Preferences, SavedSession, Snapshot, Store, StoreLock};
 pub use runtime::{Command, Event, ProviderRuntime, Reply, Runtime};
 pub use services::{Checkout, Review, Services, Task, TaskReply};

@@ -14,7 +14,7 @@ help:
 	  '  make previews          Capture native reference screens' \
 	  '  make check             Structure, format, lint and test'
 dev:
-	cargo run --locked -p caelum-desktop -- --project "$(PROJECT)"
+	python3 scripts/dev/macos_app.py -- --project "$(PROJECT)"
 app:
 	bash scripts/release/package_macos_app.sh
 build: app cli
@@ -33,6 +33,7 @@ test:
 	cargo test --locked $(PACKAGES) -- --test-threads=4
 	python3 -m unittest discover -s scripts/release -p 'test_*.py'
 	python3 -m unittest discover -s scripts/profile -p 'test_*.py'
+	python3 -m unittest discover -s scripts/dev -p 'test_*.py'
 check: structure format lint test
 previews:
 	python3 apps/desktop/preview/capture.py
