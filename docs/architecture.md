@@ -40,6 +40,12 @@ OpenCode uses its verified local registered service or an owned loopback server.
 Only owned processes are terminated on shutdown. See [Codex](codex.md),
 [OpenCode](opencode.md) and [security boundaries](security.md).
 
+Provider roots own connection/server lifetimes. `codex/` separates session
+operations, inbound approval/question requests and JSONL transport; `opencode/`
+separates sessions, events, permissions, questions, server startup and transport
+alongside its shell, statistics and generation capabilities. Provider tests live
+alongside these modules, with embedded fake servers in `tests/fixtures/`.
+
 ## Desktop modules
 
 - `main.rs`: entry point, shell, keyboard routing and offline render modes.

@@ -1,2 +1,1 @@
 # kind path ceiling; existing violations only, ceilings may only decrease.
-tests crates/caelum-core/src/opencode.rs 1532
