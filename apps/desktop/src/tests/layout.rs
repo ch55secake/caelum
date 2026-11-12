@@ -27,12 +27,24 @@ fn separate_projects_and_sessions_scroll_independently_with_compact_rows() {
         assert_eq!(rt.state.live.as_ref().unwrap().app.selected, owner);
         assert_eq!(element(&rt, "sidebar-scroll").scrolled, sessions.scrolled);
         let projects_offset = element(&rt, "projects-scroll").scrolled;
-        click(&mut rt, "pull-request-101");
+        click(
+            &mut rt,
+            &crate::code_view::source_key(
+                "https://github.com/ch55secake/caelum/pull/101",
+                "pull-request",
+            ),
+        );
         for _ in 0..5 {
             key(&mut rt, Key::Down, Mods::default());
         }
         advance(&mut rt, 0.3);
-        let last = element(&rt, "pull-request-106");
+        let last = element(
+            &rt,
+            &crate::code_view::source_key(
+                "https://github.com/ch55secake/caelum/pull/106",
+                "pull-request",
+            ),
+        );
         assert!(last.focused && last.visible[3] >= 51.0, "{last:?}");
         assert_eq!(element(&rt, "projects-scroll").scrolled, projects_offset);
         key(&mut rt, Key::Enter, Mods::default());

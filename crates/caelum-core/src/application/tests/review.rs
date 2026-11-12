@@ -196,3 +196,62 @@ fn same_head_refresh_rejects_old_pages_without_unlocking_an_active_mutation() {
     assert!(!app.services.busy(&mutation));
     assert!(app.services.reviews[&key].notice.is_some());
 }
+
+#[test]
+fn discovery_refresh_replaces_and_removes_only_its_branch_and_preserves_cache_on_failure() {
+    let mut app = Workspace::default();
+    let pr = caelum_protocol::GitHubPullRequest {
+        number: 42,
+        title: "Initial title".into(),
+        url: "https://github.com/example/alpha/pull/42".into(),
+        is_draft: false,
+        base_ref_name: String::new(),
+    };
+    let other = caelum_protocol::GitHubPullRequest {
+        url: "https://github.com/example/beta/pull/42".into(),
+        ..pr.clone()
+    };
+    discover_pull_request(&mut app, "/alpha", "feature", &pr);
+    discover_pull_request(&mut app, "/beta", "feature", &other);
+    let updated = caelum_protocol::GitHubPullRequest {
+        title: "Updated title".into(),
+        ..pr.clone()
+    };
+    discover_pull_request(&mut app, "/alpha", "feature", &updated);
+    assert_eq!(
+        app.services.checkouts["/alpha"].pull_requests.as_slice(),
+        std::slice::from_ref(&updated)
+    );
+
+    for reply in [
+        Err("Temporary network failure".into()),
+        Ok(Reply::Task(TaskReply::Discovered(None))),
+    ] {
+        app.task(Task::Discover {
+            project: "/alpha".into(),
+            branch: "feature".into(),
+        });
+        let request = app.commands().pop().unwrap().0;
+        let failed = reply.is_err();
+        app.apply(Event::Completed(request, reply));
+        assert_eq!(
+            app.services.checkouts["/alpha"].pull_requests.len(),
+            usize::from(failed)
+        );
+        assert_eq!(
+            app.services.checkouts["/beta"].pull_requests.as_slice(),
+            std::slice::from_ref(&other)
+        );
+    }
+    discover_pull_request(&mut app, "/alpha", "feature", &pr);
+    let replacement = caelum_protocol::GitHubPullRequest {
+        number: 43,
+        url: "https://github.com/example/alpha/pull/43".into(),
+        ..updated
+    };
+    discover_pull_request(&mut app, "/alpha", "feature", &replacement);
+    assert_eq!(
+        app.services.checkouts["/alpha"].pull_requests,
+        [replacement]
+    );
+}

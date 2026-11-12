@@ -325,7 +325,7 @@ impl Live {
             || self.panels.overlay.is_some();
         let mut changed = self.media.poll();
         changed |= self.feed.poll(
-            &self.app,
+            &mut self.app,
             &self.panels.sessions.text,
             self.panels.archived,
             tx,

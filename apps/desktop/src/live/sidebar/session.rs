@@ -120,25 +120,7 @@ pub(super) fn view(s: &Workspace, k: &Kit, index: usize, position: usize, count:
                         .w_full()
                         .gap(5.0)
                         .center_y()
-                        .child(
-                            row()
-                                .size(16.0, 16.0)
-                                .center()
-                                .radius(4.0)
-                                .fill(k.c.layer_03)
-                                .child(
-                                    text(
-                                        project
-                                            .chars()
-                                            .next()
-                                            .unwrap_or('·')
-                                            .to_uppercase()
-                                            .to_string(),
-                                    )
-                                    .font(rune::TextStyle::new(10.0, 600.0))
-                                    .color(k.c.text_muted),
-                                ),
-                        )
+                        .child(super::badge::view(app, &session.scope.project, k))
                         .child(
                             text(project)
                                 .font(k.ty.small)

@@ -207,3 +207,89 @@ fn discovery_retains_provider_recency_and_external_opencode_turns_bump_only_at_b
     app.apply(event("session.execution.succeeded", at + 240_000, ""));
     assert_eq!(app.sessions[index].last_activity, Some(at + 180_000));
 }
+
+#[test]
+fn pull_request_refreshes_include_linked_checkouts_coalesce_and_keep_late_results_scoped() {
+    let mut app = workspace();
+    for path in ["/alpha", "/beta", "/linked"] {
+        app.services.checkouts.entry(path.into()).or_default().git =
+            Some(caelum_protocol::GitRepositoryStatus {
+                project_path: path.into(),
+                repository_root: Some(path.into()),
+                branch: Some("feature".into()),
+                changes: vec![],
+            });
+    }
+    app.sessions[0].draft = "Keep my draft".into();
+    app.sessions[0].reading = 240.0;
+    app.preferences.session_scope = SessionScope::CurrentProject;
+    app.refresh_feed_pull_requests(None);
+    let first = app.commands();
+    assert_eq!(first.len(), 4);
+    assert!(first.iter().all(|(_, command)| matches!(command, Command::Task(task) if ["/alpha", "/linked"].contains(&task.project()))));
+    app.refresh_feed_pull_requests(None);
+    assert!(
+        app.commands().is_empty(),
+        "in-flight refreshes should coalesce"
+    );
+
+    app.select(1);
+    app.refresh_feed_pull_requests(None);
+    let second = app.commands();
+    assert_eq!(second.len(), 2);
+    assert!(second
+        .iter()
+        .all(|(_, command)| matches!(command, Command::Task(task) if task.project() == "/beta")));
+    for (request, command) in second.into_iter().chain(first) {
+        let reply = match command {
+            Command::Task(Task::Git { project }) => TaskReply::Git(
+                app.services.checkouts[&project].git.clone().unwrap(),
+                vec![],
+            ),
+            Command::Task(Task::Discover { project, branch }) => {
+                assert_eq!(branch, "feature");
+                TaskReply::Discovered(Some(caelum_protocol::GitHubPullRequest {
+                    number: 42,
+                    title: project.clone(),
+                    url: format!("https://github.com/example{project}/pull/42"),
+                    is_draft: false,
+                    base_ref_name: String::new(),
+                }))
+            }
+            _ => panic!("unexpected refresh command"),
+        };
+        app.apply(Event::Completed(request, Ok(Reply::Task(reply))));
+    }
+    assert_eq!(app.selected, Some(1));
+    assert_eq!(app.active_project.as_deref(), Some("/beta"));
+    assert_eq!(app.sessions[0].draft, "Keep my draft");
+    assert_eq!(app.sessions[0].reading, 240.0);
+    assert_eq!(
+        app.services.checkouts["/alpha"].pull_requests[0].title,
+        "/alpha"
+    );
+    assert_eq!(
+        app.services.checkouts["/beta"].pull_requests[0].title,
+        "/beta"
+    );
+    assert!(!app.feed_includes_project("/alpha", None));
+    assert!(app.feed_includes_project("/linked", Some("/alpha")));
+    assert!(
+        app.commands().is_empty(),
+        "unchanged Git branches do not discover by themselves"
+    );
+
+    app.preferences.session_scope = SessionScope::AllProjects;
+    app.close_project("/beta");
+    app.refresh_feed_pull_requests(None);
+    let refreshed = app.commands();
+    assert_eq!(
+        refreshed.len(),
+        4,
+        "refresh must explicitly re-query unchanged branches"
+    );
+    assert!(refreshed
+        .iter()
+        .all(|(_, command)| matches!(command, Command::Task(task) if task.project() != "/beta")));
+    assert!(!app.feed_includes_project("/beta", None));
+}

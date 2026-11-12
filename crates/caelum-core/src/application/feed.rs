@@ -1,5 +1,5 @@
 //! Session discovery order is independent of navigation and streamed token arrival.
-use super::{Session, Workspace};
+use super::{Session, Task, Workspace};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,17 +27,67 @@ impl Workspace {
         }
     }
 
-    /// Return stable local identities, including linked checkouts of each project.
-    /// A temporary project filter overrides the saved scope without changing it.
-    pub fn session_feed(&self, project: Option<&str>, query: &str, archived: bool) -> Vec<usize> {
+    /// Shared scope for the session feed and its pull requests, including linked checkouts.
+    pub fn feed_includes_project(&self, path: &str, project: Option<&str>) -> bool {
         let project = project.or_else(|| {
             (self.preferences.session_scope == SessionScope::CurrentProject)
                 .then_some(self.active_project.as_deref())
                 .flatten()
         });
-        if project.is_none() && self.preferences.session_scope == SessionScope::CurrentProject {
-            return Vec::new();
+        self.project_is_open(path)
+            && match project {
+                Some(project) => self.group_path(path) == self.group_path(project),
+                None => self.preferences.session_scope == SessionScope::AllProjects,
+            }
+    }
+
+    /// Refresh even when Git's branch is unchanged, without changing session ownership.
+    pub fn refresh_feed_pull_requests(&mut self, project: Option<&str>) {
+        let paths: Vec<_> = self
+            .projects
+            .iter()
+            .filter(|p| self.feed_includes_project(&p.path, project))
+            .map(|p| p.path.clone())
+            .collect();
+        for path in paths {
+            let mut branches: std::collections::BTreeSet<_> =
+                self.services.pull_request_branches(&path).collect();
+            if let Some(branch) = self
+                .services
+                .checkouts
+                .get(&path)
+                .and_then(|c| c.git.as_ref())
+                .and_then(|g| g.branch.clone())
+            {
+                branches.insert(branch);
+            }
+            for session in self
+                .sessions
+                .iter()
+                .filter(|s| !s.forgotten && s.scope.project == path)
+            {
+                if let Some(branch) = self.session_branch(session) {
+                    branches.insert(branch.to_owned());
+                }
+                if let Some(details) = &session.details {
+                    branches.extend(details.branches.iter().cloned());
+                }
+            }
+            self.task(Task::Git {
+                project: path.clone(),
+            });
+            for branch in branches {
+                self.task(Task::Discover {
+                    project: path.clone(),
+                    branch,
+                });
+            }
         }
+    }
+
+    /// Return stable local identities, including linked checkouts of each project.
+    /// A temporary project filter overrides the saved scope without changing it.
+    pub fn session_feed(&self, project: Option<&str>, query: &str, archived: bool) -> Vec<usize> {
         let query = query.trim().to_lowercase();
         let mut indices: Vec<_> = self
             .sessions
@@ -46,10 +96,7 @@ impl Workspace {
             .filter(|(_, session)| {
                 !session.forgotten
                     && session.archived == archived
-                    && self.project_is_open(&session.scope.project)
-                    && project.is_none_or(|p| {
-                        self.group_path(&session.scope.project) == self.group_path(p)
-                    })
+                    && self.feed_includes_project(&session.scope.project, project)
                     && (query.is_empty()
                         || format!(
                             "{} {} {} {} {} {}",

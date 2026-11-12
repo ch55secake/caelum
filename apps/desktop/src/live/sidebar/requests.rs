@@ -7,7 +7,8 @@ use rune_kit::{
 use std::collections::HashSet;
 
 pub(super) fn view(s: &Workspace, k: &Kit) -> El {
-    let app = &super::live(s).app;
+    let l = super::live(s);
+    let app = &l.app;
     let mut seen = HashSet::new();
     let mut rows = col()
         .key("requests-list")
@@ -16,23 +17,23 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
         .gap(4.0)
         .focus_group();
     for (project, checkout) in &app.services.checkouts {
-        if app
-            .active_project
-            .as_ref()
-            .is_none_or(|p| app.group_path(project) != app.group_path(p))
-        {
+        if !app.feed_includes_project(project, l.feed.project.as_deref()) {
             continue;
         }
         for pr in &checkout.pull_requests {
             if !seen.insert(&pr.url) {
                 continue;
             }
+            let name = crate::checkouts::project_name(app, app.group_path(project));
             let (project, url) = (project.clone(), pr.url.clone());
             let context_project = project.clone();
             rows = rows.child(crate::context::pull_request(
                 SidebarRow::new(&pr.title)
                     .icon(&ui::BRANCH)
-                    .subtitle(format!("#{} · into {}", pr.number, pr.base_ref_name))
+                    .subtitle(format!(
+                        "{name} · #{} · into {}",
+                        pr.number, pr.base_ref_name
+                    ))
                     .height(52.0)
                     .title_style(k.ty.ui)
                     .subtitle_style(k.ty.small)
@@ -40,11 +41,13 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
                         crate::panels::open_review(s, project.clone(), url.clone())
                     })
                     .build(k)
-                    .help(format!("#{} · {}", pr.number, pr.title))
-                    .key(format!("pull-request-{}", pr.number)),
+                    .help(format!(
+                        "{name} · #{} · {}\ninto {}",
+                        pr.number, pr.title, pr.base_ref_name
+                    ))
+                    .key(crate::code_view::source_key(&pr.url, "pull-request")),
                 context_project,
                 pr.url.clone(),
-                pr.number,
             ));
         }
     }
@@ -69,7 +72,7 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
                     stick_bottom: false,
                 })
                 .child(if seen.is_empty() {
-                    ui::caption("No pull requests for this project", k).padding(8.0)
+                    ui::caption("No pull requests in this scope", k).padding(8.0)
                 } else {
                     rows
                 })

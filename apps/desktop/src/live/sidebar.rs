@@ -1,4 +1,5 @@
 //! Session-first navigation. Feed controls and timers belong to this feature.
+mod badge;
 mod projects;
 mod requests;
 mod session;
@@ -6,8 +7,8 @@ mod session;
 use std::rc::Rc;
 
 use caelum_core::application::{SessionScope, Workspace as Application};
-use rune::{El, Key, KeyEvent, ScrollSpec, Tx, col, row, text_input};
-use rune_kit::{ButtonVariant, Kit, ScrollBar, shell::SidebarHeader};
+use rune::{El, Key, KeyEvent, ScrollSpec, Tx, col, icon, row, text, text_input};
+use rune_kit::{ButtonVariant, Kit, ScrollBar, glyphs, shell::SidebarHeader};
 
 use super::{live, live_mut};
 use crate::{PLUS, Workspace, context::EditMenu, quiet_button, ui};
@@ -27,6 +28,7 @@ pub struct State {
     visible: Vec<usize>,
     deadline: Option<u64>,
     query: Option<(Option<String>, String, bool)>,
+    request_scope: Option<(SessionScope, Option<String>)>,
     selected: Option<usize>,
 }
 
@@ -40,6 +42,7 @@ impl Default for State {
             visible: Vec::new(),
             deadline: None,
             query: None,
+            request_scope: None,
             selected: None,
         }
     }
@@ -77,7 +80,7 @@ impl State {
     }
     pub fn poll(
         &mut self,
-        app: &Application,
+        app: &mut Application,
         query: &str,
         archived: bool,
         tx: &mut Tx,
@@ -101,6 +104,17 @@ impl State {
                 })
                 .flatten()
         });
+        let request_scope = (app.preferences.session_scope, project.clone());
+        if self.request_scope.as_ref() != Some(&request_scope) {
+            app.refresh_feed_pull_requests(self.project.as_deref());
+            self.request_scope = Some(request_scope);
+            tx.scroll_to_y("requests-scroll", 0.0);
+        } else if self.selected != app.selected
+            && let Some(path) = app.active_project.clone()
+            && app.feed_includes_project(&path, self.project.as_deref())
+        {
+            app.refresh_feed_pull_requests(Some(&path));
+        }
         let query = (project, query.to_owned(), archived);
         if self.query.as_ref() != Some(&query) {
             let rows = app.session_feed(self.project.as_deref(), &query.1, archived);
@@ -268,10 +282,11 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
                         quiet_button(&ui::REFRESH, "Refresh sessions")
                             .disabled(l.app.projects.is_empty())
                             .on_press(|s: &mut Workspace| {
-                                let app = &mut live_mut(s).app;
-                                app.refresh_project();
-                                app.discover_open_sessions();
-                                app.refresh_open_sessions();
+                                let l = live_mut(s);
+                                l.app.refresh_project();
+                                l.app.refresh_feed_pull_requests(l.feed.project.as_deref());
+                                l.app.discover_open_sessions();
+                                l.app.refresh_open_sessions();
                             })
                             .build(k)
                             .key("refresh-sessions"),
@@ -282,18 +297,48 @@ pub fn sidebar(s: &Workspace, k: &Kit) -> El {
         )
         .child(projects::filter(s).trigger(k).w_full())
         .child(
-            text_input(&l.panels.sessions, k.ty.ui)
-                .single_line()
-                .label("Search sessions")
-                .placeholder("Search sessions · ⌘K", k.c.text_muted)
-                .color(k.c.text_base)
+            row()
+                .key("session-search-field")
                 .w_full()
-                .h(30.0)
-                .px(8.0)
+                .h(32.0)
+                .px(10.0)
+                .gap(7.0)
+                .center_y()
                 .radius(6.0)
-                .border(1.0, k.c.border_muted)
-                .edit_menu("session-search", |s| Some(&mut live_mut(s).panels.sessions))
-                .on_input_key(on_key),
+                .fill(k.c.bg_base)
+                .border(
+                    1.0,
+                    if l.panels.sessions.focused {
+                        k.c.border_focus
+                    } else {
+                        k.c.border_muted
+                    },
+                )
+                .child(
+                    icon(&glyphs::SEARCH, 13.0)
+                        .color(k.c.icon_muted)
+                        .a11y_hidden(),
+                )
+                .child(
+                    text_input(&l.panels.sessions, k.ty.ui)
+                        .single_line()
+                        .label("Search sessions")
+                        .placeholder("Search sessions", k.c.text_muted)
+                        .color(k.c.text_base)
+                        .selection_color(k.selection())
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .h(30.0)
+                        .py(5.0)
+                        .edit_menu("session-search", |s| Some(&mut live_mut(s).panels.sessions))
+                        .on_input_key(on_key),
+                )
+                .child(
+                    text("⌘K")
+                        .font(k.ty.small)
+                        .color(k.c.text_faint)
+                        .a11y_hidden(),
+                ),
         )
         .child(
             col()

@@ -4,7 +4,7 @@ use crate::{
     select::{Choice, Select},
     ui,
 };
-use rune::{El, ScrollSpec, col, icon, row, text};
+use rune::{El, ScrollSpec, col, row, text};
 use rune_kit::{Kit, ScrollBar, glyphs, shell::SidebarHeader};
 
 pub(super) fn filter(s: &Workspace) -> Select {
@@ -32,7 +32,7 @@ pub(super) fn filter(s: &Workspace) -> Select {
         )
         .collect();
     Select::choices("session-project-filter", choices)
-        .label("Filter sessions by project")
+        .label("Filter sessions and pull requests by project")
         .current(Some(l.feed.project.as_deref().unwrap_or("")))
         .open(l.feed.menu == Menu::Filter)
         .on_toggle(|s: &mut Workspace| {
@@ -92,11 +92,7 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
                         } else {
                             rune::Color::TRANSPARENT
                         })
-                        .child(icon(&ui::FOLDER, 14.0).color(if selected {
-                            k.c.icon_accent
-                        } else {
-                            k.c.icon_muted
-                        }))
+                        .child(super::badge::view(app, &path, k))
                         .child(
                             text(&project.name)
                                 .font(k.ty.ui_medium)

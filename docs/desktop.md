@@ -11,6 +11,7 @@ attachments, queues and running work are retained; reopening the folder returns 
 the remembered session. Closing the final project returns to the welcome screen.
 Arrow keys navigate each list; Tab enters a project's actions and Left/Right
 moves between Create worktree and Close.
+Project and session rows share initial badges with a stable colour for each project.
 
 The session feed shows all open projects by default, with project identity, session
 title, branch/worktree, provider, status and relative activity time. Change
@@ -20,8 +21,10 @@ The project filter above the feed temporarily narrows its scope. **⌘K** focuse
 search, which matches titles, projects, providers, branches and worktrees within
 that scope; Escape clears it. Closed projects and archived sessions stay out of
 the active feed. Recent activity is saved, and streaming tokens or selecting a
-session do not change its recency. Pull requests below the feed follow the active
-project.
+session do not change its recency. Pull requests below the feed follow the same
+project scope, including **All projects**, and refresh when the project filter
+changes. Switching projects or sessions refreshes that project's scoped PRs too.
+Search text filters sessions only.
 
 **⇧⌘N** opens the project/provider launcher; **⌘N** reuses that project's
 draft for the default provider chosen in Settings. Each session retains an

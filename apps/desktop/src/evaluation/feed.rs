@@ -60,6 +60,22 @@ pub(super) fn scene(state: &mut Workspace, name: &str) -> bool {
             changes: None,
         });
         session.unread = age == 7;
+        let checkout = l.app.services.checkouts.entry(path.into()).or_default();
+        checkout.git = Some(caelum_protocol::GitRepositoryStatus {
+            project_path: path.into(),
+            repository_root: Some(path.into()),
+            branch: Some(branch.into()),
+            changes: vec![],
+        });
+        checkout
+            .pull_requests
+            .push(caelum_protocol::GitHubPullRequest {
+                number: 42,
+                title: title.into(),
+                url: format!("https://github.com/example/{name}/pull/42"),
+                is_draft: false,
+                base_ref_name: "main".into(),
+            });
     }
     if name == "session-feed-current" {
         l.app.preferences.session_scope = SessionScope::CurrentProject;
