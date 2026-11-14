@@ -521,12 +521,14 @@ impl Live {
             .restoring_review()
             .and_then(|key| self.app.services.reviews.get(key).map(|r| (key.clone(), r)))
             && review.files_loaded
+            && !review.cached()
             && let (Some(page), Some(head)) = (review.next_page, review.head())
         {
             self.app.task(caelum_core::application::Task::ReviewFiles {
                 project: key.0,
                 url: key.1,
                 head: head.into(),
+                base: review.expected_base().unwrap_or_default().into(),
                 page,
             });
         }

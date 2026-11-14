@@ -1,4 +1,5 @@
 mod auto_merge;
+mod cache;
 
 use super::*;
 
@@ -30,6 +31,7 @@ fn search_and_review_pages_reject_late_results_from_old_targets() {
         project: key.0.clone(),
         url: key.1.clone(),
         head: "old".into(),
+        base: "base".into(),
         page: 1,
     });
     let (id, _) = app.commands().pop().unwrap();
@@ -161,10 +163,19 @@ fn same_head_refresh_rejects_old_pages_without_unlocking_an_active_mutation() {
     let key = ("/a".to_owned(), "https://github.com/a/b/pull/1".to_owned());
     let details = serde_json::from_value(json!({"number":1,"title":"PR","url":key.1,"isDraft":false,"body":"","state":"OPEN","author":null,"baseRefName":"main","headRefName":"feature","headRefOid":"head","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","additions":1,"deletions":0,"changedFiles":1,"reviewDecision":null,"statusCheckRollup":[]})).unwrap();
     app.services.reviews.entry(key.clone()).or_default().details = Some(details);
+    app.services
+        .reviews
+        .get_mut(&key)
+        .unwrap()
+        .details
+        .as_mut()
+        .unwrap()
+        .base_ref_oid = "base".into();
     let files = Task::ReviewFiles {
         project: key.0.clone(),
         url: key.1.clone(),
         head: "head".into(),
+        base: "base".into(),
         page: 1,
     };
     let mutation = Task::UpdateBranch {

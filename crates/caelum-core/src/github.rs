@@ -15,8 +15,10 @@ use thiserror::Error;
 use crate::projects::{Project, ProjectError};
 
 mod auto_merge;
+pub(crate) mod cache;
 mod review;
 pub use auto_merge::set_pull_request_auto_merge;
+pub use cache::CachedReview;
 pub use review::{pull_request_feedback, pull_request_files};
 
 /// Uses gh's existing authentication and repository/remote selection. Network
@@ -51,7 +53,7 @@ fn query_details(
     pull_request_url(url)?;
     let project = Project::open(project_path)?;
     let mut command = github_command(executable, project.path());
-    command.args(["pr", "view", url, "--json", "number,title,url,isDraft,body,state,author,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,autoMergeRequest"]);
+    command.args(["pr", "view", url, "--json", "number,title,url,isDraft,body,state,author,baseRefName,baseRefOid,headRefName,headRefOid,mergeable,mergeStateStatus,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,autoMergeRequest"]);
     let output = checked_output(command, timeout)?;
     let details: GitHubPullRequestDetails = serde_json::from_slice(&output.stdout)?;
     if details.pull_request.url != url {
@@ -486,6 +488,7 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
             "author": { "login": "contributor" }, "headRefName": "feature/worktrees",
             "baseRefName": "main", "additions": 128, "deletions": 42, "changedFiles": 6,
             "headRefOid": "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "baseRefOid": "1111111111111111111111111111111111111111",
             "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
             "reviewDecision": "APPROVED",
             "statusCheckRollup": [
@@ -508,6 +511,10 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
         assert_eq!(result.deletions, 42);
         assert_eq!(result.changed_files, 6);
         assert_eq!(result.merge_state_status, "CLEAN");
+        assert_eq!(
+            result.base_ref_oid,
+            "1111111111111111111111111111111111111111"
+        );
         assert_eq!(
             result.head_ref_oid,
             "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
@@ -534,6 +541,7 @@ printf '%s' '[{"number":40,"title":"Session UI","url":"https://github.com/exampl
         let args = fs::read_to_string(fixture.0.join("arguments")).unwrap();
         assert!(args.starts_with(&format!("pr\nview\n{url}\n--json\n")));
         assert!(args.contains("statusCheckRollup"));
+        assert!(args.contains("baseRefOid"));
         assert_eq!(
             fs::read_to_string(fixture.0.join("directory"))
                 .unwrap()

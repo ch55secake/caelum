@@ -12,9 +12,17 @@ pub fn pull_request_files(
     project_path: impl AsRef<Path>,
     url: &str,
     head_oid: &str,
+    base_oid: &str,
     page: u32,
 ) -> Result<GitHubPullRequestFiles, GitHubError> {
-    files(&gh_executable(), project_path.as_ref(), url, head_oid, page)
+    files(
+        &gh_executable(),
+        project_path.as_ref(),
+        url,
+        head_oid,
+        base_oid,
+        page,
+    )
 }
 
 fn files(
@@ -22,9 +30,11 @@ fn files(
     project_path: &Path,
     url: &str,
     head_oid: &str,
+    base_oid: &str,
     page: u32,
 ) -> Result<GitHubPullRequestFiles, GitHubError> {
     validate_head(head_oid)?;
+    validate_head(base_oid)?;
     if !(1..=100).contains(&page) {
         return Err(GitHubError::Command(
             "Invalid pull request files page".into(),
@@ -54,25 +64,20 @@ fn files(
         Ok(serde_json::from_slice(&output.stdout)?)
     };
     // Files are read from the canonical PR, never the local working-tree diff.
-    // Check both ends of a page read so changed heads cannot mix paginated diffs.
-    let before = api(&endpoint)?;
-    check_target(&before, url, head_oid, true)?;
+    // Details already supplied the expected base/head. Validate after reading
+    // each page so a changed revision cannot enter the review or its cache.
     let files: Vec<GitHubPullRequestFile> = serde_json::from_value(api(&format!(
         "{endpoint}/files?per_page={PAGE_SIZE}&page={page}"
     ))?)?;
     let after = api(&endpoint)?;
     check_target(&after, url, head_oid, true)?;
-    if before.pointer("/base/sha") != after.pointer("/base/sha") {
+    if after.pointer("/base/sha").and_then(Value::as_str) != Some(base_oid) {
         return Err(GitHubError::Command(
             "The pull request base changed. Refresh the pull request and try again.".into(),
         ));
     }
     Ok(GitHubPullRequestFiles {
-        base_oid: before
-            .pointer("/base/sha")
-            .and_then(Value::as_str)
-            .ok_or_else(|| GitHubError::Command("Missing pull request base commit".into()))?
-            .to_owned(),
+        base_oid: base_oid.to_owned(),
         next_page: (files.len() == PAGE_SIZE && page < 100).then_some(page + 1),
         files,
     })

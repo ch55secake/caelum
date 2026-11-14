@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const URL: &str = "https://git.example.com/upstream/repo/pull/44";
 const HEAD: &str = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+const BASE: &str = "1111111111111111111111111111111111111111";
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -35,7 +36,7 @@ impl Fixture {
         feedback(&self.0.join("gh"), &self.0, URL, HEAD, kind, cursor, thread)
     }
     fn files(&self, page: u32) -> Result<caelum_protocol::GitHubPullRequestFiles, GitHubError> {
-        files(&self.0.join("gh"), &self.0, URL, HEAD, page)
+        files(&self.0.join("gh"), &self.0, URL, HEAD, BASE, page)
     }
 }
 impl Drop for Fixture {
@@ -50,7 +51,7 @@ fn comment(id: &str) -> Value {
     json!({"id": id, "body": "Please fix **this**.\n```suggestion\nreturn value;\n```", "url": format!("{URL}#discussion_r1"), "author": null, "createdAt": "2026-11-01T12:00:00Z"})
 }
 fn pr() -> Value {
-    json!({"html_url": URL, "head": {"sha": HEAD}, "base": {"sha": "base-commit"}})
+    json!({"html_url": URL, "head": {"sha": HEAD}, "base": {"sha": BASE}})
 }
 fn graphql(name: &str, nodes: Value, cursor: Option<&str>) -> Value {
     let mut pr = json!({"url": URL, "headRefOid": HEAD});
@@ -71,7 +72,7 @@ fn files_are_paginated_and_pin_the_canonical_repository_and_head() {
     fixture.write("files.json", json!(entries));
     let page = fixture.files(2).unwrap();
     assert_eq!(page.next_page, Some(3));
-    assert_eq!(page.base_oid, "base-commit");
+    assert_eq!(page.base_oid, BASE);
     assert_eq!(
         page.files[0].previous_path.as_deref(),
         Some("src/old name.ts")
@@ -80,6 +81,12 @@ fn files_are_paginated_and_pin_the_canonical_repository_and_head() {
     let args = fs::read_to_string(fixture.0.join("arguments")).unwrap();
     assert!(args.contains("--hostname\ngit.example.com\n--method\nGET"));
     assert!(args.contains("repos/upstream/repo/pulls/44/files?per_page=30&page=2"));
+    assert_eq!(
+        args.matches("\nGET\n").count(),
+        2,
+        "files then final validation"
+    );
+    assert!(args.lines().nth(5).unwrap().contains("/files?"));
     fixture.write("files.json", json!([]));
     assert!(fixture.files(3).unwrap().next_page.is_none());
     assert!(fixture.files(0).is_err());
@@ -107,18 +114,53 @@ fn files_reject_changes_during_loading_and_invalid_targets() {
         .unwrap_err()
         .to_string()
         .contains("base changed"));
+    let mut changed = pr();
+    changed["html_url"] = json!("https://git.example.com/other/repo/pull/44");
+    fixture.write("changed.json", changed);
+    assert!(fixture
+        .files(1)
+        .unwrap_err()
+        .to_string()
+        .contains("different pull request"));
+    let mut changed = pr();
+    changed["base"] = Value::Null;
+    fixture.write("changed.json", changed);
+    assert!(fixture
+        .files(1)
+        .unwrap_err()
+        .to_string()
+        .contains("base changed"));
     assert!(matches!(
         files(
             &fixture.0.join("missing"),
             &fixture.0,
             "https://github.com/a/b/issues/44",
             HEAD,
+            BASE,
             1
         ),
         Err(GitHubError::InvalidUrl)
     ));
     assert!(matches!(
-        files(&fixture.0.join("missing"), &fixture.0, URL, "invalid", 1),
+        files(
+            &fixture.0.join("missing"),
+            &fixture.0,
+            URL,
+            "invalid",
+            BASE,
+            1
+        ),
+        Err(GitHubError::InvalidHead)
+    ));
+    assert!(matches!(
+        files(
+            &fixture.0.join("missing"),
+            &fixture.0,
+            URL,
+            HEAD,
+            "invalid",
+            1
+        ),
         Err(GitHubError::InvalidHead)
     ));
 }

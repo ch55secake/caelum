@@ -3,6 +3,54 @@ use crate::Workspace;
 use serde_json::json;
 
 pub(super) fn scene(state: &mut Workspace, name: &str) {
+    if name == "overview-cached" {
+        scene(state, "overview");
+        let l = state.live.as_mut().unwrap();
+        let (project, url) = l.panels.review.clone().unwrap();
+        let review = l
+            .app
+            .services
+            .reviews
+            .get_mut(&(project.clone(), url.clone()))
+            .unwrap();
+        let details = review.details.take().unwrap();
+        let cached = caelum_core::github::CachedReview {
+            files: Some(caelum_protocol::GitHubPullRequestFiles {
+                files: review.files.clone(),
+                base_oid: details.base_ref_oid.clone(),
+                next_page: None,
+            }),
+            details,
+        };
+        l.app.services.refresh_review(&project, &url);
+        l.app.task(caelum_core::application::Task::ReviewCache {
+            project: project.clone(),
+            url: url.clone(),
+        });
+        let request = l
+            .app
+            .commands()
+            .into_iter()
+            .find(|(_, command)| {
+                matches!(
+                    command,
+                    caelum_core::application::Command::Task(
+                        caelum_core::application::Task::ReviewCache { .. }
+                    )
+                )
+            })
+            .unwrap()
+            .0;
+        l.apply(caelum_core::application::Event::Completed(
+            request,
+            Ok(caelum_core::application::Reply::Task(
+                caelum_core::application::TaskReply::ReviewCache(Some(Box::new(cached))),
+            )),
+        ));
+        l.app
+            .task(caelum_core::application::Task::Details { project, url });
+        return;
+    }
     if matches!(name, "overview-long" | "overview-stale") {
         scene(state, "overview-blocked");
         let l = state.live.as_mut().unwrap();
@@ -40,6 +88,8 @@ pub(super) fn scene(state: &mut Workspace, name: &str) {
         caelum_protocol::GitHubPullRequestFile {path:"assets/icon.png".into(),status:"modified".into(),previous_path:None,additions:0,deletions:0,patch:None}
     ];
     review.files_loaded = true;
+    review.details.as_mut().unwrap().base_ref_oid = "b".repeat(40);
+    review.base = Some("b".repeat(40));
     review.threads=(0..2).map(|n|serde_json::from_value(json!({"id":format!("thread-{n}"),"path":"src/workspace.rs","line":n+2,"startLine":null,"originalLine":n+2,"diffSide":"RIGHT","isResolved":n==1,"isOutdated":false,"comments":[{"id":format!("comment-{n}"),"body":if n==0 {"Keep newer navigation intact while a restore is pending."} else {"Reading position now survives refresh. Looks good."},"url":url,"author":{"login":"reviewer"},"createdAt":"2026-11-07T10:00:00Z","state":null,"diffHunk":null}],"nextCursor":null})).unwrap()).collect();
     for n in 0..9 {
         review.files.push(caelum_protocol::GitHubPullRequestFile {

@@ -117,6 +117,8 @@ pub struct GitHubPullRequestDetails {
     pub author: Option<GitHubAuthor>,
     pub head_ref_name: String,
     pub head_ref_oid: String,
+    #[serde(default)]
+    pub base_ref_oid: String,
     pub mergeable: String,
     pub merge_state_status: String,
     pub additions: u64,

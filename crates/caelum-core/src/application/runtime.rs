@@ -35,6 +35,7 @@ pub struct ProviderRuntime {
     pub processes: Arc<ProcessRegistry>,
     pub worktrees: crate::worktrees::WorktreeClient,
     pub branches: Arc<Mutex<crate::session_branches::SessionBranches>>,
+    pub(super) review_cache: Arc<Mutex<Option<crate::github::cache::Cache>>>,
 }
 
 impl Default for ProviderRuntime {
@@ -58,6 +59,7 @@ impl Default for ProviderRuntime {
             branches: Arc::new(Mutex::new(crate::session_branches::SessionBranches::new(
                 None,
             ))),
+            review_cache: Arc::default(),
         }
     }
 }
@@ -119,6 +121,8 @@ impl ProviderRuntime {
             Command::Notify(_) => Err("Desktop notifications require a desktop handler".into()),
             Command::Task(task) => return task.execute(self).map(Reply::Task),
             Command::Load(store) => {
+                *self.review_cache.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(crate::github::cache::Cache::for_store(&store.0));
                 store.migrate_default()?;
                 let snapshot = store.load()?;
                 if let Some(parent) = store.0.parent().filter(|p| !p.as_os_str().is_empty()) {

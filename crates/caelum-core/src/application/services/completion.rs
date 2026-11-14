@@ -197,6 +197,26 @@ impl Services {
                     }
                 }
             }
+            (Task::ReviewCache { project, url }, TaskReply::ReviewCache(Some(cached))) => {
+                let review = self
+                    .reviews
+                    .entry((project.clone(), url.clone()))
+                    .or_default();
+                // Disk replies never replace live data, including a newer head.
+                if review.details.is_none() && cached.details.pull_request.url == *url {
+                    if let Some(files) = cached
+                        .files
+                        .filter(|f| f.base_oid == cached.details.base_ref_oid)
+                    {
+                        review.files = files.files;
+                        review.base = Some(files.base_oid);
+                        review.next_page = files.next_page;
+                        review.files_loaded = true;
+                    }
+                    review.details = Some(cached.details);
+                    review.source = ReviewSource::Cache;
+                }
+            }
             (Task::Details { project, url }, TaskReply::Details(details)) => {
                 if details.state == "MERGED" {
                     merged_url = Some(url.clone());
@@ -204,8 +224,10 @@ impl Services {
                 if self
                     .reviews
                     .get(&(project.clone(), url.clone()))
-                    .and_then(Review::head)
-                    != Some(&details.head_ref_oid)
+                    .is_none_or(|review| {
+                        review.head() != Some(&details.head_ref_oid)
+                            || review.expected_base() != Some(&details.base_ref_oid)
+                    })
                 {
                     self.refresh_review(project, url);
                 }
@@ -213,18 +235,23 @@ impl Services {
                     .reviews
                     .entry((project.clone(), url.clone()))
                     .or_default();
-                if review.head() != Some(&details.head_ref_oid) {
+                if review.head() != Some(&details.head_ref_oid)
+                    || review.expected_base() != Some(&details.base_ref_oid)
+                {
                     let generation = review.generation;
                     *review = Review::default();
                     review.generation = generation;
                 }
                 let head = details.head_ref_oid.clone();
-                review.details = Some(details);
+                let base = details.base_ref_oid.clone();
+                review.details = Some(*details);
+                review.source = ReviewSource::GitHub;
                 if !review.files_loaded {
                     next.push(Task::ReviewFiles {
                         project: project.clone(),
                         url: url.clone(),
                         head: head.clone(),
+                        base,
                         page: 1,
                     });
                 }
@@ -247,7 +274,11 @@ impl Services {
             }
             (
                 Task::ReviewFiles {
-                    project, url, page, ..
+                    project,
+                    url,
+                    base,
+                    page,
+                    ..
                 },
                 TaskReply::ReviewFiles(files),
             ) => {
@@ -255,7 +286,7 @@ impl Services {
                     .reviews
                     .entry((project.clone(), url.clone()))
                     .or_default();
-                if *page > 1 && review.base.as_ref() != Some(&files.base_oid) {
+                if files.base_oid != *base || (*page > 1 && review.base.as_ref() != Some(base)) {
                     review.error = Some(
                         "PR base changed; refresh the review before loading more files".into(),
                     );

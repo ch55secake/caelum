@@ -48,6 +48,20 @@ pub fn view(
     layers: &mut Vec<El>,
 ) -> El {
     let l = live(s);
+    if l.app
+        .services
+        .reviews
+        .get(&(project.into(), url.into()))
+        .is_some_and(|r| r.cached())
+    {
+        return status(
+            "Cached review",
+            "Checks and merge readiness will update when GitHub responds.",
+            Outcome::Neutral,
+            k,
+        )
+        .key("review-cached-readiness");
+    }
     let owner = (project.to_owned(), url.to_owned());
     let open = l.panels.expanded_checks.contains(&owner);
     let summary = CheckSummary::new(details.status_check_rollup.as_deref());

@@ -61,6 +61,7 @@ interactions = {
 scenes += ("worktree-create", "shell-output", "shells-many", "messages", "archive", "overview", "overview-empty", "overview-blocked", "overview-long", "overview-stale")
 scenes += ("composer-options", "files-tabs", "tools-collapsed", "merge-ready", "merge-blocked", "merge-pending", "merge-conflicts", "merge-behind", "merge-draft", "merge-merged", "merge-closed")
 scenes += ("merge-auto-enabled", "merge-auto-error")
+scenes += ("overview-cached",)
 scenes += ("shells-collapsed", "vercel", "vercel-settings", "sidebar-projects")
 scenes += ("session-feed", "session-feed-current", "session-feed-empty", "session-feed-many", "session-feed-colours")
 scenes += ("sidebar-worktrees", "sidebar-worktrees-many", "sidebar-worktrees-projects", "sidebar-worktrees-vercel", "worktrees-empty")

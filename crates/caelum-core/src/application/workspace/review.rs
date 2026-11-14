@@ -1,6 +1,22 @@
 use super::Workspace;
 
 impl Workspace {
+    /// Restore the last overview/diff while GitHub refreshes current metadata.
+    pub fn open_review(&mut self, project: String, url: String) {
+        if self
+            .services
+            .reviews
+            .get(&(project.clone(), url.clone()))
+            .is_none_or(|review| review.details.is_none())
+        {
+            self.task(crate::application::Task::ReviewCache {
+                project: project.clone(),
+                url: url.clone(),
+            });
+        }
+        self.task(crate::application::Task::Details { project, url });
+    }
+
     /// Find the conversation associated with the reviewed source branch, including
     /// its recorded history in linked checkouts. The checkout's current Git branch
     /// alone is not evidence that a session worked on the pull request.

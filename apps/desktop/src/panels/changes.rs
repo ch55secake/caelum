@@ -201,12 +201,14 @@ pub(super) fn diff_view(s: &Workspace, k: &Kit, review: bool) -> El {
                     if index + 3 >= l.panels.diff.files().len()
                         && let Some((project, url)) = l.panels.review.clone()
                         && let Some(r) = l.app.services.reviews.get(&(project.clone(), url.clone()))
+                        && !r.cached()
                         && let (Some(page), Some(head)) = (r.next_page, r.head())
                     {
                         l.app.task(Task::ReviewFiles {
                             project,
                             url,
                             head: head.into(),
+                            base: r.expected_base().unwrap_or_default().into(),
                             page,
                         });
                     }
