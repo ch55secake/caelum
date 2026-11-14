@@ -1,5 +1,5 @@
 //! Merge provider history snapshots with the conversation's live stream.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::super::AttachmentKind;
 use super::{Conversation, Entry, EntryKind};
@@ -7,46 +7,34 @@ use super::{Conversation, Entry, EntryKind};
 pub(super) fn merge(conversation: &mut Conversation, history: Vec<Entry>, older: bool) {
     let mut live = std::mem::take(&mut conversation.entries);
     let ids: HashSet<_> = history.iter().map(|entry| entry.id.as_str()).collect();
-    // A repeated prompt may occur in old history. Only its newest occurrence
-    // in a refresh can adopt this client's pending optimistic submission.
-    let optimistic = if older {
-        None
+    let optimistic = if older || !live.iter().any(|entry| entry.optimistic) {
+        BTreeMap::new()
     } else {
-        live.iter()
-            .position(|entry| entry.optimistic)
-            .and_then(|index| {
-                history
-                    .iter()
-                    .rposition(|entry| optimistic_matches(entry, &live[index]))
-                    .map(|history_index| (index, history_index))
-            })
+        adoptions(&live, &history)
     };
-    let optimistic_context =
-        optimistic.map(|(live_index, history_index)| (history_index, live[live_index].clone()));
+    let mut optimistic_context = BTreeMap::new();
     let insertion = live
         .iter()
         .position(|entry| ids.contains(entry.id.as_str()))
-        .or_else(|| optimistic.map(|(index, _)| index))
+        .or_else(|| optimistic.first_key_value().map(|(&index, _)| index))
         .unwrap_or(if older { 0 } else { live.len() });
     let mut before = Vec::new();
     let mut after = Vec::new();
     let mut existing = BTreeMap::new();
     for (index, entry) in live.drain(..).enumerate() {
-        if ids.contains(entry.id.as_str()) {
+        if let Some(&history_index) = optimistic.get(&index) {
+            optimistic_context.insert(history_index, entry);
+        } else if ids.contains(entry.id.as_str()) {
             existing.insert(entry.id.clone(), entry);
-        } else if optimistic.is_none_or(|(adopted, _)| adopted != index) {
-            if index < insertion {
-                before.push(entry);
-            } else {
-                after.push(entry);
-            }
+        } else if index < insertion {
+            before.push(entry);
+        } else {
+            after.push(entry);
         }
     }
     for (index, mut snapshot) in history.into_iter().enumerate() {
-        if let Some((history_index, optimistic)) = &optimistic_context {
-            if *history_index == index {
-                preserve_optimistic_context(&mut snapshot, optimistic);
-            }
+        if let Some(optimistic) = optimistic_context.remove(&index) {
+            preserve_optimistic_context(&mut snapshot, &optimistic);
         }
         let entry = match existing.remove(&snapshot.id) {
             Some(current) => merge_entry(snapshot, current),
@@ -58,6 +46,31 @@ pub(super) fn merge(conversation: &mut Conversation, history: Vec<Entry>, older:
     conversation.entries = before;
 }
 
+fn adoptions(live: &[Entry], history: &[Entry]) -> BTreeMap<usize, usize> {
+    let positions: HashMap<_, _> = live
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.id.as_str(), index))
+        .collect();
+    let mut matches = BTreeMap::new();
+    let mut end = history.len();
+    // Match every pending submission, newest to newest, using each echo once.
+    // An unmatched image must not block later turns, and a known earlier echo
+    // must not consume a new submission of the same prompt.
+    for (index, entry) in live.iter().enumerate().rev().filter(|(_, e)| e.optimistic) {
+        if let Some(history_index) = history[..end].iter().rposition(|snapshot| {
+            positions
+                .get(snapshot.id.as_str())
+                .is_none_or(|&known| known >= index)
+                && optimistic_matches(snapshot, entry)
+        }) {
+            matches.insert(index, history_index);
+            end = history_index;
+        }
+    }
+    matches
+}
+
 fn optimistic_matches(history: &Entry, optimistic: &Entry) -> bool {
     if history.kind != EntryKind::User || optimistic.kind != EntryKind::User {
         return false;
@@ -65,7 +78,7 @@ fn optimistic_matches(history: &Entry, optimistic: &Entry) -> bool {
     if history.text == optimistic.text {
         return true;
     }
-    let (history_text, _) = super::super::split_context(&history.text);
+    let (history_text, history_attachments) = super::super::split_context(&history.text);
     let (optimistic_text, attachments) = super::super::split_context(&optimistic.text);
     if history_text != optimistic_text
         || !attachments
@@ -82,7 +95,11 @@ fn optimistic_matches(history: &Entry, optimistic: &Entry) -> bool {
         .iter()
         .filter(|attachment| attachment.kind == AttachmentKind::Image)
         .all(|attachment| {
-            history
+            // Inbox delivery reconstructs context with fresh attachment IDs;
+            // unlike history, it carries images in context rather than media.
+            history_attachments.iter().any(|existing| {
+                existing.kind == AttachmentKind::Image && existing.content == attachment.content
+            }) || history
                 .media
                 .iter()
                 .any(|media| media.source == attachment.content || media.name == attachment.path)
@@ -94,10 +111,12 @@ fn preserve_optimistic_context(history: &mut Entry, optimistic: &Entry) {
     let (history_text, mut attachments) = super::super::split_context(&history.text);
     let (_, optimistic_attachments) = super::super::split_context(&optimistic.text);
     for attachment in optimistic_attachments {
-        if attachments
-            .iter()
-            .any(|existing| existing.id == attachment.id)
-        {
+        if attachments.iter().any(|existing| {
+            existing.id == attachment.id
+                || (existing.kind == AttachmentKind::Image
+                    && attachment.kind == AttachmentKind::Image
+                    && existing.content == attachment.content)
+        }) {
             continue;
         }
         if attachment.kind == AttachmentKind::Image
