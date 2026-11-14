@@ -96,7 +96,9 @@ impl Live {
                 && s.remote_id.as_deref() == Some(id)
         });
         let (index, session) = owners.next()?;
-        if self.app.selected == Some(index) || owners.next().is_some() {
+        if (self.app.selected == Some(index) && self.panels.screen != crate::panels::Screen::Home)
+            || owners.next().is_some()
+        {
             return None;
         }
         Some((index, Summary::new(session)))

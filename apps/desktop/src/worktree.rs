@@ -203,6 +203,7 @@ fn submit(s: &mut Workspace) {
     }
     l.app.launch_worktree(task, form.provider);
     form.submitted = true;
+    l.panels.screen = Screen::Conversation;
 }
 
 pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {

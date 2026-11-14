@@ -78,7 +78,17 @@ fn every_persisted_field_participates_in_change_detection() {
         check(Some("preferences"), key, value);
     }
     for (key, value) in [
+        ("text", json!("Home draft")),
+        ("project", json!("/b")),
+        ("provider", json!("opencode")),
+        ("options", json!({"model":"home-model"})),
+        ("attachments", json!(app.sessions[0].attachments)),
+    ] {
+        check(Some("home"), key, value);
+    }
+    for (key, value) in [
         ("version", json!(2)),
+        ("home", json!({"text":"saved home draft"})),
         ("projects", json!([{"name":"Project","path":"/a"}])),
         ("sessions", json!([])),
         ("selected", json!(0)),

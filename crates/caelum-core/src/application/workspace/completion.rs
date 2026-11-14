@@ -10,6 +10,10 @@ impl Workspace {
         pending: Pending,
         result: Result<Reply, String>,
     ) {
+        if let Pending::Home(pending) = pending {
+            self.complete_home(request, pending, result);
+            return;
+        }
         if let Pending::RegenerateTitle(index, key) = pending {
             // The provider publishes the new title through session.renamed.
             // A failed request must not disturb chat, drafts or queued work.
@@ -146,7 +150,8 @@ impl Workspace {
                         self.durable_outgoing = commands;
                         self.persistence_error = Some(error);
                     }
-                    Pending::Task(_)
+                    Pending::Home(_)
+                    | Pending::Task(_)
                     | Pending::Mention { .. }
                     | Pending::Attachment(..)
                     | Pending::RegenerateTitle(..) => {
@@ -311,6 +316,7 @@ impl Workspace {
                 if let Some(snapshot) = snapshot {
                     let snapshot = *snapshot;
                     self.saved = Some(snapshot.clone());
+                    self.home.restore(snapshot.home);
                     self.managed_worktrees = snapshot.managed_worktrees;
                     self.preferences = snapshot.preferences;
                     for (project, saved) in &self.preferences.files {
@@ -412,7 +418,11 @@ impl Workspace {
                         self.detail_queue.extend(details);
                         if let Some(index) = snapshot.selected.filter(|i| *i < self.sessions.len())
                         {
+                            let navigation = self.navigation;
                             self.select(index);
+                            // Restoring storage is not user navigation; an explicit launch
+                            // still owns its pending project-open request.
+                            self.navigation = navigation;
                             self.refresh_project();
                         }
                     }
@@ -510,7 +520,7 @@ impl Workspace {
                 self.detail_queue.extend(details);
                 if request == self.latest_open {
                     self.opening = false;
-                    if provider.is_none() || navigation == self.navigation {
+                    if navigation == self.navigation {
                         self.select_project(&project.path);
                         if let Some(provider) = provider {
                             self.project_draft(Scope {

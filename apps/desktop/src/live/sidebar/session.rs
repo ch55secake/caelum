@@ -10,7 +10,7 @@ pub(super) fn view(s: &Workspace, k: &Kit, index: usize, position: usize, count:
     let l = live(s);
     let app = &l.app;
     let session = &app.sessions[index];
-    let selected = app.selected == Some(index);
+    let selected = app.selected == Some(index) && l.panels.screen != crate::panels::Screen::Home;
     let project = crate::checkouts::project_name(app, app.group_path(&session.scope.project));
     let branch = app.session_branch(session).unwrap_or("No branch");
     let branch = app

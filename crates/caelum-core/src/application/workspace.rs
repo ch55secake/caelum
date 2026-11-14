@@ -2,6 +2,7 @@ mod archive;
 mod completion;
 mod composer;
 mod events;
+mod home;
 mod notifications;
 mod persistence;
 mod projects;
@@ -11,6 +12,9 @@ mod sessions;
 mod submission;
 mod tasks;
 mod titles;
+
+pub use home::Home;
+pub use home::HomeDraft;
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -189,6 +193,7 @@ impl Session {
 }
 
 enum Pending {
+    Home(home::Request),
     Inbox(usize, u64),
     Enqueue(usize, String),
     RemoveQueued(usize, String),
@@ -234,6 +239,7 @@ enum Pending {
 /// first-send creation; every pending request carries its original owner.
 #[derive(Default)]
 pub struct Workspace {
+    pub home: Home,
     pub window_background: bool,
     pub conversation_hidden: bool,
     pub projects: Vec<ProjectInfo>,

@@ -58,6 +58,14 @@ impl State {
     pub fn poll(&self) -> bool {
         self.changed.swap(false, Ordering::AcqRel)
     }
+    pub(crate) fn home_background(&self, dark: bool) -> Image {
+        let bytes = if dark {
+            include_bytes!("../assets/black-hole-ascii.png").as_slice()
+        } else {
+            include_bytes!("../assets/clouds-sunlit-ascii.png").as_slice()
+        };
+        self.cache.load(bytes)
+    }
     fn image(&self, data: &str, fixture: bool) -> Result<Option<Image>, String> {
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         data.hash(&mut hash);

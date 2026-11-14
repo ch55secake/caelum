@@ -7,6 +7,7 @@ mod completion;
 mod composer;
 mod context;
 mod evaluation;
+mod home;
 mod lifecycle;
 mod live;
 mod media;
@@ -439,24 +440,29 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     }
     let width = cx.layout("main-pane").map_or(840.0, |r| r[2]);
     let padding = if width < 540.0 { 16.0 } else { 32.0 };
-    let main = col()
-        .w_full()
-        .h_full()
-        .min_h(0.0)
-        .items_center()
-        .child(rune::el().w_full().h(1.0).fill(pane_border))
-        .child(transcript(
-            s,
-            &k,
-            cx.is_reduced_motion(),
-            padding,
-            &mut layers,
-        ));
-    let main = if s
-        .live
-        .as_ref()
-        .is_some_and(|live| live.panels.screen == panels::Screen::Review)
-    {
+    let main = if home::is_home(s) {
+        home::view(s, &k, &mut layers)
+    } else {
+        col()
+            .w_full()
+            .h_full()
+            .min_h(0.0)
+            .items_center()
+            .child(rune::el().w_full().h(1.0).fill(pane_border))
+            .child(transcript(
+                s,
+                &k,
+                cx.is_reduced_motion(),
+                padding,
+                &mut layers,
+            ))
+    };
+    let main = if s.live.as_ref().is_some_and(|live| {
+        matches!(
+            live.panels.screen,
+            panels::Screen::Home | panels::Screen::Review
+        )
+    }) {
         main
     } else {
         main.child(composer(s, &k, padding, width > 760.0, &mut layers))
@@ -488,6 +494,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
                     text(
                         s.live
                             .as_ref()
+                            .filter(|_| !home::is_home(s))
                             .and_then(|live| live.app.active_project.as_ref())
                             .and_then(|path| std::path::Path::new(path).file_name())
                             .and_then(|name| name.to_str())
@@ -618,7 +625,8 @@ fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
         return panels::on_key(s, ev, tx);
     }
     if s.live.is_some()
-        && (questions::on_key(s, ev, tx)
+        && (home::on_key(s, ev, tx)
+            || questions::on_key(s, ev, tx)
             || live::sidebar_key(s, ev, tx)
             || completion::on_key(s, ev, tx)
             || panels::on_key(s, ev, tx)
@@ -694,7 +702,7 @@ fn main() {
         } else if fixtures {
             Workspace::new()
         } else {
-            Workspace::live(project)
+            home::workspace(project)
         };
         if let Some(live) = &mut state.live {
             live.notifications = notifications;

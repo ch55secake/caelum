@@ -5,6 +5,18 @@ use crate::{Workspace, panels};
 type Scene = (&'static str, fn(&mut Workspace));
 
 pub(crate) const SCENES: &[Scene] = &[
+    ("home", |s| {
+        crate::home::scene(s, "home");
+    }),
+    ("home-empty", |s| {
+        crate::home::scene(s, "home-empty");
+    }),
+    ("home-draft", |s| {
+        crate::home::scene(s, "home-draft");
+    }),
+    ("home-projects", |s| {
+        crate::home::scene(s, "home-projects");
+    }),
     ("composer-options", |s| scene(s, "composer-options")),
     ("composer-empty", |s| scene(s, "composer-empty")),
     ("composer-multiline", |s| scene(s, "composer-multiline")),

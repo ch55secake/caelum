@@ -179,6 +179,8 @@ pub struct SavedSession {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub version: u32,
+    #[serde(default)]
+    pub home: super::HomeDraft,
     pub projects: Vec<ProjectInfo>,
     pub sessions: Vec<SavedSession>,
     pub selected: Option<usize>,

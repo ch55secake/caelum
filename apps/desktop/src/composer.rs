@@ -81,7 +81,7 @@ pub fn open(s: &mut Workspace, index: usize, id: &str) {
 pub fn sync(l: &mut crate::live::Live, tx: &mut Tx) -> bool {
     let mut changed = false;
     let selected = l.app.selected.filter(|&index| {
-        l.panels.screen != Screen::Review
+        l.panels.screen == Screen::Conversation
             && l.commands.side_owner.is_none()
             && crate::questions::active(l, index).is_none()
     });

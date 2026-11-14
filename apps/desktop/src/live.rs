@@ -33,6 +33,7 @@ pub struct Live {
     pub checkouts: crate::checkouts::State,
     pub completion: crate::completion::Menu,
     pub composer: crate::composer::State,
+    pub home: crate::home::State,
     pub commands: crate::commands::State,
     pub models: crate::models::Picker,
     pub notifications: crate::notifications::State,
@@ -97,6 +98,7 @@ impl Live {
             checkouts: Default::default(),
             completion: Default::default(),
             composer: Default::default(),
+            home: Default::default(),
             commands: Default::default(),
             models: Default::default(),
             notifications: Default::default(),
@@ -170,6 +172,10 @@ impl Live {
     }
 
     pub fn focus(&mut self) {
+        if self.panels.screen == crate::panels::Screen::Home {
+            self.home.editor.focused = true;
+            return;
+        }
         if crate::questions::focus(self) {
             return;
         }
@@ -238,7 +244,9 @@ impl Live {
         self.sync_editors();
         self.session_menu = None;
         self.menu = None;
-        if selected != self.app.selected || review {
+        if (selected != self.app.selected || review)
+            && self.panels.screen != crate::panels::Screen::Home
+        {
             self.panels.screen = crate::panels::Screen::Conversation;
             self.panels.overlay = None;
             self.panels.archived = false;
@@ -255,7 +263,14 @@ impl Live {
         }
         let selected = self.app.selected;
         let was_archived = selected.is_some_and(|i| self.app.sessions[i].archived);
+        let restoring = matches!(
+            &event,
+            Event::Completed(_, Ok(caelum_core::application::Reply::Snapshot(_)))
+        );
         self.app.apply(event);
+        if restoring && self.home.editor.text != self.app.home.draft.text {
+            self.home.editor.replace_text(&self.app.home.draft.text);
+        }
         if questions_changed {
             self.forms.sync(&self.app.questions);
         }
@@ -275,12 +290,13 @@ impl Live {
                 self.commands.side_editor.set_caret(caret);
             }
         }
-        if self.app.selected != selected
-            || (was_archived
-                && self
-                    .app
-                    .selected
-                    .is_some_and(|i| !self.app.sessions[i].archived))
+        if self.panels.screen != crate::panels::Screen::Home
+            && (self.app.selected != selected
+                || (was_archived
+                    && self
+                        .app
+                        .selected
+                        .is_some_and(|i| !self.app.sessions[i].archived)))
         {
             if matches!(
                 self.panels.overlay,
@@ -299,9 +315,11 @@ impl Live {
     }
 
     pub fn working(&self) -> bool {
-        self.app
-            .selected
-            .is_some_and(|index| self.app.sessions[index].working())
+        self.panels.screen == crate::panels::Screen::Conversation
+            && self
+                .app
+                .selected
+                .is_some_and(|index| self.app.sessions[index].working())
     }
 
     pub fn stop(&mut self) {
@@ -338,6 +356,8 @@ impl Live {
         self.app.conversation_hidden = self.panels.screen != crate::panels::Screen::Conversation
             || self.panels.overlay.is_some();
         let mut changed = self.media.poll();
+        changed |= crate::home::sync(self, tx);
+        self.app.home.draft.text.clone_from(&self.home.editor.text);
         changed |= self.feed.poll(
             &mut self.app,
             &self.panels.sessions.text,
@@ -602,6 +622,7 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
+        self.app.home.draft.text.clone_from(&self.home.editor.text);
         self.panels.remember(&mut self.app);
         for (i, editor) in self.drafts.iter().enumerate() {
             self.app.sessions[i].draft.clone_from(&editor.text);
@@ -645,6 +666,7 @@ pub fn open_project(_: &mut Workspace, tx: &mut Tx) {
         |s: &mut Workspace, result, _| match result {
             Ok(Some(path)) => {
                 let l = live_mut(s);
+                l.panels.screen = crate::panels::Screen::Conversation;
                 if l.panels.overlay == Some(crate::panels::Screen::Launcher) {
                     l.app.launch_project(
                         path.to_string_lossy().into_owned(),

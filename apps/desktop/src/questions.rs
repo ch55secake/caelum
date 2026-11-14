@@ -180,7 +180,7 @@ pub fn sync(l: &mut Live, tx: &mut Tx) -> bool {
     let next = l
         .app
         .selected
-        .filter(|_| l.panels.screen != Screen::Review && l.panels.overlay.is_none())
+        .filter(|_| l.panels.screen == Screen::Conversation && l.panels.overlay.is_none())
         .and_then(|index| active(l, index).map(|p| (index, key(p))));
     if l.forms.shown == next {
         return false;
@@ -206,7 +206,7 @@ pub fn sync(l: &mut Live, tx: &mut Tx) -> bool {
         }
         focus(l);
     } else if previous.is_some_and(|(index, _)| Some(index) == l.app.selected)
-        && l.panels.screen != Screen::Review
+        && l.panels.screen == Screen::Conversation
         && l.panels.overlay.is_none()
     {
         if l.commands.side_owner == l.app.selected && l.commands.side_owner.is_some() {
@@ -250,7 +250,7 @@ pub fn focus(l: &mut Live) -> bool {
 
 pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
     let l = live(s);
-    if l.panels.screen == Screen::Review || l.panels.overlay.is_some() {
+    if l.panels.screen != Screen::Conversation || l.panels.overlay.is_some() {
         return false;
     }
     let Some(prompt) = l.app.selected.and_then(|index| active(l, index)).cloned() else {
