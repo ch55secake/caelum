@@ -1,6 +1,7 @@
 //! Scoped files, checkout and head-pinned review coordination. Renderers never
 //! own subprocesses, pagination or response admission.
 mod completion;
+mod review_cache;
 
 use super::{Preferences, ProviderRuntime};
 use crate::{files, git::GitClient, github};
@@ -92,10 +93,15 @@ pub enum Task {
         project: String,
         url: String,
     },
+    ReviewCache {
+        project: String,
+        url: String,
+    },
     ReviewFiles {
         project: String,
         url: String,
         head: String,
+        base: String,
         page: u32,
     },
     Feedback {
@@ -144,7 +150,8 @@ pub enum TaskReply {
     Worktrees(Option<GitWorktrees>),
     Worktree(GitWorktree),
     Discovered(Option<GitHubPullRequest>),
-    Details(GitHubPullRequestDetails),
+    Details(Box<GitHubPullRequestDetails>),
+    ReviewCache(Option<Box<github::CachedReview>>),
     ReviewFiles(GitHubPullRequestFiles),
     Feedback(GitHubPullRequestFeedback),
     AutoMerge(GitHubAutoMergeResult),
@@ -180,6 +187,7 @@ impl Task {
             | Self::RenameWorktree { project, .. }
             | Self::Discover { project, .. }
             | Self::Details { project, .. }
+            | Self::ReviewCache { project, .. }
             | Self::ReviewFiles { project, .. }
             | Self::Feedback { project, .. }
             | Self::Merge { project, .. }
@@ -190,7 +198,7 @@ impl Task {
     }
     pub fn review(&self) -> Option<(&str, Option<&str>)> {
         match self {
-            Self::Details { url, .. } => Some((url, None)),
+            Self::Details { url, .. } | Self::ReviewCache { url, .. } => Some((url, None)),
             Self::ReviewFiles { url, head, .. }
             | Self::Feedback { url, head, .. }
             | Self::Merge { url, head, .. }
@@ -224,6 +232,7 @@ impl Task {
             | Self::RenameWorktree { .. } => "worktree-mutation".into(),
             Self::Discover { branch, .. } => format!("discover:{branch}"),
             Self::Details { url, .. } => format!("details:{url}"),
+            Self::ReviewCache { url, .. } => format!("review-cache:{url}"),
             Self::ReviewFiles { url, .. } => format!("files:{url}"),
             Self::Feedback {
                 url, kind, thread, ..
@@ -318,7 +327,10 @@ impl Task {
                     .map_err(|e| e.to_string())?,
             )),
             Self::AttachPullRequest { project, url } => {
-                reply!(github::pull_request_details(project, url), Details)
+                reply!(
+                    github::pull_request_details(project, url).map(Box::new),
+                    Details
+                )
             }
             Self::Completions { project, query } => reply!(
                 files::search_project(project, query, ProjectSearchMode::Files, false),
@@ -382,18 +394,22 @@ impl Task {
             Self::Discover { project, branch } => {
                 reply!(github::open_pull_request(project, branch), Discovered)
             }
-            Self::Details { project, url } => {
-                reply!(github::pull_request_details(project, url), Details)
-            }
+            Self::Details { project, url } => review_cache::details(runtime, project, url)
+                .map(Box::new)
+                .map(TaskReply::Details),
+            Self::ReviewCache { url, .. } => Ok(TaskReply::ReviewCache(
+                review_cache::cache(runtime)
+                    .and_then(|cache| cache.load(url))
+                    .map(Box::new),
+            )),
             Self::ReviewFiles {
                 project,
                 url,
                 head,
+                base,
                 page,
-            } => reply!(
-                github::pull_request_files(project, url, head, *page),
-                ReviewFiles
-            ),
+            } => review_cache::files(runtime, project, url, head, base, *page)
+                .map(TaskReply::ReviewFiles),
             Self::Feedback {
                 project,
                 url,
@@ -465,9 +481,17 @@ pub struct Checkout {
     pub error: Option<String>,
 }
 
+#[derive(Default, PartialEq, Eq)]
+enum ReviewSource {
+    #[default]
+    GitHub,
+    Cache,
+}
+
 #[derive(Default)]
 pub struct Review {
     generation: u64,
+    source: ReviewSource,
     pub details: Option<GitHubPullRequestDetails>,
     pub files: Vec<GitHubPullRequestFile>,
     pub files_loaded: bool,
@@ -483,6 +507,12 @@ pub struct Review {
 }
 
 impl Review {
+    pub fn cached(&self) -> bool {
+        self.source == ReviewSource::Cache
+    }
+    pub fn expected_base(&self) -> Option<&str> {
+        self.details.as_ref().map(|d| d.base_ref_oid.as_str())
+    }
     pub fn head(&self) -> Option<&str> {
         self.details.as_ref().map(|d| d.head_ref_oid.as_str())
     }
@@ -607,6 +637,7 @@ impl Services {
             };
             if self.generations.get(&id) != Some(&review.generation)
                 || head.is_some_and(|head| review.head() != Some(head))
+                || matches!(task, Task::ReviewFiles { base, .. } if review.expected_base() != Some(base))
             {
                 return false;
             }

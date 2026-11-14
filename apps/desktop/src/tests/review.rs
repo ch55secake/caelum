@@ -1,4 +1,5 @@
 mod auto_merge;
+mod cache;
 mod overview;
 
 use super::*;

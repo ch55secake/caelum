@@ -108,3 +108,18 @@ Files and feedback paginate against the expected head/base. Review generations
 reject late pages even after a same-head refresh. Mutations remain locked across
 navigation/refresh and pin the displayed head. GitHub enforces merge permissions
 and repository rules. Selected feedback becomes editable composer context.
+
+Review opening reads the last overview/files from disk alongside a fresh details
+request. `github/cache.rs` owns the best-effort SQLite cache at the workspace
+snapshot path plus `.pr-cache-v1.sqlite3`, preserving isolated state overrides.
+Canonical PR URLs share entries across worktrees; file pages additionally pin both
+base and head commits. The cache retains at most 128 overview/page records and
+32 MiB of JSON, with a 4 MiB per-record limit and seven-day expiry. Eviction reclaims
+SQLite pages. All cache I/O runs on service workers; cache failures fall back to
+GitHub. Read-only review tasks bypass draft saves after workspace restoration.
+
+Cached overviews remain labelled until live details arrive, and do not provide
+current checks or merge actions. Matching commits retain cached files; either
+commit changing invalidates files and old in-flight pages. Uncached file pages
+use the details snapshot followed by the files request and a final canonical
+URL/base/head validation, avoiding a redundant pre-files request.

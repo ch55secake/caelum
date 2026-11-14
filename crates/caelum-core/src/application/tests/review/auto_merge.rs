@@ -71,7 +71,9 @@ fn auto_merge_confirms_each_setting_and_rejects_details_read_before_or_during_th
         for stale in [before, during] {
             app.apply(Event::Completed(
                 stale,
-                Ok(Reply::Task(TaskReply::Details(old_details.clone()))),
+                Ok(Reply::Task(TaskReply::Details(Box::new(
+                    old_details.clone(),
+                )))),
             ));
             assert!(app.services.busy(&refresh));
             let details = app.services.reviews[&key].details.as_ref().unwrap();
@@ -87,7 +89,7 @@ fn auto_merge_confirms_each_setting_and_rejects_details_read_before_or_during_th
         let confirmed = app.services.reviews[&key].details.clone().unwrap();
         app.apply(Event::Completed(
             commands[0].0,
-            Ok(Reply::Task(TaskReply::Details(confirmed))),
+            Ok(Reply::Task(TaskReply::Details(Box::new(confirmed)))),
         ));
         app.commands();
     }

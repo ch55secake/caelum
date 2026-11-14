@@ -1,6 +1,7 @@
 # Performance measurements
 
 Current native evidence: [Rune evaluation and design follow-up](../design/rune-evaluation.md).
+PR fetching and restart-cache measurements: [review loading](review-loading.md).
 Historical web-client results: [release baseline](baseline-0.1.12.md) and
 [bounded render publication](stack-0.1.12.md). Their source/workloads are available
 at the recorded revisions; the browser application is no longer part of this tree.

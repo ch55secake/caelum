@@ -11,22 +11,33 @@ impl Workspace {
         };
         let mut immediate = std::mem::take(&mut self.ready_outgoing);
         for request in std::mem::take(&mut self.outgoing) {
-            if matches!(
-                request.1,
-                Command::Load(_)
-                    | Command::Cancel(_)
-                    | Command::Task(
-                        Task::Shell { .. }
-                            | Task::Git { .. }
-                            | Task::Diff { .. }
-                            | Task::File { .. }
-                            | Task::Directory { .. }
+            if (self.store_ready
+                && matches!(
+                    request.1,
+                    Command::Task(
+                        Task::ReviewCache { .. }
+                            | Task::Details { .. }
+                            | Task::ReviewFiles { .. }
+                            | Task::Feedback { .. }
                     )
-                    | Command::Approve(..)
-                    | Command::Answer(..)
-                    | Command::Notify(..)
-                    | Command::Sound(_)
-            ) {
+                ))
+                || matches!(
+                    request.1,
+                    Command::Load(_)
+                        | Command::Cancel(_)
+                        | Command::Task(
+                            Task::Shell { .. }
+                                | Task::Git { .. }
+                                | Task::Diff { .. }
+                                | Task::File { .. }
+                                | Task::Directory { .. }
+                        )
+                        | Command::Approve(..)
+                        | Command::Answer(..)
+                        | Command::Notify(..)
+                        | Command::Sound(_)
+                )
+            {
                 immediate.push(request);
             } else {
                 self.durable_outgoing.push(request);

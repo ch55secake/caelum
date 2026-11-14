@@ -38,7 +38,7 @@ pub fn open_review(s: &mut Workspace, project: String, url: String) {
     }
     live.panels.screen = Screen::Review;
     live.panels.review = Some((project.clone(), url.clone()));
-    live.app.task(Task::Details { project, url });
+    live.app.open_review(project, url);
 }
 
 pub(super) fn review(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
@@ -530,7 +530,10 @@ fn review_files_view(
                 .children(show_nav.then_some(nav))
                 .child(code.grow(1.0).min_w(0.0)),
         );
-    if let (Some(page), Some(head)) = (review.next_page, review.head()) {
+    if !review.cached()
+        && let (Some(page), Some(head), Some(base)) =
+            (review.next_page, review.head(), review.expected_base())
+    {
         body = body.child(
             action(
                 "Load more files",
@@ -538,6 +541,7 @@ fn review_files_view(
                     project: project.into(),
                     url: url.into(),
                     head: head.into(),
+                    base: base.into(),
                     page,
                 },
                 s,

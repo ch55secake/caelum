@@ -3,6 +3,21 @@ use crate::application::{Command, Provider, Reply, Scope, Task, TaskReply};
 
 impl Workspace {
     pub fn task(&mut self, task: Task) {
+        if matches!(
+            task,
+            Task::ReviewFiles { .. }
+                | Task::Feedback { .. }
+                | Task::Merge { .. }
+                | Task::SetAutoMerge { .. }
+                | Task::UpdateBranch { .. }
+        ) && task.review().is_some_and(|(url, _)| {
+            self.services
+                .reviews
+                .get(&(task.project().into(), url.into()))
+                .is_some_and(|r| r.cached())
+        }) {
+            return;
+        }
         if let Task::SetAutoMerge {
             project,
             url,

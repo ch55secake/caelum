@@ -167,7 +167,29 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
                         .child(
                             ui::caption(format!("−{}", details.deletions), k).color(k.c.danger.fg),
                         ),
-                ),
+                )
+                .children(target.and_then(|key| {
+                    l.app
+                        .services
+                        .reviews
+                        .get(key)
+                        .filter(|review| review.cached())
+                        .map(|_| {
+                            let loading = l.app.services.busy(&Task::Details {
+                                project: key.0.clone(),
+                                url: key.1.clone(),
+                            });
+                            ui::caption(
+                                if loading {
+                                    "Cached · refreshing"
+                                } else {
+                                    "Cached"
+                                },
+                                k,
+                            )
+                            .key("review-cached")
+                        })
+                })),
         )
         .child(ui::divider(k))
 }

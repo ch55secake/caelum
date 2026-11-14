@@ -154,6 +154,7 @@ fn real_workspace_services_smoke() {
         project: project.clone(),
         url: url.clone(),
         head: head.clone(),
+        base: details.base_ref_oid,
         page: 1,
     }) else {
         panic!("PR files")
