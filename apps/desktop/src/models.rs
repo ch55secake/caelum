@@ -11,13 +11,14 @@ use rune_kit::{ButtonVariant, Kit, ScrollBar};
 
 #[derive(Clone)]
 enum Owner {
+    Home(Scope),
     Session(usize, Scope),
     Defaults(Scope),
 }
 impl Owner {
     fn scope(&self) -> &Scope {
         match self {
-            Self::Session(_, scope) | Self::Defaults(scope) => scope,
+            Self::Home(scope) | Self::Session(_, scope) | Self::Defaults(scope) => scope,
         }
     }
 }
@@ -54,6 +55,11 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
             return;
         };
         Owner::Defaults(Scope { project, provider })
+    } else if l.panels.screen == crate::panels::Screen::Home {
+        let Some(scope) = l.app.home_scope() else {
+            return;
+        };
+        Owner::Home(scope)
     } else {
         let Some(index) = l.app.selected else {
             return;
@@ -67,6 +73,7 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
         .get(&choices_scope)
         .is_none_or(|choices| choices.models.is_empty());
     l.models.selected = match &owner {
+        Owner::Home(_) => l.app.home_options().model,
         Owner::Session(i, _) => l.app.sessions[*i].options.model.clone(),
         Owner::Defaults(scope) => l
             .app
@@ -86,13 +93,17 @@ pub fn open(s: &mut Workspace, settings: Option<Provider>) {
         draft.focused = false;
     }
     l.commands.side_editor.focused = false;
+    l.home.editor.focused = false;
     let at = selected_index(s, &matches(s));
     live_mut(s).models.reveal = Some(at);
 }
 pub fn close(s: &mut Workspace) {
     let l = live_mut(s);
     l.models.query.focused = false;
-    if matches!(l.models.owner.take(), Some(Owner::Session(..))) {
+    if matches!(
+        l.models.owner.take(),
+        Some(Owner::Home(_) | Owner::Session(..))
+    ) {
         l.focus();
     }
 }
@@ -146,7 +157,9 @@ fn matches(s: &Workspace) -> Vec<Model> {
             ),
         })
         .collect();
+    let home_options = l.app.home_options();
     let current = match l.models.owner.as_ref().unwrap() {
+        Owner::Home(_) => home_options.model.as_ref(),
         Owner::Session(index, _) => l.app.sessions[*index].options.model.as_ref(),
         Owner::Defaults(scope) => l
             .app
@@ -223,6 +236,17 @@ fn choose(s: &mut Workspace, id: &str) {
         .and_then(|c| c.models.iter().find(|m| Some(&m.id) == model.as_ref()))
         .and_then(|m| m.default_effort.clone());
     match owner {
+        Owner::Home(scope) => {
+            if l.app.home_scope().as_ref() != Some(&scope) {
+                close(s);
+                return;
+            }
+            let mut options = l.app.home_options();
+            options.model = model;
+            options.effort = effort;
+            l.app.home.draft.provider = Some(scope.provider);
+            l.app.home.draft.options = options;
+        }
         Owner::Defaults(scope) => {
             let defaults = l
                 .app
@@ -283,7 +307,9 @@ pub fn view(s: &Workspace, k: &Kit) -> El {
         return col();
     };
     let provider = scope.provider;
+    let home_options = l.app.home_options();
     let current = match l.models.owner.as_ref().unwrap() {
+        Owner::Home(_) => home_options.model.as_deref(),
         Owner::Session(i, _) => l.app.sessions[*i].options.model.as_deref(),
         Owner::Defaults(scope) => l
             .app
@@ -446,10 +472,10 @@ pub fn overlay(s: &Workspace, k: &Kit, layers: &mut Vec<El>) {
     let Some(owner) = live(s).models.owner.as_ref() else {
         return;
     };
-    let anchor = if matches!(owner, Owner::Defaults(_)) {
-        "settings-model-trigger"
-    } else {
-        "model-trigger"
+    let anchor = match owner {
+        Owner::Home(_) => "home-model-trigger",
+        Owner::Defaults(_) => "settings-model-trigger",
+        Owner::Session(..) => "model-trigger",
     };
     let width = rune::memo::window_layout("shell").map_or(420.0, |r| (r[2] - 32.0).min(420.0));
     layers.push(

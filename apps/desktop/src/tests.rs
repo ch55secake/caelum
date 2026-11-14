@@ -5,6 +5,7 @@ use super::{Workspace, spec};
 mod composer;
 mod context;
 mod files;
+mod home;
 mod layout;
 mod lifecycle;
 mod models;
@@ -114,7 +115,9 @@ fn choose_context(rt: &mut Runtime<Workspace>, label: &str) {
 fn design_runtime(scene: &str, size: (f32, f32)) -> Runtime<Workspace> {
     let app = spec();
     let mut state = crate::evaluation::design();
-    crate::evaluation::scene(&mut state, scene);
+    if !crate::home::scene(&mut state, scene) {
+        crate::evaluation::scene(&mut state, scene);
+    }
     let mut rt = Runtime::new(state, app.view, size, Env::new(true, 1.0));
     rt.poll = app.poll;
     rt.on_key = app.on_key;

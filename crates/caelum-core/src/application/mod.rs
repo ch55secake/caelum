@@ -25,7 +25,7 @@ pub use notifications::Notification;
 pub use persistence::{Preferences, SavedSession, Snapshot, Store, StoreLock};
 pub use runtime::{Command, Event, ProviderRuntime, Reply, Runtime};
 pub use services::{Checkout, Review, Services, Task, TaskReply};
-pub use workspace::{Session, Workspace};
+pub use workspace::{Home, HomeDraft, Session, Workspace};
 
 use serde::{Deserialize, Serialize};
 

@@ -70,6 +70,7 @@ scenes += ("tool-running", "tool-failure", "compaction", "compaction-running", "
 scenes += ("tool-output-long", "vercel-tool-output-long", "tool-search", "vercel-tools")
 scenes += ("composer-empty", "composer-multiline", "composer-queued", "composer-queue-error", "composer-attachments")
 scenes += ("composer-long", "composer-attachment-status", "composer-attachment-preview", "composer-image-preview")
+scenes += ("home", "home-empty", "home-draft", "home-projects")
 for theme in ("dark", "light"):
     for compact in (False, True):
       for label in (*scenes, *interactions):

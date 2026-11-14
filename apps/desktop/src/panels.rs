@@ -40,6 +40,7 @@ use std::{
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Screen {
+    Home,
     #[default]
     Conversation,
     Files,
@@ -575,7 +576,7 @@ pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
         live_mut(s).panels.sessions.clear();
         live_mut(s).panels.sessions.focused = false;
         live_mut(s).panels.searching_sessions = false;
-    } else if ev.key == Key::Escape && live(s).panels.screen != Screen::Conversation {
+    } else if ev.key == Key::Escape && live(s).panels.screen == Screen::Review {
         live_mut(s).panels.screen = Screen::Conversation;
     } else {
         return false;

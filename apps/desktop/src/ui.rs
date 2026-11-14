@@ -469,12 +469,27 @@ pub fn brand(s: &crate::Workspace, k: &Kit) -> El {
         .gap(10.0)
         .center_y()
         .px(8.0)
-        .child(icon(&crate::ORBIT, 18.0).color(k.c.text_accent))
         .child(
-            text("caelum")
-                .font(TextStyle::new(15.0, 600.0))
-                .color(k.c.text_base)
-                .grow(1.0),
+            row()
+                .grow(1.0)
+                .gap(10.0)
+                .center_y()
+                .child(icon(&crate::ORBIT, 18.0).color(k.c.text_accent))
+                .child(
+                    text("caelum")
+                        .font(TextStyle::new(15.0, 600.0))
+                        .color(k.c.text_base),
+                )
+                .role("button")
+                .label("Caelum Home")
+                .focusable(s.live.is_some())
+                .focus_ring(1.5, 0.0, k.c.border_focus)
+                .key("brand-home")
+                .on_press(|s: &mut crate::Workspace| {
+                    if s.live.is_some() {
+                        crate::home::open(s);
+                    }
+                }),
         );
     if s.sidebar.is_open() {
         brand = brand.child(

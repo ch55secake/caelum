@@ -112,6 +112,9 @@ impl Workspace {
 
     pub fn title(&self) -> &str {
         if let Some(live) = &self.live {
+            if live.panels.screen == crate::panels::Screen::Home {
+                return "Home";
+            }
             live.app
                 .selected
                 .map(|i| live.app.sessions[i].title.as_str())
@@ -163,6 +166,10 @@ impl Workspace {
     }
 
     pub fn send(&mut self, tx: &mut Tx) {
+        if crate::home::is_home(self) {
+            crate::home::send(self, tx);
+            return;
+        }
         if self.live.is_some() && crate::commands::dispatch(self, tx) {
             return;
         }

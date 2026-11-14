@@ -141,7 +141,12 @@ fn desktop_shutdown_saves_the_latest_editor_and_releases_the_workspace_lock() {
     live.drafts[0].text = "older in-flight save".into();
     live.poll(&mut rune::Tx::default());
     live.drafts[0].text = "latest edit before quit".into();
+    live.home.editor.text = "Latest Home draft before quit".into();
     drop(live);
+    assert_eq!(
+        store.load().unwrap().unwrap().home.text,
+        "Latest Home draft before quit"
+    );
     assert_eq!(
         store.load().unwrap().unwrap().sessions[0].draft,
         "latest edit before quit"
