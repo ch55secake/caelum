@@ -195,13 +195,12 @@ fn home_layout_fits_compact_and_large_windows_and_settles_when_idle() {
             assert!(element(&rt, "home-composer").rect[2] <= 640.1);
             assert!(rt.find("message-composer").is_none());
             let commits = rt.stats.commits;
-            let image = live(&rt.state).home.background.as_ref().unwrap().id();
+            let background = live(&rt.state).home.background.as_ref().unwrap();
+            let images = (background.dark.id(), background.light.id());
             advance(&mut rt, 1.0);
             assert_eq!(rt.stats.commits, commits, "{scene} {size:?}");
-            assert_eq!(
-                live(&rt.state).home.background.as_ref().unwrap().id(),
-                image
-            );
+            let background = live(&rt.state).home.background.as_ref().unwrap();
+            assert_eq!((background.dark.id(), background.light.id()), images);
         }
     }
 }

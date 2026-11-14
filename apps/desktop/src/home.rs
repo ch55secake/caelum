@@ -24,9 +24,14 @@ enum Menu {
     Effort,
 }
 
+pub(crate) struct Background {
+    pub dark: Image,
+    pub light: Image,
+}
+
 pub struct State {
     pub editor: TextEdit,
-    pub(crate) background: Option<Image>,
+    pub(crate) background: Option<Background>,
     position: Rc<Cell<ScrollPos>>,
     mounted: bool,
     menu: Menu,
@@ -108,11 +113,15 @@ pub fn sync(l: &mut Live, tx: &mut Tx) -> bool {
     let shown = l.panels.screen == Screen::Home;
     let mut changed = false;
     if shown && l.home.background.is_none() {
-        // A single 2000×1122 asset (about 12 MiB including mips), decoded on
-        // Rune's image worker after launch. Reuse its static pixels on every view.
-        let background = l.media.home_background();
+        // Two 2000×1122 assets (under 24 MiB total including mips), decoded on
+        // Rune's image worker after launch and reused across theme changes.
+        let background = Background {
+            dark: l.media.home_background(true),
+            light: l.media.home_background(false),
+        };
         if l.fixture {
-            let _ = background.wait();
+            let _ = background.dark.wait();
+            let _ = background.light.wait();
         }
         l.home.background = Some(background);
         changed = true;

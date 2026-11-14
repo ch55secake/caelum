@@ -441,7 +441,7 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     let width = cx.layout("main-pane").map_or(840.0, |r| r[2]);
     let padding = if width < 540.0 { 16.0 } else { 32.0 };
     let main = if home::is_home(s) {
-        home::view(s, &mut layers)
+        home::view(s, dark, &mut layers)
     } else {
         col()
             .w_full()

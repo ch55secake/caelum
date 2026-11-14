@@ -8,7 +8,7 @@ use crate::{
 use rune::{Color, El, SurfaceFit, TextStyle, col, el, icon, row, text, text_input};
 use rune_kit::{ButtonVariant, Kit};
 
-pub fn view(s: &Workspace, layers: &mut Vec<El>) -> El {
+pub fn view(s: &Workspace, dark: bool, layers: &mut Vec<El>) -> El {
     // The artwork and its charcoal writing surface keep their contrast in either theme.
     let k = crate::theme::kit(true);
     let l = live(s);
@@ -19,7 +19,8 @@ pub fn view(s: &Workspace, layers: &mut Vec<El>) -> El {
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .fill(rune::color::hex("#08090b").unwrap())
         .a11y_hidden();
-    let background = if let Some(image) = &l.home.background {
+    let background = if let Some(artwork) = &l.home.background {
+        let image = if dark { &artwork.dark } else { &artwork.light };
         background.pixels_fit(image.pixels(), SurfaceFit::Fill)
     } else {
         background
