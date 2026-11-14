@@ -55,7 +55,7 @@ pub(super) fn view(s: &Workspace, k: &Kit) -> El {
                 .gap(6.0)
                 .px(8.0)
                 .radius(7.0)
-                .fill(k.c.layer_02)
+                .fill(k.c.layer_03)
                 .child(
                     ui::caption(&title, k)
                         .truncate()

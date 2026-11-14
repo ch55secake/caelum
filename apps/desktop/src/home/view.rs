@@ -8,10 +8,14 @@ use crate::{
 use rune::{Color, El, SurfaceFit, TextStyle, col, el, icon, row, text, text_input};
 use rune_kit::{ButtonVariant, Kit};
 
-pub fn view(s: &Workspace, dark: bool, layers: &mut Vec<El>) -> El {
-    // The artwork and its charcoal writing surface keep their contrast in either theme.
-    let k = crate::theme::kit(true);
+pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let l = live(s);
+    // Text painted directly over the dark artwork needs light foreground tokens.
+    let on_art = crate::theme::appearance(
+        true,
+        &l.app.preferences.theme_family,
+        &l.app.preferences.accent_color,
+    );
     let size = rune::memo::window_layout("main-pane").unwrap_or([0.0, 0.0, 1000.0, 900.0]);
     let compact = size[3] < 680.0;
     let background = el()
@@ -20,7 +24,11 @@ pub fn view(s: &Workspace, dark: bool, layers: &mut Vec<El>) -> El {
         .fill(rune::color::hex("#08090b").unwrap())
         .a11y_hidden();
     let background = if let Some(artwork) = &l.home.background {
-        let image = if dark { &artwork.dark } else { &artwork.light };
+        let image = if k.dark {
+            &artwork.dark
+        } else {
+            &artwork.light
+        };
         background.pixels_fit(image.pixels(), SurfaceFit::Fill)
     } else {
         background
@@ -34,19 +42,19 @@ pub fn view(s: &Workspace, dark: bool, layers: &mut Vec<El>) -> El {
         .items_center()
         .child(
             icon(&crate::ORBIT, if compact { 32.0 } else { 42.0 })
-                .color(k.c.text_base)
+                .color(on_art.c.text_base)
                 .a11y_hidden(),
         )
         .child(
             text("A little room to think")
                 .key("home-heading")
                 .font(TextStyle::new(if compact { 25.0 } else { 30.0 }, 500.0).lh(38.0))
-                .color(k.c.text_base)
+                .color(on_art.c.text_base)
                 .wrap(),
         )
-        .child(composer(s, &k, layers))
-        .child(controls::project(s, &k))
-        .children((l.app.home.opening()).then(|| ui::caption("Opening project…", &k)))
+        .child(composer(s, k, layers))
+        .child(controls::project(s, k, &on_art))
+        .children((l.app.home.opening()).then(|| ui::caption("Opening project…", &on_art)))
         .children(
             l.app
                 .home
@@ -54,7 +62,11 @@ pub fn view(s: &Workspace, dark: bool, layers: &mut Vec<El>) -> El {
                 .as_ref()
                 .or(l.app.persistence_error.as_ref())
                 .or(l.app.error.as_ref())
-                .map(|error| ui::caption(error, &k).color(k.c.danger.fg).w_full()),
+                .map(|error| {
+                    ui::caption(error, &on_art)
+                        .color(on_art.c.danger.fg)
+                        .w_full()
+                }),
         );
     col()
         .key("home")
@@ -124,13 +136,13 @@ fn composer(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .padding(14.0)
         .gap(12.0)
         .radius(16.0)
-        .fill(rune::color::hex("#191b1f").unwrap().alpha(0.98))
-        .border(1.0, Color::WHITE.alpha(0.16))
+        .fill(k.c.layer_02)
+        .border(1.0, k.c.border_strong)
         .child(attachments::view(s, k))
         .child(
-            rune::auto_grow(input, 3, 8)
+            rune::auto_grow(input, 2, 8)
                 .key("home-editor")
-                .min_h(72.0)
+                .min_h(48.0)
                 .max_h(184.0)
                 .px(4.0)
                 .py(4.0)
