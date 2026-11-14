@@ -37,7 +37,7 @@ Appearance → Sidebar scope setting. Closing
 the window keeps work running; ⌘Q shuts down owned providers and saves editors.
 
 Fresh launches open **Home**, also available from the sidebar or Caelum logo.
-Home shows the black-hole artwork in dark mode and the rocket artwork in light mode.
+Home shows the black-hole artwork in dark mode and pale sunlit clouds in light mode.
 Its draft and attachments are saved independently of conversations. Choose a
 project/worktree, provider and model, then send to start a fresh session. Explicit
 project links still open their destination. Use `--design-fixture --scene home`

@@ -10,18 +10,12 @@ use rune_kit::{ButtonVariant, Kit};
 
 pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let l = live(s);
-    // Text painted directly over the dark artwork needs light foreground tokens.
-    let on_art = crate::theme::appearance(
-        true,
-        &l.app.preferences.theme_family,
-        &l.app.preferences.accent_color,
-    );
     let size = rune::memo::window_layout("main-pane").unwrap_or([0.0, 0.0, 1000.0, 900.0]);
     let compact = size[3] < 680.0;
     let background = el()
         .key("home-background")
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .fill(rune::color::hex("#08090b").unwrap())
+        .fill(rune::color::hex(if k.dark { "#08090b" } else { "#f8f8f4" }).unwrap())
         .a11y_hidden();
     let background = if let Some(artwork) = &l.home.background {
         let image = if k.dark {
@@ -42,19 +36,19 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .items_center()
         .child(
             icon(&crate::ORBIT, if compact { 32.0 } else { 42.0 })
-                .color(on_art.c.text_base)
+                .color(k.c.text_base)
                 .a11y_hidden(),
         )
         .child(
             text("A little room to think")
                 .key("home-heading")
                 .font(TextStyle::new(if compact { 25.0 } else { 30.0 }, 500.0).lh(38.0))
-                .color(on_art.c.text_base)
+                .color(k.c.text_base)
                 .wrap(),
         )
         .child(composer(s, k, layers))
-        .child(controls::project(s, k, &on_art))
-        .children((l.app.home.opening()).then(|| ui::caption("Opening project…", &on_art)))
+        .child(controls::project(s, k))
+        .children((l.app.home.opening()).then(|| ui::caption("Opening project…", k)))
         .children(
             l.app
                 .home
@@ -62,11 +56,7 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                 .as_ref()
                 .or(l.app.persistence_error.as_ref())
                 .or(l.app.error.as_ref())
-                .map(|error| {
-                    ui::caption(error, &on_art)
-                        .color(on_art.c.danger.fg)
-                        .w_full()
-                }),
+                .map(|error| ui::caption(error, k).color(k.c.danger.fg).w_full()),
         );
     col()
         .key("home")
@@ -75,11 +65,11 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         .min_h(0.0)
         .clip_rounded(0.0)
         .child(background)
-        .child(
+        .children(k.dark.then(|| {
             el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
                 .gradient(Color::BLACK.alpha(0.06), Color::BLACK.alpha(0.55))
-                .a11y_hidden(),
-        )
+                .a11y_hidden()
+        }))
         .child(
             col()
                 .key("home-scroll")

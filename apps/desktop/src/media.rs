@@ -62,7 +62,7 @@ impl State {
         let bytes = if dark {
             include_bytes!("../assets/black-hole-ascii.png").as_slice()
         } else {
-            include_bytes!("../assets/rocket-ascii.png").as_slice()
+            include_bytes!("../assets/clouds-sunlit-ascii.png").as_slice()
         };
         self.cache.load(bytes)
     }

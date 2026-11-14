@@ -9,7 +9,7 @@ use caelum_core::application::Provider;
 use rune::{El, FileDialogOptions, Tx, col, row};
 use rune_kit::{ButtonVariant, Kit};
 
-pub(super) fn project(s: &Workspace, k: &Kit, on_art: &Kit) -> El {
+pub(super) fn project(s: &Workspace, k: &Kit) -> El {
     let l = live(s);
     let project = l.app.home.draft.project.as_deref();
     let name = project
@@ -26,7 +26,7 @@ pub(super) fn project(s: &Workspace, k: &Kit, on_art: &Kit) -> El {
                 .icon(&ui::FOLDER)
                 .variant(ButtonVariant::GhostMuted)
                 .on_press(|s| toggle_menu(s, Menu::Projects))
-                .build(on_art)
+                .build(k)
                 .key("home-project")
                 .label("Project or worktree")
                 .help(project.unwrap_or("Choose where the new session will run")),
@@ -36,7 +36,7 @@ pub(super) fn project(s: &Workspace, k: &Kit, on_art: &Kit) -> El {
                 .and_then(|p| l.app.services.checkouts.get(p))
                 .and_then(|c| c.git.as_ref())
                 .and_then(|g| g.branch.as_deref())
-                .map(|branch| ui::caption(branch, on_art).truncate()),
+                .map(|branch| ui::caption(branch, k).truncate()),
         );
     let mut content = col().w_full().gap(6.0).child(heading);
     if expanded {
