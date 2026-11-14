@@ -29,14 +29,19 @@ provider events. Completion routing preserves each request's original owner and
 generation. The application and parity suites are grouped by capability under
 `application/tests/` and `application/parity_tests/`.
 
-`Runtime` uses eight normal workers, two control workers, bounded command queues,
-a 1,024-event inbox and 256-event UI drains. Arrival wakes Rune; provider I/O
+`Runtime` uses eight normal workers, two conversation workers, two control workers,
+bounded command queues, a 1,024-event inbox and 256-event UI drains. Arrival wakes Rune; provider I/O
 does not run on the UI thread. Cancellation and permission replies bypass the
-normal persistence gate. The shared `ProviderRuntime` owns providers, brokers,
-process registration and session-branch attribution.
+normal persistence gate. Resume, history pagination and inbox recovery have reserved
+workers so background catalogues, diffs and discovery cannot occupy their capacity.
+The shared `ProviderRuntime` owns providers, brokers, process registration and
+session-branch attribution.
 
 Codex uses one `codex app-server --listen stdio://` JSONL connection per project.
 OpenCode uses its verified local registered service or an owned loopback server.
+Connection attempts are shared within a checkout; startup and question recovery
+for one checkout do not lock other checkouts. Release/shutdown retires in-flight
+attempts before they can publish a connection or recover stale forms.
 Only owned processes are terminated on shutdown. See [Codex](codex.md),
 [OpenCode](opencode.md) and [security boundaries](security.md).
 

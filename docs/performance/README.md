@@ -10,6 +10,8 @@ builds/tests. Keep raw JSON with reports under ignored `apps/desktop/profile-res
 Repeat scenarios and compare medians/ranges rather than enforcing machine-specific
 CI timing thresholds.
 
+Provider and restart-history measurements: [session loading](session-loading.md).
+
 ## Synthetic native frame measurement
 
 ```sh

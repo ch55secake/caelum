@@ -1,3 +1,4 @@
+mod loading;
 mod managed;
 mod registered;
 mod smoke;
@@ -182,10 +183,9 @@ fn shutdown_terminates_and_unregisters_the_owned_server_process() {
         session_ids: Mutex::new(HashSet::new()),
         pending_permission_ids: Arc::new(Mutex::new(HashSet::new())),
     });
-    provider
-        .inner
-        .lock_servers()
-        .insert(project_path, Arc::clone(&server));
+    let slot = Arc::new(ServerSlot::default());
+    slot.connect(&processes, |_| Ok(server.clone())).unwrap();
+    provider.inner.lock_servers().insert(project_path, slot);
 
     provider.shutdown();
 

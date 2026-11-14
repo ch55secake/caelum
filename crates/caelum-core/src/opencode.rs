@@ -34,6 +34,7 @@ mod transport;
 use permissions::deny_pending_approvals;
 use questions::sync_questions;
 use server::service_file;
+use server::ServerSlot;
 use transport::api_url;
 
 use crate::{
@@ -63,7 +64,7 @@ struct ProviderInner {
     processes: Arc<ProcessRegistry>,
     approvals: ApprovalBroker,
     questions: QuestionBroker,
-    servers: Mutex<HashMap<PathBuf, Arc<OpenCodeServer>>>,
+    servers: Mutex<HashMap<PathBuf, Arc<ServerSlot>>>,
     subscribers: EventSubscribers,
     closed: AtomicBool,
 }
@@ -466,12 +467,13 @@ impl OpenCodeProvider {
             .inner
             .lock_servers()
             .iter()
-            .filter(|(path, server)| {
-                path.starts_with(checkout) && server.alive.load(Ordering::Acquire)
-            })
+            .filter(|(path, _)| path.starts_with(checkout))
             .map(|(path, server)| (path.clone(), Arc::clone(server)))
             .collect();
-        for (path, server) in servers {
+        for (path, slot) in servers {
+            let Some(server) = slot.current() else {
+                continue;
+            };
             if Self::list_sessions_on(&Project::open(&path)?, &server, false)?
                 .sessions
                 .iter()
@@ -486,19 +488,28 @@ impl OpenCodeProvider {
     }
 
     pub fn release_checkout(&self, checkout: &Path) {
-        let mut servers = self.inner.lock_servers();
-        let paths: Vec<_> = servers
-            .keys()
-            .filter(|path| path.starts_with(checkout))
-            .cloned()
-            .collect();
-        for path in paths {
-            if let Some(server) = servers.remove(&path) {
-                server.close(&self.inner.processes);
-                self.inner
-                    .questions
-                    .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
-            }
+        let removed = {
+            let mut servers = self.inner.lock_servers();
+            let paths: Vec<_> = servers
+                .keys()
+                .filter(|path| path.starts_with(checkout))
+                .cloned()
+                .collect();
+            paths
+                .into_iter()
+                .filter_map(|path| {
+                    let server = servers.remove(&path)?.retire();
+                    // Invalidate recovery and clear forms before a replacement
+                    // slot can be registered. No provider I/O holds the map.
+                    self.inner
+                        .questions
+                        .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
+                    server
+                })
+                .collect::<Vec<_>>()
+        };
+        for server in removed {
+            server.close(&self.inner.processes);
         }
     }
 
@@ -616,7 +627,7 @@ fn find_opencode_executable() -> Result<PathBuf, OpenCodeError> {
 }
 
 impl ProviderInner {
-    fn lock_servers(&self) -> MutexGuard<'_, HashMap<PathBuf, Arc<OpenCodeServer>>> {
+    fn lock_servers(&self) -> MutexGuard<'_, HashMap<PathBuf, Arc<ServerSlot>>> {
         self.servers
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
