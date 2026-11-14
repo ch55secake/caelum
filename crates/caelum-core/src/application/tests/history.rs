@@ -75,6 +75,117 @@ fn repeated_prompts_and_older_pages_do_not_duplicate_or_adopt_the_wrong_message(
 }
 
 #[test]
+fn an_unmatched_image_prompt_cannot_block_reconciliation_of_later_turns() {
+    for provider in Provider::ALL {
+        let image = Attachment::image("screenshot.png".into(), b"\x89PNG\r\n\x1a\n").unwrap();
+        let mut conversation = Conversation::default();
+        conversation.optimistic(
+            "local-image".into(),
+            super::super::composer::with_context("Describe this", std::slice::from_ref(&image)),
+        );
+        for turn in 0..3 {
+            conversation.optimistic(format!("local-{turn}"), "Follow up".into());
+            let id = format!("user-{turn}");
+            match provider {
+                Provider::Codex => conversation.apply(provider, "item/started", &json!({
+                    "item":{"id":id,"type":"userMessage","content":[{"type":"text","text":"Follow up"}]},
+                })),
+                Provider::OpenCode => conversation.history(provider, &[
+                    json!({"id":id,"type":"user","text":"Follow up"}),
+                ], false),
+            }
+            assert_eq!(
+                conversation.entries.len(),
+                turn + 2,
+                "{provider:?} turn {turn}"
+            );
+            assert_eq!(
+                conversation.entries.iter().filter(|e| e.optimistic).count(),
+                1
+            );
+            assert_eq!(conversation.entries[0].id, "local-image");
+        }
+    }
+}
+
+#[test]
+fn one_refresh_adopts_all_pending_prompts_once_without_consuming_a_later_repeat() {
+    let mut conversation = Conversation::default();
+    for id in ["local-first", "local-second"] {
+        conversation.optimistic(id.into(), "again".into());
+    }
+    let history = [
+        json!({"id":"first","type":"user","text":"again"}),
+        json!({"id":"second","type":"user","text":"again"}),
+    ];
+    conversation.history(Provider::OpenCode, &history, false);
+    assert_eq!(conversation.entries.len(), 2);
+    assert!(conversation.entries.iter().all(|entry| !entry.optimistic));
+    conversation.optimistic("local-third".into(), "again".into());
+    for _ in 0..2 {
+        conversation.history(Provider::OpenCode, &history, false);
+        assert_eq!(conversation.entries.len(), 3);
+        assert!(
+            conversation.entries[2].optimistic,
+            "an old echo is not the new submission"
+        );
+    }
+    conversation.history(
+        Provider::OpenCode,
+        &[json!({"id":"third","type":"user","text":"again"})],
+        false,
+    );
+    assert_eq!(conversation.entries.len(), 3);
+    assert!(conversation.entries.iter().all(|entry| !entry.optimistic));
+}
+
+#[test]
+fn image_context_matching_preserves_older_messages_and_distinct_captures() {
+    let image = Attachment::image("screenshot.png".into(), b"\x89PNG\r\n\x1a\n").unwrap();
+    let other = Attachment::image("screenshot.png".into(), b"\x89PNG\r\n\x1a\nother").unwrap();
+    let prompt =
+        super::super::composer::with_context("Describe this", std::slice::from_ref(&image));
+    let mut echo = image.clone();
+    echo.id = "reconstructed-image".into();
+    let echo = super::super::composer::with_context("Describe this", &[echo]);
+    let old = json!({"id":"old","type":"user","text":echo});
+    let mut conversation = Conversation::default();
+    conversation.optimistic("local".into(), prompt);
+    conversation.history(Provider::OpenCode, std::slice::from_ref(&old), true);
+    conversation.history(Provider::OpenCode, &[old], false);
+    assert_eq!(conversation.entries.len(), 2);
+    assert!(conversation.entries[1].optimistic);
+
+    conversation.history(Provider::OpenCode, &[json!({
+        "id":"different","type":"user","text":super::super::composer::with_context("Describe this", &[other]),
+    })], false);
+    assert_eq!(conversation.entries.len(), 3);
+    assert!(
+        conversation.entries[1].optimistic,
+        "same filename is not the same captured image"
+    );
+    for _ in 0..2 {
+        conversation.history(
+            Provider::OpenCode,
+            &[json!({
+                "id":"new","type":"user","text":echo,
+            })],
+            false,
+        );
+        assert_eq!(conversation.entries.len(), 3);
+        assert!(conversation.entries.iter().all(|entry| !entry.optimistic));
+        let entry = conversation
+            .entries
+            .iter()
+            .find(|e| e.id == "opencode-new")
+            .unwrap();
+        let attachments = split_context(&entry.text).1;
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].content, image.content);
+    }
+}
+
+#[test]
 fn delayed_history_preserves_live_tool_output_snapshots() {
     let mut conversation = Conversation::default();
     let history = vec![json!({"id":"message","type":"assistant","content":[{
