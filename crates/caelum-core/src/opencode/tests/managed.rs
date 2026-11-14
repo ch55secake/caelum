@@ -771,16 +771,11 @@ fn managed_server_lists_creates_restores_prompts_streams_and_shuts_down() {
         .lock_servers()
         .get(&Project::open(&project_path).unwrap().path().to_path_buf())
         .unwrap()
-        .clone();
+        .current()
+        .unwrap();
     assert!(!server.owns_session("ses_fake"));
 
-    let process_id = provider
-        .inner
-        .lock_servers()
-        .get(&Project::open(&project_path).unwrap().path().to_path_buf())
-        .unwrap()
-        .process_id
-        .unwrap();
+    let process_id = server.process_id.unwrap();
     provider.release_checkout(&checkout);
     assert!(provider.inner.lock_servers().is_empty());
     provider.shutdown();

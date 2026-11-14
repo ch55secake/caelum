@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -31,31 +31,140 @@ pub(super) const SERVER_PASSWORD_ENV: &str = "OPENCODE_SERVER_PASSWORD";
 const SERVER_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-impl OpenCodeProvider {
-    pub(super) fn server(&self, project: &Project) -> Result<Arc<OpenCodeServer>, OpenCodeError> {
-        if self.inner.closed.load(Ordering::Acquire) {
+/// One checkout's connection attempt. The provider map is never locked during I/O.
+#[derive(Default)]
+pub(super) struct ServerSlot {
+    state: Mutex<ServerState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+enum ServerState {
+    #[default]
+    Empty,
+    Connecting(Arc<AtomicBool>),
+    Ready(Arc<OpenCodeServer>),
+    Closed,
+}
+
+impl ServerSlot {
+    pub(super) fn connect(
+        &self,
+        processes: &ProcessRegistry,
+        connect: impl FnOnce(Arc<AtomicBool>) -> Result<Arc<OpenCodeServer>, OpenCodeError>,
+    ) -> Result<Arc<OpenCodeServer>, OpenCodeError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            match &*state {
+                ServerState::Ready(server) if server.alive.load(Ordering::Acquire) => {
+                    return Ok(server.clone());
+                }
+                ServerState::Connecting(_) => {
+                    state = self.ready.wait(state).unwrap_or_else(|e| e.into_inner());
+                }
+                ServerState::Closed => return Err(OpenCodeError::Closed),
+                _ => break,
+            }
+        }
+        let alive = Arc::new(AtomicBool::new(true));
+        let previous = std::mem::replace(&mut *state, ServerState::Connecting(alive.clone()));
+        drop(state);
+        if let ServerState::Ready(server) = previous {
+            server.close(processes);
+        }
+        let result = connect(alive);
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*state, ServerState::Closed) {
+            // Release/shutdown may retire this attempt while its I/O is in flight.
+            // Never publish it into a replacement checkout connection.
+            drop(state);
+            if let Ok(server) = result {
+                server.close(processes);
+            }
             return Err(OpenCodeError::Closed);
         }
+        *state = match &result {
+            Ok(server) => ServerState::Ready(server.clone()),
+            Err(_) => ServerState::Empty,
+        };
+        self.ready.notify_all();
+        result
+    }
 
-        let mut servers = self.inner.lock_servers();
-        if let Some(server) = servers.get(project.path()) {
-            if server.alive.load(Ordering::Acquire) {
-                return Ok(Arc::clone(server));
-            }
-            let dead = servers
-                .remove(project.path())
-                .expect("entry was just found");
-            dead.close(&self.inner.processes);
+    pub(super) fn current(&self) -> Option<Arc<OpenCodeServer>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        while matches!(*state, ServerState::Connecting(_)) {
+            state = self.ready.wait(state).unwrap_or_else(|e| e.into_inner());
         }
+        match &*state {
+            ServerState::Ready(server) if server.alive.load(Ordering::Acquire) => {
+                Some(server.clone())
+            }
+            _ => None,
+        }
+    }
 
-        if let Some(server) = self
+    pub(super) fn close(&self, processes: &ProcessRegistry) {
+        if let Some(server) = self.retire() {
+            server.close(processes);
+        }
+    }
+
+    /// Invalidate synchronously; process cleanup can run after releasing the map.
+    pub(super) fn retire(&self) -> Option<Arc<OpenCodeServer>> {
+        let previous = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::replace(&mut *state, ServerState::Closed)
+        };
+        let server = match previous {
+            ServerState::Connecting(alive) => {
+                alive.store(false, Ordering::Release);
+                None
+            }
+            ServerState::Ready(server) => {
+                server.alive.store(false, Ordering::Release);
+                Some(server)
+            }
+            _ => None,
+        };
+        self.ready.notify_all();
+        server
+    }
+}
+
+impl OpenCodeProvider {
+    pub(super) fn server(&self, project: &Project) -> Result<Arc<OpenCodeServer>, OpenCodeError> {
+        let slot = {
+            let mut servers = self.inner.lock_servers();
+            if self.inner.closed.load(Ordering::Acquire) {
+                return Err(OpenCodeError::Closed);
+            }
+            servers
+                .entry(project.path().to_path_buf())
+                .or_default()
+                .clone()
+        };
+        slot.connect(&self.inner.processes, |alive| self.connect(project, alive))
+    }
+
+    fn connect(
+        &self,
+        project: &Project,
+        alive: Arc<AtomicBool>,
+    ) -> Result<Arc<OpenCodeServer>, OpenCodeError> {
+        if !alive.load(Ordering::Acquire) {
+            return Err(OpenCodeError::Closed);
+        }
+        if let Some(mut server) = self
             .inner
             .service_file
             .as_deref()
             .and_then(discover_service)
         {
+            Arc::get_mut(&mut server)
+                .expect("newly discovered server")
+                .alive = alive;
             self.listen(&server, project)?;
-            servers.insert(project.path().to_path_buf(), Arc::clone(&server));
             return Ok(server);
         }
 
@@ -117,19 +226,23 @@ impl OpenCodeProvider {
                 }
             }
         };
-        let server = Arc::new(
-            OpenCodeServer::new(
-                Some(process_id),
-                format!("http://127.0.0.1:{port}"),
-                Some(password),
-            )
-            .inspect_err(|_| {
-                let _ = self.inner.processes.terminate(process_id);
-            })?,
-        );
+        let mut server = OpenCodeServer::new(
+            Some(process_id),
+            format!("http://127.0.0.1:{port}"),
+            Some(password),
+        )
+        .inspect_err(|_| {
+            let _ = self.inner.processes.terminate(process_id);
+        })?;
+        server.alive = alive;
+        let server = Arc::new(server);
 
         let query = [("directory", project.path().to_string_lossy().into_owned())];
         loop {
+            if !server.alive.load(Ordering::Acquire) {
+                server.close(&self.inner.processes);
+                return Err(OpenCodeError::Closed);
+            }
             let readiness = match server.request_json(Method::GET, "/api/session", &query, None) {
                 Ok(response) if response.get("data").and_then(Value::as_array).is_some() => Ok(()),
                 Ok(_) => Err(OpenCodeError::Protocol(
@@ -152,22 +265,22 @@ impl OpenCodeProvider {
         }
 
         self.listen(&server, project)?;
-        servers.insert(project.path().to_path_buf(), Arc::clone(&server));
         Ok(server)
     }
 
     fn listen(&self, server: &Arc<OpenCodeServer>, project: &Project) -> Result<(), OpenCodeError> {
-        let result = if self.inner.closed.load(Ordering::Acquire) {
-            Err(OpenCodeError::Closed)
-        } else {
-            spawn_event_listener(
-                Arc::clone(server),
-                project.path().to_path_buf(),
-                self.inner.approvals.clone(),
-                self.inner.questions.clone(),
-                Arc::clone(&self.inner.subscribers),
-            )
-        };
+        let result =
+            if self.inner.closed.load(Ordering::Acquire) || !server.alive.load(Ordering::Acquire) {
+                Err(OpenCodeError::Closed)
+            } else {
+                spawn_event_listener(
+                    Arc::clone(server),
+                    project.path().to_path_buf(),
+                    self.inner.approvals.clone(),
+                    self.inner.questions.clone(),
+                    Arc::clone(&self.inner.subscribers),
+                )
+            };
         if result.is_err() {
             server.close(&self.inner.processes);
         } else {

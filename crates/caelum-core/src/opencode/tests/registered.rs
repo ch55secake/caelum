@@ -63,7 +63,14 @@ fn registered_service_streams_external_work_and_survives_provider_shutdown() {
                 .is_working,
             Some(true)
         );
-        let server = Arc::clone(provider.inner.lock_servers().values().next().unwrap());
+        let server = provider
+            .inner
+            .lock_servers()
+            .values()
+            .next()
+            .unwrap()
+            .current()
+            .unwrap();
         assert!(server.process_id.is_none());
         let checkout = directory.0.canonicalize().unwrap();
         assert!(provider.ensure_checkout_idle(&checkout).is_err());

@@ -536,6 +536,7 @@ pub struct Runtime {
     watched_projects: Vec<String>,
     providers: Option<ProviderRuntime>,
     requests: SyncSender<(u64, Command)>,
+    history: SyncSender<(u64, Command)>,
     control: SyncSender<(u64, Command)>,
     inbox: Option<Receiver<Event>>,
     sender: SyncSender<Event>,
@@ -630,10 +631,13 @@ impl Runtime {
     pub(super) fn with_executor(execute: Execute, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         let (sender, inbox) = mpsc::sync_channel(1024);
         let (requests, normal) = mpsc::sync_channel(1024);
+        let (history, conversations) = mpsc::sync_channel(128);
         let (control, urgent) = mpsc::sync_channel(128);
         let closed = Arc::new(AtomicBool::new(false));
         let mut workers = Vec::new();
-        for (receiver, count) in [(normal, 8), (urgent, 2)] {
+        // Keep conversation reads moving while catalogues, diffs and discovery
+        // occupy the normal pool. Controls retain their own independent capacity.
+        for (receiver, count) in [(normal, 8), (conversations, 2), (urgent, 2)] {
             let receiver = Arc::new(Mutex::new(receiver));
             for _ in 0..count {
                 let receiver = receiver.clone();
@@ -667,6 +671,7 @@ impl Runtime {
             watched_projects: Vec::new(),
             providers: None,
             requests,
+            history,
             control,
             inbox: Some(inbox),
             sender,
@@ -717,6 +722,11 @@ impl Runtime {
                 | Command::Load(_)
         ) {
             &self.control
+        } else if matches!(
+            command,
+            Command::Resume(_) | Command::History(..) | Command::Inbox(_)
+        ) {
+            &self.history
         } else {
             &self.requests
         };
