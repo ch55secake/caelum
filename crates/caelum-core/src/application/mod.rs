@@ -92,7 +92,7 @@ pub struct Options {
     pub agent: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
     /// Provider activity time in Unix milliseconds.
     pub updated_at: Option<u64>,

@@ -7,6 +7,7 @@ mod git;
 mod harness;
 mod lifetime;
 mod models;
+pub mod native;
 mod runtime;
 mod stats;
 mod tools;

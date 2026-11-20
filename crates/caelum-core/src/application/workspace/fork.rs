@@ -5,7 +5,7 @@ use super::{update_summary, Pending, Session, Workspace};
 use crate::application::{presentation, split_context, Command, Provider, Reply, SessionKey};
 use caelum_protocol::SessionHistoryPage;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ForkBoundary {
     CodexTurn(String),
     CodexBefore(String),
@@ -13,7 +13,7 @@ pub enum ForkBoundary {
     OpenCodeTip(String),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum HistoryAction {
     Fork,
     Edit,

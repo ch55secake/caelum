@@ -141,6 +141,10 @@ def stage(root: Path, app: Path, target: str, tag: str) -> Path:
     shutil.copy2(root / "target" / target / "release/caelum-desktop", binary)
     audit_elf(binary, arch)
     bundle_libraries(binary, app / "usr/lib", arch)
+    # The VM extracts only this headless executable; it never launches the GUI.
+    peer = app / "usr/bin/caelum"
+    shutil.copy2(root / "target" / target / "release/caelum", peer)
+    audit_elf(peer, arch)
     assets = root / "apps/desktop/assets"
     for source, name in [(assets / "linux/AppRun", "AppRun"), (assets / "linux/dev.caelum.desktop.desktop", "dev.caelum.desktop.desktop"), (assets / "linux/dev.caelum.desktop.png", "dev.caelum.desktop.png")]:
         shutil.copy2(source, app / name)

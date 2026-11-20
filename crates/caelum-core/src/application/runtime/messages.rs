@@ -7,8 +7,9 @@ use caelum_protocol::{
     QuestionPrompt, SessionHistoryPage,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Command {
+    #[serde(skip)]
     Remote(crate::remote::Operation),
     Inbox(SessionKey),
     Enqueue(SessionKey, String, String),
@@ -17,6 +18,7 @@ pub enum Command {
     RegenerateTitle(SessionKey),
     Rename(SessionKey, String),
     CheckpointFiles(SessionKey, String, String),
+    #[serde(skip)]
     Export(
         SessionKey,
         String,
@@ -29,10 +31,14 @@ pub enum Command {
         tip: String,
         files: bool,
     },
+    #[serde(skip)]
     Notify(Notification),
+    #[serde(skip)]
     Sound(u8),
     Task(Task),
+    #[serde(skip)]
     Load(Store),
+    #[serde(skip)]
     Save(Store, Box<Snapshot>),
     Commands(Scope),
     Shells(SessionKey),
@@ -65,7 +71,7 @@ pub enum Command {
     Answer(QuestionPrompt, Option<crate::questions::Answer>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct OpenCodeMove {
     pub from: SessionKey,
     pub project: ProjectInfo,
@@ -74,13 +80,15 @@ pub struct OpenCodeMove {
     pub linked_worktree: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Reply {
+    #[serde(skip)]
     Remote(crate::remote::Outcome),
     CheckpointFiles(Vec<String>),
     Inbox(Vec<serde_json::Value>),
     Generated(String),
     Task(TaskReply),
+    #[serde(skip)]
     Snapshot(Option<Box<Snapshot>>),
     Commands(Vec<caelum_protocol::OpenCodeCommandInfo>),
     Shells(Vec<caelum_protocol::OpenCodeBackgroundShell>),
@@ -106,8 +114,9 @@ pub enum Reply {
     Done,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Event {
+    #[serde(skip)]
     UpdateProgress(u64, crate::updates::Progress),
     Checkout(String),
     Completed(u64, Result<Reply, String>),

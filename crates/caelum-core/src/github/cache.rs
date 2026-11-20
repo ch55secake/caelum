@@ -14,7 +14,7 @@ const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENTRY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_AGE: i64 = 7 * 24 * 60 * 60 * 1_000_000_000;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CachedReview {
     pub details: GitHubPullRequestDetails,
     /// A contiguous prefix, stopping at the first uncached page.

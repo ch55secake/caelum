@@ -8,7 +8,7 @@ use crate::{files, git::GitClient, github};
 use caelum_protocol::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Task {
     Shell {
         project: String,
@@ -16,6 +16,7 @@ pub enum Task {
         id: String,
         stop: bool,
     },
+    #[serde(skip)]
     Reveal {
         project: String,
         path: String,
@@ -24,7 +25,9 @@ pub enum Task {
         project: String,
         bytes: Vec<u8>,
     },
+    #[serde(skip)]
     Updates,
+    #[serde(skip)]
     Update(crate::updates::Job),
     Image {
         project: String,
@@ -131,15 +134,18 @@ pub enum Task {
         url: String,
         head: String,
     },
+    #[serde(skip)]
     ImportSettings {
         path: String,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum TaskReply {
     Shell(String),
+    #[serde(skip)]
     Updates(UpdateCheck),
+    #[serde(skip)]
     Update(crate::updates::Reply),
     Image(String),
     Usage(serde_json::Value),
@@ -157,6 +163,7 @@ pub enum TaskReply {
     ReviewFiles(GitHubPullRequestFiles),
     Feedback(GitHubPullRequestFeedback),
     AutoMerge(GitHubAutoMergeResult),
+    #[serde(skip)]
     Preferences(Preferences),
     Done,
 }
