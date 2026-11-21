@@ -8,6 +8,7 @@ use thiserror::Error;
 pub struct Project {
     path: PathBuf,
     name: String,
+    remote: bool,
 }
 
 impl Project {
@@ -37,9 +38,46 @@ impl Project {
         Ok(Self {
             path: canonical_path,
             name,
+            remote: false,
         })
     }
 
+    /// A forwarded provider speaks the VM's physical directory names. Never
+    /// consult the laptop to resolve a path reported by that provider.
+    pub(crate) fn for_provider(
+        path: impl AsRef<Path>,
+        access: Option<&crate::remote::native::Access>,
+    ) -> Result<Self, ProjectError> {
+        let Some(access) = access else {
+            return Self::open(path);
+        };
+        let path = path.as_ref();
+        if path.as_os_str() != access.root.as_str() {
+            return Err(ProjectError::OutsideProject {
+                path: path.into(),
+                project: PathBuf::from(&access.root),
+            });
+        }
+        Ok(Self {
+            path: path.into(),
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            remote: true,
+        })
+    }
+    pub(crate) fn matches(&self, path: &str) -> bool {
+        if self.remote {
+            self.path.as_os_str() == path
+        } else {
+            Path::new(path).canonicalize().is_ok_and(|p| p == self.path)
+        }
+    }
+    pub(crate) fn is_remote(&self) -> bool {
+        self.remote
+    }
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -48,6 +86,9 @@ impl Project {
     /// canonical project root. Canonicalization also rejects symlinks that
     /// point outside the selected project.
     pub fn resolve_scoped_path(&self, path: impl AsRef<Path>) -> Result<PathBuf, ProjectError> {
+        if self.remote {
+            return Err(ProjectError::RemoteFilesystem);
+        }
         let path = path.as_ref();
         if path.as_os_str().is_empty() {
             return Err(ProjectError::EmptyPath);
@@ -89,6 +130,8 @@ impl Project {
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
+    #[error("VM files require their SSH connection")]
+    RemoteFilesystem,
     #[error("project path cannot be empty")]
     EmptyPath,
     #[error("could not resolve project path '{path}': {source}")]

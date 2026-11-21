@@ -53,26 +53,19 @@ protocol, recovery and lifecycle checks. Real-service smoke tests are opt-in;
 see the [desktop development guide](../apps/desktop/README.md).
 
 `nix develop -c python3 scripts/dev/smoke_native_workspace.py` exercises the
-desktop transport and headless CLI over a pinned loopback SSH connection, using
+desktop transport, SFTP and Git over a pinned loopback SSH connection, using
 a temporary Git checkout and provider fixtures. To stream a real provider turn
-and recover the history after a worker restart and host-key change, pass
+and recover the history after a provider restart and host-key change, pass
 `--real-opencode /path/to/opencode` or `--real-codex /path/to/codex`. A loopback
 Responses fixture supplies the model output and checks that reconnecting does
-not ask for another answer. All modes use a temporary home.
+not ask for another answer. Add `--approval` to disconnect while the provider
+is waiting for permission. All modes use a temporary home with no Caelum binary.
 
-To run Caelum Dev on fresh VMs before a release, stage the headless peers from
-a compatible CI build of this checkout. Once both Linux AppImage jobs have
-published their artifacts, run:
+Build the signed macOS Dev bundle with:
 
 ```sh
-nix shell nixpkgs#squashfsTools -c python3 scripts/dev/stage_vm_peers.py RUN_ID FULL_COMMIT
 nix develop -c python3 scripts/dev/macos_app.py --build-only
 ```
-
-The signed Dev app carries both Linux architectures. On first connection it
-uploads the matching binary over pinned SSH and checks its digest before use.
-Subsequent connections reuse the verified copy. Release builds without bundled
-peers use the matching checksum-verified release AppImage.
 
 For visual changes, run `make previews` and inspect light/dark, inspector,
 compact and settings scenes. Native frame measurements are described in

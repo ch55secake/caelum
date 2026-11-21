@@ -1,6 +1,6 @@
 use super::{
-    directory_matches, model_id, model_ref, valid_session_id, OpenCodeError, OpenCodeProvider,
-    OpenCodeServer, PROVIDER_NAME, SESSION_LIMIT,
+    model_id, model_ref, valid_session_id, OpenCodeError, OpenCodeProvider, OpenCodeServer,
+    PROVIDER_NAME, SESSION_LIMIT,
 };
 use crate::projects::Project;
 use caelum_protocol::{
@@ -24,7 +24,7 @@ impl OpenCodeProvider {
                 "Invalid OpenCode fork boundary".into(),
             ));
         }
-        let project = Project::open(path)?;
+        let project = self.project(path)?;
         let server = self.server(&project)?;
         let parent = self.session(&server, &project, source)?;
         if parent.is_working || parent.archived {
@@ -54,7 +54,7 @@ impl OpenCodeProvider {
             server.request_json(Method::POST, &format!("{route}/fork"), &[], Some(body))?;
         let value = &response["data"];
         let boundary_type = if before { "before" } else { "through" };
-        if !session_directory(value).is_some_and(|dir| directory_matches(dir, project.path()))
+        if !session_directory(value).is_some_and(|dir| project.matches(dir))
             || value.pointer("/fork/sessionID").and_then(Value::as_str) != Some(source)
             || value.pointer("/fork/boundary/type").and_then(Value::as_str) != Some(boundary_type)
             || value
@@ -80,7 +80,7 @@ impl OpenCodeProvider {
         &self,
         project_path: impl AsRef<Path>,
     ) -> Result<OpenCodeSessionList, OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         Self::list_sessions_on(&project, &server, false)
     }
@@ -90,7 +90,7 @@ impl OpenCodeProvider {
         &self,
         project_path: impl AsRef<Path>,
     ) -> Result<OpenCodeSessionList, OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         Self::list_sessions_on(&project, &server, true)
     }
@@ -115,9 +115,7 @@ impl OpenCodeProvider {
 
         let mut sessions = Vec::with_capacity(values.len());
         for value in values {
-            if session_directory(value)
-                .is_some_and(|directory| directory_matches(directory, project.path()))
-            {
+            if session_directory(value).is_some_and(|directory| project.matches(directory)) {
                 if let Some(mut session) = session_info(value) {
                     session.is_working = active.contains(&session.id);
                     server.remember_session(&session.id);
@@ -146,7 +144,7 @@ impl OpenCodeProvider {
         effort: Option<&str>,
         agent: Option<&str>,
     ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         let fallback = if model.is_none() && effort.is_some() {
             let query = [(
@@ -179,9 +177,7 @@ impl OpenCodeProvider {
         let value = response.get("data").ok_or_else(|| {
             OpenCodeError::Protocol("session create response has no session".into())
         })?;
-        if !session_directory(value)
-            .is_some_and(|directory| directory_matches(directory, project.path()))
-        {
+        if !session_directory(value).is_some_and(|directory| project.matches(directory)) {
             return Err(OpenCodeError::SessionNotInProject);
         }
         let session = session_info(value).ok_or_else(|| {
@@ -199,7 +195,7 @@ impl OpenCodeProvider {
         project_path: impl AsRef<Path>,
         session_id: &str,
     ) -> Result<OpenCodeSessionInfo, OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, session_id)?;
         Ok(OpenCodeSessionInfo {
@@ -215,7 +211,7 @@ impl OpenCodeProvider {
         project_path: impl AsRef<Path>,
         session_id: &str,
     ) -> Result<(OpenCodeSessionInfo, SessionHistoryPage), OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, session_id)?;
         let page = history_on(&server, &session, None)?;
@@ -238,7 +234,7 @@ impl OpenCodeProvider {
         if !valid_session_id(session_id) {
             return Err(OpenCodeError::InvalidSessionId);
         }
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         let response = server.request_json(
             Method::GET,
@@ -260,7 +256,7 @@ impl OpenCodeProvider {
                 "session location is not an absolute directory".into(),
             ));
         }
-        let destination = Project::open(directory)?;
+        let destination = self.project(directory)?;
         if destination.path() != project.path() {
             server.forget_session(session_id);
         } else {
@@ -293,7 +289,7 @@ impl OpenCodeProvider {
         session_id: &str,
         title: &str,
     ) -> Result<(), OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         self.session_metadata(&server, &project, session_id)?;
         server.request_json(
@@ -312,7 +308,7 @@ impl OpenCodeProvider {
         from: &str,
         to: &str,
     ) -> Result<Vec<String>, OpenCodeError> {
-        let project = Project::open(path)?;
+        let project = self.project(path)?;
         let server = self.server(&project)?;
         self.session_metadata(&server, &project, id)?;
         let response = server.request_json(
@@ -349,7 +345,7 @@ impl OpenCodeProvider {
         if !valid_message_id(message) {
             return Err(OpenCodeError::Protocol("Invalid rewind boundary".into()));
         }
-        let project = Project::open(path)?;
+        let project = self.project(path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, id)?;
         if session.archived || session.is_working {
@@ -396,8 +392,7 @@ impl OpenCodeProvider {
         }
         let current = server.request_json(Method::GET, &route, &[], None)?;
         if current["data"]["id"].as_str() != Some(id)
-            || !session_directory(&current["data"])
-                .is_some_and(|dir| directory_matches(dir, project.path()))
+            || !session_directory(&current["data"]).is_some_and(|dir| project.matches(dir))
             || current["data"]["revert"] != staged["data"]
         {
             return Err(OpenCodeError::Protocol("The staged revert changed. Inspect it in OpenCode; it was not committed by Caelum.".into()));
@@ -412,7 +407,7 @@ impl OpenCodeProvider {
         session_id: &str,
         cursor: Option<&str>,
     ) -> Result<SessionHistoryPage, OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, session_id)?;
         history_on(&server, &session, cursor)
@@ -423,7 +418,7 @@ impl OpenCodeProvider {
         project_path: impl AsRef<Path>,
         session_id: &str,
     ) -> Result<SessionDetails, OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         self.session_metadata(&server, &project, session_id)?;
         let changes = server
@@ -458,7 +453,7 @@ impl OpenCodeProvider {
         session_id: &str,
         archived: bool,
     ) -> Result<(), OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, session_id)?;
         if archived && session.is_working {
@@ -487,7 +482,7 @@ impl OpenCodeProvider {
         project_path: impl AsRef<Path>,
         session_id: &str,
     ) -> Result<(), OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         let session = self.session(&server, &project, session_id)?;
         if session.is_working {
@@ -520,7 +515,7 @@ impl OpenCodeProvider {
         project_path: impl AsRef<Path>,
         session_id: &str,
     ) -> Result<(), OpenCodeError> {
-        let project = Project::open(project_path)?;
+        let project = self.project(project_path)?;
         let server = self.server(&project)?;
         self.session_metadata(&server, &project, session_id)?;
         let path = format!("/api/session/{session_id}/interrupt");
@@ -559,9 +554,7 @@ impl OpenCodeProvider {
         let value = response
             .get("data")
             .ok_or_else(|| OpenCodeError::Protocol("session response has no data".into()))?;
-        if !session_directory(value)
-            .is_some_and(|directory| directory_matches(directory, project.path()))
-        {
+        if !session_directory(value).is_some_and(|directory| project.matches(directory)) {
             return Err(OpenCodeError::SessionNotInProject);
         }
         let session = session_info(value)

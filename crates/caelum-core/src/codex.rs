@@ -19,6 +19,7 @@ mod sessions;
 #[cfg(all(test, unix))]
 mod tests;
 mod transport;
+mod websocket;
 
 use transport::spawn_reader;
 
@@ -44,6 +45,7 @@ pub struct CodexProvider {
 }
 
 struct ProviderInner {
+    remote: Option<Arc<crate::remote::native::Access>>,
     executable: Option<PathBuf>,
     processes: Arc<ProcessRegistry>,
     approvals: ApprovalBroker,
@@ -54,9 +56,9 @@ struct ProviderInner {
 }
 
 struct CodexConnection {
-    process_id: ProcessId,
+    process_id: Option<ProcessId>,
     version: std::sync::OnceLock<semver::Version>,
-    writer: Arc<Mutex<std::process::ChildStdin>>,
+    writer: Arc<transport::Writer>,
     pending: PendingRequests,
     next_id: AtomicU64,
     alive: Arc<AtomicBool>,
@@ -67,7 +69,7 @@ struct CodexConnection {
 
 struct ReaderContext {
     pending: PendingRequests,
-    writer: Arc<Mutex<std::process::ChildStdin>>,
+    writer: Arc<transport::Writer>,
     alive: Arc<AtomicBool>,
     subscribers: EventSubscribers,
     approvals: ApprovalBroker,
@@ -78,6 +80,13 @@ struct ReaderContext {
 }
 
 impl CodexProvider {
+    pub(crate) fn forwarded(mut self, access: Arc<crate::remote::native::Access>) -> Self {
+        Arc::get_mut(&mut self.inner).expect("new provider").remote = Some(access);
+        self
+    }
+    fn project(&self, path: impl AsRef<Path>) -> Result<Project, ProjectError> {
+        Project::for_provider(path, self.inner.remote.as_deref())
+    }
     pub fn new(
         processes: Arc<ProcessRegistry>,
         approvals: ApprovalBroker,
@@ -105,6 +114,7 @@ impl CodexProvider {
     ) -> Self {
         Self {
             inner: Arc::new(ProviderInner {
+                remote: None,
                 executable,
                 processes,
                 approvals,
@@ -142,7 +152,7 @@ impl CodexProvider {
                 .unwrap_or_else(|p| p.into_inner())
                 .is_empty();
             if starting
-                || Self::list_sessions_on(&Project::open(&path)?, &connection, false)?
+                || Self::list_sessions_on(&self.project(&path)?, &connection, false)?
                     .threads
                     .iter()
                     .any(|thread| thread.is_working)
@@ -167,7 +177,7 @@ impl CodexProvider {
                 self.inner
                     .questions
                     .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
-                let _ = self.inner.processes.terminate(connection.process_id);
+                connection.close(&self.inner.processes);
             }
         }
     }
@@ -185,7 +195,7 @@ impl CodexProvider {
             self.inner
                 .questions
                 .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
-            let _ = self.inner.processes.terminate(connection.process_id);
+            connection.close(&self.inner.processes);
         }
         self.inner.lock_subscribers().clear();
     }
@@ -203,41 +213,51 @@ impl CodexProvider {
             let dead = connections
                 .remove(project.path())
                 .expect("entry was just found");
-            let _ = self.inner.processes.terminate(dead.process_id);
+            dead.close(&self.inner.processes);
         }
 
-        let executable = match self.inner.executable.as_deref() {
-            Some(path) if crate::executable::executable(path) => path.to_path_buf(),
-            Some(path) => return Err(CodexError::ExecutableNotFound(path.to_path_buf())),
-            None => find_codex_executable()?,
-        };
-        check_authentication(&executable, project.path())?;
+        let (process_id, writer, reader) = if let Some(access) = &self.inner.remote {
+            let url = access.codex().map_err(CodexError::Transport)?;
+            let (writer, reader) = websocket::open(access, &url)?;
+            (None, writer, reader)
+        } else {
+            let executable = match self.inner.executable.as_deref() {
+                Some(path) if crate::executable::executable(path) => path.to_path_buf(),
+                Some(path) => return Err(CodexError::ExecutableNotFound(path.to_path_buf())),
+                None => find_codex_executable()?,
+            };
+            check_authentication(&executable, project.path())?;
 
-        let mut child = Command::new(&executable)
-            .env("PATH", crate::executable::path(&executable))
-            .args(["app-server", "--listen", "stdio://"])
-            .current_dir(project.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|source| CodexError::StartServer {
-                executable: executable.clone(),
-                source,
+            let mut child = Command::new(&executable)
+                .env("PATH", crate::executable::path(&executable))
+                .args(["app-server", "--listen", "stdio://"])
+                .current_dir(project.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|source| CodexError::StartServer {
+                    executable: executable.clone(),
+                    source,
+                })?;
+            let stdin = child.stdin.take().ok_or_else(|| {
+                CodexError::Protocol("Codex app-server stdin was not piped".into())
             })?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| CodexError::Protocol("Codex app-server stdin was not piped".into()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| CodexError::Protocol("Codex app-server stdout was not piped".into()))?;
-        let process_id = self.inner.processes.register(child)?;
+            let stdout = child.stdout.take().ok_or_else(|| {
+                CodexError::Protocol("Codex app-server stdout was not piped".into())
+            })?;
+            let process_id = self.inner.processes.register(child)?;
+            use std::io::{BufRead, BufReader};
+            (
+                Some(process_id),
+                transport::Writer::Stdio(Mutex::new(stdin)),
+                Box::new(BufReader::new(stdout).lines()) as transport::Messages,
+            )
+        };
         let connection = Arc::new(CodexConnection {
             process_id,
             version: Default::default(),
-            writer: Arc::new(Mutex::new(stdin)),
+            writer: Arc::new(writer),
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU64::new(1),
             alive: Arc::new(AtomicBool::new(true)),
@@ -247,7 +267,7 @@ impl CodexProvider {
         });
 
         spawn_reader(
-            stdout,
+            reader,
             ReaderContext {
                 pending: Arc::clone(&connection.pending),
                 writer: Arc::clone(&connection.writer),
@@ -286,11 +306,28 @@ impl CodexProvider {
                 Ok(Value::Null)
             });
         if let Err(error) = init_result {
-            let _ = self.inner.processes.terminate(process_id);
-            connection.alive.store(false, Ordering::Release);
+            connection.close(&self.inner.processes);
             return Err(error);
         }
 
+        if let Some(access) = &self.inner.remote {
+            // Resubscribing active threads lets Codex reissue its own pending
+            // requests, even for a background session. Never restart a turn.
+            let subscribed = Self::list_sessions_on(project, &connection, false).and_then(|list| {
+                for thread in list.threads.into_iter().filter(|t| t.is_working) {
+                    connection.request(
+                        "thread/resume",
+                        json!({"threadId":thread.id,"excludeTurns":true}),
+                    )?;
+                }
+                Ok(())
+            });
+            if let Err(e) = subscribed {
+                connection.close(&self.inner.processes);
+                return Err(e);
+            }
+            access.codex_used.store(true, Ordering::Release);
+        }
         connections.insert(project.path().to_path_buf(), Arc::clone(&connection));
         Ok(connection)
     }
@@ -320,9 +357,21 @@ impl Drop for ProviderInner {
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (path, connection) in std::mem::take(connections) {
-            let _ = self.processes.terminate(connection.process_id);
+            connection.close(&self.processes);
             self.questions
                 .clear(PROVIDER_NAME, &path.to_string_lossy(), None);
+        }
+    }
+}
+
+impl CodexConnection {
+    fn close(&self, processes: &ProcessRegistry) {
+        self.alive.store(false, Ordering::Release);
+        if let Some(id) = self.process_id {
+            let _ = processes.terminate(id);
+        }
+        if let transport::Writer::WebSocket(_, stop, _) = self.writer.as_ref() {
+            stop.send_replace(true);
         }
     }
 }

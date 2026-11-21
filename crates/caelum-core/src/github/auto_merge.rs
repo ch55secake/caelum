@@ -18,8 +18,8 @@ pub fn set_pull_request_auto_merge(
     )
 }
 
-fn set_auto_merge(
-    executable: &Path,
+pub(super) fn set_auto_merge(
+    executable: &(impl Gh + ?Sized),
     project_path: &Path,
     url: &str,
     head_oid: &str,
@@ -31,7 +31,7 @@ fn set_auto_merge(
         .path_segments()
         .ok_or(GitHubError::InvalidUrl)?
         .collect();
-    let project = Project::open(project_path)?;
+    let project = executable.project(project_path)?;
     let command = || {
         let mut command = github_command(executable, project.path());
         command.args(["api", "--hostname", parsed.host_str().unwrap(), "graphql"]);
@@ -44,7 +44,7 @@ fn set_auto_merge(
         "-F", &format!("number={}", segments[3]),
         "-f", "query=query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id url headRefOid state isDraft } } }",
     ]);
-    let response = graphql(lookup)?;
+    let response = graphql(executable, lookup)?;
     let pr = &response["data"]["repository"]["pullRequest"];
     let canonical_url = identity::check(
         executable,
@@ -96,7 +96,7 @@ fn set_auto_merge(
     // Use the native setting mutation: `gh pr merge --auto` can instead merge
     // immediately. GitHub enforces repository permissions and branch rules.
     mutation.args(["-f", &format!("query=mutation({variables}) {{ {operation}(input: {{ {input} }}) {{ pullRequest {{ url headRefOid state autoMergeRequest {{ mergeMethod }} }} }} }}")]);
-    let response = graphql(mutation)?;
+    let response = graphql(executable, mutation)?;
     let pr = &response["data"][operation]["pullRequest"];
     if pr["url"].as_str() != Some(canonical_url) || pr.get("autoMergeRequest").is_none() {
         return Err(GitHubError::Command(
@@ -119,9 +119,9 @@ fn set_auto_merge(
     Ok(result)
 }
 
-fn graphql(command: Command) -> Result<Value, GitHubError> {
-    let output = checked_output(command, Duration::from_secs(30))?;
-    let response: Value = serde_json::from_slice(&output.stdout)?;
+fn graphql(executable: &(impl Gh + ?Sized), command: Command) -> Result<Value, GitHubError> {
+    let output = executable.output(command, Duration::from_secs(30))?;
+    let response: Value = serde_json::from_slice(&output)?;
     if let Some(errors) = response
         .get("errors")
         .filter(|errors| errors.as_array().is_none_or(|errors| !errors.is_empty()))

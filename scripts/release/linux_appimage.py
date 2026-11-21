@@ -141,10 +141,6 @@ def stage(root: Path, app: Path, target: str, tag: str) -> Path:
     shutil.copy2(root / "target" / target / "release/caelum-desktop", binary)
     audit_elf(binary, arch)
     bundle_libraries(binary, app / "usr/lib", arch)
-    # The VM extracts only this headless executable; it never launches the GUI.
-    peer = app / "usr/bin/caelum"
-    shutil.copy2(root / "target" / target / "release/caelum", peer)
-    audit_elf(peer, arch)
     assets = root / "apps/desktop/assets"
     for source, name in [(assets / "linux/AppRun", "AppRun"), (assets / "linux/dev.caelum.desktop.desktop", "dev.caelum.desktop.desktop"), (assets / "linux/dev.caelum.desktop.png", "dev.caelum.desktop.png")]:
         shutil.copy2(source, app / name)
@@ -181,10 +177,6 @@ def main() -> None:
         subprocess.run([str(tool), "--no-appstream", "--runtime-file", str(runtime), str(app), str(image)], check=True, env={**os.environ, "ARCH": arch, "VERSION": version, "APPIMAGE_EXTRACT_AND_RUN": "1"})
         if command(image, "--appimage-extract-and-run", "--version") != f"Caelum {version}":
             raise SystemExit("AppImage startup/version verification failed")
-        # Exercise exactly the extraction used by the VM, outside the desktop library bundle.
-        command(image, "--appimage-extract", "usr/bin/caelum", cwd=directory)
-        if command(directory / "squashfs-root/usr/bin/caelum", "--version") != f"caelum {version}":
-            raise SystemExit("Extracted workspace peer version does not match the desktop")
         print(image)
 
 

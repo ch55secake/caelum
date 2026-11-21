@@ -13,7 +13,7 @@ impl Workspace {
         pending: &Pending,
     ) {
         let project = match pending {
-            // Boat checks the base locally before asking the SSH peer to start a thread.
+            // Boat checks the base before the VM provider starts a thread.
             Pending::CheckHandoff(i, _) => Some(self.sessions[*i].scope.project.as_str()),
             _ => Binding::owner(command).map(|p| p.as_str()),
         };

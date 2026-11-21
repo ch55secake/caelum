@@ -36,6 +36,7 @@ struct Tracking {
 /// Attribute checkout branches only to known, unambiguous execution.
 #[derive(Clone)]
 pub struct SessionBranches {
+    vm: Option<Arc<crate::remote::native::Access>>,
     database: Option<WorkspaceDatabase>,
     tracking: Arc<Mutex<Tracking>>,
 }
@@ -43,9 +44,38 @@ pub struct SessionBranches {
 impl SessionBranches {
     pub fn new(database: Option<WorkspaceDatabase>) -> Self {
         Self {
+            vm: None,
             database,
             tracking: Arc::new(Mutex::new(Tracking::default())),
         }
+    }
+    pub(crate) fn forwarded(vm: Arc<crate::remote::native::Access>) -> Self {
+        let database = vm.metadata.as_ref().map(|m| m.branches.clone());
+        Self {
+            vm: Some(vm),
+            ..Self::new(database)
+        }
+    }
+    fn context(&self, path: &str) -> Option<crate::git::GitBranchContext> {
+        match &self.vm {
+            Some(vm) if path == vm.root => vm.io.block_on(vm.branch_context()).ok(),
+            Some(_) => None,
+            None => GitClient::new().branch_context(path).ok().flatten(),
+        }
+    }
+    fn key(&self, path: &str, provider: &str, id: &str) -> Option<Key> {
+        if id.is_empty() {
+            return None;
+        }
+        Some(Key {
+            path: Project::for_provider(path, self.vm.as_deref())
+                .ok()?
+                .path()
+                .to_string_lossy()
+                .into_owned(),
+            provider: provider.into(),
+            session: id.into(),
+        })
     }
 
     pub fn codex_event(&self, event: &CodexEvent) -> Option<SessionBranchUpdate> {
@@ -86,7 +116,7 @@ impl SessionBranches {
         id: &str,
         mut details: SessionDetails,
     ) -> SessionDetails {
-        let Some(key) = key(path, provider, id) else {
+        let Some(key) = self.key(path, provider, id) else {
             return details;
         };
         let mut tracking = self
@@ -130,7 +160,7 @@ impl SessionBranches {
         }
         // The status read may predate a newer turn. Sample under the execution
         // lock instead of attributing that earlier snapshot to its new owner.
-        let Ok(Some(context)) = GitClient::new().branch_context(&status.project_path) else {
+        let Some(context) = self.context(&status.project_path) else {
             return Vec::new();
         };
         if context.root != root {
@@ -149,7 +179,7 @@ impl SessionBranches {
         turn: Option<&str>,
         starting: bool,
     ) -> Option<SessionBranchUpdate> {
-        let key = key(path, provider, id)?;
+        let key = self.key(path, provider, id)?;
         let mut tracking = self
             .tracking
             .lock()
@@ -163,7 +193,7 @@ impl SessionBranches {
             if active.ambiguous {
                 return None;
             }
-            if let Ok(Some(context)) = GitClient::new().branch_context(&key.path) {
+            if let Some(context) = self.context(&key.path) {
                 if context.root == active.root {
                     return self.record(&mut tracking, key, context.branch);
                 }
@@ -177,9 +207,7 @@ impl SessionBranches {
         {
             return None;
         }
-        let Ok(Some(context)) = GitClient::new().branch_context(&key.path) else {
-            return None;
-        };
+        let context = self.context(&key.path)?;
         let mut ambiguous = false;
         for (other, active) in &mut tracking.active {
             if other != &key && active.root == context.root {
@@ -261,21 +289,6 @@ impl SessionBranches {
             .active
             .retain(|key, _| key.path != path || key.provider != provider);
     }
-}
-
-fn key(path: &str, provider: &str, id: &str) -> Option<Key> {
-    if id.is_empty() {
-        return None;
-    }
-    Some(Key {
-        path: Project::open(path)
-            .ok()?
-            .path()
-            .to_string_lossy()
-            .into_owned(),
-        provider: provider.to_owned(),
-        session: id.to_owned(),
-    })
 }
 
 #[cfg(test)]

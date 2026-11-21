@@ -51,6 +51,9 @@ impl ProviderRuntime {
                 page,
             )),
             Err(OpenCodeError::SessionNotInProject) => {
+                if self.vm.is_some() {
+                    return Err("This session moved outside the verified VM checkout.".into());
+                }
                 let (project, archived) = self
                     .opencode
                     .session_location(&key.scope.project, &key.id)

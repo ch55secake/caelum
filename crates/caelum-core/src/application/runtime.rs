@@ -31,6 +31,7 @@ pub use messages::Reply;
 /// Shared by desktop adapters; constructing this does not start a provider.
 #[derive(Clone)]
 pub struct ProviderRuntime {
+    vm: Option<Arc<crate::remote::native::Access>>,
     pub codex: CodexProvider,
     pub opencode: OpenCodeProvider,
     pub approvals: ApprovalBroker,
@@ -49,6 +50,7 @@ impl Default for ProviderRuntime {
         let approvals = ApprovalBroker::default();
         let questions = QuestionBroker::default();
         Self {
+            vm: None,
             codex: CodexProvider::new(processes.clone(), approvals.clone(), questions.clone()),
             opencode: OpenCodeProvider::new(
                 processes.clone(),
@@ -87,6 +89,9 @@ impl ProviderRuntime {
     }
 
     pub fn shutdown(&self) {
+        if let Some(vm) = &self.vm {
+            vm.live.store(false, Ordering::Release);
+        }
         self.remote.shutdown();
         self.updates.shutdown();
         self.approvals.shutdown();
@@ -98,6 +103,11 @@ impl ProviderRuntime {
     }
 
     fn execute(&self, command: &Command) -> Result<Reply, String> {
+        if let Some(vm) = &self.vm {
+            if let Some(result) = vm.checkout_command(command, &self.branches) {
+                return result;
+            }
+        }
         let result = match command {
             Command::Remote(op) => return self.remote.execute(op).map(Reply::Remote),
             Command::Inbox(key) => {
@@ -556,9 +566,12 @@ impl Runtime {
             Arc::new(move |command| backend.execute(command)),
             Arc::new(wake),
         );
-        providers
-            .updates
-            .observe(runtime.sender.clone(), runtime.wake.clone());
+        let local = providers.vm.is_none();
+        if local {
+            providers
+                .updates
+                .observe(runtime.sender.clone(), runtime.wake.clone());
+        }
         let branches = providers.branches.clone();
         runtime.forward(providers.codex.subscribe(), move |event| {
             let update = branches
@@ -586,43 +599,8 @@ impl Runtime {
             vec![Event::Questions(value)]
         });
         runtime.providers = Some(providers);
-        {
-            let (updates, receiver) = mpsc::channel::<Vec<String>>();
-            let closed = runtime.closed.clone();
-            let sender = runtime.sender.clone();
-            let wake = runtime.wake.clone();
-            runtime.forwarders.push(thread::spawn(move || {
-                let Ok(mut watch) = checkout_watch::CheckoutWatch::new() else {
-                    return;
-                };
-                while !closed.load(Ordering::Acquire) {
-                    match receiver.recv_timeout(Duration::from_millis(350)) {
-                        Ok(mut projects) => {
-                            for latest in receiver.try_iter() {
-                                projects = latest;
-                            }
-                            watch.sync(projects.iter().cloned());
-                            // Reconcile edits made while native registration was pending.
-                            watch
-                                .dirty
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .extend(projects);
-                        }
-                        Err(RecvTimeoutError::Timeout) => {}
-                        Err(RecvTimeoutError::Disconnected) => return,
-                    }
-                    let projects =
-                        std::mem::take(&mut *watch.dirty.lock().unwrap_or_else(|e| e.into_inner()));
-                    for project in projects {
-                        if sender.send(Event::Checkout(project)).is_err() {
-                            return;
-                        }
-                        wake();
-                    }
-                }
-            }));
-            runtime.checkout_watch = Some(updates);
+        if local {
+            runtime.start_checkout_watch();
         }
         runtime
     }

@@ -6,6 +6,48 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+impl super::Runtime {
+    pub(super) fn start_checkout_watch(&mut self) {
+        use super::{mpsc, thread, Duration, Event, Ordering, RecvTimeoutError};
+        let (updates, receiver) = mpsc::channel::<Vec<String>>();
+        let closed = self.closed.clone();
+        let sender = self.sender.clone();
+        let wake = self.wake.clone();
+        self.forwarders.push(thread::spawn(move || {
+            let Ok(mut watch) = CheckoutWatch::new() else {
+                return;
+            };
+            while !closed.load(Ordering::Acquire) {
+                match receiver.recv_timeout(Duration::from_millis(350)) {
+                    Ok(mut projects) => {
+                        for latest in receiver.try_iter() {
+                            projects = latest;
+                        }
+                        watch.sync(projects.iter().cloned());
+                        // Reconcile edits made while native registration was pending.
+                        watch
+                            .dirty
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .extend(projects);
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+                let projects =
+                    std::mem::take(&mut *watch.dirty.lock().unwrap_or_else(|e| e.into_inner()));
+                for project in projects {
+                    if sender.send(Event::Checkout(project)).is_err() {
+                        return;
+                    }
+                    wake();
+                }
+            }
+        }));
+        self.checkout_watch = Some(updates);
+    }
+}
+
 pub(super) struct CheckoutWatch {
     watcher: RecommendedWatcher,
     roots: Arc<Mutex<BTreeMap<PathBuf, BTreeSet<String>>>>,

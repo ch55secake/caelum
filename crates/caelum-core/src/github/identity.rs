@@ -1,11 +1,11 @@
-use super::{checked_output, github_command, pull_request_url, GitHubError};
+use super::{github_command, pull_request_url, Gh, GitHubError};
 use serde_json::Value;
 use std::{path::Path, time::Duration};
 
 /// Accept a repository move only when GitHub resolves the requested repository
 /// to the returned one. A matching PR number alone cannot establish identity.
 pub(super) fn check<'a>(
-    executable: &Path,
+    executable: &(impl Gh + ?Sized),
     project: &Path,
     requested: &str,
     returned: Option<&'a str>,
@@ -34,8 +34,8 @@ pub(super) fn check<'a>(
         "GET",
         &format!("repos/{}/{}", original_path[0], original_path[1]),
     ]);
-    let output = checked_output(command, timeout)?;
-    let repository: Value = serde_json::from_slice(&output.stdout)?;
+    let output = executable.output(command, timeout)?;
+    let repository: Value = serde_json::from_slice(&output)?;
     let confirmed = repository["html_url"]
         .as_str()
         .and_then(|url| reqwest::Url::parse(url).ok());

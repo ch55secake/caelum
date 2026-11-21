@@ -1,4 +1,4 @@
-use super::super::{connect, Bundle, Endpoint};
+use super::super::{connect, Endpoint};
 use crate::{
     application::{Command, Event, Options, Provider, Reply, Scope, SessionKey},
     remote::{
@@ -79,6 +79,9 @@ impl Desktop {
     }
     #[track_caller]
     fn request(&mut self, cmd: Command) -> Reply {
+        self.try_request(cmd).unwrap()
+    }
+    fn try_request(&mut self, cmd: Command) -> Result<Reply, String> {
         self.id += 1;
         let id = self.id;
         self.submit(id, cmd).unwrap();
@@ -86,7 +89,7 @@ impl Desktop {
             if let Notice::Event(e) = n {
                 if let Event::Completed(i, r) = *e {
                     assert_eq!(i, id);
-                    return Some(r.unwrap());
+                    return Some(r);
                 }
                 None
             } else {
@@ -120,7 +123,6 @@ fn attach() -> (Desktop, PathBuf) {
     let mut attempts = 0;
     let client = Client::with_tunnel(
         root.clone(),
-        repo.into(),
         move || {
             let _ = wake.send(());
         },
@@ -141,7 +143,6 @@ fn attach() -> (Desktop, PathBuf) {
                 Endpoint::new(endpoint)?,
                 repo,
                 &root,
-                Bundle::load(&fixture.join("bundle"))?,
             )
             .await?;
             let _ = children.send(tunnel.child.id().unwrap());
@@ -249,11 +250,59 @@ fn native_workspace_over_openssh() {
             .count(),
         1
     );
-    parity::codex(&mut desktop, scope(Provider::Codex), &fixture);
     parity::checkout(&mut desktop, &key);
 }
 
 mod parity;
+
+#[test]
+#[ignore = "run scripts/dev/smoke_native_workspace.py --approval with a real provider"]
+fn native_pending_approval_over_openssh() {
+    let (mut desktop, fixture) = attach();
+    let scope = Scope {
+        project: desktop.binding.project.clone(),
+        provider: if std::env::var("CAELUM_NATIVE_SMOKE_PROVIDER").as_deref() == Ok("codex") {
+            Provider::Codex
+        } else {
+            Provider::OpenCode
+        },
+    };
+    let Reply::Session(s) = desktop.request(Command::Start(scope, Options::default())) else {
+        panic!()
+    };
+    desktop.id += 1;
+    desktop
+        .submit(
+            desktop.id,
+            Command::Send(
+                s.key.clone(),
+                "Create the fixture directory.".into(),
+                Options::default(),
+            ),
+        )
+        .unwrap();
+    let pending = |n: Notice| match n {
+        Notice::Event(e) => match *e {
+            Event::Approvals(a) => a.first().cloned(),
+            Event::Completed(_, Err(e)) => panic!("Failed to send: {e}"),
+            _ => None,
+        },
+        _ => None,
+    };
+    let before = desktop.until(pending);
+    fs::write(fixture.join("reconnecting"), "").unwrap();
+    desktop.interrupt_link();
+    desktop.request(Command::Resume(s.key.clone()));
+    let after = desktop
+        .approvals
+        .iter()
+        .find(|a| a.session_id == before.session_id)
+        .cloned()
+        .unwrap_or_else(|| desktop.until(pending));
+    assert_eq!(after.session_id.as_deref(), Some(s.key.id.as_str()));
+    assert_eq!(after.summary, before.summary);
+    assert!(!fixture.join("approval-fixture").exists());
+}
 
 #[test]
 #[ignore = "run scripts/dev/smoke_native_workspace.py --real-opencode BINARY"]
@@ -328,6 +377,11 @@ fn native_new_session_over_openssh() {
         serde_json::to_vec(&s.key).unwrap(),
     )
     .unwrap();
+    fs::write(fixture.join("reconnecting"), "").unwrap();
+    desktop.interrupt_link();
+    assert!(
+        matches!(desktop.request(Command::List(s.key.scope.clone())),Reply::Sessions(rows) if rows.iter().any(|r|r.key==s.key))
+    );
 }
 
 #[test]

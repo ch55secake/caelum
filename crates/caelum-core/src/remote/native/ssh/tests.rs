@@ -84,3 +84,42 @@ fn an_incomplete_pin_or_unusable_forwarded_endpoint_never_falls_back() {
         assert!(Endpoint::new(serde_json::from_value(json!({"ok":true,"type":"sshkey","machineIp":"192.0.2.1","sshEndpoint":addr,"hostKey":key})).unwrap()).is_err());
     }
 }
+
+#[tokio::test]
+async fn remote_paths_do_not_depend_on_the_laptop_filesystem() {
+    use crate::{
+        application::{Command as Op, Task},
+        projects::Project,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let missing = temp.path().join("remote-only");
+    let path = missing.to_str().unwrap();
+    let access = Access::new(
+        temp.path().join("closed-socket"),
+        "fixture.invalid".into(),
+        path.into(),
+    );
+    let root = Project::for_provider(path, Some(&access)).unwrap();
+    assert!(!missing.exists() && root.matches(path));
+    std::fs::create_dir(&missing).unwrap();
+    let alias = temp.path().join("laptop-alias");
+    std::os::unix::fs::symlink(&missing, &alias).unwrap();
+    assert!(!root.matches(alias.to_str().unwrap()));
+    // A same-named laptop file must not become readable after a tunnel loss.
+    std::fs::write(missing.join("note"), "laptop").unwrap();
+    tokio::task::spawn_blocking(move || {
+        let task = Op::Task(Task::File {
+            project: access.root.clone(),
+            path: "note".into(),
+        });
+        assert!(access
+            .checkout_command(
+                &task,
+                &std::sync::Mutex::new(crate::session_branches::SessionBranches::new(None))
+            )
+            .unwrap()
+            .is_err());
+    })
+    .await
+    .unwrap();
+}

@@ -7,7 +7,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     thread,
 };
@@ -15,7 +15,7 @@ use std::{
 pub(super) fn request_question(
     id: &Value,
     params: &Value,
-    writer: &Arc<Mutex<std::process::ChildStdin>>,
+    writer: &Arc<super::transport::Writer>,
     alive: &Arc<AtomicBool>,
     questions: &QuestionBroker,
     project: &Path,
@@ -102,7 +102,7 @@ pub(super) fn handle_server_request(
     method: &str,
     request_id: Value,
     params: Value,
-    writer: &Arc<Mutex<std::process::ChildStdin>>,
+    writer: &Arc<super::transport::Writer>,
     approvals: &ApprovalBroker,
     project_path: &Path,
 ) {
@@ -184,6 +184,7 @@ pub(super) fn handle_server_request(
     };
     let waiter = match approvals.request(request.clone()) {
         Ok(waiter) => waiter,
+        Err(crate::approvals::ApprovalError::DuplicateRequest) => return,
         Err(_) => {
             let _ = respond_to_approval(writer, request_id, "decline");
             return;
@@ -203,7 +204,9 @@ pub(super) fn handle_server_request(
         })
         .unwrap_or(true);
     thread::spawn(move || {
-        let decision = waiter.wait(APPROVAL_TIMEOUT);
+        let Some(decision) = waiter.decision(APPROVAL_TIMEOUT) else {
+            return;
+        };
         let response_decision = if decision == ApprovalDecision::AllowOnce && available {
             "accept"
         } else {
@@ -214,7 +217,7 @@ pub(super) fn handle_server_request(
 }
 
 fn respond_to_approval(
-    writer: &Arc<Mutex<std::process::ChildStdin>>,
+    writer: &Arc<super::transport::Writer>,
     request_id: Value,
     decision: &str,
 ) -> Result<(), String> {

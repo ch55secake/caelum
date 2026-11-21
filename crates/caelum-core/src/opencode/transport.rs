@@ -11,6 +11,7 @@ use reqwest::{StatusCode, Url};
 use serde_json::Value;
 
 use super::OpenCodeError;
+pub(super) const MAX_MESSAGE: usize = 32 * 1024 * 1024;
 
 pub(super) fn read_sse_frames<R, F>(
     reader: &mut R,
@@ -21,20 +22,30 @@ where
     R: BufRead,
     F: FnMut(String),
 {
-    let mut data = Vec::new();
+    use std::io::Read;
+    let mut data = String::new();
     while active() {
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
+        if reader
+            .by_ref()
+            .take(MAX_MESSAGE as u64 + 1)
+            .read_line(&mut line)?
+            == 0
+        {
             if !data.is_empty() {
-                on_data(data.join("\n"));
+                data.pop();
+                on_data(data);
             }
             return Ok(());
+        }
+        if line.len() > MAX_MESSAGE {
+            return Err(io::Error::other("OpenCode event exceeds 32 MiB"));
         }
         let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
             if !data.is_empty() {
-                on_data(data.join("\n"));
-                data.clear();
+                data.pop();
+                on_data(std::mem::take(&mut data));
             }
             continue;
         }
@@ -43,7 +54,11 @@ where
         }
         let (field, value) = line.split_once(':').unwrap_or((line, ""));
         if field == "data" {
-            data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
+            if data.len() + value.len() + 1 > MAX_MESSAGE {
+                return Err(io::Error::other("OpenCode event exceeds 32 MiB"));
+            }
+            data.push_str(value.strip_prefix(' ').unwrap_or(value));
+            data.push('\n');
         }
     }
     Ok(())

@@ -12,5 +12,5 @@ if [[ "${TARGET%%-*}" != "$(uname -m)" ]]; then
 fi
 output="${RUNNER_TEMP:-$root/target}/release"
 mkdir -p "$output"
-cargo build --locked --release --timings -p caelum-desktop -p caelum-cli --target "$TARGET" --manifest-path "$root/Cargo.toml"
+cargo build --locked --release --timings -p caelum-desktop --target "$TARGET" --manifest-path "$root/Cargo.toml"
 python3 "$root/scripts/release/linux_appimage.py" --root "$root" --target "$TARGET" --output "$output"

@@ -29,7 +29,7 @@ impl Workspace {
     }
 
     /// A VM conversation is a normal stable session slot. The URI is local state;
-    /// only the verified physical directory is sent to the owning SSH peer.
+    /// the provider receives the verified physical directory on its VM.
     pub fn open_vm_session(&mut self, id: &str, new: Option<Provider>) -> Option<usize> {
         let checkout = self.remote.saved.checkouts.get(id)?;
         if matches!(self.remote.jobs.get(id), Some(Job::Deleting(_)))

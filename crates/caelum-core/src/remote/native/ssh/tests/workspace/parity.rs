@@ -1,51 +1,6 @@
-use super::{Command, Desktop, Event, Notice, Options, Reply, Scope, SessionKey};
+use super::{Command, Desktop, Reply, SessionKey};
 use crate::application::{Task, TaskReply};
-use caelum_protocol::{ApprovalDecision, ProjectSearchMode};
-use std::{fs, path::Path};
-
-pub(super) fn codex(desktop: &mut Desktop, scope: Scope, dir: &Path) {
-    let options = Options {
-        model: Some("test-model".into()),
-        effort: Some("high".into()),
-        agent: None,
-    };
-    let Reply::Session(session) = desktop.request(Command::Start(scope, options.clone())) else {
-        panic!("no Codex thread")
-    };
-    let key = session.key;
-    desktop.id += 1;
-    desktop
-        .submit(
-            desktop.id,
-            Command::Send(key.clone(), "request-approval".into(), options),
-        )
-        .unwrap();
-    desktop.until(|n| matches!(n,Notice::Event(e) if matches!(*e,Event::Codex(ref e) if e.method=="item/agentMessage/delta" && e.params["delta"]=="Hello from Codex")).then_some(()));
-    let turn = dir.join("turn-request.json");
-    let sent: serde_json::Value = serde_json::from_slice(&fs::read(&turn).unwrap()).unwrap();
-    assert_eq!(sent["threadId"], key.id);
-    assert_eq!(sent["model"], "test-model");
-    assert_eq!(sent["effort"], "high");
-    fs::rename(&turn, dir.join("accepted-turn.json")).unwrap();
-    desktop.interrupt_link();
-    let approval = desktop
-        .approvals
-        .iter()
-        .find(|a| a.provider == "codex" && a.session_id.as_ref() == Some(&key.id))
-        .expect("same pending Codex request")
-        .clone();
-    assert!(matches!(
-        desktop.request(Command::Approve(approval, ApprovalDecision::Deny)),
-        Reply::Done
-    ));
-    assert!(
-        matches!(desktop.request(Command::Resume(key.clone())),Reply::Session(s) if s.key==key)
-    );
-    assert!(
-        matches!(desktop.request(Command::History(key,None)),Reply::History(page) if page.data.iter().any(|t|t["items"][0]["aggregatedOutput"]=="clean"))
-    );
-    assert!(!turn.exists(), "reconnecting resubmitted the Codex turn");
-}
+use caelum_protocol::ProjectSearchMode;
 
 pub(super) fn checkout(desktop: &mut Desktop, key: &SessionKey) {
     let project = &key.scope.project;
@@ -72,6 +27,13 @@ pub(super) fn checkout(desktop: &mut Desktop, key: &SessionKey) {
         },
     );
     assert!(matches!(note,TaskReply::File(f) if f.content=="VM edit\n"));
+    assert!(desktop
+        .try_request(Command::Task(Task::File {
+            project: project.clone(),
+            path: "outside/endpoint.json".into()
+        }))
+        .unwrap_err()
+        .contains("outside the VM checkout"));
     let results = task(
         desktop,
         Task::Search {
@@ -98,6 +60,16 @@ pub(super) fn checkout(desktop: &mut Desktop, key: &SessionKey) {
         },
     );
     assert!(matches!(diff,TaskReply::Diff(d) if d.unstaged.contains("+VM edit")));
+    assert!(matches!(
+        task(
+            desktop,
+            Task::Discover {
+                project: project.clone(),
+                branch: "feat/native".into()
+            }
+        ),
+        TaskReply::Discovered(None)
+    ));
     assert!(
         matches!(desktop.request(Command::Shells(key.clone())),Reply::Shells(s) if s[0].id=="sh_example")
     );

@@ -22,6 +22,7 @@ struct BrokerState {
 struct PendingRequest {
     request: PermissionRequest,
     response: Sender<ApprovalDecision>,
+    ticket: Arc<()>,
 }
 
 /// Coordinates one-shot approvals between provider adapters and the desktop UI.
@@ -55,20 +56,40 @@ impl ApprovalBroker {
             return Err(ApprovalError::DuplicateRequest);
         }
 
-        state
-            .pending
-            .insert(key.clone(), PendingRequest { request, response });
+        let ticket = Arc::new(());
+        state.pending.insert(
+            key.clone(),
+            PendingRequest {
+                request,
+                response,
+                ticket: ticket.clone(),
+            },
+        );
         Self::publish(&mut state);
 
         Ok(ApprovalWaiter {
             key,
             receiver,
             state: Arc::downgrade(&self.state),
+            ticket,
         })
     }
 
     pub fn pending(&self) -> Vec<ApprovalPrompt> {
         Self::prompts(&self.lock())
+    }
+
+    /// The provider (or another client) settled this request. Discard the
+    /// callback without sending a second decision.
+    pub(crate) fn dismiss(&self, provider: &str, project: &str, id: &str) {
+        let mut state = self.lock();
+        if state
+            .pending
+            .remove(&(provider.into(), project.into(), id.into()))
+            .is_some()
+        {
+            Self::publish(&mut state);
+        }
     }
 
     pub fn subscribe(&self) -> Receiver<Vec<ApprovalPrompt>> {
@@ -150,6 +171,7 @@ impl ApprovalBroker {
 }
 
 pub struct ApprovalWaiter {
+    ticket: Arc<()>,
     key: RequestKey,
     receiver: Receiver<ApprovalDecision>,
     state: Weak<Mutex<BrokerState>>,
@@ -158,11 +180,13 @@ pub struct ApprovalWaiter {
 impl ApprovalWaiter {
     /// Wait for an explicit choice. Timeout or channel closure means deny.
     pub fn wait(self, timeout: Duration) -> ApprovalDecision {
+        self.decision(timeout).unwrap_or(ApprovalDecision::Deny)
+    }
+    pub(crate) fn decision(self, timeout: Duration) -> Option<ApprovalDecision> {
         match self.receiver.recv_timeout(timeout) {
-            Ok(decision) => decision,
-            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
-                ApprovalDecision::Deny
-            }
+            Ok(decision) => Some(decision),
+            Err(RecvTimeoutError::Timeout) => Some(ApprovalDecision::Deny),
+            Err(RecvTimeoutError::Disconnected) => None,
         }
     }
 }
@@ -175,8 +199,12 @@ impl Drop for ApprovalWaiter {
         let mut state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(pending) = state.pending.remove(&self.key) {
-            let _ = pending.response.send(ApprovalDecision::Deny);
+        if state
+            .pending
+            .get(&self.key)
+            .is_some_and(|p| Arc::ptr_eq(&p.ticket, &self.ticket))
+        {
+            state.pending.remove(&self.key);
             ApprovalBroker::publish(&mut state);
         }
     }
@@ -252,6 +280,24 @@ mod tests {
             ),
             Err(ApprovalError::UnknownRequest)
         );
+    }
+
+    #[test]
+    fn a_dismissed_transport_waiter_cannot_consume_a_reissued_request() {
+        let broker = ApprovalBroker::default();
+        let old = broker.request(request("same")).unwrap();
+        broker.dismiss("test-provider", "/workspace/test", "same");
+        let new = broker.request(request("same")).unwrap();
+        assert_eq!(old.decision(Duration::ZERO), None);
+        broker
+            .resolve(
+                "test-provider",
+                "/workspace/test",
+                "same",
+                ApprovalDecision::AllowOnce,
+            )
+            .unwrap();
+        assert_eq!(new.wait(Duration::ZERO), ApprovalDecision::AllowOnce);
     }
 
     #[test]

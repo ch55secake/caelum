@@ -163,6 +163,35 @@ impl OpenCodeProvider {
         if !alive.load(Ordering::Acquire) {
             return Err(OpenCodeError::Closed);
         }
+        if let Some(access) = &self.inner.remote {
+            let (url, password, pid) = access.opencode().map_err(OpenCodeError::ServerNotReady)?;
+            let mut server = OpenCodeServer::new(None, url, password)?;
+            server.remote = Some(access.clone());
+            server.alive = alive;
+            let info = server.request_json(Method::GET, "/api/info", &[], None)?;
+            if info["pid"].as_u64() != Some(pid)
+                || !info["version"]
+                    .as_str()
+                    .is_some_and(|v| v.starts_with("2."))
+            {
+                return Err(OpenCodeError::Protocol(
+                    "The forwarded endpoint does not match the VM’s OpenCode V2 service.".into(),
+                ));
+            }
+            let server = Arc::new(server);
+            self.listen(&server, project)?;
+            if let Err(e) = super::permissions::recover(
+                &server,
+                &self.inner.approvals,
+                project.path(),
+                &self.inner.subscribers,
+            ) {
+                server.close(&self.inner.processes);
+                return Err(e);
+            }
+            access.opencode_used.store(true, Ordering::Release);
+            return Ok(server);
+        }
         if let Some(mut server) = self
             .inner
             .service_file
@@ -294,7 +323,13 @@ impl OpenCodeProvider {
         } else {
             // The stream is live-only. Recover forms that predate this connection.
             // A missing form API must not prevent older servers from connecting.
-            let _ = sync_questions(server, &self.inner.questions, project.path());
+            let forms = sync_questions(server, &self.inner.questions, project.path());
+            if server.remote.is_some() {
+                if let Err(error) = forms {
+                    server.close(&self.inner.processes);
+                    return Err(error);
+                }
+            }
         }
         result
     }
@@ -308,10 +343,14 @@ impl OpenCodeServer {
     ) -> Result<Self, OpenCodeError> {
         let builder = || {
             Client::builder()
+                .no_proxy()
+                .retry(reqwest::retry::never())
                 .connect_timeout(Duration::from_secs(1))
                 .redirect(reqwest::redirect::Policy::none())
         };
         Ok(Self {
+            permission_revision: Default::default(),
+            remote: None,
             process_id,
             base_url,
             client: builder()
@@ -352,6 +391,11 @@ impl OpenCodeServer {
         query: &[(&str, String)],
         body: Option<Value>,
     ) -> Result<Value, OpenCodeError> {
+        if self.remote.as_ref().is_some_and(|vm| {
+            !vm.live.load(Ordering::Acquire) || !self.alive.load(Ordering::Acquire)
+        }) {
+            return Err(OpenCodeError::Closed);
+        }
         let trace = crate::diagnostics::http(&method, path);
         let url = api_url(&self.base_url, path, query)?;
         let mut request = self.authenticate(self.client.request(method, url));
@@ -362,9 +406,17 @@ impl OpenCodeServer {
             .send()
             .map_err(|error| OpenCodeError::Request(error.to_string()))?;
         let status = response.status();
-        let bytes = response
-            .bytes()
-            .map_err(|error| OpenCodeError::Request(error.to_string()))?;
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        response
+            .take(super::transport::MAX_MESSAGE as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| OpenCodeError::Request(e.to_string()))?;
+        if bytes.len() > super::transport::MAX_MESSAGE {
+            return Err(OpenCodeError::Protocol(
+                "The OpenCode response exceeds 32 MiB.".into(),
+            ));
+        }
         let result = decode_json_response(status, &bytes);
         if let Some(trace) = trace {
             trace.finish(

@@ -8,6 +8,18 @@ use std::{path::PathBuf, sync::Arc};
 #[cfg(test)]
 mod tests;
 
+impl ProviderRuntime {
+    pub(crate) fn forwarded(access: Arc<crate::remote::native::Access>) -> Self {
+        let mut providers = Self::default();
+        providers.codex = providers.codex.forwarded(access.clone());
+        providers.opencode = providers.opencode.forwarded(access.clone());
+        providers.branches = Arc::new(std::sync::Mutex::new(
+            crate::session_branches::SessionBranches::forwarded(access.clone()),
+        ));
+        providers.vm = Some(access);
+        providers
+    }
+}
 impl Runtime {
     /// Desktop-side workers for a native VM window. No provider event subscriptions or laptop
     /// checkout watchers are started. Reject project operations even if misrouted by a caller.

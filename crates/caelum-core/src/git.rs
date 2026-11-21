@@ -20,7 +20,7 @@ use paths::{
     git_path_string, project_relative_prefix, validate_project_relative_path, validate_scoped_file,
 };
 
-const PORCELAIN_STATUS_ARGS: &[&str] = &[
+pub(crate) const PORCELAIN_STATUS_ARGS: &[&str] = &[
     "status",
     "--porcelain=v2",
     "-z",
@@ -428,7 +428,7 @@ impl GitClient {
     }
 }
 
-fn parse_status(output: &[u8]) -> Result<Vec<GitFileStatus>, GitError> {
+pub(crate) fn parse_status(output: &[u8]) -> Result<Vec<GitFileStatus>, GitError> {
     let mut changes = Vec::new();
     let mut offset = 0;
     while offset < output.len() {

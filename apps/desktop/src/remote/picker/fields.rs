@@ -100,9 +100,9 @@ pub(super) fn machine(s: &Workspace, k: &Kit) -> El {
     let detail = match form.lifetime {
         Lifetime::UntilStopped => "Bills until you stop the VM. Requires a paid Boat plan.",
         Lifetime::Day | Lifetime::EightHours => {
-            "Paid plans only. Boat renews the timer during a prompt."
+            "Paid plans only. SSH sessions do not extend the timer."
         }
-        _ => "Boat renews the timer while a prompt is running or waiting.",
+        _ => "SSH sessions do not extend the auto-stop timer.",
     };
     col()
         .w_full()

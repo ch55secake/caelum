@@ -1,4 +1,4 @@
-use super::{protocol, NativeTarget};
+use super::{commands, NativeTarget};
 use crate::application::{Command, Event, Reply, Task, TaskReply};
 
 /// The saved checkout ID names a Boat account/machine/repository. A VM path alone
@@ -23,7 +23,7 @@ impl Binding {
         })
     }
 
-    /// Route before consulting the peer allowlist, so unsupported VM commands
+    /// Route before consulting the VM allowlist, so unsupported VM commands
     /// can never fall back to the laptop. Global desktop commands have no owner.
     pub fn owner(command: &mut Command) -> Option<&mut String> {
         match command {
@@ -76,7 +76,7 @@ impl Binding {
             .filter(|p| **p == self.project)
             .ok_or("This command belongs to another checkout.")?;
         owner.clone_from(&self.root);
-        if !protocol::admitted(&command, &self.root) {
+        if !commands::admitted(&command, &self.root) {
             return Err("This action is not available on the VM checkout.".into());
         }
         if let Command::Task(Task::Worktrees { directory, .. }) = &mut command {

@@ -2,10 +2,10 @@
 //! The desktop owns editors, its workspace snapshot, and Boat lifecycle credentials.
 mod binding;
 mod client;
+mod commands;
 mod profile;
-mod protocol;
-mod server;
 mod ssh;
+mod workspace;
 
 pub use binding::checkout_id;
 pub use binding::project_key;
@@ -14,7 +14,7 @@ pub use client::Client;
 pub use client::Notice;
 pub use client::Status;
 pub(crate) use profile::retire;
-pub use server::run_peer;
+pub(crate) use ssh::Access;
 
 use super::{
     checkout::{repo_name, valid_root},

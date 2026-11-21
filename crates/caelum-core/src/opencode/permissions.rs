@@ -11,6 +11,44 @@ use std::{
     thread,
 };
 
+pub(super) fn recover(
+    server: &OpenCodeServer,
+    approvals: &ApprovalBroker,
+    project: &Path,
+    subscribers: &EventSubscribers,
+) -> Result<(), super::OpenCodeError> {
+    for _ in 0..3 {
+        let generation = *server
+            .permission_revision
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let list = server.request_json(
+            Method::GET,
+            "/api/permission/request",
+            &[(
+                "location[directory]",
+                project.to_string_lossy().into_owned(),
+            )],
+            None,
+        )?;
+        let observed = server
+            .permission_revision
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *observed != generation {
+            continue;
+        }
+        for request in list["data"].as_array().ok_or_else(|| {
+            super::OpenCodeError::Protocol("Invalid pending permission list".into())
+        })? {
+            request_permission(server, approvals, project, subscribers, request);
+        }
+        return Ok(());
+    }
+    Err(super::OpenCodeError::Protocol(
+        "Pending VM permissions changed during recovery. Reconnect to refresh them.".into(),
+    ))
+}
 pub(super) fn request_permission(
     server: &OpenCodeServer,
     approvals: &ApprovalBroker,
@@ -86,7 +124,12 @@ pub(super) fn request_permission(
     let permission_id = permission_id.to_owned();
     let request_id = format!("{session_id}:{permission_id}");
     thread::spawn(move || {
-        let decision = waiter.wait(APPROVAL_TIMEOUT);
+        let Some(decision) = waiter.decision(APPROVAL_TIMEOUT) else {
+            return;
+        };
+        if server.remote.is_some() && !server.alive.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
         let decision = permission_reply(decision);
         let path = format!("/api/session/{session_id}/permission/{permission_id}/reply");
         let result = server.request_json(
@@ -155,6 +198,8 @@ fn valid_permission_id(value: &str) -> bool {
 impl OpenCodeServer {
     fn clone_for_permission(&self) -> Self {
         Self {
+            permission_revision: self.permission_revision.clone(),
+            remote: self.remote.clone(),
             process_id: self.process_id,
             base_url: self.base_url.clone(),
             client: self.client.clone(),

@@ -1,18 +1,12 @@
-use super::{
-    protocol::{self, CommandFrame, ServerFrame, VERSION},
-    ssh, NativeTarget,
-};
-use crate::application::{Command, Event};
+use super::{commands, ssh, NativeTarget};
+use crate::application::{Command, Event, ProviderRuntime, Runtime};
 use std::{
     collections::BTreeSet,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::{mpsc, watch},
-};
+use tokio::sync::{mpsc, watch, Notify};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Status {
@@ -27,7 +21,7 @@ pub enum Notice {
 }
 
 struct Active {
-    writer: mpsc::Sender<CommandFrame>,
+    writer: mpsc::Sender<(u64, Command)>,
     pending: BTreeSet<u64>,
 }
 type Link = Arc<Mutex<Option<Active>>>;
@@ -50,7 +44,7 @@ impl Output {
     }
 }
 
-/// A connection accepts commands only after its exact peer has identified itself. No outbox
+/// A connection accepts commands only after SSH verifies the checkout. No outbox
 /// survives a tunnel loss. An uncertain mutation is reconciled from native history, never retried.
 pub struct Client {
     root: String,
@@ -69,43 +63,31 @@ impl Client {
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let root = target.root()?;
-        Self::with_tunnel(root, target.repository.clone(), wake, async move || {
+        Self::with_tunnel(root, wake, async move || {
             ssh::open(&target, &parent_store).await
         })
     }
 
     pub(super) fn with_tunnel(
         root: String,
-        repository: String,
         wake: impl Fn() + Send + Sync + 'static,
         mut open: impl AsyncFnMut() -> Result<ssh::Tunnel, String> + Send + 'static,
     ) -> Result<Self, String> {
-        Self::with_connection(root.clone(), wake, async move |link, out| {
+        let mut recover_open = false;
+        Self::with_connection(root, wake, async move |link, out| {
             let mut tunnel = match open().await {
                 Ok(tunnel) => tunnel,
                 Err(e) => return e,
             };
-            let problem = session(
-                &root,
-                &repository,
-                link,
-                out,
-                &mut tunnel.child.stdout.take().expect("piped stdout"),
-                &mut tunnel.child.stdin.take().expect("piped stdin"),
-            )
-            .await;
-            let status = tokio::time::timeout(Duration::from_millis(300), tunnel.child.wait())
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .and_then(|status| status.code());
-            match status {
-                Some(66) => "Could not install the matching Caelum workspace peer from the Linux release. Check the VM’s network and desktop version.".into(),
-                Some(65) => "The native workspace needs an x86_64 or aarch64 Linux VM.".into(),
-                Some(67) => "The verified checkout directory is missing or moved. Check its location on the VM, then refresh the checkout.".into(),
-                Some(255) => "The verified SSH connection closed. Check that the VM is running, then reconnect to refresh its address and host key.".into(),
-                _ => problem,
-            }
+            let access = tunnel.access.clone();
+            let problem = tokio::select! {
+                _=tunnel.child.wait()=>"SSH disconnected. Reconnect to verify the VM’s address and host key.".to_owned(),
+                e=session(access.clone(),recover_open,link,out)=>e,
+            };
+            recover_open = access
+                .opencode_used
+                .load(std::sync::atomic::Ordering::Acquire);
+            problem
         })
     }
 
@@ -155,7 +137,7 @@ impl Client {
     }
 
     pub fn submit(&self, id: u64, command: Command) -> Result<(), String> {
-        if !protocol::admitted(&command, &self.root) {
+        if !commands::admitted(&command, &self.root) {
             return Err("This action is not available in a native VM workspace.".into());
         }
         let offline = "The VM is disconnected. Reconnect before trying again.";
@@ -169,7 +151,7 @@ impl Client {
         if active.pending.len() >= 512 || !active.pending.insert(id) {
             return Err("Too many pending native workspace requests.".into());
         }
-        if active.writer.try_send(CommandFrame(id, command)).is_err() {
+        if active.writer.try_send((id, command)).is_err() {
             active.pending.remove(&id);
             return Err("The VM connection is busy or closed. Try again.".into());
         }
@@ -236,136 +218,100 @@ async fn supervise(
     }
 }
 
-async fn frame(input: &mut (impl AsyncRead + Unpin)) -> Result<ServerFrame, String> {
-    let n = input
-        .read_u32()
-        .await
-        .map_err(|_| "Native VM connection closed. Check the VM checkout and installed peer.")?
-        as usize;
-    if n == 0 || n > protocol::LIMIT {
-        return Err("Invalid native VM frame size.".into());
-    }
-    let mut data = vec![0; n];
-    input
-        .read_exact(&mut data)
-        .await
-        .map_err(|_| "Incomplete native VM response.")?;
-    serde_json::from_slice(&data).map_err(|_| "Incompatible native VM response.".into())
-}
-async fn session(
-    expected_root: &str,
-    expected_repo: &str,
-    link: &Link,
-    out: &Output,
-    input: &mut (impl AsyncRead + Unpin),
-    output: &mut (impl AsyncWrite + Unpin),
-) -> String {
-    // Broker snapshots precede Connected so a stale question/permission cannot be answered
-    // during the gap between a new handshake and recovery of its pending requests.
-    let handshake = async {
-        match frame(input).await? {
-            ServerFrame::Ready {
-                version,
-                root,
-                repository,
-            } if version == VERSION
-                && root == expected_root
-                && repository.eq_ignore_ascii_case(expected_repo) => {}
-            ServerFrame::Error(e) => return Err(e),
-            _ => {
-                return Err(
-                    "The workspace peer has a different protocol version or checkout.".into(),
-                )
-            }
+// Runtime shutdown joins blocking provider workers; a dropped SSH attempt must
+// release its master immediately, including while a read is still in progress.
+struct Workers(Option<Runtime>, Arc<super::Access>);
+impl Drop for Workers {
+    fn drop(&mut self) {
+        self.1
+            .live
+            .store(false, std::sync::atomic::Ordering::Release);
+        if let Some(runtime) = self.0.take() {
+            std::thread::spawn(move || drop(runtime));
         }
-        match (frame(input).await?, frame(input).await?) {
-            (ServerFrame::Event(a), ServerFrame::Event(q))
-                if matches!(*a, Event::Approvals(_)) && matches!(*q, Event::Questions(_)) =>
-            {
-                Ok([a, q])
-            }
-            _ => Err("The workspace peer did not restore its pending requests.".into()),
-        }
-    };
-    match tokio::time::timeout(Duration::from_secs(125), handshake).await {
-        Ok(Ok(snapshots)) => {
-            for event in snapshots {
-                out.send(Notice::Event(event)).await;
-            }
-            exchange(link, out, input, output).await
-        }
-        Ok(Err(e)) => e,
-        Err(_) => "Timed out preparing the native workspace on the VM.".into(),
     }
 }
-
-async fn exchange(
-    link: &Link,
-    out: &Output,
-    input: &mut (impl AsyncRead + Unpin),
-    output: &mut (impl AsyncWrite + Unpin),
-) -> String {
-    let (writer, mut rx) = mpsc::channel(128);
+fn activate(link: &Link) -> mpsc::Receiver<(u64, Command)> {
+    let (writer, rx) = mpsc::channel(128);
     *link.lock().unwrap_or_else(|e| e.into_inner()) = Some(Active {
         writer,
         pending: BTreeSet::new(),
     });
+    rx
+}
+async fn deliver(link: &Link, out: &Output, event: Event) {
+    let completion = if let Event::Completed(id, _) = &event {
+        if !link
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|a| a.pending.contains(id))
+        {
+            return;
+        }
+        Some(*id)
+    } else {
+        None
+    };
+    out.send(Notice::Event(Box::new(event))).await;
+    if let Some(id) = completion {
+        if let Some(active) = link.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            active.pending.remove(&id);
+        }
+    }
+}
+async fn session(access: Arc<super::Access>, recover: bool, link: &Link, out: &Output) -> String {
+    let wake = Arc::new(Notify::new());
+    let notify = wake.clone();
+    let providers = ProviderRuntime::forwarded(access.clone());
+    let mut workers = Workers(
+        Some(Runtime::with_providers(providers.clone(), move || {
+            notify.notify_one()
+        })),
+        access.clone(),
+    );
+    let rt = workers.0.as_mut().unwrap();
+    if recover {
+        let opencode = providers.opencode.clone();
+        let root = access.root.clone();
+        match tokio::task::spawn_blocking(move || opencode.attach(&root)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return e.to_string(),
+            Err(e) => return e.to_string(),
+        }
+    }
+    out.send(Notice::Event(Box::new(Event::Approvals(
+        providers.approvals.pending(),
+    ))))
+    .await;
+    out.send(Notice::Event(Box::new(Event::Questions(
+        providers.questions.pending(),
+    ))))
+    .await;
+    let mut requests = activate(link);
     out.publish(Message::Connected(link.clone())).await;
-    let read = async {
-        loop {
-            match frame(input).await {
-                Ok(ServerFrame::Event(event)) => {
-                    let reply = if let Event::Completed(id, _) = event.as_ref() {
-                        if !link
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .as_ref()
-                            .is_some_and(|a| a.pending.contains(id))
-                        {
-                            continue;
-                        }
-                        Some(*id)
-                    } else {
-                        None
-                    };
-                    out.send(Notice::Event(event)).await;
-                    if let Some(id) = reply {
-                        if let Some(active) =
-                            link.lock().unwrap_or_else(|e| e.into_inner()).as_mut()
-                        {
-                            active.pending.remove(&id);
-                        }
-                    }
-                }
-                Ok(_) => return "Unexpected native VM handshake.".into(),
-                Err(e) => return e,
+    loop {
+        tokio::select! {
+            _ = wake.notified() => for event in rt.drain() {
+                let event = match event {
+                    Event::OpenCode(ref e) if e.event_type == "server.disconnected"
+                        && access.opencode_used.load(std::sync::atomic::Ordering::Acquire) => return "VM OpenCode event stream disconnected.".into(),
+                    Event::Codex(ref e) if e.method == "codex/processExited"
+                        && access.codex_used.load(std::sync::atomic::Ordering::Acquire) => return "VM Codex WebSocket disconnected.".into(),
+                    Event::Approvals(_) => Event::Approvals(providers.approvals.pending()),
+                    Event::Questions(_) => Event::Questions(providers.questions.pending()),
+                    e => e,
+                };
+                deliver(link, out, event).await;
+            },
+            req = requests.recv() => match req {
+                Some((id, cmd)) => if let Err(e) = rt.submit(id, cmd) {
+                    deliver(link, out, Event::Completed(id, Err(e))).await;
+                },
+                None => return "VM workspace closed.".into(),
             }
         }
-    };
-    let write = async {
-        while let Some(request) = rx.recv().await {
-            let data = match protocol::encode(&request) {
-                Ok(data) => data,
-                Err(e) => {
-                    let id = request.0;
-                    out.send(Notice::Event(Box::new(Event::Completed(
-                        id,
-                        Err(e.to_string()),
-                    ))))
-                    .await;
-                    if let Some(active) = link.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-                        active.pending.remove(&id);
-                    }
-                    continue;
-                }
-            };
-            if output.write_all(&data).await.is_err() || output.flush().await.is_err() {
-                return "Could not write to the VM connection.".into();
-            }
-        }
-        "Native VM workspace closed.".into()
-    };
-    tokio::select! { error=read=>error, error=write=>error }
+    }
 }
 
 #[cfg(test)]

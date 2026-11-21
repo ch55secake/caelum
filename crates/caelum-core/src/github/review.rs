@@ -25,8 +25,8 @@ pub fn pull_request_files(
     )
 }
 
-fn files(
-    executable: &Path,
+pub(super) fn files(
+    executable: &(impl Gh + ?Sized),
     project_path: &Path,
     url: &str,
     head_oid: &str,
@@ -45,7 +45,7 @@ fn files(
         .path_segments()
         .ok_or(GitHubError::InvalidUrl)?
         .collect();
-    let project = Project::open(project_path)?;
+    let project = executable.project(project_path)?;
     let endpoint = format!(
         "repos/{}/{}/pulls/{}",
         segments[0], segments[1], segments[3]
@@ -60,8 +60,8 @@ fn files(
             "GET",
             endpoint,
         ]);
-        let output = checked_output(command, Duration::from_secs(10))?;
-        Ok(serde_json::from_slice(&output.stdout)?)
+        let output = executable.output(command, Duration::from_secs(10))?;
+        Ok(serde_json::from_slice(&output)?)
     };
     // Files are read from the canonical PR, never the local working-tree diff.
     // Details already supplied the expected base/head. Validate after reading
@@ -102,8 +102,8 @@ pub fn pull_request_feedback(
     )
 }
 
-fn feedback(
-    executable: &Path,
+pub(super) fn feedback(
+    executable: &(impl Gh + ?Sized),
     project_path: &Path,
     url: &str,
     head_oid: &str,
@@ -117,7 +117,7 @@ fn feedback(
         .path_segments()
         .ok_or(GitHubError::InvalidUrl)?
         .collect();
-    let project = Project::open(project_path)?;
+    let project = executable.project(project_path)?;
     let selection = match kind {
         GitHubFeedbackKind::Discussion | GitHubFeedbackKind::Replies => format!("comments(first: {PAGE_SIZE}, after: $cursor) {{ nodes {{ {COMMENT_FIELDS} }} {PAGE_INFO} }}"),
         GitHubFeedbackKind::Reviews => format!("reviews(first: {PAGE_SIZE}, after: $cursor) {{ nodes {{ {COMMENT_FIELDS} state }} {PAGE_INFO} }}"),
@@ -151,8 +151,8 @@ fn feedback(
     if let Some(cursor) = cursor {
         command.args(["-f", &format!("cursor={cursor}")]);
     }
-    let output = checked_output(command, Duration::from_secs(15))?;
-    let response: Value = serde_json::from_slice(&output.stdout)?;
+    let output = executable.output(command, Duration::from_secs(15))?;
+    let response: Value = serde_json::from_slice(&output)?;
     if response
         .get("errors")
         .and_then(Value::as_array)
@@ -236,7 +236,7 @@ fn next_cursor(connection: &Value) -> Result<Option<String>, GitHubError> {
 }
 
 fn check_target(
-    executable: &Path,
+    executable: &(impl Gh + ?Sized),
     project: &Path,
     value: &Value,
     url: &str,

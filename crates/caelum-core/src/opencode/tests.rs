@@ -176,6 +176,8 @@ fn shutdown_terminates_and_unregisters_the_owned_server_process() {
     let client = Client::builder().build().unwrap();
     let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let server = Arc::new(OpenCodeServer {
+        permission_revision: Default::default(),
+        remote: None,
         process_id: Some(process_id),
         base_url: "http://127.0.0.1:1".to_owned(),
         client: client.clone(),

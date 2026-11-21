@@ -49,9 +49,6 @@ impl ProviderKind {
 
 #[derive(Debug, Subcommand)]
 enum CommandKind {
-    /// Private, versioned native workspace transport inside a VM.
-    #[command(hide = true)]
-    WorkspacePeer { mode: String, repository: String },
     /// Start an interactive agent session.
     Chat {
         #[arg(value_name = "PROJECT")]
@@ -88,9 +85,6 @@ fn main() -> std::process::ExitCode {
 
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
-        Some(CommandKind::WorkspacePeer { mode, repository }) => {
-            Ok(caelum_core::remote::native::run_peer(&mode, &repository)?)
-        }
         Some(CommandKind::Chat { project, session }) => {
             chat(cli.provider, open_project(project)?, session.as_deref())
         }

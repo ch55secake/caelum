@@ -1,12 +1,12 @@
 use std::{
     collections::{HashMap, VecDeque},
-    io::{BufRead, BufReader, Write},
+    io::{self, Write},
     path::Path,
-    sync::{atomic::Ordering, mpsc, Arc, Mutex},
+    sync::{atomic::Ordering, mpsc, Mutex},
     thread,
 };
 
-use caelum_protocol::{ApprovalDecision, CodexEvent};
+use caelum_protocol::CodexEvent;
 use serde_json::{json, Value};
 
 use super::requests::{handle_server_request, request_question};
@@ -109,7 +109,16 @@ impl CodexConnection {
     }
 }
 
-pub(super) fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderContext) {
+pub(super) type Messages = Box<dyn Iterator<Item = io::Result<String>> + Send>;
+pub(super) enum Writer {
+    Stdio(Mutex<std::process::ChildStdin>),
+    WebSocket(
+        tokio::sync::mpsc::Sender<String>,
+        tokio::sync::watch::Sender<bool>,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ),
+}
+pub(super) fn spawn_reader(reader: Messages, context: ReaderContext) {
     thread::spawn(move || {
         let ReaderContext {
             pending,
@@ -122,13 +131,9 @@ pub(super) fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderCon
             pending_turns,
             turn_threads,
         } = context;
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {}
+        for message in reader {
+            let line = match message {
+                Ok(line) => line,
                 Err(error) => {
                     publish_event(
                         &subscribers,
@@ -141,7 +146,7 @@ pub(super) fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderCon
                     );
                     break;
                 }
-            }
+            };
 
             let message: Value = match serde_json::from_str(line.trim_end()) {
                 Ok(message) => message,
@@ -235,11 +240,10 @@ pub(super) fn spawn_reader(stdout: std::process::ChildStdout, context: ReaderCon
                         }
                         if let Ok(request_id) = request_id_string(request_id) {
                             let opaque_id = format!("{}:{request_id}", project_key(&project_path));
-                            let _ = approvals.resolve(
+                            approvals.dismiss(
                                 PROVIDER_NAME,
                                 &project_path.to_string_lossy(),
                                 &opaque_id,
-                                ApprovalDecision::Deny,
                             );
                         }
                     }
@@ -350,11 +354,18 @@ fn codex_event(
     }
 }
 
-pub(super) fn write_message(
-    writer: &Arc<Mutex<std::process::ChildStdin>>,
-    message: &Value,
-) -> Result<(), String> {
-    let mut writer = writer.lock().unwrap_or_else(|p| p.into_inner());
+pub(super) fn write_message(writer: &Writer, message: &Value) -> Result<(), String> {
+    let mut writer = match writer {
+        Writer::Stdio(writer) => writer.lock().unwrap_or_else(|p| p.into_inner()),
+        Writer::WebSocket(tx, stop, live) => {
+            return if live.load(Ordering::Acquire) && !*stop.borrow() {
+                tx.try_send(message.to_string())
+                    .map_err(|_| "Codex WebSocket is busy or closed.".into())
+            } else {
+                Err("Codex WebSocket closed.".into())
+            }
+        }
+    };
     serde_json::to_writer(&mut *writer, message).map_err(|error| error.to_string())?;
     writer.write_all(b"\n").map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())

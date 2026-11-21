@@ -1,12 +1,12 @@
 use super::NativeTarget;
-mod bundle;
+mod access;
 use crate::remote::{
     boat::{api, checkout_quote, Boat},
     credentials,
 };
+pub(crate) use access::Access;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use boat_sdk::access::models::{SshKeyRequest, SshKeyResponse};
-use bundle::Bundle;
 use std::{
     fs,
     net::{IpAddr, SocketAddr},
@@ -19,6 +19,10 @@ use tokio::process::{Child, Command};
 
 pub(super) struct Tunnel {
     pub child: Child,
+    // Child::wait closes its stdin; keep the master session's lifetime distinct
+    // from its exit observer.
+    _keepalive: tokio::process::ChildStdin,
+    pub access: std::sync::Arc<Access>,
     _pin: tempfile::TempDir,
 }
 
@@ -171,10 +175,14 @@ impl Endpoint {
 pub(super) async fn open(target: &NativeTarget, parent_store: &Path) -> Result<Tunnel, String> {
     let owner = target.clone();
     let parent = parent_store.to_owned();
-    let (key, public) = tokio::task::spawn_blocking(move || {
+    let ((key, public), metadata) = tokio::task::spawn_blocking(move || {
         owner.with_live_profile(&parent, || {
             let store = owner.store_path(&parent);
-            identity(&store.parent().expect("workspace directory").join("ssh"))
+            let dir = store.parent().expect("workspace directory");
+            Ok((
+                identity(&dir.join("ssh"))?,
+                access::Metadata::open(&owner, &parent, &store)?,
+            ))
         })
     })
     .await
@@ -186,14 +194,11 @@ pub(super) async fn open(target: &NativeTarget, parent_store: &Path) -> Result<T
     })
     .await
     .map_err(|_| "Boat timed out authorizing SSH.")??;
-    connect(
-        key,
-        endpoint,
-        &target.repository,
-        &target.checkout_root,
-        Bundle::discover()?,
-    )
-    .await
+    let mut tunnel = connect(key, endpoint, &target.repository, &target.checkout_root).await?;
+    std::sync::Arc::get_mut(&mut tunnel.access)
+        .expect("new SSH attempt")
+        .metadata = Some(metadata);
+    Ok(tunnel)
 }
 
 async fn connect(
@@ -201,19 +206,15 @@ async fn connect(
     endpoint: Endpoint,
     repository: &str,
     root: &str,
-    bundle: Option<Bundle>,
 ) -> Result<Tunnel, String> {
     let pin = tempfile::tempdir().map_err(|e| e.to_string())?;
     let known = pin.path().join("known_hosts");
     fs::write(&known, endpoint.pin).map_err(|e| e.to_string())?;
-    let remote = format!(
-        "sh -c {} sh {} {} {}{}",
-        checkout_quote(include_str!("bootstrap.sh")),
-        checkout_quote(env!("CARGO_PKG_VERSION")),
-        checkout_quote(repository),
-        checkout_quote(root),
-        bundle.as_ref().map(Bundle::arguments).unwrap_or_default()
-    );
+    let socket = pin.path().join("control");
+    let dir = checkout_quote(root);
+    // Opening the session channel confirms the master can accept multiplexed
+    // requests. Keep it alive until the desktop detaches or SSH loses the VM.
+    let remote = format!("cd -P {dir} && test \"$PWD\" = {dir} && test \"$(git rev-parse --show-toplevel)\" = \"$PWD\" && git remote get-url origin && exec cat >/dev/null");
     let mut child = Command::new("ssh")
         .args([
             "-F",
@@ -234,7 +235,7 @@ async fn connect(
             "-o",
             "ForwardAgent=no",
             "-o",
-            "ClearAllForwardings=yes",
+            "ExitOnForwardFailure=yes",
             "-o",
             "ConnectTimeout=10",
             "-o",
@@ -242,6 +243,8 @@ async fn connect(
             "-o",
             "ServerAliveCountMax=2",
         ])
+        .args(["-M", "-S"])
+        .arg(&socket)
         .arg("-o")
         .arg(format!("UserKnownHostsFile=\"{}\"", known.display()))
         .arg("-i")
@@ -251,7 +254,7 @@ async fn connect(
         .arg("-l")
         .arg(endpoint.user)
         .arg("--")
-        .arg(endpoint.host)
+        .arg(&endpoint.host)
         .arg(remote)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -259,12 +262,25 @@ async fn connect(
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Start OpenSSH: {e}"))?;
-    if let Some(bundle) = bundle {
-        tokio::time::timeout(Duration::from_secs(180), bundle.install(&mut child))
-            .await
-            .map_err(|_| "Timed out installing the bundled VM peer.")??;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+    let mut origin = String::new();
+    let mut reader = BufReader::new(child.stdout.take().expect("piped stdout").take(8192));
+    tokio::time::timeout(Duration::from_secs(15), reader.read_line(&mut origin))
+        .await
+        .map_err(|_| "SSH timed out verifying the VM checkout.")?
+        .map_err(|e| e.to_string())?;
+    if !origin.ends_with('\n')
+        || !crate::remote::github_slug(origin.trim())
+            .is_some_and(|r| r.eq_ignore_ascii_case(repository))
+    {
+        return Err("SSH could not verify the VM host key and Git checkout. Check the machine and refresh its connection.".into());
     }
-    Ok(Tunnel { child, _pin: pin })
+    Ok(Tunnel {
+        _keepalive: child.stdin.take().expect("piped stdin"),
+        child,
+        access: std::sync::Arc::new(Access::new(socket, endpoint.host, root.to_owned())),
+        _pin: pin,
+    })
 }
 
 #[cfg(test)]

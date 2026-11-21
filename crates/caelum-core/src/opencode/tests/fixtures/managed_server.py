@@ -81,6 +81,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/form":
             assert parse_qs(urlsplit(self.path).query) == {"location[directory]": [PROJECT]}
             self.send_json({"data": list(FORMS.values()) + [{"id": "frm_global", "sessionID": "global", "fields": []}]})
+        elif path == "/api/info":
+            self.send_json({"version":"2.0.0","pid":os.getpid()})
+        elif path == "/api/permission/request":
+            self.send_json({"data":[] if os.path.exists("approval.json") else [{"id":"per_fake","sessionID":"ses_fake","action":"bash"}]})
         elif path == "/api/session":
             archived = SESSION.get("time", {}).get("archived") is not None
             requested_archived = parse_qs(urlsplit(self.path).query).get("archived", ["false"]) == ["true"]
@@ -315,6 +319,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 server = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[-1])), Handler)
+if "--service" in sys.argv:
+    from pathlib import Path
+    reg = Path(os.environ["XDG_STATE_HOME"]) / "opencode/service.json"
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    reg.write_text(json.dumps({"version":"2.0.0","url":f"http://127.0.0.1:{server.server_port}","pid":os.getpid(),"password":PASSWORD}))
 if not os.environ.get("OPENCODE_SERVER_PASSWORD"):
     print("server password " + PASSWORD, flush=True)
 server.serve_forever()

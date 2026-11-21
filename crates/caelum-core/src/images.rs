@@ -2,7 +2,7 @@ use std::io::Read;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 
-const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+pub(crate) const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Bound both local files and authenticated provider media before crossing IPC.
 pub(crate) fn data_url(reader: impl Read) -> Result<String, String> {

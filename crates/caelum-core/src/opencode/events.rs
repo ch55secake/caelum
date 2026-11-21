@@ -56,6 +56,31 @@ pub(super) fn spawn_event_listener(
                 if !server.alive.load(Ordering::Acquire) {
                     return;
                 }
+                if event.event_type == "permission.replied"
+                    && event
+                        .location
+                        .as_ref()
+                        .and_then(|l| l["directory"].as_str())
+                        .is_none_or(|d| server.matches(d, &project_path))
+                {
+                    if let (Some(session), Some(id)) = (
+                        event.data["sessionID"].as_str(),
+                        event.data["requestID"].as_str(),
+                    ) {
+                        let id = format!("{session}:{id}");
+                        let mut revision = server
+                            .permission_revision
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        *revision = revision.wrapping_add(1);
+                        server
+                            .pending_permission_ids
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(&id);
+                        approvals.dismiss(PROVIDER_NAME, &project_path.to_string_lossy(), &id);
+                    }
+                }
                 // A resolution can arrive during the first snapshot, before
                 // its session is known locally. Invalidate that snapshot even
                 // when a location-less event cannot otherwise be routed yet.
@@ -64,7 +89,7 @@ pub(super) fn spawn_event_listener(
                         .location
                         .as_ref()
                         .and_then(|location| location["directory"].as_str())
-                        .is_none_or(|directory| directory_matches(directory, &project_path))
+                        .is_none_or(|directory| server.matches(directory, &project_path))
                 {
                     if let (Some(session), Some(id)) =
                         (event.data["sessionID"].as_str(), event.data["id"].as_str())
@@ -138,11 +163,21 @@ fn event_belongs_to_project(
         .and_then(|location| location.get("directory"))
         .and_then(Value::as_str)
     {
-        return directory_matches(directory, project_path);
+        return server.matches(directory, project_path);
     }
     data.get("sessionID")
         .and_then(Value::as_str)
         .is_some_and(|session_id| server.owns_session(session_id))
+}
+
+impl OpenCodeServer {
+    fn matches(&self, directory: &str, project: &Path) -> bool {
+        if self.remote.is_some() {
+            project.as_os_str() == directory
+        } else {
+            directory_matches(directory, project)
+        }
+    }
 }
 
 fn publish_disconnected(

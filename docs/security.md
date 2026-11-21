@@ -48,6 +48,6 @@ Opening a VM session authorizes a dedicated SSH public key for the selected
 Boat account and machine. Each attachment uses only the host key from that
 Boat response. The private key stays in the machine-scoped laptop profile.
 Drafts stay in the laptop workspace, scoped to the owning VM checkout. The
-VM peer verifies the checkout’s Git root and origin and
-listens on a private Unix socket; it receives neither the Boat API key nor
-laptop provider credentials.
+desktop verifies the checkout’s physical Git root and origin over SSH. Provider
+clients connect only to forwarded loopback ports. File operations resolve paths
+using SFTP on the VM. The VM receives neither the Boat API key nor laptop provider credentials.

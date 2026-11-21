@@ -141,7 +141,7 @@ pub fn search_project(
     Ok(result)
 }
 
-fn path_score(path: &str, query: &str) -> Option<i64> {
+pub(crate) fn path_score(path: &str, query: &str) -> Option<i64> {
     let path = path.to_lowercase();
     let query = query.to_lowercase();
     let mut remaining = path.chars().enumerate();
@@ -224,6 +224,15 @@ pub fn list_directory(
         });
     }
 
+    Ok(directory_page(entries, relative_path, offset, limit))
+}
+
+pub(crate) fn directory_page(
+    mut entries: Vec<ProjectFileEntry>,
+    relative_path: &str,
+    offset: usize,
+    limit: usize,
+) -> ProjectDirectoryListing {
     entries.sort_by(|left, right| {
         entry_order(left.kind)
             .cmp(&entry_order(right.kind))
@@ -241,12 +250,12 @@ pub fn list_directory(
     let next_offset =
         (offset.saturating_add(page.len()) < total).then_some(offset.saturating_add(page.len()));
 
-    Ok(ProjectDirectoryListing {
+    ProjectDirectoryListing {
         path: relative_path.to_owned(),
         entries: page,
         total,
         next_offset,
-    })
+    }
 }
 
 pub fn read_image(project_path: impl AsRef<Path>, relative_path: &str) -> Result<String, String> {
@@ -287,8 +296,14 @@ pub fn read_text_file(
     let mut limited = file.take((MAX_TEXT_FILE_BYTES + 1) as u64);
     read_preview(&mut limited, &path, &mut bytes)?;
 
-    let truncated =
-        bytes.len() > MAX_TEXT_FILE_BYTES || metadata.len() > MAX_TEXT_FILE_BYTES as u64;
+    text_preview(relative_path, metadata.len(), bytes)
+}
+pub(crate) fn text_preview(
+    relative_path: &str,
+    size: u64,
+    mut bytes: Vec<u8>,
+) -> Result<ProjectFileContent, FileBrowserError> {
+    let truncated = bytes.len() > MAX_TEXT_FILE_BYTES || size > MAX_TEXT_FILE_BYTES as u64;
     if bytes.len() > MAX_TEXT_FILE_BYTES {
         bytes.truncate(MAX_TEXT_FILE_BYTES);
     }
@@ -310,7 +325,7 @@ pub fn read_text_file(
     Ok(ProjectFileContent {
         path: relative_path.to_owned(),
         content,
-        size_bytes: metadata.len(),
+        size_bytes: size,
         truncated,
     })
 }
@@ -343,7 +358,7 @@ fn resolve_project_path(
         .map_err(FileBrowserError::Project)
 }
 
-fn validate_relative_path(path: &str) -> Result<(), FileBrowserError> {
+pub(crate) fn validate_relative_path(path: &str) -> Result<(), FileBrowserError> {
     let relative = Path::new(path);
     if path.is_empty()
         || path.contains('\0')

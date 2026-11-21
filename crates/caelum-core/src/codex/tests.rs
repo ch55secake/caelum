@@ -276,7 +276,7 @@ fn checkout_cleanup_rejects_active_turns_and_releases_only_its_connections() {
     assert_eq!(provider.inner.lock_connections().len(), 1);
     for connection in [connection, nested_connection] {
         assert!(matches!(
-            processes.terminate(connection.process_id),
+            processes.terminate(connection.process_id.unwrap()),
             Err(crate::processes::ProcessError::UnknownProcess)
         ));
     }

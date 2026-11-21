@@ -8,11 +8,13 @@ rust-version.workspace = true
 base64 = "0.23"
 boat-sdk = { git = "https://github.com/caelurium/boat-sdk-rs", tag = "v0.6.0" }
 caelum-protocol = { path = "../caelum-protocol" }
+futures-util = { version = "0.3", features = ["sink"] }
 ignore = "0.4"
 notify = "8.2"
 regex = "1"
 reqwest = { workspace = true, features = ["rustls-tls"] }
 rusqlite.workspace = true
+russh-sftp = "3"
 rustix = { version = "1", features = ["fs", "process"] }
 semver = "1"
 serde.workspace = true
@@ -22,6 +24,7 @@ tempfile = "3"
 thiserror.workspace = true
 time = { version = "0.3", features = ["parsing"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros", "process", "io-util", "signal", "fs"] }
+tokio-tungstenite = "0.30"
 zeroize = "1"
 uuid = { version = "1", features = ["v4"] }
 

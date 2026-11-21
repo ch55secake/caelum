@@ -63,8 +63,10 @@ sessions does not submit a message.
 ![New session with Codex selected and a ready Boat VM listed under its project](design/previews/rune-dark-vm-session-launcher-small.png)
 
 The Boat key needs the [`ssh` action](https://docs.boat.dev/ssh-access).
-Caelum installs its matching Linux peer on first use and uses the VM’s own
-provider configuration and credentials. Drafts and session settings are kept
+No Caelum installation is needed on the VM. Caelum verifies its SSH host key,
+Git root and origin, then forwards a loopback port to the VM’s OpenCode V2
+service or Codex WebSocket `app-server`. It starts the installed provider if
+needed. The VM uses its own provider settings and credentials. Drafts and session settings are kept
 on this computer, scoped to their account, machine and repository. **Save as
 default** in a VM session sets the model, effort and agent for new sessions on
 that checkout. Provider defaults, favourite models and drafts from the earlier
@@ -73,7 +75,7 @@ separate-window preview are imported on startup.
 If SSH drops, you can keep editing. Caelum tries to reconnect once; if the VM
 has stopped, **Resume** it from machine stats and reconnect in the same session.
 The connection verifies the new host key, reloads history and
-restores pending questions and approvals. Check the transcript before retrying
+restores questions and approvals that the provider still has pending. Check the transcript before retrying
 a message marked unconfirmed. Closing the window detaches; it does not stop
 the VM. SSH activity does **not** extend Boat’s auto-stop timer.
 
