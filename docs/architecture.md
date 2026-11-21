@@ -48,8 +48,10 @@ filesystem registries. Settings owns the Boat connection; a checkout captures
 its account, machine ID, GitHub repository and branch. The local project path
 only groups the sidebar row. A saved creation attempt carries its idempotency
 key through provisioning; once Boat returns a machine, retries prepare that
-same machine. A one-repository environment puts the agent and remote Git in
-`/home/user/<repository>`. Caelum can create a dedicated environment and never
+same machine. In a single-repository environment Caelum resolves the physical
+Git worktree on the VM, verifies its GitHub origin and saves the directory for
+managed Git and native SSH. A new VM can fill a missing clone from its published
+base; attaching to an existing VM only verifies it. Caelum can create a dedicated environment and never
 adds a repository to an existing shared environment.
 
 On explicit Send, the remote composer captures the thread’s provider (`codex`

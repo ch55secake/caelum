@@ -73,6 +73,7 @@ pub(super) fn scene(s: &mut Workspace, offline: bool) {
             id: "vm-example".into(),
         },
         repository: "example/project".into(),
+        checkout_root: "/home/user/project".into(),
     };
     let handle = s.handle.clone();
     *s = workspace(target);
@@ -238,6 +239,7 @@ pub(crate) fn target(l: &Live, id: &str) -> Option<NativeTarget> {
     let target = NativeTarget {
         machine: machine.key.clone(),
         repository: c.source.repository.clone(),
+        checkout_root: c.root.clone()?,
     };
     target.root().ok()?;
     Some(target)

@@ -62,6 +62,9 @@ pub enum Phase {
 pub struct Checkout {
     pub source: Source,
     pub phase: Phase,
+    /// Canonical Git worktree on this VM. Older snapshots resolve it on refresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
     #[serde(default)]
     pub thread: super::Thread,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -103,6 +106,7 @@ impl Checkout {
         Some(Target {
             machine: self.machine()?.key.clone(),
             repository: self.source.repository.clone(),
+            root: self.root.clone(),
             required_base: self
                 .thread
                 .continued
@@ -117,7 +121,16 @@ impl Checkout {
 pub struct Target {
     pub machine: MachineId,
     pub repository: String,
+    pub root: Option<String>,
     pub required_base: Option<PublishedBase>,
+}
+
+pub(super) fn valid_root(path: &str) -> bool {
+    path.len() <= 4096
+        && !path.chars().any(char::is_control)
+        && path
+            .strip_prefix('/')
+            .is_some_and(|p| p.split('/').all(|part| !matches!(part, "" | "." | "..")))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

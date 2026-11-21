@@ -24,7 +24,7 @@ BOOT = (ROOT / "crates/caelum-core/src/remote/native/bootstrap.sh").read_text()
 
 
 async def run(home, real_opencode, real_codex, api, calls):
-    project = home / "project"
+    project = home / "Boat's checkout"
     project.mkdir()
     binary = home / ".local/bin"
     binary.mkdir(parents=True)
@@ -86,7 +86,7 @@ env_key = "CAELUM_TEST_KEY"
         {"id": "sh_example", "command": "check", "status": "running", "time": {"started": 1}, "metadata": {"sessionID": "ses_fake"}}
     ]}))
 
-    refused = subprocess.run([peer, "workspace-peer", "attach", "another/project"], env=remote, capture_output=True)
+    refused = subprocess.run([peer, "workspace-peer", "attach", "another/project"], cwd=project, env=remote, capture_output=True)
     assert refused.returncode and "Error" in json.loads(refused.stdout[4:]), "wrong Git origin accepted"
     login = asyncssh.generate_private_key("ssh-ed25519")
     login.write_private_key(home / "client")
@@ -95,20 +95,20 @@ env_key = "CAELUM_TEST_KEY"
     phases = ["native_new_session_over_openssh", "native_resume_after_vm_stop"] if real_opencode or real_codex else ["native_workspace_over_openssh"]
     for phase in phases:
         previous = len(calls)
-        await exercise(home, remote, peer, phase)
+        await exercise(home, project, remote, peer, phase)
         if phase == "native_new_session_over_openssh":
             assert len(calls) == 1 if real_codex else len(calls) >= 1
         elif phase == "native_resume_after_vm_stop":
             assert len(calls) == previous, "resuming history contacted the model again"
 
 
-async def exercise(home, remote, peer, phase):
+async def exercise(home, project, remote, peer, phase):
     host = asyncssh.generate_private_key("ssh-ed25519")
 
     async def attach(channel):
         # This loopback fixture accepts only the exact release bootstrap from this checkout.
         args = shlex.split(channel.command or "")
-        if args != ["sh", "-c", BOOT, "sh", VERSION, REPO]:
+        if args != ["sh", "-c", BOOT, "sh", VERSION, REPO, str(project)]:
             channel.exit(1)
             return
         child = await asyncio.create_subprocess_exec(
@@ -145,7 +145,7 @@ async def exercise(home, remote, peer, phase):
         "sshUser": "user", "hostKey": host.export_public_key().decode().strip(),
     }))
     # Hold a handle to the real detached worker so teardown can also verify orderly shutdown.
-    worker = await asyncio.create_subprocess_exec(peer, "workspace-peer", "serve", REPO, env=remote, cwd=home)
+    worker = await asyncio.create_subprocess_exec(peer, "workspace-peer", "serve", REPO, env=remote, cwd=project)
     try:
         async with asyncio.timeout(10):
             while not list((home / ".local/state/caelum/peers").glob("*.sock")):
@@ -155,6 +155,7 @@ async def exercise(home, remote, peer, phase):
         test = await asyncio.create_subprocess_exec(
             "cargo", "test", "--locked", "-p", "caelum-core", phase, "--", "--ignored",
             cwd=ROOT, env={**os.environ, "CAELUM_NATIVE_SSH_FIXTURE": str(home),
+                           "CAELUM_NATIVE_SSH_ROOT": str(project),
                            "CAELUM_NATIVE_SMOKE_PROVIDER": "codex" if "CODEX_HOME" in remote else "opencode"},
         )
         if await test.wait():

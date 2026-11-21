@@ -122,7 +122,11 @@ pub enum Outcome {
     Source(Source),
     Machine(Machine),
     Waiting(Machine),
-    Prepared(Machine, String),
+    Prepared {
+        machine: Machine,
+        branch: String,
+        root: String,
+    },
     Lifetime(Machine),
     Accepted(Run),
     Rejected(String),

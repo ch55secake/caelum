@@ -184,18 +184,24 @@ pub(super) async fn open(target: &NativeTarget, parent_store: &Path) -> Result<T
     })
     .await
     .map_err(|_| "Boat timed out authorizing SSH.")??;
-    connect(key, endpoint, &target.repository)
+    connect(key, endpoint, &target.repository, &target.checkout_root)
 }
 
-fn connect(key: PathBuf, endpoint: Endpoint, repository: &str) -> Result<Tunnel, String> {
+fn connect(
+    key: PathBuf,
+    endpoint: Endpoint,
+    repository: &str,
+    root: &str,
+) -> Result<Tunnel, String> {
     let pin = tempfile::tempdir().map_err(|e| e.to_string())?;
     let known = pin.path().join("known_hosts");
     fs::write(&known, endpoint.pin).map_err(|e| e.to_string())?;
     let remote = format!(
-        "sh -c {} sh {} {}",
+        "sh -c {} sh {} {} {}",
         checkout_quote(include_str!("bootstrap.sh")),
         checkout_quote(env!("CARGO_PKG_VERSION")),
-        checkout_quote(repository)
+        checkout_quote(repository),
+        checkout_quote(root)
     );
     let child = Command::new("ssh")
         .args([

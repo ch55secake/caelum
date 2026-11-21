@@ -29,10 +29,15 @@ impl Backend {
         });
         rt.as_ref().map_err(Clone::clone)?.block_on(async {
             let mut closed = self.closed.subscribe();
+            let timeout = if matches!(op, Operation::Prepare(_, _, Some(_))) {
+                390
+            } else {
+                90
+            };
             tokio::select! {
                 biased;
                 _ = closed.wait_for(|v| *v) => Err("Remote connection closed".into()),
-                result = tokio::time::timeout(Duration::from_secs(90), self.perform(op)) =>
+                result = tokio::time::timeout(Duration::from_secs(timeout), self.perform(op)) =>
                     result.map_err(|_| "Boat did not respond in time".to_owned())?,
             }
         })

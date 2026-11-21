@@ -153,10 +153,11 @@ impl Harness for Boat {
         if conversation.is_some_and(|c| !valid_id(c)) {
             return Ok(Outcome::Rejected("Invalid remote conversation".into()));
         }
-        if let Err(error) = self.verify_origin(target).await {
-            return Ok(Outcome::Rejected(error));
-        }
-        if let Err(error) = self.verify_base(target).await {
+        let worktree = match self.worktree(target, None).await {
+            Ok(w) => w,
+            Err(e) => return Ok(Outcome::Rejected(e)),
+        };
+        if let Err(error) = worktree.verify_base().await {
             return Ok(Outcome::Rejected(error));
         }
         let request = PromptRequest {
@@ -268,7 +269,7 @@ impl Harness for Boat {
             _ => RunStatus::Running,
         };
         Ok(Page {
-            lines: super::events::lines(events.events, run, &target.repository, cursor),
+            lines: super::events::lines(events.events, run, target.root.as_deref(), cursor),
             cursor: next,
             more,
             status,

@@ -44,6 +44,14 @@ fn machine(id: &str) -> Machine {
     }
 }
 
+fn prepared_vm(machine: Machine, branch: impl Into<String>) -> Outcome {
+    Outcome::Prepared {
+        machine,
+        branch: branch.into(),
+        root: "/workspace/checkout".into(),
+    }
+}
+
 #[test]
 fn vm_feed_scopes_and_sorts_drafts_with_local_sessions_without_reordering_on_switch() {
     use crate::application::{FeedSession, Provider, Scope, SessionScope};
@@ -64,10 +72,7 @@ fn vm_feed_scopes_and_sorts_drafts_with_local_sessions_without_reordering_on_swi
     let (id, req, _) = created(&mut app);
     app.apply(Event::Completed(
         req,
-        Ok(Reply::Remote(Outcome::Prepared(
-            machine("vm"),
-            "feat/boat".into(),
-        ))),
+        Ok(Reply::Remote(prepared_vm(machine("vm"), "feat/boat"))),
     ));
     let prior = app.selected_feed_session().unwrap();
     let c = app.remote.saved.checkouts.get_mut(&id).unwrap();
@@ -130,10 +135,7 @@ fn attaching_reopens_a_chat_but_the_launcher_starts_one_on_the_verified_checkout
         assert_eq!(t.machine, vm.key);
         app.apply(Event::Completed(
             *req,
-            Ok(Reply::Remote(Outcome::Prepared(
-                vm.clone(),
-                "existing".into(),
-            ))),
+            Ok(Reply::Remote(prepared_vm(vm.clone(), "existing"))),
         ));
     };
     let id = attach(&mut app, Some(Provider::Codex)).unwrap();
@@ -251,7 +253,7 @@ fn lost_create_reply_reuses_the_persisted_attempt_and_late_prepare_keeps_its_own
     let (other, _, _) = created(&mut restored);
     restored.apply(Event::Completed(
         prepare,
-        Ok(Reply::Remote(Outcome::Prepared(machine("vm-a"), branch))),
+        Ok(Reply::Remote(prepared_vm(machine("vm-a"), branch))),
     ));
     assert_eq!(restored.remote.saved.selected.as_ref(), Some(&other));
     assert!(matches!(
@@ -264,6 +266,14 @@ fn lost_create_reply_reuses_the_persisted_attempt_and_late_prepare_keeps_its_own
     ));
     assert!(restored.active_project.is_none());
     assert!(restored.sessions.is_empty());
+    let mut reopened = Workspace::default();
+    reopened.remote.saved = restored.snapshot().remote;
+    reopened.select_remote(&id);
+    assert!(matches!(
+        reopened.commands().as_slice(),
+        [(_, Command::Remote(Operation::Prepare(target, _, None)))]
+            if target.machine.id == "vm-a" && target.root.as_deref() == Some("/workspace/checkout")
+    ));
 }
 
 #[test]
@@ -275,11 +285,7 @@ fn reopening_reattaches_to_the_saved_run_without_reposting_the_prompt() {
         |app: &mut Workspace, req, out| app.apply(Event::Completed(req, Ok(Reply::Remote(out))));
     finish(&mut app, req, Outcome::Machine(machine("vm-a")));
     let (req, _) = app.commands().pop().unwrap();
-    finish(
-        &mut app,
-        req,
-        Outcome::Prepared(machine("vm-a"), "feat/new".into()),
-    );
+    finish(&mut app, req, prepared_vm(machine("vm-a"), "feat/new"));
     assert!(app.set_vm_provider(&id, &id, Provider::Codex));
     assert!(app.send_remote(&id, "Edit a file"));
     let saved_before_ack = app.snapshot();
@@ -329,11 +335,7 @@ fn reopening_reattaches_to_the_saved_run_without_reposting_the_prompt() {
             serde_json::from_value(serde_json::to_value(snapshot.remote).unwrap()).unwrap();
         reopened.select_remote(&id);
         let (req, _) = reopened.commands().pop().unwrap();
-        finish(
-            &mut reopened,
-            req,
-            Outcome::Prepared(machine("vm-a"), "feat/new".into()),
-        );
+        finish(&mut reopened, req, prepared_vm(machine("vm-a"), "feat/new"));
         let mut work = reopened.commands();
         assert!(!reopened.set_vm_provider(&id, &id, Provider::OpenCode));
         if known {
@@ -395,10 +397,7 @@ fn only_the_visible_monitor_polls_and_stale_samples_cannot_stop_a_new_attempt() 
     let (req, _) = app.commands().pop().unwrap();
     app.apply(Event::Completed(
         req,
-        Ok(Reply::Remote(Outcome::Prepared(
-            machine("vm-a"),
-            "feat/new".into(),
-        ))),
+        Ok(Reply::Remote(prepared_vm(machine("vm-a"), "feat/new"))),
     ));
     let now = Instant::now();
     assert!(app.monitor_remote(None, now).is_none() && app.commands().is_empty());

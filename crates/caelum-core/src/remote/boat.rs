@@ -5,6 +5,7 @@ mod harness;
 mod setup_error;
 mod stats;
 mod tools;
+mod worktree;
 
 pub(super) use checkout::quote as checkout_quote;
 

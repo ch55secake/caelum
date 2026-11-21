@@ -102,6 +102,7 @@ impl Client {
             match status {
                 Some(66) => "Could not install the matching Caelum workspace peer from the Linux release. Check the VM’s network and desktop version.".into(),
                 Some(65) => "The native workspace needs an x86_64 or aarch64 Linux VM.".into(),
+                Some(67) => "The verified checkout directory is missing or moved. Check its location on the VM, then refresh the checkout.".into(),
                 Some(255) => "The verified SSH connection closed. Check that the VM is running, then reconnect to refresh its address and host key.".into(),
                 _ => problem,
             }

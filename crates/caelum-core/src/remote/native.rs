@@ -12,7 +12,10 @@ pub use client::Status;
 pub(crate) use profile::retire;
 pub use server::run_peer;
 
-use super::{checkout::repo_name, MachineId};
+use super::{
+    checkout::{repo_name, valid_root},
+    MachineId,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -21,6 +24,7 @@ use sha2::{Digest, Sha256};
 pub struct NativeTarget {
     pub machine: MachineId,
     pub repository: String,
+    pub checkout_root: String,
 }
 
 impl NativeTarget {
@@ -36,7 +40,11 @@ impl NativeTarget {
         {
             return Err("A native workspace needs an identified Boat machine.".into());
         }
-        Ok(format!("/home/user/{}", repo_name(&self.repository)?))
+        repo_name(&self.repository)?;
+        if !valid_root(&self.checkout_root) {
+            return Err("Refresh the VM checkout to verify its directory.".into());
+        }
+        Ok(self.checkout_root.clone())
     }
 }
 

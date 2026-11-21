@@ -88,6 +88,7 @@ pub(crate) fn scene(s: &mut Workspace, name: &str) {
     l.app.remote.saved.selected = Some(id.clone());
     let mut c = Checkout {
         source,
+        root: Some("/home/user/project".into()),
         phase: Phase::Ready {
             machine: machine.clone(),
             branch: "feat/remote-checkout".into(),

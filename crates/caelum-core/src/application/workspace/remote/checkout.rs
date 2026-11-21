@@ -139,6 +139,7 @@ impl Workspace {
             Checkout {
                 source,
                 phase: Phase::Create(plan),
+                root: None,
                 thread: Thread::for_checkout(),
                 other_threads: Vec::new(),
                 pinned_stats: false,
@@ -212,6 +213,7 @@ impl Workspace {
                 id.clone(),
                 Checkout {
                     source,
+                    root: None,
                     thread: Thread::for_checkout(),
                     other_threads: Vec::new(),
                     pinned_stats: false,
@@ -310,7 +312,12 @@ impl Workspace {
             Phase::Ready { .. } => None,
         };
         match result {
-            Ok(Outcome::Prepared(machine, branch)) if valid(&machine) => {
+            Ok(Outcome::Prepared {
+                machine,
+                branch,
+                root,
+            }) if valid(&machine) && c.root.as_ref().is_none_or(|old| old == &root) => {
+                c.root = Some(root);
                 c.phase = Phase::Ready { machine, branch };
                 self.follow_remote(id);
             }

@@ -37,6 +37,7 @@ async fn reauthorizes_the_exact_machine_and_replaces_its_host_pin_after_resume()
             id: "vm-1".into(),
         },
         repository: "example/project".into(),
+        checkout_root: "/workspace/checkout".into(),
     };
     assert!(authorize(&boat, &target, public.clone()).await.is_err());
     assert!(server.received_requests().await.unwrap().is_empty());

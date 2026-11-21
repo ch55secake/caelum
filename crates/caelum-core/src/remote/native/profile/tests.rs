@@ -13,6 +13,7 @@ fn retiring_one_machine_removes_its_repositories_and_rejects_late_writes() {
             id: id.into(),
         },
         repository: repository.into(),
+        checkout_root: "/workspace/checkout".into(),
     };
     let first = target("one", "vm-a", "example/project");
     let second = target("one", "vm-a", "example/other");

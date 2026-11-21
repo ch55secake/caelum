@@ -43,7 +43,7 @@ impl Boat {
         target: &Target,
         action: &GitAction,
     ) -> Result<Review, String> {
-        self.verify_origin(target).await?;
+        let worktree = self.worktree(target, None).await?;
         match action {
             GitAction::Read => {}
             GitAction::Commit(r, msg) => {
@@ -52,15 +52,15 @@ impl Boat {
                 }
                 // Only commit the reviewed tree. Later edits to the worktree remain unstaged;
                 // refuse to replace an index or HEAD changed since review.
-                self.command(target,&format!("{} && test \"$(git write-tree)\" = {} && git read-tree {} && git commit -m {}",
+                worktree.command(&format!("{} && test \"$(git write-tree)\" = {} && git read-tree {} && git commit -m {}",
                     r.guard(),quote(&r.index),quote(&r.tree),quote(msg.trim()))).await?;
             }
             GitAction::Push(r) => {
                 if !r.valid() {
                     return Err("Invalid remote branch".into());
                 }
-                let urls = self
-                    .command(target, "git remote get-url --push --all origin")
+                let urls = worktree
+                    .command("git remote get-url --push --all origin")
                     .await?;
                 if urls.trim().is_empty()
                     || !urls.lines().all(|url| {
@@ -70,18 +70,16 @@ impl Boat {
                     return Err("The push destination is not the reviewed GitHub repository".into());
                 }
                 // Pin the source object even if another tool moves the branch during the push.
-                self.command(
-                    target,
-                    &format!(
+                worktree
+                    .command(&format!(
                         "{} && git push origin {}",
                         r.guard(),
                         quote(&format!("{}:refs/heads/{}", r.head, r.branch))
-                    ),
-                )
-                .await?;
+                    ))
+                    .await?;
             }
         }
-        let data = self.command(target, REVIEW).await?;
+        let data = worktree.command(REVIEW).await?;
         if data.len() > 512 * 1024 {
             return Err("Remote diff exceeds the 512 KiB review limit".into());
         }

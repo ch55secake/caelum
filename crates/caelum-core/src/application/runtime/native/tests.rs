@@ -40,6 +40,7 @@ fn offline_drafts_and_options_survive_restart_without_loading_a_laptop_provider_
             id: "vm-example".into(),
         },
         repository: "example/project".into(),
+        checkout_root: "/workspace/checkout".into(),
     };
     let store = Store(target.store_path(&parent));
     let root = target.root().unwrap();

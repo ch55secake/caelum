@@ -27,4 +27,6 @@ if [ ! -x "$peer" ]; then
     rm -rf "$stage"
     trap - EXIT
 fi
+cd -P "$3" || exit 67
+test "$PWD" = "$3" || exit 67
 exec "$peer" workspace-peer attach "$repo"

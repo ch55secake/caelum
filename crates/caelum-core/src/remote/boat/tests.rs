@@ -238,6 +238,7 @@ async fn a_prepared_environment_reports_create_scope_and_plan_denials_at_the_vm_
 
 fn agent_target() -> Target {
     Target {
+        root: Some("/workspace/checkout".into()),
         required_base: None,
         machine: MachineId {
             host: Host::Boat,
@@ -266,7 +267,7 @@ async fn switching_harnesses_uses_the_exact_machine_conversation_cursor_and_term
     let target = agent_target();
     let run = json!({"id":"r","promptId":"p","sandboxId":"vm-1","conversationId":"c","status":"finished","done":true});
     Mock::given(method("POST")).and(path("/sandboxes/vm-1/commands"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"type":"command","success":true,"exitCode":0,"stdout":"git@github.com:example/project.git\n","stderr":"","timedOut":false}))).expect(3).mount(&server).await;
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"type":"command","success":true,"exitCode":0,"stdout":"/workspace/checkout\n","stderr":"","timedOut":false}))).expect(3).mount(&server).await;
     for (scope, message, provider, prompt, id) in [
         (
             json!({"new":true,"model":"boat-model-b","reasoningEffort":"high"}),
@@ -326,7 +327,7 @@ async fn switching_harnesses_uses_the_exact_machine_conversation_cursor_and_term
             {"type":"response","id":"old","conversationId":"c","taskId":"old-prompt","timestamp":10,"data":{"content":"another turn"}},
             {"type":"response","id":"unowned","timestamp":10,"data":{"content":"unowned"}},
             {"type":"response","id":"text","conversationId":"c","timestamp":11,"data":{"content":"Editing…","is_streaming":true}},
-            {"type":"response","id":"tools","conversationId":"c","timestamp":12,"data":{"tools":[{"use":{"id":"call-1","name":"Edit","input":{"filePath":"/home/user/project/src/lib.rs","token":"private-tool-input"}}}]}},
+            {"type":"response","id":"tools","conversationId":"c","timestamp":12,"data":{"tools":[{"use":{"id":"call-1","name":"Edit","input":{"filePath":"/workspace/checkout/src/lib.rs","token":"private-tool-input"}}}]}},
             {"type":"response","id":"done","taskId":"p","timestamp":13,"data":{"content":"Edited the file."}},
             {"type":"response","id":"result","conversationId":"c","timestamp":14,"data":{"tools":[{"use":{"id":"call-1","name":"Edit"},"result":{"is_error":false,"content":"private-tool-output"}},{"use":{"id":"call-2","name":"Bash","input":{"command":"cargo test --token private-tool-input"}},"result":{"is_error":true}}]}},
             {"type":"response","id":"reverted","conversationId":"c","timestamp":15,"data":{"content":"obsolete","is_reverted":true}}
@@ -410,7 +411,7 @@ async fn a_mismatched_receipt_is_uncertain_and_recovery_checks_the_latest_harnes
     let target = agent_target();
     let run = |p: &str| json!({"id":format!("run-{p}"),"promptId":p,"sandboxId":"vm-1","conversationId":"c","status":"finished","done":true});
     Mock::given(method("POST")).and(path("/sandboxes/vm-1/commands"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"type":"command","success":true,"exitCode":0,"stdout":"git@github.com:example/project.git\n","stderr":"","timedOut":false}))).expect(1).mount(&server).await;
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"type":"command","success":true,"exitCode":0,"stdout":"/workspace/checkout\n","stderr":"","timedOut":false}))).expect(1).mount(&server).await;
     Mock::given(method("POST")).and(path("/sandboxes/vm-1/prompt"))
         .and(body_json(json!({"provider":"codex","conversationId":"c","prompt":"Next"})))
         .respond_with(ResponseTemplate::new(202).set_body_json(json!({"ok":true,"type":"queued","id":"vm-1","promptId":"p","conversationId":"c","promptRun":run("p"),"status":"queued","provider":"opencode"})))

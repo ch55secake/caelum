@@ -16,6 +16,8 @@ class NativePeerInstall(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name)
+        self.checkout = self.home.resolve() / "VM checkout"
+        self.checkout.mkdir()
         self.bin = self.home / "bin"
         self.bin.mkdir()
 
@@ -45,7 +47,7 @@ chmod 700 squashfs-root/usr/bin/caelum
     def install(self, manifest):
         (self.home / "SHA256SUMS").write_text(manifest)
         return subprocess.run(
-            ["sh", str(INSTALLER), "1.2.3", "example/project"],
+            ["sh", str(INSTALLER), "1.2.3", "example/project", str(self.checkout)],
             env={"HOME": str(self.home), "PATH": f"{self.bin}:{os.environ['PATH']}"},
             capture_output=True, text=True, timeout=10,
         )

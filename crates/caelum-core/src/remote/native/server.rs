@@ -21,11 +21,11 @@ use std::{
 
 /// Entry point of `caelum workspace-peer`. stdout is exclusively framed data in attach mode.
 pub fn run_peer(mode: &str, repository: &str) -> Result<(), String> {
-    let name = repo_name(repository)?;
+    repo_name(repository)?;
     let home = std::env::var_os("HOME").ok_or("No VM home directory")?;
     let home = PathBuf::from(home).canonicalize().map_err(error)?;
-    let root = home
-        .join(name)
+    let root = std::env::current_dir()
+        .map_err(error)?
         .into_os_string()
         .into_string()
         .map_err(|_| "Invalid VM checkout path")?;

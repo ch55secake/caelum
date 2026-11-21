@@ -79,10 +79,7 @@ fn deletion_waits_for_the_confirmed_boat_target_and_retires_late_results() {
     let req = app.commands().pop().unwrap().0;
     app.apply(Event::Completed(
         req,
-        Ok(Reply::Remote(Outcome::Prepared(
-            machine("vm"),
-            "feature/local".into(),
-        ))),
+        Ok(Reply::Remote(prepared_vm(machine("vm"), "feature/local"))),
     ));
     app.remote
         .saved
@@ -247,7 +244,7 @@ fn restored_local_link_opens_its_own_parked_thread_and_timer_changes_do_not_touc
         .unwrap();
     let link = app.linked_vm(i).unwrap().clone();
     let (req, _) = app.commands().pop().unwrap();
-    let prepared = || Outcome::Prepared(machine("vm"), "feature/local".into());
+    let prepared = || prepared_vm(machine("vm"), "feature/local");
     app.apply(Event::Completed(req, Ok(Reply::Remote(prepared()))));
     app.home_select_project(source().project);
     assert!(app.begin_vm_handoff(HandoffSource::HomeDraft));
@@ -389,11 +386,7 @@ fn handoff_first_send_survives_rejection_and_restore_without_replaying_chat_afte
         target.required_base.unwrap().tip,
         source.published_tip.as_deref().unwrap()
     );
-    complete(
-        &mut reopened,
-        prepare,
-        Outcome::Prepared(machine("vm"), branch),
-    );
+    complete(&mut reopened, prepare, prepared_vm(machine("vm"), branch));
     assert!(reopened.commands().is_empty());
     assert_eq!(
         reopened.remote.saved.checkouts[&id].thread.draft,
@@ -520,10 +513,7 @@ fn home_can_continue_on_an_existing_idle_machine_without_overwriting_its_thread(
     let (req, _) = app.commands().pop().unwrap();
     app.apply(Event::Completed(
         req,
-        Ok(Reply::Remote(Outcome::Prepared(
-            m.clone(),
-            "existing".into(),
-        ))),
+        Ok(Reply::Remote(prepared_vm(m.clone(), "existing"))),
     ));
     let original = Thread {
         conversation: Some("original".into()),
@@ -561,7 +551,7 @@ fn home_can_continue_on_an_existing_idle_machine_without_overwriting_its_thread(
         .unwrap();
     app.apply(Event::Completed(
         req,
-        Ok(Reply::Remote(Outcome::Prepared(m, "existing".into()))),
+        Ok(Reply::Remote(prepared_vm(m, "existing"))),
     ));
     assert!(app.switch_vm_thread(&id, &id));
     assert_eq!(app.remote.saved.checkouts[&id].thread, original);

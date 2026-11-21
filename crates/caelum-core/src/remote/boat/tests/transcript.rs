@@ -30,12 +30,7 @@ fn typed_public_summaries_update_independently_of_text_and_never_fall_back_to_pr
             {"type":"response","id":"old","conversationId":"other","data":{"content":content}},
             {"type":"response","id":"ours.1","taskId":"p","data":{"content":content,"is_streaming":running}},
             {"type":"response","id":"undone","taskId":"p","data":{"content":content,"is_reverted":true}}]);
-        for l in events::lines(
-            serde_json::from_value(page).unwrap(),
-            &run(),
-            "example/project",
-            None,
-        ) {
+        for l in events::lines(serde_json::from_value(page).unwrap(), &run(), None, None) {
             thread.append(l);
         }
         assert_eq!(thread.lines.len(), 3);
@@ -60,7 +55,7 @@ async fn opening_a_saved_call_reads_only_its_event_and_bounds_text_without_persi
     for l in events::lines(
         serde_json::from_value(json!([event])).unwrap(),
         &run(),
-        &target.repository,
+        target.root.as_deref(),
         Some("before"),
     ) {
         thread.append(l);
@@ -134,7 +129,7 @@ async fn a_call_without_an_id_requires_its_named_slot_and_displays_command_strea
     let mut lines = events::lines(
         serde_json::from_value(json!([event(json!([read, shell]))])).unwrap(),
         &run(),
-        &target.repository,
+        target.root.as_deref(),
         None,
     );
     let source = lines.pop().unwrap().tool_source.unwrap();

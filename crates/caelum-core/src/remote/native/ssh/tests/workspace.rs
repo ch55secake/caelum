@@ -85,11 +85,11 @@ impl Desktop {
 fn attach() -> (Desktop, PathBuf) {
     let fixture =
         PathBuf::from(std::env::var_os("CAELUM_NATIVE_SSH_FIXTURE").expect("SSH fixture"));
-    let root = fixture.join("project").to_str().unwrap().to_owned();
+    let root = std::env::var("CAELUM_NATIVE_SSH_ROOT").unwrap();
     let repo = "example/project";
     let (wake, events) = mpsc::channel();
     let (children, pids) = mpsc::channel();
-    let directory = fixture.clone();
+    let project = PathBuf::from(&root);
     let mut attempts = 0;
     let client = Client::with_tunnel(
         root.clone(),
@@ -100,17 +100,21 @@ fn attach() -> (Desktop, PathBuf) {
         async move || {
             attempts += 1;
             let mut endpoint: boat_sdk::access::models::SshKeyResponse =
-                serde_json::from_slice(&fs::read(directory.join("endpoint.json")).unwrap())
-                    .unwrap();
+                serde_json::from_slice(&fs::read(fixture.join("endpoint.json")).unwrap()).unwrap();
             if attempts == 1 {
                 endpoint.host_key = Some(
-                    fs::read_to_string(directory.join("client.pub"))
+                    fs::read_to_string(fixture.join("client.pub"))
                         .unwrap()
                         .trim()
                         .into(),
                 );
             }
-            let tunnel = connect(directory.join("client"), Endpoint::new(endpoint)?, repo)?;
+            let tunnel = connect(
+                fixture.join("client"),
+                Endpoint::new(endpoint)?,
+                repo,
+                &root,
+            )?;
             let _ = children.send(tunnel.child.id().unwrap());
             Ok(tunnel)
         },
@@ -129,14 +133,14 @@ fn attach() -> (Desktop, PathBuf) {
     desktop.tunnels.recv().unwrap();
     desktop.client.reconnect();
     desktop.connected();
-    (desktop, fixture)
+    (desktop, project)
 }
 
 #[test]
 #[ignore = "run scripts/dev/smoke_native_workspace.py with the loopback SSH fixture"]
 fn native_workspace_over_openssh() {
     let (mut desktop, fixture) = attach();
-    let root = fixture.join("project").to_str().unwrap().to_owned();
+    let root = fixture.to_str().unwrap().to_owned();
     let scope = |provider| Scope {
         project: root.clone(),
         provider,
@@ -154,7 +158,7 @@ fn native_workspace_over_openssh() {
     assert!(
         matches!(desktop.request(Command::Resume(key.clone())),Reply::Resumed(_,page) if !page.data.is_empty())
     );
-    let path = fixture.join("project/requests.jsonl");
+    let path = fixture.join("requests.jsonl");
     assert!(
         !path.exists(),
         "opening or selecting a session sent a provider mutation"
@@ -233,7 +237,7 @@ fn native_new_session_over_openssh() {
         Provider::OpenCode
     };
     let scope = Scope {
-        project: fixture.join("project").to_str().unwrap().into(),
+        project: fixture.to_str().unwrap().into(),
         provider,
     };
     let Reply::Sessions(before) = desktop.request(Command::List(scope.clone())) else {

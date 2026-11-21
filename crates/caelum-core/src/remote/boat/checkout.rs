@@ -1,19 +1,22 @@
-use super::{setup_error::Step, Boat};
+use super::{setup_error::Step, worktree::Worktree, Boat};
 use crate::remote::{
-    checkout::repo_name, github_slug, valid_branch, Machine, MachineId, Outcome, Plan, Size,
-    Source, Target,
+    checkout::repo_name, valid_branch, Machine, MachineId, Outcome, Plan, Size, Source, Target,
 };
 use boat_sdk::{
-    commands::CommandRequest,
     environments::models::*,
     sandbox::{requests::CreateSandboxRequest, resources::Sandbox, MachineSize},
 };
 
-fn suitable(e: &SandboxEnvironment, repo: &str) -> bool {
-    !e.safe_for_third_parties
-        && e.pass_github
-        && e.pass_agents_credentials
-        && matches!(e.selected_repositories.as_deref(), Some([r]) if r.full_name.as_ref().is_some_and(|name| name.eq_ignore_ascii_case(repo)))
+fn selected_repo<'a>(e: &'a SandboxEnvironment, repo: &str) -> Option<&'a str> {
+    let [selected] = e.selected_repositories.as_deref()? else {
+        return None;
+    };
+    selected.full_name.as_deref().filter(|name| {
+        !e.safe_for_third_parties
+            && e.pass_github
+            && e.pass_agents_credentials
+            && name.eq_ignore_ascii_case(repo)
+    })
 }
 
 pub(in crate::remote) fn quote(s: &str) -> String {
@@ -66,7 +69,7 @@ impl Boat {
             .map_err(|e| Step::ListEnvironments.error(e))?
             .environments
             .into_iter()
-            .find(|e| suitable(e, &repository))
+            .find(|e| selected_repo(e, &repository).is_some())
             .map(|e| e.name);
         Ok(Source {
             project: project.to_owned(),
@@ -90,7 +93,7 @@ impl Boat {
         let env = envs.into_iter().find(|e| e.name == name);
         if env
             .as_ref()
-            .is_some_and(|e| suitable(e, &source.repository))
+            .is_some_and(|e| selected_repo(e, &source.repository).is_some())
         {
             return Ok(name.into());
         }
@@ -219,61 +222,6 @@ impl Boat {
         Ok(sandbox)
     }
 
-    pub(super) async fn command(&self, target: &Target, command: &str) -> Result<String, String> {
-        self.owns(&target.machine)?;
-        let dir = format!("/home/user/{}", repo_name(&target.repository)?);
-        let command = format!("cd {} && {{ {}; }}", quote(&dir), command);
-        let result = self
-            .client
-            .run_command(&target.machine.id, &CommandRequest::new(command))
-            .await
-            .map_err(|e| Step::RunCommand.error(e))?;
-        if !result.success || result.timed_out || result.exit_code != Some(0) {
-            // Git diagnostics may contain credential-bearing remote URLs.
-            return Err(format!("Remote Git command failed (exit {}). Check the checkout, branch and GitHub access on the machine.",
-                result.exit_code.map_or_else(|| "unknown".to_owned(), |n| n.to_string())));
-        }
-        if result.stdout_truncated == Some(true) {
-            return Err("The remote command output was truncated".into());
-        }
-        Ok(result.stdout)
-    }
-
-    pub(super) async fn verify_origin(&self, target: &Target) -> Result<(), String> {
-        let origin = self
-            .command(
-                target,
-                "test \"$(git rev-parse --show-toplevel)\" = \"$PWD\" && git remote get-url origin",
-            )
-            .await?;
-        if !github_slug(&origin).is_some_and(|s| s.eq_ignore_ascii_case(&target.repository)) {
-            return Err("The remote checkout does not match the selected GitHub repository".into());
-        }
-        Ok(())
-    }
-
-    pub(super) async fn verify_base(&self, target: &Target) -> Result<(), String> {
-        if let Some(base) = &target.required_base {
-            if !base.valid() {
-                return Err("Invalid session base branch.".into());
-            }
-            // Read-only, including on existing VMs with uncommitted work.
-            let answer = self
-                .command(
-                    target,
-                    &format!(
-                        "if git merge-base --is-ancestor {} HEAD; then echo yes; else echo no; fi",
-                        quote(&base.tip)
-                    ),
-                )
-                .await?;
-            if answer.trim() != "yes" {
-                return Err(format!("This VM checkout does not include the published tip of {}. Update its branch or choose a new VM.", base.branch));
-            }
-        }
-        Ok(())
-    }
-
     pub(super) async fn prepare_checkout(
         &self,
         target: &Target,
@@ -306,19 +254,26 @@ impl Boat {
             .environments(None)
             .await
             .map_err(|e| Step::ListEnvironments.error(e))?;
-        if !envs.environments.iter().any(|e| {
-            Some(&e.name) == sandbox.environment.as_ref()
-                && e.latest_version_number == sandbox.environment_version
-                && suitable(e, &target.repository)
-        }) {
+        let Some(repo) = envs
+            .environments
+            .iter()
+            .find(|e| {
+                Some(&e.name) == sandbox.environment.as_ref()
+                    && e.latest_version_number == sandbox.environment_version
+            })
+            .and_then(|e| selected_repo(e, &target.repository))
+        else {
             return Err("This machine needs a current single-repository environment for the selected GitHub repository".into());
+        };
+        if branch.is_some_and(|b| !valid_branch(b)) {
+            return Err("Invalid checkout branch".into());
         }
-        self.verify_origin(target).await?;
+        let worktree = self.worktree(target, branch.map(|_| (repo, base))).await?;
         if let Some(branch) = branch {
-            self.open_planned_branch(target, base, branch).await?;
+            worktree.open_planned_branch(target, base, branch).await?;
         }
-        self.verify_base(target).await?;
-        let current = self.command(target, "git branch --show-current").await?;
+        worktree.verify_base().await?;
+        let current = worktree.command("git branch --show-current").await?;
         let current = current.trim();
         if !valid_branch(current) {
             return Err("Select a named branch on the remote checkout".into());
@@ -326,9 +281,15 @@ impl Boat {
         if branch.is_some_and(|expected| expected != current) {
             return Err("The VM changed branches during setup. Refresh the checkout.".into());
         }
-        Ok(Outcome::Prepared(self.machine(sandbox), current.into()))
+        Ok(Outcome::Prepared {
+            machine: self.machine(sandbox),
+            branch: current.into(),
+            root: worktree.root,
+        })
     }
+}
 
+impl Worktree<'_> {
     async fn open_planned_branch(
         &self,
         target: &Target,
@@ -353,7 +314,7 @@ impl Boat {
             format!("if test \"$(git branch --show-current)\" != {branch}; then git fetch --no-tags origin {base} && git merge-base --is-ancestor {start} FETCH_HEAD && git switch --no-track -c {branch} {start}; fi",
                 branch = quote(branch), base = quote(&format!("refs/heads/{base}")))
         };
-        self.command(target, &command).await?;
+        self.command(&command).await?;
         Ok(())
     }
 }

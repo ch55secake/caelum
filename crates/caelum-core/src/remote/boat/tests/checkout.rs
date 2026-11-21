@@ -55,7 +55,7 @@ fn clone_vm(vm: &Path, published: &Path) {
     );
 }
 
-async fn serve_checkout(server: &MockServer, vm: &Path, published: &Path) {
+async fn serve_checkout(server: &MockServer, workdir: &Path, published: &Path) {
     environment(server).await;
     Mock::given(method("GET"))
         .and(path("/sandboxes/vm-1"))
@@ -65,21 +65,140 @@ async fn serve_checkout(server: &MockServer, vm: &Path, published: &Path) {
         )
         .mount(server)
         .await;
-    let wd = vm.to_owned();
+    let wd = workdir.to_owned();
+    let home = wd.join(".fixture-home");
+    fs::create_dir(&home).unwrap();
     let upstream = published.to_owned();
-    // Substitute only the VM mount and transport. Git runs against real, separate clones.
+    let bin = wd.join(".fixture-bin");
+    fs::create_dir(&bin).unwrap();
+    crate::test_support::write_executable(
+        &bin.join("git"),
+        r#"#!/bin/sh
+export PATH="$FIXTURE_PATH"
+case "$1" in clone|fetch|push) set -- -c "url.$UPSTREAM.insteadOf=https://github.com/example/project.git" "$@";; esac
+exec git "$@"
+"#,
+    );
+    let original = std::env::var_os("PATH").unwrap();
+    let path_with_bin =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&original))).unwrap();
     Mock::given(method("POST")).and(path("/sandboxes/vm-1/commands")).and(header("authorization","Bearer fixture-key"))
         .respond_with(move |req:&Request| {
             let body:Value=req.body_json().unwrap();
-            let script=body["command"].as_str().unwrap().strip_prefix("cd '/home/user/project' && ").unwrap();
-            let transport=r#"git() { case "$1" in fetch|push) command git -c "url.$UPSTREAM.insteadOf=https://github.com/example/project.git" "$@";; *) command git "$@";; esac; }"#;
-            let result=Command::new("/bin/sh").arg("-c").arg(format!("{transport}\n{script}")).current_dir(&wd)
-                .env("UPSTREAM", &upstream).env("GIT_CONFIG_GLOBAL","/dev/null").env("GIT_CONFIG_NOSYSTEM","1")
+            let script=body["command"].as_str().unwrap();
+            let result=Command::new("/bin/sh").arg("-c").arg(script).current_dir(&wd)
+                .env("HOME", &home).env("UPSTREAM", &upstream).env("GIT_CONFIG_GLOBAL","/dev/null").env("GIT_CONFIG_NOSYSTEM","1")
+                .env("PATH", &path_with_bin).env("FIXTURE_PATH", &original).env("GIT_ALLOW_PROTOCOL","file")
                 .env("GIT_AUTHOR_NAME","Fixture").env("GIT_AUTHOR_EMAIL","fixture@example.com")
                 .env("GIT_COMMITTER_NAME","Fixture").env("GIT_COMMITTER_EMAIL","fixture@example.com").output().unwrap();
             ResponseTemplate::new(200).set_body_json(json!({"ok":true,"type":"exec","success":result.status.success(),"exitCode":result.status.code(),
                 "timedOut":false,"stdout":String::from_utf8_lossy(&result.stdout),"stderr":String::from_utf8_lossy(&result.stderr)}))
         }).mount(server).await;
+}
+
+#[tokio::test]
+async fn only_new_vm_setup_fills_a_missing_checkout_and_retry_uses_the_verified_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("vm");
+    let upstream = temp.path().join("published");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&upstream).unwrap();
+    git(&upstream, &["init", "-b", "main"]);
+    git(&upstream, &["commit", "--allow-empty", "-m", "published"]);
+    let (server, boat) = fixture().await;
+    serve_checkout(&server, &home, &upstream).await;
+    let target = Target {
+        root: None,
+        ..super::agent_target()
+    };
+    let dest = home.join("project");
+    assert!(boat
+        .prepare(&target, "main", None)
+        .await
+        .unwrap_err()
+        .contains("No checkout"));
+    assert!(
+        !dest.exists(),
+        "attaching must not populate an existing machine"
+    );
+    assert!(boat
+        .prepare(&target, "unpublished", Some("topic"))
+        .await
+        .unwrap_err()
+        .contains("Could not clone"));
+    assert!(
+        !dest.exists(),
+        "a failed clone must leave a retryable destination"
+    );
+    fs::create_dir(&dest).unwrap();
+    assert!(boat.prepare(&target, "main", Some("topic")).await.is_err());
+    assert_eq!(fs::read_dir(&dest).unwrap().count(), 0);
+    fs::remove_dir(&dest).unwrap();
+
+    let Outcome::Prepared { root, branch, .. } =
+        boat.prepare(&target, "main", Some("topic")).await.unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(Path::new(&root), dest.canonicalize().unwrap());
+    assert_eq!(branch, "topic");
+    assert_eq!(
+        git(&dest, &["rev-parse", "HEAD"]),
+        git(&upstream, &["rev-parse", "main"])
+    );
+    fs::write(dest.join("draft"), "uncommitted").unwrap();
+    let bound = Target {
+        root: Some(root),
+        ..target.clone()
+    };
+    let second = home.join("other clone");
+    clone_vm(&second, &upstream);
+    assert!(boat
+        .prepare(&target, "main", None)
+        .await
+        .unwrap_err()
+        .contains("More than one"));
+    assert!(
+        matches!(boat.prepare(&bound, "main", None).await.unwrap(), Outcome::Prepared { branch, .. } if branch=="topic")
+    );
+
+    fs::rename(&dest, home.join(".parked")).unwrap();
+    assert!(boat
+        .prepare(&bound, "main", Some("topic"))
+        .await
+        .unwrap_err()
+        .contains("missing at"));
+    assert!(
+        !dest.exists(),
+        "a pinned checkout must not be replaced or rebound"
+    );
+    fs::rename(&second, &dest).unwrap();
+    git(
+        &dest,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/another/project.git",
+        ],
+    );
+    fs::rename(home.join(".parked"), &second).unwrap();
+    assert!(boat
+        .prepare(&target, "main", Some("topic"))
+        .await
+        .unwrap_err()
+        .contains("does not match"));
+    assert_eq!(git(&dest, &["branch", "--show-current"]), "main");
+    assert_eq!(
+        fs::read_to_string(second.join("draft")).unwrap(),
+        "uncommitted"
+    );
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|r| r.method.as_str() == "GET" || r.url.path() == "/sandboxes/vm-1/commands"));
 }
 
 #[tokio::test]
@@ -176,7 +295,7 @@ async fn runs_opencode_on_the_session_worktree_branch_and_publishes_only_the_rev
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let laptop = root.join("laptop/project");
-    let vm = root.join("vm/project");
+    let vm = root.join("vm/Boat's checkout");
     fs::create_dir_all(&laptop).unwrap();
     git(root, &["init", "--bare", "-b", "main", "published.git"]);
     git(&laptop, &["init", "-b", "main"]);
@@ -235,7 +354,7 @@ async fn runs_opencode_on_the_session_worktree_branch_and_publishes_only_the_rev
     fs::write(laptop.join("README"), "Unpublished laptop work\n").unwrap();
     let laptop_before = git(&laptop, &["diff"]);
     let (server, boat) = fixture().await;
-    serve_checkout(&server, &vm, &published).await;
+    serve_checkout(&server, vm.parent().unwrap(), &published).await;
     let plan = Plan {
         token: uuid::Uuid::new_v4().to_string(),
         branch: base.branch.clone(),
@@ -293,6 +412,7 @@ async fn runs_opencode_on_the_session_worktree_branch_and_publishes_only_the_rev
         ],
     );
     let target = Target {
+        root: None,
         required_base: Some(base),
         machine: machine.key,
         repository: source.repository,
@@ -308,7 +428,7 @@ async fn runs_opencode_on_the_session_worktree_branch_and_publishes_only_the_rev
         .unwrap(),
         Outcome::Rejected(_)
     ));
-    let Outcome::Prepared(_, branch) = boat
+    let Outcome::Prepared { branch, root, .. } = boat
         .prepare(&target, &source.base, Some(&plan.branch))
         .await
         .unwrap()
@@ -316,6 +436,11 @@ async fn runs_opencode_on_the_session_worktree_branch_and_publishes_only_the_rev
         panic!()
     };
     assert_eq!(branch, "feat/source");
+    assert_eq!(Path::new(&root), vm.canonicalize().unwrap());
+    let target = Target {
+        root: Some(root),
+        ..target
+    };
     assert_eq!(git(&vm, &["rev-parse", "HEAD"]), published_head);
     assert_eq!(
         git(&vm, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
@@ -398,8 +523,9 @@ async fn a_precloned_session_branch_opens_at_the_pin_and_a_prepare_retry_preserv
     let vm = temp.path().join("vm/project");
     clone_vm(&vm, &published);
     let (server, boat) = fixture().await;
-    serve_checkout(&server, &vm, &published).await;
+    serve_checkout(&server, vm.parent().unwrap(), &published).await;
     let target = Target {
+        root: None,
         machine: MachineId {
             host: Host::Boat,
             account: boat.account.clone(),
@@ -421,20 +547,20 @@ async fn a_precloned_session_branch_opens_at_the_pin_and_a_prepare_retry_preserv
     assert_eq!(git(&vm, &["rev-parse", "HEAD"]), vm_only);
     // A saved plan from before same-branch handoffs still opens its named branch.
     assert!(
-        matches!(boat.prepare(&target, "main", Some("legacy/topic")).await.unwrap(), Outcome::Prepared(_, b) if b == "legacy/topic")
+        matches!(boat.prepare(&target, "main", Some("legacy/topic")).await.unwrap(), Outcome::Prepared { branch, .. } if branch == "legacy/topic")
     );
     assert_eq!(git(&vm, &["rev-parse", "HEAD"]), tip);
     assert_eq!(git(&vm, &["rev-parse", "main"]), vm_only);
 
     git(&vm, &["branch", "-m", "main", "setup-work"]);
     git(&vm, &["switch", "--track", "origin/main"]);
-    assert!(matches!(open().await.unwrap(), Outcome::Prepared(_, b) if b == "main"));
+    assert!(matches!(open().await.unwrap(), Outcome::Prepared { branch, .. } if branch == "main"));
     assert_eq!(git(&vm, &["rev-parse", "HEAD"]), tip);
 
     git(&vm, &["merge", "--ff-only", &newer]);
     fs::write(vm.join("draft"), "Staged on the VM").unwrap();
     git(&vm, &["add", "draft"]);
-    assert!(matches!(open().await.unwrap(), Outcome::Prepared(_, b) if b == "main"));
+    assert!(matches!(open().await.unwrap(), Outcome::Prepared { branch, .. } if branch == "main"));
     assert_eq!(git(&vm, &["rev-parse", "HEAD"]), newer);
     assert_eq!(git(&vm, &["show", ":draft"]), "Staged on the VM");
 }

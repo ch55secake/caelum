@@ -31,6 +31,22 @@ current single-repo environment for the project's GitHub origin. **Resume** a
 stopped machine to use its saved disk; attaching keeps its current branch.
 If setup fails, **Refresh checkout** retries that checkout on the same machine.
 
+If setup reports a missing checkout, look on the VM itself. Replace `VM_ID`
+with the Boat ID shown for that machine:
+
+```sh
+boat exec VM_ID 'pwd -P; find "$HOME" -maxdepth 3 -name .git -prune -print'
+```
+
+Boat normally clones into `$HOME/<repository>`. Caelum checks the VM command
+workdir and home for a Git checkout with the selected `origin`, so the folder
+need not have the repository’s name. If it lives elsewhere, a link from an
+unused `$HOME/<repository>` to the checkout also works.
+On a newly created VM Caelum can clone a missing repository using the VM’s
+GitHub access. When attaching to an existing VM, restore the missing checkout
+first, then click **Refresh checkout**. If it was previously verified, restore
+it at its saved path so the same sessions and files are reopened.
+
 ## Open a native workspace
 
 On a running, ready checkout, click **Open native workspace** above the VM

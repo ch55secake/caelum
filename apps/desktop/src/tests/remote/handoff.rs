@@ -25,6 +25,14 @@ fn inventory() -> Inventory {
     }
 }
 
+fn prepared_vm(branch: &str) -> Outcome {
+    Outcome::Prepared {
+        machine: machine(),
+        branch: branch.into(),
+        root: "/workspace/checkout".into(),
+    }
+}
+
 fn prepare(rt: &mut Runtime<Workspace>, expected_project: &str, read_chat: bool) {
     rt.update(|s, _| {
         let l = live_mut(s);
@@ -136,10 +144,7 @@ fn composer_handoff_can_be_cancelled_then_continued_on_a_vm_without_sending() {
         };
         l.apply(Event::Completed(
             *req,
-            Ok(Reply::Remote(Outcome::Prepared(
-                machine(),
-                "feat/existing".into(),
-            ))),
+            Ok(Reply::Remote(prepared_vm("feat/existing"))),
         ));
     });
     advance(&mut rt, 0.2);
@@ -205,10 +210,7 @@ fn composer_handoff_can_be_cancelled_then_continued_on_a_vm_without_sending() {
             .unwrap();
         l.apply(Event::Completed(
             req,
-            Ok(Reply::Remote(Outcome::Prepared(
-                machine(),
-                "feat/existing".into(),
-            ))),
+            Ok(Reply::Remote(prepared_vm("feat/existing"))),
         ));
     });
     advance(&mut rt, 0.2);
@@ -303,10 +305,7 @@ fn vm_setup_occupies_the_composer_until_the_prepared_checkout_restores_the_draft
         };
         l.apply(Event::Completed(
             *req,
-            Ok(Reply::Remote(Outcome::Prepared(
-                machine(),
-                "feature/session".into(),
-            ))),
+            Ok(Reply::Remote(prepared_vm("feature/session"))),
         ));
     });
     advance(&mut rt, 0.5);

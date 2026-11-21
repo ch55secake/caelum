@@ -33,7 +33,7 @@ pub(super) fn response<'a>(
 pub(super) fn lines(
     events: Vec<SandboxEvent>,
     run: &Run,
-    repository: &str,
+    root: Option<&str>,
     cursor: Option<&str>,
 ) -> Vec<Line> {
     let mut lines = Vec::new();
@@ -77,7 +77,7 @@ pub(super) fn lines(
                 });
             lines.push(Line {
                 key,
-                tool_detail: call.input.and_then(|v| detail(&name, v, repository)),
+                tool_detail: call.input.and_then(|v| detail(&name, v, root)),
                 tool_source: source,
                 ..Line::new(Speaker::Tool(call.state), name)
             });
@@ -86,7 +86,7 @@ pub(super) fn lines(
     lines
 }
 
-fn detail(name: &str, input: &serde_json::Value, repository: &str) -> Option<String> {
+fn detail(name: &str, input: &serde_json::Value, root: Option<&str>) -> Option<String> {
     match name.to_ascii_lowercase().as_str() {
         "bash" | "shell" | "exec_command" | "commandexecution" => {
             let word = input
@@ -109,10 +109,7 @@ fn detail(name: &str, input: &serde_json::Value, repository: &str) -> Option<Str
                 .iter()
                 .find_map(|p| input.get(p)?.as_str())?;
             let path = if path.starts_with('/') {
-                let repo = repository.rsplit('/').next()?;
-                path.strip_prefix("/home/user/")?
-                    .strip_prefix(repo)?
-                    .strip_prefix('/')?
+                path.strip_prefix(root?)?.strip_prefix('/')?
             } else {
                 path.trim_start_matches("./")
             };
