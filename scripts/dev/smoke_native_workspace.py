@@ -2,6 +2,7 @@
 """Run the production OpenSSH client, headless peer and provider adapters in an isolated checkout."""
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,9 +32,21 @@ async def run(home, real_opencode, real_codex, api, calls):
     remote = {"HOME": str(home), "PATH": f"{binary}:/usr/bin:/bin", "LANG": "C",
               "XDG_DATA_HOME": str(home / "data"), "XDG_CONFIG_HOME": str(home / "config"),
               "XDG_CACHE_HOME": str(home / "cache"), "XDG_STATE_HOME": str(home / "state")}
-    peer = home / f".local/lib/caelum-peer/v{VERSION}/caelum"
-    peer.parent.mkdir(parents=True)
-    shutil.copy2(CLI, peer)
+    peer = CLI
+    bundle = home / "bundle"
+    bundle.mkdir()
+    with peer.open("rb") as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
+    manifest = {}
+    for arch in ("aarch64", "x86_64"):
+        (bundle / arch).symlink_to(peer)
+        manifest[arch] = [digest, peer.stat().st_size]
+    (bundle / "manifest.json").write_text(json.dumps(manifest))
+    (binary / "uname").write_text('#!/bin/sh\n[ "$1" != -m ] || { echo x86_64; exit; }\nexec /usr/bin/uname "$@"\n')
+    (binary / "uname").chmod(0o700)
+    if not Path("/usr/bin/sha256sum").exists():
+        (binary / "sha256sum").write_text('#!/bin/sh\nexec /usr/bin/shasum -a 256 "$@"\n')
+        (binary / "sha256sum").chmod(0o700)
     for name in ("opencode", "codex"):
         source = ROOT / f"crates/caelum-core/src/{name}/tests/fixtures"
         installed = real_opencode if name == "opencode" else real_codex
@@ -108,7 +121,9 @@ async def exercise(home, project, remote, peer, phase):
     async def attach(channel):
         # This loopback fixture accepts only the exact release bootstrap from this checkout.
         args = shlex.split(channel.command or "")
-        if args != ["sh", "-c", BOOT, "sh", VERSION, REPO, str(project)]:
+        assets = json.loads((home / "bundle/manifest.json").read_text())
+        flags = [str(v) for arch in ("x86_64", "aarch64") for v in assets[arch]]
+        if args != ["sh", "-c", BOOT, "sh", VERSION, REPO, str(project), *flags]:
             channel.exit(1)
             return
         child = await asyncio.create_subprocess_exec(

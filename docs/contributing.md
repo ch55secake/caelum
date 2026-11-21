@@ -60,10 +60,19 @@ and recover the history after a worker restart and host-key change, pass
 Responses fixture supplies the model output and checks that reconnecting does
 not ask for another answer. All modes use a temporary home.
 
-An unreleased desktop needs a peer from the same source revision: extract
-`usr/bin/caelum` from that build’s Linux AppImage for the VM architecture and
-install it as `~/.local/lib/caelum-peer/v<workspace-version>/caelum` on the VM
-(mode `0700`). Published desktop builds do this automatically over SSH.
+To run Caelum Dev on fresh VMs before a release, stage the headless peers from
+a compatible CI build of this checkout. Once both Linux AppImage jobs have
+published their artifacts, run:
+
+```sh
+nix shell nixpkgs#squashfsTools -c python3 scripts/dev/stage_vm_peers.py RUN_ID FULL_COMMIT
+nix develop -c python3 scripts/dev/macos_app.py --build-only
+```
+
+The signed Dev app carries both Linux architectures. On first connection it
+uploads the matching binary over pinned SSH and checks its digest before use.
+Subsequent connections reuse the verified copy. Release builds without bundled
+peers use the matching checksum-verified release AppImage.
 
 For visual changes, run `make previews` and inspect light/dark, inspector,
 compact and settings scenes. Native frame measurements are described in

@@ -1,10 +1,12 @@
 use super::NativeTarget;
+mod bundle;
 use crate::remote::{
     boat::{api, checkout_quote, Boat},
     credentials,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use boat_sdk::access::models::{SshKeyRequest, SshKeyResponse};
+use bundle::Bundle;
 use std::{
     fs,
     net::{IpAddr, SocketAddr},
@@ -184,26 +186,35 @@ pub(super) async fn open(target: &NativeTarget, parent_store: &Path) -> Result<T
     })
     .await
     .map_err(|_| "Boat timed out authorizing SSH.")??;
-    connect(key, endpoint, &target.repository, &target.checkout_root)
+    connect(
+        key,
+        endpoint,
+        &target.repository,
+        &target.checkout_root,
+        Bundle::discover()?,
+    )
+    .await
 }
 
-fn connect(
+async fn connect(
     key: PathBuf,
     endpoint: Endpoint,
     repository: &str,
     root: &str,
+    bundle: Option<Bundle>,
 ) -> Result<Tunnel, String> {
     let pin = tempfile::tempdir().map_err(|e| e.to_string())?;
     let known = pin.path().join("known_hosts");
     fs::write(&known, endpoint.pin).map_err(|e| e.to_string())?;
     let remote = format!(
-        "sh -c {} sh {} {} {}",
+        "sh -c {} sh {} {} {}{}",
         checkout_quote(include_str!("bootstrap.sh")),
         checkout_quote(env!("CARGO_PKG_VERSION")),
         checkout_quote(repository),
-        checkout_quote(root)
+        checkout_quote(root),
+        bundle.as_ref().map(Bundle::arguments).unwrap_or_default()
     );
-    let child = Command::new("ssh")
+    let mut child = Command::new("ssh")
         .args([
             "-F",
             "/dev/null",
@@ -248,6 +259,11 @@ fn connect(
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Start OpenSSH: {e}"))?;
+    if let Some(bundle) = bundle {
+        tokio::time::timeout(Duration::from_secs(180), bundle.install(&mut child))
+            .await
+            .map_err(|_| "Timed out installing the bundled VM peer.")??;
+    }
     Ok(Tunnel { child, _pin: pin })
 }
 

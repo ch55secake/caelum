@@ -1,4 +1,4 @@
-use super::super::{connect, Endpoint};
+use super::super::{connect, Bundle, Endpoint};
 use crate::{
     application::{Command, Event, Options, Provider, Reply, Scope, SessionKey},
     remote::native::{Client, Notice, Status},
@@ -114,7 +114,9 @@ fn attach() -> (Desktop, PathBuf) {
                 Endpoint::new(endpoint)?,
                 repo,
                 &root,
-            )?;
+                Bundle::load(&fixture.join("bundle"))?,
+            )
+            .await?;
             let _ = children.send(tunnel.child.id().unwrap());
             Ok(tunnel)
         },
@@ -130,7 +132,6 @@ fn attach() -> (Desktop, PathBuf) {
         tunnels: pids,
     };
     desktop.until(|n| matches!(n, Notice::Status(Status::Disconnected(_))).then_some(()));
-    desktop.tunnels.recv().unwrap();
     desktop.client.reconnect();
     desktop.connected();
     (desktop, project)

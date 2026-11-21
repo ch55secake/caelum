@@ -5,7 +5,26 @@ version=$1
 repo=$2
 dir="$HOME/.local/lib/caelum-peer/v$version"
 peer="$dir/caelum"
-if [ ! -x "$peer" ]; then
+if [ "$#" -eq 7 ]; then
+    arch=$(uname -m)
+    case "$arch" in x86_64) digest=$4; size=$5 ;; aarch64) digest=$6; size=$7 ;; *) exit 65 ;; esac
+    dir="$dir/$digest"
+    peer="$dir/caelum"
+    verified() { actual=$(sha256sum "$1") && [ "${actual%% *}" = "$digest" ]; }
+    if [ -x "$peer" ] && verified "$peer"; then
+        printf 'cached\n'
+    else
+        mkdir -p "$dir"
+        stage=$(mktemp "$dir/.install.XXXXXXXX")
+        trap 'rm -f "$stage"' EXIT
+        printf 'install %s\n' "$arch"
+        head -c "$size" > "$stage"
+        verified "$stage" || exit 66
+        chmod 700 "$stage"
+        mv "$stage" "$peer"
+        trap - EXIT
+    fi
+elif [ ! -x "$peer" ]; then
     arch=$(uname -m)
     case "$arch" in x86_64|aarch64) ;; *) exit 65 ;; esac
     mkdir -p "$dir"

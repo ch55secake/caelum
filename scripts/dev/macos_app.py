@@ -24,6 +24,23 @@ def stage(root: Path, binary: Path) -> Path:
     temporary.replace(executable)
     shutil.copy2(root / "apps/desktop/assets/icon.icns", resources / "icon.icns")
     version = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+    peers = root / "target" / "vm-peers" / version
+    manifest = {}
+    for arch in ("x86_64", "aarch64"):
+        source = peers / arch
+        dest = resources / "vm-peers" / arch
+        if source.is_file():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, dest)
+            with dest.open("rb") as f:
+                manifest[arch] = [hashlib.file_digest(f, "sha256").hexdigest(), dest.stat().st_size]
+        elif dest.exists():
+            dest.unlink()
+    index = resources / "vm-peers" / "manifest.json"
+    if manifest:
+        index.write_text(json.dumps(manifest))
+    else:
+        index.unlink(missing_ok=True)
     checkout = hashlib.sha256(os.fsencode(root.resolve())).hexdigest()[:12]
     data = dict(
         CFBundleName="Caelum Dev", CFBundleDisplayName="Caelum Dev",
