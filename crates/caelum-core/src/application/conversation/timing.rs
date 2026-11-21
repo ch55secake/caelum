@@ -50,6 +50,12 @@ pub(super) struct History {
     messages: Vec<Message>,
 }
 
+#[derive(Default)]
+struct TurnTiming<'a> {
+    started_at: Option<u64>,
+    last_output: Option<&'a String>,
+}
+
 impl History {
     pub fn update(&mut self, data: &[Value], older: bool) -> BTreeMap<String, (u64, u64)> {
         let incoming: Vec<_> = data.iter().filter_map(Message::read).collect();
@@ -90,35 +96,32 @@ impl History {
         self.messages = before;
 
         let mut timings = BTreeMap::new();
-        let mut start = None;
-        let mut last_output = None;
-        let mut in_turn = false;
+        let mut turn = None;
         for message in &self.messages {
             match &message.kind {
                 Kind::User => {
-                    if !in_turn {
-                        start = message.created;
-                        in_turn = true;
-                    }
+                    turn.get_or_insert(TurnTiming {
+                        started_at: message.created,
+                        last_output: None,
+                    });
                 }
                 Kind::Assistant(outputs) => {
-                    in_turn = true;
+                    let turn = turn.get_or_insert_with(TurnTiming::default);
                     for id in outputs {
-                        last_output = Some(id);
-                        if let (Some(start), Some(end)) = (start, message.completed) {
+                        turn.last_output = Some(id);
+                        if let (Some(start), Some(end)) = (turn.started_at, message.completed) {
                             timings.insert(id.clone(), (start, end));
                         }
                     }
                 }
                 Kind::Idle => {
-                    if let (Some(start), Some(end), Some(id)) =
-                        (start, message.created, last_output)
-                    {
-                        timings.insert(id.clone(), (start, end));
+                    if let Some(turn) = turn.take() {
+                        if let (Some(start), Some(end), Some(id)) =
+                            (turn.started_at, message.created, turn.last_output)
+                        {
+                            timings.insert(id.clone(), (start, end));
+                        }
                     }
-                    start = None;
-                    last_output = None;
-                    in_turn = false;
                 }
             }
         }

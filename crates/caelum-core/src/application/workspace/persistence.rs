@@ -4,14 +4,45 @@ use super::{Pending, Workspace};
 use crate::application::{Command, QueuedPrompt, SavedSession, Snapshot, Store, Task};
 use std::collections::HashMap;
 
+type Requests = Vec<(u64, Command)>;
+
+#[derive(Default)]
+pub(super) enum State {
+    #[default]
+    Disabled,
+    Unavailable(String),
+    Loading {
+        request: u64,
+        store: Store,
+    },
+    LoadFailed(String),
+    Loaded(Loaded),
+}
+
+pub(super) struct Loaded {
+    store: Store,
+    saved: Option<Box<Snapshot>>,
+    write: Write,
+}
+
+enum Write {
+    Ready,
+    Saving {
+        request: u64,
+        snapshot: Box<Snapshot>,
+        commands: Requests,
+    },
+    Failed(String),
+}
+
 impl Workspace {
     pub fn commands(&mut self) -> Vec<(u64, Command)> {
-        let Some(store) = self.store.as_ref() else {
+        if matches!(self.persistence, State::Disabled | State::Unavailable(_)) {
             return std::mem::take(&mut self.outgoing);
-        };
+        }
         let mut immediate = std::mem::take(&mut self.ready_outgoing);
         for request in std::mem::take(&mut self.outgoing) {
-            if (self.store_ready
+            if (self.restored()
                 && matches!(
                     request.1,
                     Command::Task(
@@ -45,21 +76,31 @@ impl Workspace {
                 self.durable_outgoing.push(request);
             }
         }
-        if !self.store_ready || self.saving || self.persistence_error.is_some() {
+        let State::Loaded(Loaded {
+            store,
+            saved,
+            write: Write::Ready,
+        }) = &self.persistence
+        else {
             return immediate;
-        }
-        if self
-            .saved
+        };
+        if saved
             .as_ref()
             .is_none_or(|saved| !self.matches_snapshot(saved))
         {
-            let snapshot = self.snapshot();
-            self.saving = true;
+            let snapshot = Box::new(self.snapshot());
             let commands = std::mem::take(&mut self.durable_outgoing);
-            self.request(
-                Command::Save(store.clone(), Box::new(snapshot.clone())),
-                Pending::Save(Box::new(snapshot), commands),
+            let request = self.request(
+                Command::Save(store.clone(), snapshot.clone()),
+                Pending::Save,
             );
+            if let State::Loaded(loaded) = &mut self.persistence {
+                loaded.write = Write::Saving {
+                    request,
+                    snapshot,
+                    commands,
+                };
+            }
             immediate.append(&mut self.outgoing);
         } else {
             immediate.append(&mut self.durable_outgoing);
@@ -68,33 +109,109 @@ impl Workspace {
     }
 
     pub fn enable_store(&mut self, path: std::path::PathBuf) {
+        if !matches!(self.persistence, State::Disabled | State::Unavailable(_)) {
+            return;
+        }
         let store = Store(path);
-        self.store = Some(store.clone());
-        self.request(Command::Load(store), Pending::Load);
+        let request = self.request(Command::Load(store.clone()), Pending::Load);
+        self.persistence = State::Loading { request, store };
+    }
+
+    pub fn store_unavailable(&mut self, error: String) {
+        if matches!(self.persistence, State::Disabled | State::Unavailable(_)) {
+            self.persistence = State::Unavailable(error);
+        }
+    }
+
+    pub fn persistence_error(&self) -> Option<&String> {
+        match &self.persistence {
+            State::Unavailable(error) | State::LoadFailed(error) => Some(error),
+            State::Loaded(Loaded {
+                write: Write::Failed(error),
+                ..
+            }) => Some(error),
+            _ => None,
+        }
+    }
+
+    pub(super) fn store_loaded(
+        &mut self,
+        id: u64,
+        result: Result<Option<&Snapshot>, String>,
+    ) -> bool {
+        let State::Loading { request, store } = &self.persistence else {
+            return false;
+        };
+        if *request != id {
+            return false;
+        }
+        self.persistence = match result {
+            Ok(saved) => State::Loaded(Loaded {
+                store: store.clone(),
+                saved: saved.cloned().map(Box::new),
+                write: Write::Ready,
+            }),
+            Err(error) => State::LoadFailed(error),
+        };
+        true
+    }
+
+    pub(super) fn store_saved(&mut self, id: u64, result: Result<(), String>) {
+        let State::Loaded(loaded) = &mut self.persistence else {
+            return;
+        };
+        if !matches!(loaded.write, Write::Saving { request, .. } if request == id) {
+            return;
+        }
+        let Write::Saving {
+            snapshot,
+            mut commands,
+            ..
+        } = std::mem::replace(&mut loaded.write, Write::Ready)
+        else {
+            unreachable!();
+        };
+        match result {
+            Ok(()) => {
+                loaded.saved = Some(snapshot);
+                self.ready_outgoing.append(&mut commands);
+            }
+            Err(error) => {
+                loaded.write = Write::Failed(error);
+                commands.append(&mut self.durable_outgoing);
+                self.durable_outgoing = commands;
+            }
+        }
     }
 
     pub fn retry_save(&mut self) {
-        if self.store_ready {
-            self.persistence_error = None;
+        if let State::Loaded(loaded) = &mut self.persistence {
+            if matches!(loaded.write, Write::Failed(_)) {
+                loaded.write = Write::Ready;
+            }
         }
     }
 
     pub fn restored(&self) -> bool {
-        self.store.is_none() || self.store_ready
+        matches!(
+            self.persistence,
+            State::Disabled | State::Unavailable(_) | State::Loaded(_)
+        )
     }
 
     /// Native restart waits for the exact current editor/queue snapshot.
     pub fn saved_for_restart(&self) -> bool {
-        self.persistence_error.is_none()
-            && self.restored()
-            && !self.saving
-            && self.home.attaching == 0
+        self.home.attaching == 0
             && self.sessions.iter().all(|session| session.attaching == 0)
-            && (self.store.is_none()
-                || self
-                    .saved
-                    .as_ref()
-                    .is_some_and(|saved| self.matches_snapshot(saved)))
+            && match &self.persistence {
+                State::Disabled => true,
+                State::Loaded(Loaded {
+                    write: Write::Ready,
+                    saved: Some(saved),
+                    ..
+                }) => self.matches_snapshot(saved),
+                _ => false,
+            }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -178,10 +295,8 @@ impl Workspace {
     /// Called after background workers have stopped, so an older write cannot
     /// replace the final editor snapshot during normal window shutdown.
     pub fn flush(&self) -> Result<(), String> {
-        if self.store_ready {
-            if let Some(store) = &self.store {
-                return store.save(&self.snapshot());
-            }
+        if let State::Loaded(Loaded { store, .. }) = &self.persistence {
+            return store.save(&self.snapshot());
         }
         Ok(())
     }

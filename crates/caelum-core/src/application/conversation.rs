@@ -12,6 +12,7 @@ mod subagents;
 mod timing;
 #[cfg(test)]
 mod timing_tests;
+mod turn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
@@ -83,13 +84,8 @@ pub struct Conversation {
     pub context_window: Option<u64>,
     pub usage_model: Option<String>,
     usage_at: u64,
-    step_started: Option<(String, u64)>,
-    step_model: Option<String>,
-    turn_started_at: Option<u64>,
-    turn_agent: Option<String>,
-    turn_agent_captured: bool,
-    turn_assistant_ids: Vec<String>,
-    turn_provider_started: bool,
+    step: Option<opencode::Step>,
+    turn: Option<turn::Turn>,
     output_history: timing::History,
     pub failure: failure::State,
 }
@@ -101,38 +97,6 @@ impl Conversation {
         entry.optimistic = true;
         self.entries.push(entry);
         self.working = true;
-    }
-
-    pub fn begin_turn(&mut self, agent: Option<String>, started_at: u64) {
-        self.failure.begin(started_at);
-        if !self.working || self.turn_started_at.is_none() {
-            self.turn_started_at = Some(started_at);
-            self.turn_assistant_ids.clear();
-            self.turn_agent = agent;
-            self.turn_agent_captured = true;
-            self.turn_provider_started = false;
-        } else if !self.turn_agent_captured {
-            self.turn_agent = agent;
-            self.turn_agent_captured = true;
-        }
-    }
-
-    pub fn provider_started_with_agent(&mut self, agent: Option<String>, started_at: u64) {
-        if self.turn_provider_started {
-            return;
-        }
-        if !self.working || self.turn_started_at.is_none() {
-            self.turn_started_at = Some(started_at);
-            self.turn_assistant_ids.clear();
-            self.turn_agent = agent.clone();
-            self.turn_agent_captured = true;
-        } else if !self.turn_agent_captured {
-            self.turn_agent = agent.clone();
-            self.turn_agent_captured = true;
-        }
-
-        self.turn_started_at = self.turn_started_at.map(|at| at.min(started_at));
-        self.turn_provider_started = true;
     }
 
     pub fn remove_optimistic(&mut self) {
@@ -287,28 +251,8 @@ impl Conversation {
     }
 
     fn settle_at(&mut self, ended_at: u64) {
-        let started_at = self.turn_started_at.take();
-        let assistant_id = self.turn_assistant_ids.last().cloned();
-        let turn_agent = self.turn_agent.clone();
-        if let (Some(started_at), Some(id)) = (started_at, assistant_id) {
-            if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
-                if !entry.metadata.is_object() {
-                    entry.metadata = serde_json::json!({});
-                }
-                if entry.metadata["agent"].as_str().is_none() {
-                    if let Some(agent) = turn_agent.as_deref() {
-                        entry.metadata["agent"] = agent.into();
-                    }
-                }
-                entry.metadata["ended"] = ended_at.into();
-                set_output_duration(entry, started_at, ended_at);
-            }
-        }
-        self.turn_started_at = None;
-        self.turn_agent = None;
-        self.turn_agent_captured = false;
-        self.turn_assistant_ids.clear();
-        self.turn_provider_started = false;
+        self.finish_turn(ended_at);
+        self.step = None;
         self.working = false;
         self.retrying = false;
         for entry in &mut self.entries {
@@ -327,21 +271,6 @@ impl Conversation {
                 }
             }
         }
-    }
-
-    fn note_turn_output(&mut self, id: &str) {
-        if self.turn_started_at.is_some()
-            && !self
-                .turn_assistant_ids
-                .iter()
-                .any(|existing| existing == id)
-        {
-            self.turn_assistant_ids.push(id.into());
-        }
-    }
-
-    fn provider_started(&mut self, data: &Value) {
-        self.provider_started_with_agent(self.turn_agent.clone(), provider_started_at(data));
     }
 
     pub fn apply(&mut self, provider: Provider, method: &str, data: &Value) {

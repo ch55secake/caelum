@@ -422,6 +422,12 @@ enum TurnStatus {
     Interrupted,
 }
 
+#[derive(Clone, Copy)]
+enum OpenCodeTurn {
+    AwaitingStart,
+    Started,
+}
+
 fn wait_for_turn(
     provider: ProviderKind,
     project: &Project,
@@ -431,7 +437,7 @@ fn wait_for_turn(
     approval_updates: &Receiver<Vec<ApprovalPrompt>>,
 ) -> Result<TurnStatus, Box<dyn std::error::Error>> {
     let mut handled_approvals = HashSet::new();
-    let mut opencode_turn_started = false;
+    let mut opencode_turn = OpenCodeTurn::AwaitingStart;
     loop {
         handle_approvals(
             approval_updates,
@@ -440,28 +446,20 @@ fn wait_for_turn(
             &mut handled_approvals,
         )?;
         match events.recv_timeout(Duration::from_millis(100)) {
-            Ok(event) => {
-                let outcome = event_outcome(&event, session_id, opencode_turn_started);
-                opencode_turn_started |= outcome.started;
-                for text in outcome.output {
+            Ok(event) => match event_outcome(&event, session_id, opencode_turn) {
+                EventOutcome::Ignore => {}
+                EventOutcome::Started => opencode_turn = OpenCodeTurn::Started,
+                EventOutcome::Output(text) => {
                     print!("{text}");
                     io::stdout().flush()?;
                 }
-                for activity in outcome.activity {
-                    eprintln!("\n[{activity}]");
-                }
-                if let Some(error) = outcome.error {
-                    return Err(error.into());
-                }
-                if let Some(status) = outcome.complete {
+                EventOutcome::Activity(activity) => eprintln!("\n[{activity}]"),
+                EventOutcome::Disconnected(error) => return Err(error.into()),
+                EventOutcome::Finished(status) => {
                     println!();
-                    return Ok(match status.as_str() {
-                        "failed" => TurnStatus::Failed,
-                        "interrupted" => TurnStatus::Interrupted,
-                        _ => TurnStatus::Completed,
-                    });
+                    return Ok(status);
                 }
-            }
+            },
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(format!("{} event stream disconnected", provider.name()).into())
@@ -514,49 +512,38 @@ fn handle_approvals(
     Ok(())
 }
 
-#[derive(Default)]
-struct EventOutcome {
-    output: Vec<String>,
-    activity: Vec<String>,
-    started: bool,
-    complete: Option<String>,
-    error: Option<String>,
+#[derive(Debug, Default, PartialEq, Eq)]
+enum EventOutcome {
+    #[default]
+    Ignore,
+    Started,
+    Output(String),
+    Activity(String),
+    Finished(TurnStatus),
+    Disconnected(&'static str),
 }
 
-fn event_outcome(
-    event: &ProviderEvent,
-    session_id: &str,
-    opencode_turn_started: bool,
-) -> EventOutcome {
+fn event_outcome(event: &ProviderEvent, session_id: &str, turn: OpenCodeTurn) -> EventOutcome {
     match event {
         ProviderEvent::Codex(event) => codex_event_outcome(event, session_id),
-        ProviderEvent::OpenCode(event) => {
-            opencode_event_outcome(event, session_id, opencode_turn_started)
-        }
+        ProviderEvent::OpenCode(event) => opencode_event_outcome(event, session_id, turn),
     }
 }
 
 fn codex_event_outcome(event: &CodexEvent, session_id: &str) -> EventOutcome {
     if event.method == "codex/processExited" {
-        return EventOutcome {
-            error: Some("Codex app-server exited unexpectedly".to_owned()),
-            ..EventOutcome::default()
-        };
+        return EventOutcome::Disconnected("Codex app-server exited unexpectedly");
     }
     let params = &event.params;
     if params.get("threadId").and_then(serde_json::Value::as_str) != Some(session_id) {
         return EventOutcome::default();
     }
     match event.method.as_str() {
-        "item/agentMessage/delta" => EventOutcome {
-            output: params
-                .get("delta")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-                .into_iter()
-                .collect(),
-            ..EventOutcome::default()
-        },
+        "item/agentMessage/delta" => params
+            .get("delta")
+            .and_then(serde_json::Value::as_str)
+            .map(|delta| EventOutcome::Output(delta.into()))
+            .unwrap_or_default(),
         "item/started" => {
             let item = params.get("item");
             let kind = item
@@ -576,20 +563,13 @@ fn codex_event_outcome(event: &CodexEvent, session_id: &str) -> EventOutcome {
                 "reasoning" => None,
                 _ => Some(format!("Codex activity: {kind}")),
             };
-            EventOutcome {
-                activity: activity.into_iter().collect(),
-                ..EventOutcome::default()
-            }
+            activity.map(EventOutcome::Activity).unwrap_or_default()
         }
-        "item/commandExecution/outputDelta" => EventOutcome {
-            activity: params
-                .get("delta")
-                .and_then(serde_json::Value::as_str)
-                .map(|delta| format!("Command output:\n{delta}"))
-                .into_iter()
-                .collect(),
-            ..EventOutcome::default()
-        },
+        "item/commandExecution/outputDelta" => params
+            .get("delta")
+            .and_then(serde_json::Value::as_str)
+            .map(|delta| EventOutcome::Activity(format!("Command output:\n{delta}")))
+            .unwrap_or_default(),
         "turn/completed" => {
             let status = params
                 .get("turn")
@@ -602,10 +582,11 @@ fn codex_event_outcome(event: &CodexEvent, session_id: &str) -> EventOutcome {
                         .unwrap_or("completed")
                 })
                 .unwrap_or("completed");
-            EventOutcome {
-                complete: Some(status.to_owned()),
-                ..EventOutcome::default()
-            }
+            EventOutcome::Finished(match status {
+                "failed" => TurnStatus::Failed,
+                "interrupted" => TurnStatus::Interrupted,
+                _ => TurnStatus::Completed,
+            })
         }
         _ => EventOutcome::default(),
     }
@@ -614,13 +595,10 @@ fn codex_event_outcome(event: &CodexEvent, session_id: &str) -> EventOutcome {
 fn opencode_event_outcome(
     event: &OpenCodeEvent,
     session_id: &str,
-    turn_started: bool,
+    turn: OpenCodeTurn,
 ) -> EventOutcome {
     if event.event_type == "server.disconnected" {
-        return EventOutcome {
-            error: Some("OpenCode server disconnected".to_owned()),
-            ..EventOutcome::default()
-        };
+        return EventOutcome::Disconnected("OpenCode server disconnected");
     }
     if event
         .data
@@ -631,48 +609,27 @@ fn opencode_event_outcome(
         return EventOutcome::default();
     }
     match event.event_type.as_str() {
-        "session.execution.started" => EventOutcome {
-            started: true,
-            ..EventOutcome::default()
-        },
-        "session.text.delta" => EventOutcome {
-            output: event
-                .data
-                .get("delta")
-                .or_else(|| event.data.get("text"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-                .into_iter()
-                .collect(),
-            ..EventOutcome::default()
-        },
-        "session.tool.called" => EventOutcome {
-            activity: event
-                .data
-                .get("name")
-                .or_else(|| event.data.get("tool"))
-                .and_then(serde_json::Value::as_str)
-                .map(|name| format!("Using tool: {name}"))
-                .into_iter()
-                .collect(),
-            ..EventOutcome::default()
-        },
-        "session.execution.failed" => EventOutcome {
-            complete: Some("failed".to_owned()),
-            ..EventOutcome::default()
-        },
-        "session.execution.interrupted" => EventOutcome {
-            complete: Some("interrupted".to_owned()),
-            ..EventOutcome::default()
-        },
-        "session.execution.succeeded" => EventOutcome {
-            complete: Some("completed".to_owned()),
-            ..EventOutcome::default()
-        },
-        "session.idle" if turn_started => EventOutcome {
-            complete: Some("completed".to_owned()),
-            ..EventOutcome::default()
-        },
+        "session.execution.started" => EventOutcome::Started,
+        "session.text.delta" => event
+            .data
+            .get("delta")
+            .or_else(|| event.data.get("text"))
+            .and_then(serde_json::Value::as_str)
+            .map(|delta| EventOutcome::Output(delta.into()))
+            .unwrap_or_default(),
+        "session.tool.called" => event
+            .data
+            .get("name")
+            .or_else(|| event.data.get("tool"))
+            .and_then(serde_json::Value::as_str)
+            .map(|name| EventOutcome::Activity(format!("Using tool: {name}")))
+            .unwrap_or_default(),
+        "session.execution.failed" => EventOutcome::Finished(TurnStatus::Failed),
+        "session.execution.interrupted" => EventOutcome::Finished(TurnStatus::Interrupted),
+        "session.execution.succeeded" => EventOutcome::Finished(TurnStatus::Completed),
+        "session.idle" if matches!(turn, OpenCodeTurn::Started) => {
+            EventOutcome::Finished(TurnStatus::Completed)
+        }
         _ => EventOutcome::default(),
     }
 }
@@ -729,8 +686,14 @@ mod tests {
             params: json!({ "threadId": "thread-1", "delta": "hello" }),
             request_id: None,
         });
-        assert_eq!(event_outcome(&event, "thread-1", false).output, ["hello"]);
-        assert!(event_outcome(&event, "thread-2", false).output.is_empty());
+        assert_eq!(
+            event_outcome(&event, "thread-1", OpenCodeTurn::AwaitingStart),
+            EventOutcome::Output("hello".into())
+        );
+        assert_eq!(
+            event_outcome(&event, "thread-2", OpenCodeTurn::AwaitingStart),
+            EventOutcome::Ignore
+        );
     }
 
     #[test]
@@ -751,11 +714,17 @@ mod tests {
             created: None,
             location: None,
         });
-        assert_eq!(event_outcome(&delta, "ses_1", false).output, ["hello"]);
-        assert_eq!(event_outcome(&complete, "ses_1", false).complete, None);
         assert_eq!(
-            event_outcome(&complete, "ses_1", true).complete.as_deref(),
-            Some("completed")
+            event_outcome(&delta, "ses_1", OpenCodeTurn::AwaitingStart),
+            EventOutcome::Output("hello".into())
+        );
+        assert_eq!(
+            event_outcome(&complete, "ses_1", OpenCodeTurn::AwaitingStart),
+            EventOutcome::Ignore
+        );
+        assert_eq!(
+            event_outcome(&complete, "ses_1", OpenCodeTurn::Started),
+            EventOutcome::Finished(TurnStatus::Completed)
         );
     }
 

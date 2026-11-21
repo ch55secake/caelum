@@ -64,7 +64,7 @@ pub(crate) fn drawn(rt: &rune::Runtime<Workspace>) {
 pub(crate) fn poll(live: &mut Live, tx: &mut Tx) -> bool {
     if live.updates.startup.get() == Startup::Store
         && live.app.restored()
-        && live.app.persistence_error.is_none()
+        && live.app.persistence_error().is_none()
     {
         live.updates.startup.set(Startup::Scheduled);
         if matches!(live.app.services.updater.phase, Phase::Idle) {
@@ -75,7 +75,7 @@ pub(crate) fn poll(live: &mut Live, tx: &mut Tx) -> bool {
         }
     }
     if let Phase::Restarting(installed) = &live.app.services.updater.phase {
-        if let Some(error) = &live.app.persistence_error {
+        if let Some(error) = live.app.persistence_error() {
             live.app
                 .services
                 .updater

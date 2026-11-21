@@ -17,7 +17,7 @@ impl Workspace {
                         .then(|| self.notifications.take(self.navigation))
                         .flatten();
                     self.complete(id, pending, result);
-                    if self.store_ready {
+                    if self.restored() {
                         if let Some(target) = activation {
                             self.activate_notification(target);
                         }

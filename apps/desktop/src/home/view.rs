@@ -55,7 +55,7 @@ pub fn view(s: &Workspace, k: &Kit, reduced_motion: bool, layers: &mut Vec<El>) 
                 .home
                 .error
                 .as_ref()
-                .or(l.app.persistence_error.as_ref())
+                .or(l.app.persistence_error())
                 .or(l.app.error.as_ref())
                 .map(|error| ui::caption(error, k).color(k.c.danger.fg).w_full()),
         );

@@ -6,6 +6,13 @@ use super::{
 };
 use crate::application::presentation;
 
+#[derive(Debug)]
+pub(super) struct Step {
+    message_id: String,
+    started_at: u64,
+    model: Option<String>,
+}
+
 impl Conversation {
     pub(super) fn opencode(&mut self, method: &str, data: &Value) {
         if !self.failure.event(method, data) {
@@ -115,27 +122,30 @@ impl Conversation {
             }
         }
         if method == "session.step.started" {
-            self.step_model = model_id(data);
-            self.step_started = data["assistantMessageID"].as_str().map(|id| {
-                (
-                    id.into(),
-                    data["started"]
-                        .as_u64()
-                        .or(data["_created"].as_u64())
-                        .unwrap_or(0),
-                )
+            self.step = data["assistantMessageID"].as_str().map(|id| Step {
+                message_id: id.into(),
+                started_at: data["started"]
+                    .as_u64()
+                    .or(data["_created"].as_u64())
+                    .unwrap_or(0),
+                model: model_id(data),
             });
         }
         if method == "session.step.ended" {
-            let at = self
-                .step_started
+            let step = if self.step.as_ref().is_some_and(|step| {
+                Some(step.message_id.as_str()) == data["assistantMessageID"].as_str()
+            }) {
+                self.step.take()
+            } else {
+                None
+            };
+            let at = step
                 .as_ref()
-                .filter(|(id, _)| Some(id.as_str()) == data["assistantMessageID"].as_str())
-                .map(|(_, at)| *at)
+                .map(|step| step.started_at)
                 .or(data["_created"].as_u64())
                 .unwrap_or(0);
             if self.usage(&data["tokens"], at) {
-                self.usage_model = model_id(data).or_else(|| self.step_model.clone());
+                self.usage_model = model_id(data).or_else(|| step.and_then(|step| step.model));
             }
         }
         if let Some(rest) = method.strip_prefix("session.") {

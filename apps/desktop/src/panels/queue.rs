@@ -73,7 +73,7 @@ pub fn composer_context(s: &Workspace, k: &Kit, index: usize) -> El {
     {
         context = context.child(queued_messages(s, k, index));
     }
-    if let Some(error) = &live(s).app.persistence_error {
+    if let Some(error) = live(s).app.persistence_error() {
         context = context.child(label(error, k));
     }
     context.child(crate::composer::attachments(s, k, index))

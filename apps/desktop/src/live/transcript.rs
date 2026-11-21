@@ -20,7 +20,7 @@ pub fn transcript(s: &Workspace, k: &Kit, reduced: bool, padding: f32, layers: &
     }
     let live = live(s);
     let mut content = col().w_full().max_w(840.0).px(padding).py(24.0).gap(24.0);
-    if let Some(error) = &live.app.persistence_error {
+    if let Some(error) = live.app.persistence_error() {
         content = content.child(text(error).font(k.ty.ui).color(k.c.text_accent).wrap());
     }
     if let Some(error) = &live.app.error {

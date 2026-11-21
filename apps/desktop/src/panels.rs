@@ -610,7 +610,7 @@ pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
 
 pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
     let mut surface = col().w_full().grow(1.0).min_h(0.0).gap(10.0).padding(16.0);
-    if let Some(error) = &live(s).app.persistence_error {
+    if let Some(error) = live(s).app.persistence_error() {
         surface = surface.child(label(error, k));
     }
     if let Some(project) = &live(s).app.active_project

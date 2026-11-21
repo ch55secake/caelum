@@ -19,18 +19,27 @@ impl ProcessId {
 }
 
 #[derive(Default)]
-struct RegistryState {
-    closed: bool,
-    processes: BTreeMap<ProcessId, ManagedChild>,
+enum RegistryState {
+    #[default]
+    Closed,
+    Open(BTreeMap<ProcessId, ManagedChild>),
 }
 
 /// Owns child processes so cancellation and application shutdown can reap them.
 /// Providers should build commands from an explicit executable and argument
 /// vector, never by interpolating a request into a shell command.
-#[derive(Default)]
 pub struct ProcessRegistry {
     next_id: AtomicU64,
     state: Mutex<RegistryState>,
+}
+
+impl Default for ProcessRegistry {
+    fn default() -> Self {
+        Self {
+            next_id: AtomicU64::default(),
+            state: Mutex::new(RegistryState::Open(BTreeMap::new())),
+        }
+    }
 }
 
 impl ProcessRegistry {
@@ -38,20 +47,21 @@ impl ProcessRegistry {
         let id = ProcessId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let child = ManagedChild::new(child);
         let mut state = self.lock();
-        if state.closed {
+        let RegistryState::Open(processes) = &mut *state else {
+            drop(state);
             let _ = child.terminate();
             return Err(ProcessError::Closed);
-        }
-        state.processes.insert(id, child);
+        };
+        processes.insert(id, child);
         Ok(id)
     }
 
     pub fn terminate(&self, id: ProcessId) -> Result<ExitStatus, ProcessError> {
-        let child = self
-            .lock()
-            .processes
-            .remove(&id)
-            .ok_or(ProcessError::UnknownProcess)?;
+        let child = match &mut *self.lock() {
+            RegistryState::Open(processes) => processes.remove(&id),
+            RegistryState::Closed => None,
+        }
+        .ok_or(ProcessError::UnknownProcess)?;
         child.terminate().map_err(ProcessError::from)
     }
 
@@ -60,23 +70,25 @@ impl ProcessRegistry {
     pub fn poll_exited(&self) -> Result<Vec<(ProcessId, ExitStatus)>, ProcessError> {
         let mut state = self.lock();
         let mut completed = Vec::new();
-        for (id, child) in &mut state.processes {
+        let RegistryState::Open(processes) = &mut *state else {
+            return Ok(completed);
+        };
+        for (id, child) in processes.iter_mut() {
             if let Some(status) = child.try_wait().map_err(ProcessError::from)? {
                 completed.push((*id, status));
             }
         }
         for (id, _) in &completed {
-            state.processes.remove(id);
+            processes.remove(id);
         }
         Ok(completed)
     }
 
     /// Stop accepting children and terminate/reap every child that remains.
     pub fn shutdown(&self) {
-        let children = {
-            let mut state = self.lock();
-            state.closed = true;
-            std::mem::take(&mut state.processes)
+        let previous = std::mem::take(&mut *self.lock());
+        let RegistryState::Open(children) = previous else {
+            return;
         };
         for (_, child) in children {
             let _ = child.terminate();
@@ -214,6 +226,7 @@ mod tests {
         registry.register(sleeper()).unwrap();
         registry.register(sleeper()).unwrap();
 
+        registry.shutdown();
         registry.shutdown();
 
         assert_eq!(registry.poll_exited().unwrap().len(), 0);

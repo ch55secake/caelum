@@ -12,14 +12,25 @@ use thiserror::Error;
 
 type RequestKey = (String, String, String);
 
+enum BrokerState {
+    Open(OpenBroker),
+    Closed,
+}
+
+impl Default for BrokerState {
+    fn default() -> Self {
+        Self::Open(OpenBroker::default())
+    }
+}
+
 #[derive(Default)]
-struct BrokerState {
-    closed: bool,
+struct OpenBroker {
     pending: BTreeMap<RequestKey, PendingRequest>,
     subscribers: Vec<Sender<Vec<ApprovalPrompt>>>,
 }
 
 struct PendingRequest {
+    attempt: Arc<()>,
     request: PermissionRequest,
     response: Sender<ApprovalDecision>,
 }
@@ -48,35 +59,50 @@ impl ApprovalBroker {
         );
         let (response, receiver) = mpsc::channel();
         let mut state = self.lock();
-        if state.closed {
+        let BrokerState::Open(open) = &mut *state else {
             return Err(ApprovalError::Closed);
-        }
-        if state.pending.contains_key(&key) {
+        };
+        if open.pending.contains_key(&key) {
             return Err(ApprovalError::DuplicateRequest);
         }
 
-        state
-            .pending
-            .insert(key.clone(), PendingRequest { request, response });
-        Self::publish(&mut state);
+        let attempt = Arc::new(());
+        open.pending.insert(
+            key.clone(),
+            PendingRequest {
+                attempt: attempt.clone(),
+                request,
+                response,
+            },
+        );
+        Self::publish(open);
 
         Ok(ApprovalWaiter {
             key,
+            attempt,
             receiver,
             state: Arc::downgrade(&self.state),
         })
     }
 
     pub fn pending(&self) -> Vec<ApprovalPrompt> {
-        Self::prompts(&self.lock())
+        match &*self.lock() {
+            BrokerState::Open(open) => Self::prompts(open),
+            BrokerState::Closed => Vec::new(),
+        }
     }
 
     pub fn subscribe(&self) -> Receiver<Vec<ApprovalPrompt>> {
         let (sender, receiver) = mpsc::channel();
         let mut state = self.lock();
-        let _ = sender.send(Self::prompts(&state));
-        if !state.closed {
-            state.subscribers.push(sender);
+        match &mut *state {
+            BrokerState::Open(open) => {
+                let _ = sender.send(Self::prompts(open));
+                open.subscribers.push(sender);
+            }
+            BrokerState::Closed => {
+                let _ = sender.send(Vec::new());
+            }
         }
         receiver
     }
@@ -94,33 +120,32 @@ impl ApprovalBroker {
             request_id.to_owned(),
         );
         let mut state = self.lock();
-        if state.closed {
+        let BrokerState::Open(open) = &mut *state else {
             return Err(ApprovalError::Closed);
-        }
-        let pending = state
+        };
+        let pending = open
             .pending
             .remove(&key)
             .ok_or(ApprovalError::UnknownRequest)?;
         let _ = pending.response.send(decision);
-        Self::publish(&mut state);
+        Self::publish(open);
         Ok(())
     }
 
     /// Reject pending approvals during app shutdown and notify the UI.
     pub fn shutdown(&self) {
         let mut state = self.lock();
-        if state.closed {
+        let BrokerState::Open(mut open) = std::mem::replace(&mut *state, BrokerState::Closed)
+        else {
             return;
-        }
-        state.closed = true;
-        for (_, pending) in std::mem::take(&mut state.pending) {
+        };
+        for (_, pending) in std::mem::take(&mut open.pending) {
             let _ = pending.response.send(ApprovalDecision::Deny);
         }
-        Self::publish(&mut state);
-        state.subscribers.clear();
+        Self::publish(&mut open);
     }
 
-    fn prompts(state: &BrokerState) -> Vec<ApprovalPrompt> {
+    fn prompts(state: &OpenBroker) -> Vec<ApprovalPrompt> {
         state
             .pending
             .values()
@@ -135,7 +160,7 @@ impl ApprovalBroker {
             .collect()
     }
 
-    fn publish(state: &mut BrokerState) {
+    fn publish(state: &mut OpenBroker) {
         let prompts = Self::prompts(state);
         state
             .subscribers
@@ -151,6 +176,7 @@ impl ApprovalBroker {
 
 pub struct ApprovalWaiter {
     key: RequestKey,
+    attempt: Arc<()>,
     receiver: Receiver<ApprovalDecision>,
     state: Weak<Mutex<BrokerState>>,
 }
@@ -175,9 +201,18 @@ impl Drop for ApprovalWaiter {
         let mut state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(pending) = state.pending.remove(&self.key) {
+        let BrokerState::Open(open) = &mut *state else {
+            return;
+        };
+        if let std::collections::btree_map::Entry::Occupied(entry) =
+            open.pending.entry(self.key.clone())
+        {
+            if !Arc::ptr_eq(&self.attempt, &entry.get().attempt) {
+                return;
+            }
+            let pending = entry.remove();
             let _ = pending.response.send(ApprovalDecision::Deny);
-            ApprovalBroker::publish(&mut state);
+            ApprovalBroker::publish(open);
         }
     }
 }
@@ -291,6 +326,25 @@ mod tests {
                 ApprovalDecision::AllowOnce,
             ),
             Err(ApprovalError::UnknownRequest)
+        );
+    }
+
+    #[test]
+    fn dropping_a_resolved_waiter_cannot_deny_a_reused_request_id() {
+        let broker = ApprovalBroker::default();
+        let old = broker.request(request("reused")).unwrap();
+        let resolve =
+            |decision| broker.resolve("test-provider", "/workspace/test", "reused", decision);
+        resolve(ApprovalDecision::Deny).unwrap();
+        let replacement = broker.request(request("reused")).unwrap();
+
+        drop(old);
+
+        assert_eq!(broker.pending().len(), 1);
+        resolve(ApprovalDecision::AllowOnce).unwrap();
+        assert_eq!(
+            replacement.wait(Duration::ZERO),
+            ApprovalDecision::AllowOnce
         );
     }
 

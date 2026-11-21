@@ -28,6 +28,8 @@ archival, composer context, queues/submission, persistence, service tasks and
 provider events. Completion routing preserves each request's original owner and
 generation. The application and parity suites are grouped by capability under
 `application/tests/` and `application/parity_tests/`.
+The [state machine audit](state-machine-audit.md) tracks lifecycle invariants
+that are encoded in types and candidates still using implicit state.
 
 `workspace/home.rs` owns the saved Home draft, target/options and asynchronous
 attachment/project requests. First send creates a fresh stable session only after

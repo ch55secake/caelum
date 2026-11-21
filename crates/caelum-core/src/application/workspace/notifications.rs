@@ -23,8 +23,8 @@ impl Workspace {
     /// Focus only the exact, still-open session. Old notifications never recreate
     /// deleted/archived sessions or redirect to a provider with the same remote ID.
     pub fn activate_notification(&mut self, target: SessionKey) {
-        if self.store.is_some() && !self.store_ready {
-            if self.persistence_error.is_none() {
+        if !self.restored() {
+            if self.persistence_error().is_none() {
                 self.notifications.pending = Some((target, self.navigation));
             }
             return;

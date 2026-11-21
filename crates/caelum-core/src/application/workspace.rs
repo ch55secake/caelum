@@ -38,7 +38,7 @@ use caelum_protocol::{ApprovalPrompt, ProjectInfo, ProviderChoices, QuestionProm
 
 use super::{
     Attachment, Command, Conversation, Options, Preferences, Provider, QueuedPrompt, Scope,
-    Services, SessionKey, Snapshot, Store, Summary, Task,
+    Services, SessionKey, Summary, Task,
 };
 
 pub struct Session {
@@ -231,7 +231,7 @@ enum Pending {
     RegenerateTitle(usize, SessionKey),
     Notify,
     Load,
-    Save(Box<Snapshot>, Vec<(u64, Command)>),
+    Save,
     Task(Task),
     Commands(Scope),
     Shells(usize, u64),
@@ -292,17 +292,13 @@ pub struct Workspace {
     pub preferences: Preferences,
     notifications: notifications::State,
     pub provider_commands: HashMap<Scope, Vec<caelum_protocol::OpenCodeCommandInfo>>,
-    pub persistence_error: Option<String>,
     pub last_archived: Option<usize>,
     archive_clock: Option<(u64, u64)>,
     archive_revision: u64,
     archive_notice_revision: u64,
     archive_replacement: Option<usize>,
     navigation: u64,
-    store: Option<Store>,
-    store_ready: bool,
-    saving: bool,
-    saved: Option<Snapshot>,
+    persistence: persistence::State,
     durable_outgoing: Vec<(u64, Command)>,
     ready_outgoing: Vec<(u64, Command)>,
     detail_queue: Vec<usize>,

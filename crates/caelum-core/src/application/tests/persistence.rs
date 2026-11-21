@@ -44,8 +44,8 @@ fn failed_disk_write_blocks_admission_and_retry_keeps_the_original_prompt() {
     let (load, _) = app.commands().pop().unwrap();
     app.apply(Event::Completed(load, Ok(Reply::Snapshot(None))));
     app.send(index, "keep through disk failure".into());
-    let (save, _) = app.commands().pop().unwrap();
-    app.apply(Event::Completed(save, Err("disk full".into())));
+    let (failed_save, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(failed_save, Err("disk full".into())));
     assert!(app.commands().is_empty());
     assert_eq!(
         app.snapshot().sessions[index]
@@ -56,10 +56,29 @@ fn failed_disk_write_blocks_admission_and_retry_keeps_the_original_prompt() {
     );
     app.retry_save();
     let (save, _) = app.commands().pop().unwrap();
+    app.apply(Event::Completed(failed_save, Ok(Reply::Done)));
+    assert!(app.commands().is_empty());
     app.apply(Event::Completed(save, Ok(Reply::Done)));
     assert!(matches!(
         app.commands().as_slice(),
         [(_, Command::Start(..))]
+    ));
+}
+
+#[test]
+fn enabling_persistence_twice_cannot_replace_an_active_load() {
+    let mut app = Workspace::default();
+    app.enable_store("original.json".into());
+    let (load, _) = app.commands().pop().unwrap();
+    app.enable_store("replacement.json".into());
+    assert!(app.commands().is_empty());
+    assert!(!app.restored());
+
+    app.apply(Event::Completed(load, Ok(Reply::Snapshot(None))));
+    assert!(app.restored());
+    assert!(matches!(
+        app.commands().as_slice(),
+        [(_, Command::Save(store, _))] if store.0 == std::path::Path::new("original.json")
     ));
 }
 
