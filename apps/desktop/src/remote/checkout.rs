@@ -9,8 +9,14 @@ use rune::{El, Tx};
 use rune_kit::Kit;
 use std::time::Instant;
 
+fn dismiss_wait(l: &mut Live) {
+    if let Some((id, _)) = l.remote.open_when_ready.take() {
+        l.app.dismiss_vm_destination(&id);
+    }
+}
+
 pub(crate) fn enter(s: &mut Workspace) {
-    live_mut(s).remote.open_when_ready = None;
+    dismiss_wait(live_mut(s));
     if live(s).app.selected.is_some() && super::native::selected(live(s)).is_some() {
         let l = live_mut(s);
         l.panels.screen = Screen::Conversation;
@@ -31,7 +37,7 @@ pub(crate) fn enter(s: &mut Workspace) {
 }
 
 pub(crate) fn open_session_row(s: &mut Workspace, link: &VmLink) {
-    live_mut(s).remote.open_when_ready = None;
+    dismiss_wait(live_mut(s));
     if live_mut(s).app.open_vm_thread(link) {
         if live(s).app.remote.saved.checkouts[&link.checkout]
             .thread
@@ -63,6 +69,7 @@ pub(crate) fn enter_new(s: &mut Workspace) {
 }
 
 pub(crate) fn select(s: &mut Workspace, id: &str) {
+    live_mut(s).app.dismiss_vm_destination(id);
     session(s, id, None);
 }
 
@@ -82,7 +89,8 @@ pub(super) fn session(
 }
 
 pub(crate) fn manage(s: &mut Workspace, id: &str) {
-    live_mut(s).remote.open_when_ready = None;
+    live_mut(s).app.dismiss_vm_destination(id);
+    dismiss_wait(live_mut(s));
     live_mut(s).app.select_remote(id);
     show(s, true);
 }
@@ -118,6 +126,7 @@ pub(crate) fn sync(l: &mut Live, tx: &mut Tx) -> bool {
     if let Some((id, new)) = l.remote.open_when_ready.clone() {
         if l.app.remote.saved.selected.as_deref() != Some(&id) || l.panels.screen != Screen::Remote
         {
+            l.app.dismiss_vm_destination(&id);
             l.remote.open_when_ready = None;
         } else if l.panels.overlay.is_none()
             && !l.app.remote.jobs.contains_key(&id)

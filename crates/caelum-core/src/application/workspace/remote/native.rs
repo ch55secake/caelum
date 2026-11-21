@@ -32,7 +32,9 @@ impl Workspace {
     /// only the verified physical directory is sent to the owning SSH peer.
     pub fn open_vm_session(&mut self, id: &str, new: Option<Provider>) -> Option<usize> {
         let checkout = self.remote.saved.checkouts.get(id)?;
-        if matches!(self.remote.jobs.get(id), Some(Job::Deleting(_))) {
+        if matches!(self.remote.jobs.get(id), Some(Job::Deleting(_)))
+            || self.remote.branch_checks.contains_key(id)
+        {
             return None;
         }
         let ready = self.can_open_vm_session(id);

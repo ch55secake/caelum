@@ -33,6 +33,27 @@ pub(crate) fn start(s: &mut Workspace, id: &str) {
                 |s| s.scope.provider,
             )
     };
+    if l.panels.overlay == Some(Screen::Launcher)
+        && l.app.remote.saved.selected.as_deref() != Some(id)
+        && l.app
+            .active_project
+            .as_deref()
+            .and_then(caelum_core::remote::native::checkout_id)
+            != Some(id)
+    {
+        let source = &l.app.remote.saved.checkouts[id].source.project;
+        let project = l
+            .app
+            .active_project
+            .as_deref()
+            .filter(|p| {
+                caelum_core::remote::native::checkout_id(p).is_none()
+                    && l.app.group_path(p) == l.app.group_path(source)
+            })
+            .unwrap_or(source)
+            .to_owned();
+        l.app.check_vm_destination(id, project);
+    }
     super::checkout::session(s, id, Some(provider));
 }
 

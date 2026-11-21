@@ -111,21 +111,52 @@ impl Backend {
             Operation::Discover(project) | Operation::DiscoverHandoff(project) => self
                 .connected()
                 .await?
-                .discover(project, matches!(op, Operation::DiscoverHandoff(_)))
+                .discover(project)
                 .await
                 .map(Outcome::Source),
+            Operation::MatchCheckout(project, target) => {
+                let git = crate::git::GitClient::new();
+                if !git
+                    .github_origin(project)?
+                    .eq_ignore_ascii_case(&target.repository)
+                {
+                    return Err("The VM checkout has a different GitHub origin.".into());
+                }
+                let base = git.handoff_base(project).await?;
+                let mut target = target.clone();
+                target.required_base = Some(base.clone());
+                self.connected()
+                    .await?
+                    .prepare(&target, &base.branch, None)
+                    .await
+            }
             Operation::Lifetime(key, lifetime) => self
                 .connected()
                 .await?
                 .lifetime(key, *lifetime)
                 .await
                 .map(Outcome::Lifetime),
-            Operation::Create(source, plan) => self
-                .connected()
-                .await?
-                .create(source, plan)
-                .await
-                .map(Outcome::Machine),
+            Operation::Create(source, plan) => {
+                if let Some(tip) = &source.published_tip {
+                    let git = crate::git::GitClient::new();
+                    let actual = git.handoff_base(&source.project).await?;
+                    if actual.branch != source.base
+                        || actual.tip != *tip
+                        || !git
+                            .github_origin(&source.project)?
+                            .eq_ignore_ascii_case(&source.repository)
+                    {
+                        return Err(
+                            "The checkout or its published branch changed. Reopen VM setup.".into(),
+                        );
+                    }
+                }
+                self.connected()
+                    .await?
+                    .create(source, plan)
+                    .await
+                    .map(Outcome::Machine)
+            }
             Operation::Prepare(target, base, branch) => {
                 self.connected()
                     .await?

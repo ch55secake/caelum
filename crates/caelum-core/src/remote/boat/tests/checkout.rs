@@ -278,6 +278,22 @@ async fn an_environment_write_denial_can_be_corrected_and_the_same_create_retrie
         .expect(1)
         .mount(&server)
         .await;
+    assert!(boat
+        .create(&source, &plan)
+        .await
+        .unwrap_err()
+        .contains("not confirmed"));
+    let mut configured = environment("dedicated", &name, false);
+    configured["selectedRepositories"] =
+        json!([{"fullName":"example/project","baseBranch":"main"}]);
+    Mock::given(method("GET"))
+        .and(path("/environments"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"environments":[configured]})),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
     assert_eq!(boat.create(&source, &plan).await.unwrap().key.id, "vm-1");
     let requests = server.received_requests().await.unwrap();
     let create = requests
@@ -390,6 +406,15 @@ async fn runs_opencode_on_the_session_worktree_branch_and_publishes_only_the_rev
         base: base.branch.clone(),
         environment: Some("project-env".into()),
     };
+    let mismatch = boat.create(&source, &plan).await.unwrap_err();
+    assert!(mismatch.contains("feat/source"));
+    assert!(!server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .any(|r| r.url.path() == "/sandboxes"));
+    super::environment_on(&server, "feat/source", 1).await;
     let machine = boat.create(&source, &plan).await.unwrap();
     let newer = git(
         &published,
@@ -418,7 +443,11 @@ async fn runs_opencode_on_the_session_worktree_branch_and_publishes_only_the_rev
         repository: source.repository,
     };
     let err = boat.prepare(&target, &source.base, None).await.unwrap_err();
-    assert!(err.contains("does not include") && git(&vm, &["branch", "--show-current"]) == "main");
+    assert!(
+        err.contains("feat/source")
+            && err.contains("VM checkout is on main")
+            && git(&vm, &["branch", "--show-current"]) == "main"
+    );
     assert!(matches!(
         boat.send(
             &target,

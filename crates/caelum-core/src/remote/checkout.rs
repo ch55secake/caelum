@@ -9,14 +9,14 @@ pub struct Source {
     pub account: String,
     pub repository: String,
     pub base: String,
-    /// The published tip captured from the session's exact worktree for a handoff.
+    /// The published tip captured from the selected worktree before provisioning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published_tip: Option<String>,
     pub environment: Option<String>,
 }
 
 impl Source {
-    /// Standalone creates use a new name. Only a confirmed handoff can reuse the base name.
+    /// Older persisted plans may name a separate working branch.
     pub(crate) fn valid_plan_branch(&self, branch: &str) -> bool {
         valid_branch(&self.base)
             && valid_branch(branch)
@@ -132,7 +132,16 @@ impl Checkout {
                 .continued
                 .as_ref()
                 .filter(|_| self.thread.conversation.is_none())
-                .and_then(|c| c.base.clone()),
+                .and_then(|c| c.base.clone())
+                .or_else(|| {
+                    if self.root.is_some() || !matches!(self.phase, Phase::Prepare { .. }) {
+                        return None;
+                    }
+                    Some(PublishedBase {
+                        branch: self.source.base.clone(),
+                        tip: self.source.published_tip.clone()?,
+                    })
+                }),
         })
     }
 }

@@ -1,90 +1,37 @@
-use super::{Lifetime, Size, Source, submit, valid_branch};
+use super::{Lifetime, Size, Source};
 use crate::{
     Workspace,
-    context::EditMenu,
     live::{live, live_mut},
     ui,
 };
-use rune::{El, Key, col, icon, row, text};
+use rune::{El, col, icon, row, text};
 use rune_kit::Kit;
 
 fn label(value: &str, k: &Kit) -> El {
     text(value).font(k.ty.small_medium).color(k.c.text_base)
 }
 
-pub(super) fn checkout(s: &Workspace, k: &Kit, source: &Source, handoff: bool) -> El {
-    let l = live(s);
-    let f = &l.remote.form;
-    if handoff {
-        let tip = source.published_tip.as_deref().unwrap_or("");
-        return row()
-            .w_full()
-            .center_y()
-            .gap(6.0)
-            .child(icon(&ui::BRANCH, 13.0).color(k.c.icon_muted))
-            .child(ui::caption("Session branch", k))
-            .child(
-                text(&source.base)
-                    .font(k.ty.ui_medium)
-                    .color(k.c.text_base)
-                    .min_w(0.0)
-                    .truncate()
-                    .help(format!("Published session branch: {}", source.base))
-                    .key("handoff-base"),
-            )
-            .children(
-                tip.get(..8)
-                    .map(|short| ui::caption(format!("· {short}"), k).help(tip)),
-            );
-    }
-    let owner = source.clone();
-    let screen = l.panels.overlay;
-    let base = col()
-        .min_w(0.0)
-        .grow(1.0)
-        .gap(4.0)
-        .child(label("Start from", k))
+pub(super) fn checkout(k: &Kit, source: &Source) -> El {
+    let tip = source.published_tip.as_deref().unwrap_or("");
+    row()
+        .w_full()
+        .center_y()
+        .gap(6.0)
+        .child(icon(&ui::BRANCH, 13.0).color(k.c.icon_muted))
+        .child(ui::caption("Session branch", k))
         .child(
-            ui::field(&f.base, "Published base branch", &source.base, k)
-                .edit_menu("remote-base", |s| Some(&mut live_mut(s).remote.form.base)),
+            text(&source.base)
+                .font(k.ty.ui_medium)
+                .color(k.c.text_base)
+                .min_w(0.0)
+                .truncate()
+                .help(format!("Published session branch: {}", source.base))
+                .key("handoff-base"),
         )
-        .children((!valid_branch(f.base(source))).then(|| {
-            ui::caption("Enter a valid published branch.", k)
-                .wrap()
-                .color(k.c.danger.fg)
-                .role("alert")
-        }));
-    let branch = col()
-        .min_w(0.0)
-        .grow(1.0)
-        .gap(4.0)
-        .child(label("New branch on VM", k))
-        .child(
-            ui::field(&f.branch, "New branch", "feat/my-change", k)
-                .edit_menu("remote-branch", |s| {
-                    Some(&mut live_mut(s).remote.form.branch)
-                })
-                .on_input_key(move |s: &mut Workspace, e, _| {
-                    if e.key != Key::Enter {
-                        return false;
-                    }
-                    submit(s, &owner, screen);
-                    true
-                }),
+        .children(
+            tip.get(..8)
+                .map(|short| ui::caption(format!("· {short}"), k).help(tip)),
         )
-        .children(f.branch_error(source).map(|e| {
-            ui::caption(e, k)
-                .wrap()
-                .color(k.c.danger.fg)
-                .role("alert")
-                .key("vm-branch-error")
-        }));
-    let pair = if rune::memo::window_layout("shell").is_none_or(|r| r[2] >= 520.) {
-        row()
-    } else {
-        col()
-    };
-    pair.w_full().gap(10.0).child(base).child(branch)
 }
 
 // Boat's standard size names and capacities: https://docs.boat.dev/machines.md

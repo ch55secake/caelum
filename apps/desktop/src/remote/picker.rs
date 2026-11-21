@@ -10,14 +10,12 @@ use caelum_core::{
     application::{Provider, VmDestination},
     remote::{Lifetime, Picker, Size, Source, valid_branch},
 };
-use rune::{El, ScrollSpec, TextEdit, col, icon, row, text};
+use rune::{El, ScrollSpec, col, icon, row, text};
 use rune_kit::{ButtonVariant, Kit, ScrollBar, glyphs};
 
 #[derive(Default)]
 pub(super) struct Form {
     launcher_provider: Option<Provider>,
-    base: TextEdit,
-    branch: TextEdit,
     size: Size,
     lifetime: Lifetime,
     tab: Tab,
@@ -50,35 +48,8 @@ impl Form {
         self.launcher_provider.unwrap_or(Provider::OpenCode)
     }
 
-    fn base<'a>(&'a self, source: &'a Source) -> &'a str {
-        if self.base.text.is_empty() {
-            &source.base
-        } else {
-            &self.base.text
-        }
-    }
-
-    fn branch_error(&self, source: &Source) -> Option<&'static str> {
-        let branch = self.branch.text.as_str();
-        if branch.is_empty() {
-            None
-        } else if !valid_branch(branch) {
-            Some("Enter a valid Git branch name.")
-        } else if branch == self.base(source) {
-            Some("Use a different name from the starting branch.")
-        } else {
-            None
-        }
-    }
-
-    fn ready(&self, source: &Source, handoff: bool) -> bool {
-        if handoff {
-            source.published_tip.is_some() && valid_branch(&source.base)
-        } else {
-            valid_branch(self.base(source))
-                && !self.branch.text.is_empty()
-                && self.branch_error(source).is_none()
-        }
+    fn ready(&self, source: &Source) -> bool {
+        source.published_tip.is_some() && valid_branch(&source.base)
     }
 }
 
@@ -171,7 +142,7 @@ pub(crate) fn picker(s: &Workspace, k: &Kit) -> El {
         settings = settings.child(machines(s, k, source, handoff));
     } else {
         settings = settings
-            .child(fields::checkout(s, k, source, handoff))
+            .child(fields::checkout(k, source))
             .child(fields::machine(s, k));
     }
     pane = pane.child(
@@ -203,7 +174,7 @@ pub(crate) fn picker(s: &Workspace, k: &Kit) -> El {
             .center_y()
             .child(icon(&ui::AGENT, 14.0).color(k.c.icon_muted))
             .child(
-                ui::caption(format!("{} · Boat default model", provider.name()), k)
+                ui::caption(format!("{} · VM provider settings", provider.name()), k)
                     .truncate()
                     .min_w(0.0)
                     .grow(1.0)
@@ -212,7 +183,7 @@ pub(crate) fn picker(s: &Workspace, k: &Kit) -> El {
             .child(
                 ui::Button::new("Create VM")
                     .variant(ButtonVariant::Contrast)
-                    .disabled(!l.remote.form.ready(source, handoff))
+                    .disabled(!l.remote.form.ready(source))
                     .on_press(move |s: &mut Workspace| submit(s, &owner, screen))
                     .build(k)
                     .key("create-remote"),
@@ -225,7 +196,7 @@ fn submit(s: &mut Workspace, owner: &Source, screen: Option<Screen>) {
     let handoff = screen == Some(Screen::VmHandoff);
     if l.panels.overlay != screen
         || !matches!(&l.app.remote.picker,Some(Picker::Ready(source)) if source==owner)
-        || !l.remote.form.ready(owner, handoff)
+        || !l.remote.form.ready(owner)
     {
         return;
     }
@@ -236,13 +207,7 @@ fn submit(s: &mut Workspace, owner: &Source, screen: Option<Screen>) {
             lifetime: f.lifetime,
         });
         l.schedule();
-    } else if let Some(id) = l.app.create_remote(
-        f.base(owner),
-        &f.branch.text,
-        f.size,
-        f.lifetime,
-        f.provider(),
-    ) {
+    } else if let Some(id) = l.app.create_remote(f.size, f.lifetime, f.provider()) {
         let provider = f.provider();
         super::checkout::session(s, &id, Some(provider));
     }
@@ -334,19 +299,10 @@ fn machines(s: &Workspace, k: &Kit, source: &Source, handoff: bool) -> El {
     let l = live(s);
     let app = &l.app;
     let new_session = l.remote.form.launcher_provider;
-    let detail = if handoff {
-        format!(
-            "The checkout must contain the published commit from origin/{}.",
-            source.base
-        )
-    } else if let Some(provider) = new_session {
-        format!(
-            "Start a {} session on the VM’s current branch.",
-            provider.name()
-        )
-    } else {
-        "Open this repository on the VM’s current branch.".into()
-    };
+    let detail = format!(
+        "The VM checkout must be on {} and contain its published commit.",
+        source.base
+    );
     let mut list = col().w_full().gap(6.0).child(ui::caption(detail, k).wrap());
     for machine in app
         .remote

@@ -138,11 +138,15 @@ async fn running_machine_lifetime_uses_explicit_seconds_or_null_and_boats_actual
 }
 
 async fn environment(server: &MockServer) {
+    environment_on(server, "main", 5).await;
+}
+
+async fn environment_on(server: &MockServer, branch: &str, priority: u8) {
     Mock::given(method("GET")).and(path("/environments")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
         "environments":[{"id":"env-1","name":"project-env","isDefault":true,"latestVersionNumber":2,
         "safeForThirdParties":false,"passGithub":true,"passSecrets":false,"passSandboxCredentials":false,
-        "passAgentsCredentials":true,"envContents":"","secretFiles":[],"versions":[],"selectedRepositories":[{"fullName":"example/project"}]}]
-    }))).mount(server).await;
+        "passAgentsCredentials":true,"envContents":"","secretFiles":[],"versions":[],"selectedRepositories":[{"fullName":"example/project","baseBranch":branch}]}]
+    }))).with_priority(priority).mount(server).await;
 }
 
 #[tokio::test]

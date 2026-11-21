@@ -60,7 +60,8 @@ impl Binding {
             Command::Task(t) => t.project_mut(),
             Command::Remote(
                 crate::remote::Operation::Discover(p)
-                | crate::remote::Operation::DiscoverHandoff(p),
+                | crate::remote::Operation::DiscoverHandoff(p)
+                | crate::remote::Operation::MatchCheckout(p, _),
             ) => Some(p),
             Command::Remote(_)
             | Command::Notify(_)

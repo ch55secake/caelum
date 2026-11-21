@@ -100,6 +100,7 @@ pub enum Operation {
     Disconnect,
     Discover(String),
     DiscoverHandoff(String),
+    MatchCheckout(String, Target),
     Create(Source, Plan),
     Prepare(Target, String, Option<String>),
     Power(MachineId, bool),
@@ -156,6 +157,7 @@ pub struct State {
     pub removed: Vec<String>,
     pub(crate) deleted_during_inventory: Vec<MachineId>,
     pub(crate) native_requests: std::collections::BTreeMap<u64, String>,
+    pub(crate) branch_checks: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Default)]

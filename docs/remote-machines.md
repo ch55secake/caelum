@@ -13,15 +13,16 @@ Configure provider credentials in [Boat → Agents & Proxying](https://boat.dev/
    **Connect Boat**. The key is stored in Keychain or Linux Secret Service.
 2. Click **Create VM…** in **Settings → Remote machines** or **New session**.
    Use the current project, choose another, or open a project folder with a GitHub `origin`.
-3. **Start from** defaults to the published origin default branch, or `main`.
-   Enter a different **New branch on VM** name, choose the [machine size](https://docs.boat.dev/machines.md)
+3. **Session branch** shows the current branch of the selected checkout,
+   including a linked worktree. Publish it to `origin`, choose the [machine size](https://docs.boat.dev/machines.md)
    and auto-stop, then click **Create VM**. Creation prepares the checkout;
    your first **Send** starts the conversation.
-   Caelum provisions the repository using a compatible single-repo
+   Caelum checks the published ref and Boat’s clone branch before allocating the VM.
+   It uses a matching single-repo
    environment or creates a dedicated one. Unpublished commits, staged changes
    and files on your laptop stay there.
 
-![Create VM with a published base, a new working branch and the selected machine size](design/previews/rune-light-remote-create-ready-small.png)
+![Create VM with the checkout’s published branch and selected machine size](design/previews/rune-light-remote-create-ready-small.png)
 
 To attach instead, right-click a project, choose **Open on remote machine…**,
 and choose the machine under **Existing VM**. It must have a
@@ -91,7 +92,7 @@ needs `environment.write`** to create and configure the Boat environment.
   account. Reopen **one** failed checkout, or click **Refresh checkout** if it’s
   already open, to retry its original request.
 - To keep a key without `environment.write`, configure an [environment in Boat](https://docs.boat.dev/environments/repositories.md)
-  with just this repository, GitHub access and agent credentials enabled, and
+   with just this repository, its exact clone branch, GitHub access and agent credentials enabled, and
   **Safe for third parties** off. Reopen VM setup so Caelum discovers it. The
   key still needs `environment.read` and `sandbox.create` for that environment,
   `exec` to prepare the checkout, and `ssh` to connect a native session.
@@ -109,7 +110,7 @@ Home draft or a recent session. Finish any active local turn and queued prompts 
 For a handoff, **Session branch** is the current branch of that session’s exact
 worktree (or Home’s chosen checkout). A new VM opens **that same branch** at
 its published commit on `origin`. The name is shown for reference; there’s
-nothing to enter. An existing VM keeps its branch and must already contain the
+nothing to enter. An existing VM must already be on that branch and contain the
 published commit.
 
 ![Handoff showing the session’s published commit and options for a new VM](design/previews/rune-dark-remote-handoff-new-small.png)

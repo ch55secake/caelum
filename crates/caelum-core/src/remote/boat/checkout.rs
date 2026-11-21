@@ -7,18 +7,25 @@ use boat_sdk::{
     sandbox::{requests::CreateSandboxRequest, resources::Sandbox, MachineSize},
 };
 
-fn selected_repo<'a>(e: &'a SandboxEnvironment, repo: &str) -> Option<&'a str> {
+fn selected_repo<'a>(e: &'a SandboxEnvironment, repo: &str) -> Option<&'a SelectedRepository> {
     let [selected] = e.selected_repositories.as_deref()? else {
         return None;
     };
-    selected.full_name.as_deref().filter(|name| {
-        !e.safe_for_third_parties
-            && e.pass_github
-            && e.pass_agents_credentials
-            && name.eq_ignore_ascii_case(repo)
-    })
+    selected
+        .full_name
+        .as_deref()
+        .filter(|name| {
+            !e.safe_for_third_parties
+                && e.pass_github
+                && e.pass_agents_credentials
+                && name.eq_ignore_ascii_case(repo)
+        })
+        .map(|_| selected)
 }
 
+fn clones(e: &SandboxEnvironment, repo: &str, branch: &str) -> bool {
+    selected_repo(e, repo).and_then(|r| r.base_branch.as_deref()) == Some(branch)
+}
 pub(in crate::remote) fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -49,19 +56,10 @@ else
 fi"#;
 
 impl Boat {
-    pub(in crate::remote) async fn discover(
-        &self,
-        project: &str,
-        handoff: bool,
-    ) -> Result<Source, String> {
+    pub(in crate::remote) async fn discover(&self, project: &str) -> Result<Source, String> {
         let git = crate::git::GitClient::new();
-        let (repository, default) = git.published_source(project)?;
-        let (base, published_tip) = if handoff {
-            let published = git.handoff_base(project).await?;
-            (published.branch, Some(published.tip))
-        } else {
-            (default, None)
-        };
+        let repository = git.github_origin(project)?;
+        let published = git.handoff_base(project).await?;
         let environment = self
             .client
             .environments(None)
@@ -69,14 +67,14 @@ impl Boat {
             .map_err(|e| Step::ListEnvironments.error(e))?
             .environments
             .into_iter()
-            .find(|e| selected_repo(e, &repository).is_some())
+            .find(|e| clones(e, &repository, &published.branch))
             .map(|e| e.name);
         Ok(Source {
             project: project.to_owned(),
             account: self.account.clone(),
             repository,
-            base,
-            published_tip,
+            base: published.branch,
+            published_tip: Some(published.tip),
             environment,
         })
     }
@@ -93,13 +91,16 @@ impl Boat {
         let env = envs.into_iter().find(|e| e.name == name);
         if env
             .as_ref()
-            .is_some_and(|e| selected_repo(e, &source.repository).is_some())
+            .is_some_and(|e| clones(e, &source.repository, &source.base))
         {
             return Ok(name.into());
         }
         // Only the private name minted for this create attempt may be configured.
         if source.environment.is_some() {
-            return Err("The selected Boat environment changed. Choose the project again.".into());
+            return Err(format!(
+                "The selected Boat environment no longer clones {} on {}. Reopen VM setup.",
+                source.repository, source.base
+            ));
         }
         let repo = self
             .client
@@ -164,7 +165,22 @@ impl Boat {
         if !response.success {
             return Err("Could not configure the new checkout environment".into());
         }
-        Ok(name.into())
+        self.client
+            .environments(None)
+            .await
+            .map_err(|e| Step::ListEnvironments.error(e))?
+            .environments
+            .iter()
+            .any(|e| {
+                e.id == env.id && e.name == name && clones(e, &source.repository, &source.base)
+            })
+            .then(|| name.to_owned())
+            .ok_or_else(|| {
+                format!(
+                    "Boat has not confirmed the clone branch {} for {}. Refresh checkout to retry.",
+                    source.base, source.repository
+                )
+            })
     }
 
     pub(super) async fn create_checkout(
@@ -254,27 +270,36 @@ impl Boat {
             .environments(None)
             .await
             .map_err(|e| Step::ListEnvironments.error(e))?;
-        let Some(repo) = envs
+        if envs
             .environments
             .iter()
             .find(|e| {
                 Some(&e.name) == sandbox.environment.as_ref()
                     && e.latest_version_number == sandbox.environment_version
             })
-            .and_then(|e| selected_repo(e, &target.repository))
-        else {
+            .is_none_or(|e| selected_repo(e, &target.repository).is_none())
+        {
             return Err("This machine needs a current single-repository environment for the selected GitHub repository".into());
         };
         if branch.is_some_and(|b| !valid_branch(b)) {
             return Err("Invalid checkout branch".into());
         }
-        let worktree = self.worktree(target, branch.map(|_| (repo, base))).await?;
+        let worktree = self
+            .worktree(target, branch.map(|_| (target.repository.as_str(), base)))
+            .await?;
         if let Some(branch) = branch {
             worktree.open_planned_branch(target, base, branch).await?;
         }
-        worktree.verify_base().await?;
         let current = worktree.command("git branch --show-current").await?;
         let current = current.trim();
+        if let Some(base) = target
+            .required_base
+            .as_ref()
+            .filter(|b| branch.is_none() && current != b.branch)
+        {
+            return Err(format!("The session uses {}, but the VM checkout is on {}. Choose a matching VM or create one.", base.branch, if current.is_empty() {"detached HEAD"} else {current}));
+        }
+        worktree.verify_base().await?;
         if !valid_branch(current) {
             return Err("Select a named branch on the remote checkout".into());
         }

@@ -21,7 +21,7 @@ pub(crate) fn scene(s: &mut Workspace, name: &str) {
             "main"
         }
         .into(),
-        published_tip: (name == "remote-handoff").then(|| "a".repeat(40)),
+        published_tip: Some("a".repeat(40)),
         environment: (name != "remote-create").then(|| "project".into()),
     };
     let machine = Machine {
