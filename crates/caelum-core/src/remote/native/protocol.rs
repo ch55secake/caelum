@@ -3,7 +3,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
 pub(super) const VERSION: u32 = 1;
-const LIMIT: usize = 32 * 1024 * 1024;
+pub(super) const LIMIT: usize = 32 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct CommandFrame(pub u64, pub Command);

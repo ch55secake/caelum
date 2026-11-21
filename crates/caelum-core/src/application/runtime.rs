@@ -20,6 +20,7 @@ mod checkout_watch;
 mod conversation;
 mod handoff;
 mod messages;
+mod native;
 mod opencode;
 
 pub use messages::Command;

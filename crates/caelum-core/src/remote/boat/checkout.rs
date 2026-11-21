@@ -16,7 +16,7 @@ fn suitable(e: &SandboxEnvironment, repo: &str) -> bool {
         && matches!(e.selected_repositories.as_deref(), Some([r]) if r.full_name.as_ref().is_some_and(|name| name.eq_ignore_ascii_case(repo)))
 }
 
-pub(super) fn quote(s: &str) -> String {
+pub(in crate::remote) fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 

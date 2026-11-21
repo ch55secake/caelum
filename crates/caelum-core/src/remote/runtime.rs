@@ -57,7 +57,17 @@ impl Backend {
                 .map(super::models::model_lists)
                 .map(Outcome::Models)
                 .map_err(api),
-            Operation::Delete(key) => self.connected().await?.delete(key).await,
+            Operation::Delete(key) => {
+                let confirmed = self.connected().await?.delete(key).await?;
+                if let Outcome::Deleted(id) = &confirmed {
+                    if let Err(e) =
+                        super::native::retire(&crate::application::Store::default_path(), id)
+                    {
+                        eprintln!("Could not retire the deleted VM's native workspace: {e}");
+                    }
+                }
+                Ok(confirmed)
+            }
             Operation::Stats(key) => self.connected().await?.stats(key).await.map(Outcome::Stats),
             Operation::Git(target, action) => self
                 .connected()

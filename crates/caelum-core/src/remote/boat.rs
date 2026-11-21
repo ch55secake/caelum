@@ -6,6 +6,8 @@ mod setup_error;
 mod stats;
 mod tools;
 
+pub(super) use checkout::quote as checkout_quote;
+
 use super::{
     Host, Inventory, Lifetime, Machine, MachineId, Machines, Outcome, Plan, Source, Target,
 };
@@ -100,7 +102,7 @@ impl Boat {
                 .map(|time| time.unix_timestamp()),
         }
     }
-    fn owns(&self, key: &MachineId) -> Result<(), String> {
+    pub(super) fn owns(&self, key: &MachineId) -> Result<(), String> {
         if key.account == self.account && key.host == Host::Boat {
             Ok(())
         } else {
