@@ -108,6 +108,7 @@ pub(super) fn launcher(s: &Workspace, k: &Kit) -> El {
                     )
                     .child(
                         quiet_button(&ui::SERVER, "Run on remote machine…")
+                            .disabled(l.native.is_some())
                             .on_press(move |s: &mut Workspace| {
                                 crate::remote::open(s, remote_project.clone())
                             })
@@ -116,6 +117,7 @@ pub(super) fn launcher(s: &Workspace, k: &Kit) -> El {
                     )
                     .child(
                         quiet_button(&ui::BRANCH, "Create worktree for this project")
+                            .disabled(l.native.is_some())
                             .on_press(move |s: &mut Workspace| {
                                 crate::worktree::open(
                                     s,
@@ -132,6 +134,7 @@ pub(super) fn launcher(s: &Workspace, k: &Kit) -> El {
                     )
                     .child(
                         quiet_button(&ui::MORE, "Manage this project's worktrees")
+                            .disabled(l.native.is_some())
                             .on_press(move |s: &mut Workspace| {
                                 crate::checkouts::manage(s, manage_project.clone())
                             })
@@ -186,7 +189,7 @@ pub(super) fn launcher(s: &Workspace, k: &Kit) -> El {
             .scroll_bar(k),
     )
     .child(ui::divider(k))
-    .child(
+    .children(l.native.is_none().then(|| {
         row()
             .w_full()
             .gap(8.0)
@@ -196,8 +199,8 @@ pub(super) fn launcher(s: &Workspace, k: &Kit) -> El {
                     .build(k),
             )
             .child(rune::el().grow(1.0))
-            .child(crate::remote::create_button(k)),
-    )
+            .child(crate::remote::create_button(k))
+    }))
 }
 
 fn launch(s: &mut Workspace, path: &str) {

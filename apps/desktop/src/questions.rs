@@ -266,6 +266,9 @@ pub fn on_key(s: &mut Workspace, ev: &KeyEvent, tx: &mut Tx) -> bool {
 
 fn submit(s: &mut Workspace, prompt: &QuestionPrompt, dismiss: bool, tx: &mut Tx) {
     let l = live_mut(s);
+    if !crate::remote::native::ready(l) {
+        return;
+    }
     let owner = key(prompt);
     if !l.app.questions.iter().any(|p| matches_key(p, &owner)) {
         return;

@@ -26,6 +26,9 @@ pub fn configure(app: App<Workspace>) -> App<Workspace> {
         .on_close(|s, tx| {
             if let Some(live) = &mut s.live {
                 live.poll(tx);
+                if live.native.is_some() {
+                    tx.quit();
+                }
             }
         })
         .menu_item(
@@ -112,7 +115,7 @@ pub fn open_url(s: &mut Workspace, url: &str, _: &mut Tx) {
     let Some(state) = &s.live else {
         return;
     };
-    if state.evaluation || state.fixture {
+    if state.evaluation || state.fixture || state.native.is_some() {
         return;
     }
     match caelum_core::desktop::project_from_url(url) {
@@ -124,7 +127,7 @@ pub fn open_url(s: &mut Workspace, url: &str, _: &mut Tx) {
 fn activate(s: &mut Workspace, project: Option<String>) {
     // Activation can arrive while idle. Schedule the queued project-open effect.
     if let Some(project) = project
-        && s.live.is_some()
+        && s.live.as_ref().is_some_and(|l| l.native.is_none())
     {
         let live = live::live_mut(s);
         live.panels.screen = panels::Screen::Conversation;

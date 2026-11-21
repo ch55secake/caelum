@@ -5,6 +5,12 @@ use crate::{Workspace, panels};
 type Scene = (&'static str, fn(&mut Workspace));
 
 pub(crate) const SCENES: &[Scene] = &[
+    ("native-connected", |s| {
+        crate::remote::scene(s, "native-connected")
+    }),
+    ("native-offline", |s| {
+        crate::remote::scene(s, "native-offline")
+    }),
     ("remote-creating", |s| {
         crate::remote::scene(s, "remote-creating")
     }),

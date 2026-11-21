@@ -166,7 +166,8 @@ fn composer(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
                         .icon(&crate::SEND)
                         .variant(ButtonVariant::Contrast)
                         .disabled(
-                            l.app.home.opening()
+                            !crate::remote::native::ready(l)
+                                || l.app.home.opening()
                                 || l.app.home.attaching > 0
                                 || (l.home.editor.text.trim().is_empty()
                                     && l.app.home.draft.attachments.is_empty()),

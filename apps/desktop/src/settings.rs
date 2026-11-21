@@ -110,6 +110,9 @@ pub fn view(s: &Workspace, k: &Kit, layers: &mut Vec<El>) -> El {
         ("Notifications", Page::Notifications, &ui::BELL),
         ("About", Page::About, &crate::ORBIT),
     ] {
+        if live(s).native.is_some() && matches!(target, Page::Remote | Page::Worktrees) {
+            continue;
+        }
         nav = nav.child(
             k.interactive(
                 row()
@@ -679,7 +682,7 @@ fn about(s: &Workspace, k: &Kit) -> El {
                     .key("copy-app-details"),
             ),
     );
-    body = body.child(crate::updates::view(s, k));
+    body = body.children(live(s).native.is_none().then(|| crate::updates::view(s, k)));
     let mut links = row().w_full().gap(8.0);
     for (name, url, key) in [
         ("Source code", updates::REPOSITORY_URL, "about-repository"),
@@ -717,6 +720,7 @@ fn about(s: &Workspace, k: &Kit) -> El {
         row().justify_end().child(
             Button::new("Import JSON…")
                 .variant(ButtonVariant::Outline)
+                .disabled(live(s).native.is_some())
                 .on_press_tx(|_: &mut Workspace, tx| {
                     tx.open_file(
                         FileDialogOptions::default(),

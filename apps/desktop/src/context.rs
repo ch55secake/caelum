@@ -1,6 +1,11 @@
 //! App-owned context menus. Actions and editor selections belong to the clicked object.
+mod files;
+mod project;
 mod workspace;
 
+pub(crate) use files::path;
+pub(crate) use project::project;
+pub(crate) use project::remote_checkout;
 pub(crate) use workspace::button as workspace_button;
 pub(crate) use workspace::workspace;
 
@@ -14,10 +19,6 @@ use crate::{
 use caelum_core::application::{Attachment, Task};
 use rune::{El, Icon, Key, KeyEvent, PointerPress, TextEdit, Tx};
 use rune_kit::{Kit, MenuItem, glyphs};
-
-mod project;
-pub(crate) use project::project;
-pub(crate) use project::remote_checkout;
 
 type Choose = Box<dyn FnOnce(&mut Workspace, &str, &mut Tx)>;
 
@@ -389,7 +390,11 @@ pub fn file(
                         owner.is_some_and(|i| live(s).app.sessions[i].scope.project == project),
                     ),
             )
-            .item(Item::new("reveal", "Reveal in Finder").icon(&ui::FOLDER));
+            .item(
+                Item::new("reveal", "Reveal in Finder")
+                    .icon(&ui::FOLDER)
+                    .enabled(live(s).native.is_none()),
+            );
         show(s, at, origin.clone(), menu, move |s, pick, tx| match pick {
             "copy" => tx.copy(content.clone()),
             "path" => tx.copy(path.clone()),
@@ -473,89 +478,6 @@ pub fn worktree(el: El, project: String, path: String, origin: String) -> El {
             _ => {}
         });
     })
-}
-
-pub fn path(el: El, project: String, path: String, directory: bool, origin: String) -> El {
-    el.key(&origin)
-        .on_secondary_press(move |s: &mut Workspace, at, _| {
-            let owner = live(s).app.selected;
-            let project = project.clone();
-            let path = path.clone();
-            let opened = live(s)
-                .app
-                .services
-                .checkouts
-                .get(&project)
-                .is_some_and(|c| c.tabs.contains(&path));
-            let mut menu = Menu::new()
-                .item(
-                    Item::new(
-                        "open",
-                        if directory {
-                            "Open folder"
-                        } else {
-                            "Open file"
-                        },
-                    )
-                    .icon(if directory { &ui::FOLDER } else { &ui::FILE }),
-                )
-                .separator()
-                .item(Item::new("relative", "Copy relative path").icon(&glyphs::COPY))
-                .item(Item::new("full", "Copy full path"))
-                .item(Item::new("reveal", "Reveal in Finder").icon(&ui::FOLDER));
-            if !directory {
-                menu = menu.separator().item(
-                    Item::new("attach", "Add to prompt")
-                        .icon(&ui::EDIT)
-                        .enabled(
-                            owner.is_some_and(|i| live(s).app.sessions[i].scope.project == project),
-                        ),
-                );
-            }
-            if opened {
-                menu = menu.item(Item::new("close", "Close file").icon(&glyphs::CLOSE));
-            }
-            show(s, at, origin.clone(), menu, move |s, pick, tx| match pick {
-                "open" if directory => {
-                    let l = live_mut(s);
-                    l.app
-                        .preferences
-                        .files
-                        .entry(project.clone())
-                        .or_default()
-                        .expanded
-                        .insert(path.clone());
-                    l.app.task(Task::Directory {
-                        project,
-                        path,
-                        offset: 0,
-                    });
-                }
-                "open" => {
-                    live_mut(s).app.open_file(project, path);
-                    panels::show(s, panels::Screen::Files);
-                }
-                "relative" => tx.copy(path),
-                "full" => tx.copy(std::path::Path::new(&project).join(path).to_string_lossy()),
-                "reveal" => live_mut(s).app.task(Task::Reveal { project, path }),
-                "attach" if live(s).app.selected == owner => {
-                    if let Some(index) =
-                        owner.filter(|&i| live(s).app.sessions[i].scope.project == project)
-                    {
-                        live_mut(s).app.attach_file(index, path);
-                    }
-                }
-                "close" => {
-                    if let Some(c) = live_mut(s).app.services.checkouts.get_mut(&project) {
-                        c.tabs.retain(|p| p != &path);
-                        if c.selected_file.as_ref() == Some(&path) {
-                            c.selected_file = c.tabs.last().cloned();
-                        }
-                    }
-                }
-                _ => {}
-            });
-        })
 }
 
 pub fn link(s: &mut Workspace, index: usize, url: &str, at: PointerPress, _: &mut Tx) {

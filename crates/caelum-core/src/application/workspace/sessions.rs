@@ -2,6 +2,21 @@ use super::{update_summary, Pending, Session, Workspace};
 use crate::application::{Command, Provider, Scope, Summary};
 
 impl Workspace {
+    /// A tunnel loss is not the end of a provider turn. Keep its ID, editors and pending
+    /// forms; history and broker snapshots decide what is still active when it reconnects.
+    pub fn native_connection_lost(&mut self, project: &str) {
+        for session in self
+            .sessions
+            .iter_mut()
+            .filter(|s| s.scope.project == project)
+        {
+            session.revision += 1;
+            session.queue_paused = true;
+            session.disconnected = session.remote_id.is_some();
+            session.conversation.working = false;
+        }
+    }
+
     pub fn refresh_open_sessions(&mut self) {
         let sessions: Vec<_> = self
             .sessions

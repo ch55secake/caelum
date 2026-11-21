@@ -123,6 +123,14 @@ pub(super) fn project(s: &Workspace, k: &Kit) -> El {
 }
 
 pub(super) fn open_project(s: &mut Workspace, tx: &mut Tx) {
+    if let Some(native) = &live(s).native {
+        if let Ok(root) = native.target.root() {
+            let l = live_mut(s);
+            l.app.home_select_project(root);
+            l.home.menu = Menu::Closed;
+        }
+        return;
+    }
     let generation = live(s).app.home.generation();
     tx.open_folder(
         FileDialogOptions {

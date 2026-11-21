@@ -5,6 +5,7 @@ pub(crate) fn run() {
     let mut evaluation = false;
     let mut design = false;
     let mut project = None;
+    let mut native: Option<caelum_core::remote::native::NativeTarget> = None;
     let mut latency_workload = None;
     let mut args = Vec::new();
     let mut input = std::env::args().skip(1);
@@ -22,6 +23,14 @@ pub(crate) fn run() {
             "--fixtures" => fixtures = true,
             "--evaluation-workload" => evaluation = true,
             "--design-fixture" => design = true,
+            "--boat-workspace" => {
+                let target: caelum_core::remote::native::NativeTarget = input
+                    .next()
+                    .and_then(|v| serde_json::from_str(&v).ok())
+                    .unwrap_or_else(|| fail("Expected a Boat workspace identity"));
+                target.root().unwrap_or_else(|e| fail(&e));
+                native = Some(target);
+            }
             "--latency-workload" => {
                 latency_workload = input.next().as_deref().and_then(latency::Scenario::parse);
                 if latency_workload.is_none() {
@@ -70,7 +79,12 @@ pub(crate) fn run() {
     let production = !fixtures && !evaluation && !design && latency_workload.is_none();
     #[cfg(target_os = "linux")]
     let _instance = if production {
-        match super::linux::start(handle.clone(), project.clone()) {
+        let local = caelum_core::application::Store::default_path();
+        let store = native
+            .as_ref()
+            .map(|n| n.store_path(&local))
+            .unwrap_or(local);
+        match super::linux::start_for_state(handle.clone(), project.clone(), &store) {
             Ok(super::linux::Launch::Primary(instance)) => Some(instance),
             Ok(super::linux::Launch::Forwarded) => return,
             Err(error) => fail(&error),
@@ -90,6 +104,8 @@ pub(crate) fn run() {
             evaluation::workspace()
         } else if fixtures {
             Workspace::new()
+        } else if let Some(target) = native {
+            crate::remote::native::workspace(target)
         } else {
             home::workspace(project)
         };

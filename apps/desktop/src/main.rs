@@ -556,6 +556,16 @@ fn view(s: &Workspace, cx: &mut Cx<Workspace>) -> El {
     let mut shell_kit = k.clone();
     shell_kit.radius.lg = 0.0;
     shell_kit.c.border_muted = k.c.bg_base;
+    let main = if let Some(bar) = s.live.as_ref().and_then(|_| remote::native::banner(s, &k)) {
+        col()
+            .w_full()
+            .h_full()
+            .min_h(0.)
+            .child(bar)
+            .child(main.grow(1.).min_h(0.))
+    } else {
+        main
+    };
     let shell = SplitView::new(main)
         .sidebar(
             &sidebar_pane,

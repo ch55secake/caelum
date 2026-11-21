@@ -53,6 +53,7 @@ pub(crate) fn drawn(rt: &rune::Runtime<Workspace>) {
     if let Some(live) = &rt.state.live
         && !live.fixture
         && !live.evaluation
+        && live.native.is_none()
         && live.updates.startup.get() == Startup::Frame
         && let Some(handle) = &rt.state.handle
     {

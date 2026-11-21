@@ -93,6 +93,9 @@ pub fn changed(s: &mut Workspace, _: &mut Tx) {
 
 pub fn send(s: &mut Workspace, tx: &mut Tx) {
     let l = live_mut(s);
+    if !crate::remote::native::ready(l) {
+        return;
+    }
     let trace = l.latency.begin("send_home");
     l.app.home.draft.text.clone_from(&l.home.editor.text);
     if !l.app.home_project_available() {

@@ -10,6 +10,9 @@ use rune_kit::{ButtonVariant, IconButtonVariant, Kit, ScrollBar};
 
 pub(crate) fn button(s: &Workspace, k: &Kit, session: Option<usize>) -> El {
     let l = live(s);
+    if l.native.is_some() {
+        return rune::el();
+    }
     let linked = session.and_then(|i| l.app.linked_vm(i));
     let blocker = session
         .filter(|_| linked.is_none())

@@ -303,7 +303,7 @@ pub fn view(s: &Workspace, k: &Kit, index: usize, prompt: &QuestionPrompt, paddi
                             },
                         )
                         .variant(ButtonVariant::GhostMuted)
-                        .disabled(pending)
+                        .disabled(pending || !crate::remote::native::ready(l))
                         .on_press_tx(move |s: &mut Workspace, tx| submit(s, &dismiss, true, tx))
                         .build(k)
                         .key(format!("question-dismiss-{}", prompt.request_id))
@@ -312,7 +312,7 @@ pub fn view(s: &Workspace, k: &Kit, index: usize, prompt: &QuestionPrompt, paddi
                     .child(
                         ui::Button::new(submit_label)
                             .variant(ButtonVariant::Contrast)
-                            .disabled(pending)
+                            .disabled(pending || !crate::remote::native::ready(l))
                             .on_press_tx(move |s: &mut Workspace, tx| {
                                 submit(s, &submit_prompt, false, tx)
                             })

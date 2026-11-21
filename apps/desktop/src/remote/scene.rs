@@ -4,6 +4,10 @@ use caelum_core::remote::*;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(crate) fn scene(s: &mut Workspace, name: &str) {
+    if matches!(name, "native-connected" | "native-offline") {
+        super::native::scene(s, name == "native-offline");
+        return;
+    }
     let l = live_mut(s);
     let source = Source {
         project: l.app.projects[0].path.clone(),

@@ -1,7 +1,6 @@
 //! One desktop per persisted workspace, with event-driven activation over the session bus.
 use std::{path::Path, sync::mpsc, thread, time::Duration};
 
-use caelum_core::application::Store;
 use rune::AppHandle;
 use tokio::sync::oneshot;
 use zbus::{Connection, fdo::RequestNameFlags};
@@ -49,14 +48,7 @@ impl Activation {
     }
 }
 
-pub(super) fn start(
-    handle: AppHandle<Workspace>,
-    project: Option<String>,
-) -> Result<Launch, String> {
-    start_for_state(handle, project, &Store::default_path())
-}
-
-fn start_for_state(
+pub(super) fn start_for_state(
     handle: AppHandle<Workspace>,
     project: Option<String>,
     state: &Path,

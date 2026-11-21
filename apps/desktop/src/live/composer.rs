@@ -74,7 +74,8 @@ pub fn composer(s: &Workspace, k: &Kit, padding: f32, wide: bool, layers: &mut V
         .icon(if queued { &ui::QUEUE } else { &SEND })
         .variant(ButtonVariant::Contrast)
         .disabled(
-            !session.can_submit()
+            !crate::remote::native::ready(live)
+                || !session.can_submit()
                 || (!queued && !session.can_send())
                 || (draft.text.trim().is_empty() && session.attachments.is_empty()),
         )

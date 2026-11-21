@@ -4,6 +4,7 @@ mod conversation;
 mod create;
 mod handoff;
 mod launcher;
+pub(crate) mod native;
 mod picker;
 mod popup;
 mod provider;
@@ -45,6 +46,7 @@ use rune_kit::Kit;
 
 #[derive(Default)]
 pub(crate) struct State {
+    windows: native::Windows,
     key: TextEdit,
     form: picker::Form,
     folders: create::Folders,

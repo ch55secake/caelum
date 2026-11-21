@@ -1,5 +1,6 @@
 mod handoff;
 mod models;
+mod native;
 mod transcript;
 mod workspace;
 

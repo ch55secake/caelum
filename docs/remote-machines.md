@@ -1,11 +1,11 @@
 # Run Codex or OpenCode on Boat
 
-A remote machine has its own Git checkout and disk. Caelum sends messages to
+A remote machine has its own Git checkout and disk. Its managed VM chat sends messages to
 [Boat’s integrated Codex and OpenCode agents](https://docs.boat.dev/platform-guide/agents.md).
 Set each provider’s default model and credentials in [Boat → Agents & Proxying](https://boat.dev/dashboard?tab=agents).
 The VM composer can override that default for a chat. The local model,
 reasoning effort and primary agent (Build, Plan or custom) do not transfer. There is no
-Caelum agent or OpenCode server to install on the VM.
+additional install for managed chat. You can also open the checkout as a native Caelum workspace over SSH.
 
 ## Create or attach a checkout
 
@@ -31,7 +31,32 @@ current single-repo environment for the project's GitHub origin. **Resume** a
 stopped machine to use its saved disk; attaching keeps its current branch.
 If setup fails, **Refresh checkout** retries that checkout on the same machine.
 
-### Connected, but Create VM returns 403
+## Open a native workspace
+
+On a running, ready checkout, click **Open native workspace** above the VM
+transcript, or choose it from the VM’s sidebar menu. A separate Caelum window
+opens on the VM checkout. Start with OpenCode, or choose Codex in **New session**.
+The normal session list, model and effort pickers, transcript, questions,
+approvals and background-shell output use the provider installed on the VM.
+**Files** and **Changes** read that checkout. Opening a window or switching
+sessions does not submit a message.
+
+The Boat key needs the [`ssh` action](https://docs.boat.dev/ssh-access).
+Caelum installs its matching Linux peer on first use and uses the VM’s own
+provider configuration and credentials. Drafts and session settings are kept
+on this computer, separately for each account, machine and repository. The
+managed conversation, including any handoff draft, stays in its original window.
+
+If SSH drops, you can keep editing. Caelum tries to reconnect once; if the VM
+has stopped, **Resume** it in the original window and click **Reconnect** in
+the native one. The connection verifies the new host key, reloads history and
+restores pending questions and approvals. Check the transcript before retrying
+a message marked unconfirmed. Closing the window detaches; it does not stop
+the VM. SSH activity does **not** extend Boat’s auto-stop timer.
+
+![A disconnected native workspace with its OpenCode session and unsent draft still visible](design/previews/rune-light-native-offline-small.png)
+
+## Connected, but Create VM returns 403
 
 Connecting checks that the key can read the account and list VMs. Creating a VM
 needs `sandbox.create` for its environment. **First-time repository setup also
