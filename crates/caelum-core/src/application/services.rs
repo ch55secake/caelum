@@ -355,11 +355,7 @@ impl Task {
             } => reply!(files::search_project(project, query, *mode, false), Search),
             Self::Git { project } => {
                 let status = git.repository_status(project).map_err(|e| e.to_string())?;
-                let branches = runtime
-                    .branches
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .refresh_checkout(&status);
+                let branches = runtime.branches.refresh_checkout(&status);
                 Ok(TaskReply::Git(status, branches))
             }
             Self::Diff { project, path } => reply!(git.file_diff(project, path), Diff),

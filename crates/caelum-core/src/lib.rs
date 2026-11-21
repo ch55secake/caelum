@@ -2,6 +2,7 @@
 
 pub mod application;
 pub mod approvals;
+mod blocking_actor;
 pub mod codex;
 pub mod database;
 pub mod desktop;

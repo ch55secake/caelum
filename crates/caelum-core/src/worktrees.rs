@@ -3,31 +3,102 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
     process::{Command, Output},
-    sync::{Arc, Mutex},
 };
 
 use caelum_protocol::{GitWorktree, GitWorktrees, ProjectInfo};
 use thiserror::Error;
 
-use crate::projects::{Project, ProjectError};
+use crate::{
+    blocking_actor::BlockingActor,
+    projects::{Project, ProjectError},
+};
 
 /// Git owns checkout discovery and removal. The application only chooses a
 /// destination and remembers how checkouts are grouped in its workspace.
+/// Operations block and must run on synchronous background workers.
 #[derive(Clone)]
 pub struct WorktreeClient {
+    paths: WorktreePaths,
+    operations: BlockingActor<WorktreePaths>,
+}
+
+#[derive(Clone)]
+struct WorktreePaths {
     home: PathBuf,
-    operations: Arc<Mutex<()>>,
 }
 
 impl WorktreeClient {
     pub fn new(home: PathBuf) -> Self {
+        let paths = WorktreePaths { home };
         Self {
-            home,
-            operations: Arc::new(Mutex::new(())),
+            operations: BlockingActor::spawn("caelum-worktrees", paths.clone()),
+            paths,
         }
     }
 
     pub fn list(
+        &self,
+        path: impl AsRef<Path>,
+        base_directory: &str,
+    ) -> Result<Option<GitWorktrees>, WorktreeError> {
+        self.paths.list(path, base_directory)
+    }
+
+    pub fn destination(
+        &self,
+        path: impl AsRef<Path>,
+        branch: &str,
+        base_directory: &str,
+    ) -> Result<PathBuf, WorktreeError> {
+        self.paths.destination(path, branch, base_directory)
+    }
+
+    pub fn create(
+        &self,
+        path: impl AsRef<Path>,
+        branch: &str,
+        base: &str,
+        base_directory: &str,
+    ) -> Result<GitWorktree, WorktreeError> {
+        let path = path.as_ref().to_owned();
+        let (branch, base, directory) = (
+            branch.to_owned(),
+            base.to_owned(),
+            base_directory.to_owned(),
+        );
+        self.operations
+            .call(move |paths| paths.create(path, &branch, &base, &directory))
+            .ok_or(WorktreeError::WorkerStopped)?
+    }
+
+    pub fn remove(
+        &self,
+        project_path: impl AsRef<Path>,
+        worktree_path: &str,
+    ) -> Result<GitWorktree, WorktreeError> {
+        let project = project_path.as_ref().to_owned();
+        let worktree = worktree_path.to_owned();
+        self.operations
+            .call(move |paths| paths.remove(project, &worktree))
+            .ok_or(WorktreeError::WorkerStopped)?
+    }
+
+    pub fn rename(
+        &self,
+        project_path: impl AsRef<Path>,
+        worktree_path: &str,
+        name: &str,
+    ) -> Result<GitWorktree, WorktreeError> {
+        let project = project_path.as_ref().to_owned();
+        let (worktree, name) = (worktree_path.to_owned(), name.to_owned());
+        self.operations
+            .call(move |paths| paths.rename(project, &worktree, &name))
+            .ok_or(WorktreeError::WorkerStopped)?
+    }
+}
+
+impl WorktreePaths {
+    fn list(
         &self,
         path: impl AsRef<Path>,
         base_directory: &str,
@@ -132,7 +203,7 @@ impl WorktreeClient {
         }))
     }
 
-    pub fn destination(
+    fn destination(
         &self,
         path: impl AsRef<Path>,
         branch: &str,
@@ -146,17 +217,13 @@ impl WorktreeClient {
         Ok(destination_preview(&listing, branch))
     }
 
-    pub fn create(
+    fn create(
         &self,
         path: impl AsRef<Path>,
         branch: &str,
         base: &str,
         base_directory: &str,
     ) -> Result<GitWorktree, WorktreeError> {
-        let _guard = self
-            .operations
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
         let project = Project::open(path)?;
         let destination = self.destination(project.path(), branch, base_directory)?;
 
@@ -218,15 +285,11 @@ impl WorktreeClient {
             .ok_or(WorktreeError::UnknownWorktree)
     }
 
-    pub fn remove(
+    fn remove(
         &self,
         project_path: impl AsRef<Path>,
         worktree_path: &str,
     ) -> Result<GitWorktree, WorktreeError> {
-        let _guard = self
-            .operations
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
         let project = Project::open(project_path)?;
         let entry = self
             .list(project.path(), "")?
@@ -252,16 +315,12 @@ impl WorktreeClient {
         Ok(entry)
     }
 
-    pub fn rename(
+    fn rename(
         &self,
         project_path: impl AsRef<Path>,
         worktree_path: &str,
         name: &str,
     ) -> Result<GitWorktree, WorktreeError> {
-        let _guard = self
-            .operations
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
         let project = Project::open(project_path)?;
         let listing = self
             .list(project.path(), "")?
@@ -516,6 +575,8 @@ fn command_error(output: Output) -> WorktreeError {
 
 #[derive(Debug, Error)]
 pub enum WorktreeError {
+    #[error("Worktree worker stopped.")]
+    WorkerStopped,
     #[error(transparent)]
     Project(#[from] ProjectError),
     #[error("worktree filesystem operation failed: {0}")]
@@ -595,6 +656,30 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn cloned_clients_serialize_creates_with_the_same_destination() {
+        let test = Repository::new();
+        let (first, second) = std::thread::scope(|scope| {
+            let create = || {
+                test.client
+                    .clone()
+                    .create(&test.repo, "feature", "main", "")
+            };
+            let first = scope.spawn(create);
+            let second = scope.spawn(create);
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        let entry = match (first, second) {
+            (Ok(entry), Err(WorktreeError::Occupied(path)))
+            | (Err(WorktreeError::Occupied(path)), Ok(entry)) => {
+                assert_eq!(Path::new(&entry.path), path);
+                entry
+            }
+            results => panic!("expected one successful create and one occupied path: {results:?}"),
+        };
+        assert!(Path::new(&entry.path).is_dir());
     }
 
     #[test]

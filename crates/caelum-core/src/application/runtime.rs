@@ -21,6 +21,7 @@ mod conversation;
 mod handoff;
 mod messages;
 mod opencode;
+mod worker;
 
 pub use messages::Command;
 pub use messages::Event;
@@ -37,7 +38,7 @@ pub struct ProviderRuntime {
     pub processes: Arc<ProcessRegistry>,
     remote: Arc<crate::remote::Backend>,
     pub worktrees: crate::worktrees::WorktreeClient,
-    pub branches: Arc<Mutex<crate::session_branches::SessionBranches>>,
+    pub branches: crate::session_branches::SessionBranches,
     pub(super) review_cache: Arc<Mutex<Option<crate::github::cache::Cache>>>,
     pub(super) updates: crate::updates::Backend,
 }
@@ -61,9 +62,7 @@ impl Default for ProviderRuntime {
             worktrees: crate::worktrees::WorktreeClient::new(
                 std::env::var_os("HOME").unwrap_or_default().into(),
             ),
-            branches: Arc::new(Mutex::new(crate::session_branches::SessionBranches::new(
-                None,
-            ))),
+            branches: crate::session_branches::SessionBranches::new(None),
             review_cache: Arc::default(),
             updates: Default::default(),
         }
@@ -175,8 +174,7 @@ impl ProviderRuntime {
                     let database =
                         crate::database::WorkspaceDatabase::open(parent.join("branches.sqlite3"))
                             .map_err(|e| e.to_string())?;
-                    *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
-                        crate::session_branches::SessionBranches::new(Some(database));
+                    self.branches.reset(database)?;
                 }
                 return Ok(Reply::Snapshot(snapshot.map(Box::new)));
             }
@@ -226,17 +224,12 @@ impl ProviderRuntime {
                         .session_details(&key.scope.project, &key.id)
                         .map_err(|e| e.to_string())?,
                 };
-                return Ok(Reply::Details(
-                    self.branches
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .details(
-                            &key.scope.project,
-                            key.scope.provider.as_str(),
-                            &key.id,
-                            details,
-                        ),
-                ));
+                return Ok(Reply::Details(self.branches.details(
+                    &key.scope.project,
+                    key.scope.provider.as_str(),
+                    &key.id,
+                    details,
+                )));
             }
             Command::Open(path) => {
                 return Project::open(path)
@@ -524,14 +517,14 @@ pub struct Runtime {
     checkout_watch: Option<mpsc::Sender<Vec<String>>>,
     watched_projects: Vec<String>,
     providers: Option<ProviderRuntime>,
-    requests: SyncSender<(u64, Command)>,
-    history: SyncSender<(u64, Command)>,
-    control: SyncSender<(u64, Command)>,
+    requests: tokio::sync::mpsc::Sender<worker::Request>,
+    history: tokio::sync::mpsc::Sender<worker::Request>,
+    control: tokio::sync::mpsc::Sender<worker::Request>,
     inbox: Option<Receiver<Event>>,
     sender: SyncSender<Event>,
     wake: Arc<dyn Fn() + Send + Sync>,
     closed: Arc<AtomicBool>,
-    workers: Vec<JoinHandle<()>>,
+    workers: Option<worker::Workers>,
     forwarders: Vec<JoinHandle<()>>,
 }
 
@@ -554,20 +547,14 @@ impl Runtime {
             .observe(runtime.sender.clone(), runtime.wake.clone());
         let branches = providers.branches.clone();
         runtime.forward(providers.codex.subscribe(), move |event| {
-            let update = branches
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .codex_event(&event);
+            let update = branches.codex_event(&event);
             std::iter::once(Event::Codex(event))
                 .chain(update.map(Event::Branch))
                 .collect()
         });
         let branches = providers.branches.clone();
         runtime.forward(providers.opencode.subscribe(), move |event| {
-            let update = branches
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .opencode_event(&event);
+            let update = branches.opencode_event(&event);
             std::iter::once(Event::OpenCode(event))
                 .chain(update.map(Event::Branch))
                 .collect()
@@ -622,44 +609,19 @@ impl Runtime {
 
     pub(super) fn with_executor(execute: Execute, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         let (sender, inbox) = mpsc::sync_channel(1024);
-        let (requests, normal) = mpsc::sync_channel(1024);
-        let (history, conversations) = mpsc::sync_channel(128);
-        let (control, urgent) = mpsc::sync_channel(128);
+        let (requests, normal) = tokio::sync::mpsc::channel(1024);
+        let (history, conversations) = tokio::sync::mpsc::channel(128);
+        let (control, urgent) = tokio::sync::mpsc::channel(128);
         let closed = Arc::new(AtomicBool::new(false));
-        let mut workers = Vec::new();
-
-        for (receiver, count) in [(normal, 8), (conversations, 2), (urgent, 2)] {
-            let receiver = Arc::new(Mutex::new(receiver));
-            for _ in 0..count {
-                let receiver = receiver.clone();
-                let execute = execute.clone();
-                let sender = sender.clone();
-                let wake = wake.clone();
-                let closed = closed.clone();
-                workers.push(thread::spawn(move || {
-                    while !closed.load(Ordering::Acquire) {
-                        let request = receiver
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .recv_timeout(Duration::from_millis(50));
-                        match request {
-                            Ok((id, command)) => {
-                                let _context = crate::diagnostics::context(id);
-                                crate::diagnostics::command("started", id, &command);
-                                let result = execute(&command);
-                                crate::diagnostics::command("finished", id, &command);
-                                if sender.send(Event::Completed(id, result)).is_err() {
-                                    break;
-                                }
-                                wake();
-                            }
-                            Err(RecvTimeoutError::Timeout) => continue,
-                            Err(RecvTimeoutError::Disconnected) => break,
-                        }
-                    }
-                }));
-            }
-        }
+        let workers = worker::Workers::start(
+            normal,
+            conversations,
+            urgent,
+            execute,
+            sender.clone(),
+            wake.clone(),
+            closed.clone(),
+        );
         Self {
             checkout_watch: None,
             watched_projects: Vec::new(),
@@ -671,7 +633,7 @@ impl Runtime {
             sender,
             wake,
             closed,
-            workers,
+            workers: Some(workers),
             forwarders: Vec::new(),
         }
     }
@@ -770,10 +732,11 @@ impl Drop for Runtime {
         self.closed.store(true, Ordering::Release);
         self.checkout_watch.take();
         self.inbox.take();
+        let workers = self.workers.take().map(worker::Workers::stop);
         if let Some(providers) = &self.providers {
             providers.shutdown();
         }
-        for worker in self.forwarders.drain(..).chain(self.workers.drain(..)) {
+        for worker in self.forwarders.drain(..).chain(workers) {
             let _ = worker.join();
         }
     }

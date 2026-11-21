@@ -34,9 +34,10 @@ attachment/project requests. First send creates a fresh stable session only afte
 admission, transferring its captured context through the normal durable submission
 path. Home request generations reject results for an older target or draft.
 
-`Runtime` uses eight normal workers, two conversation workers, two control workers,
-bounded command queues, a 1,024-event inbox and 256-event UI drains. Arrival wakes
-Rune; provider I/O does not run on the UI thread. Cancellation and permission
+`Runtime` dispatches from three bounded Tokio mailboxes with separate limits for
+blocking work: eight normal, two conversation and two control commands at a time.
+It uses a 1,024-event inbox and 256-event UI drains. Arrival wakes Rune; provider
+I/O does not run on the UI thread. Cancellation and permission
 replies bypass the normal persistence gate. Resume, history pagination and inbox
 recovery have reserved workers so background catalogues, diffs and discovery
 cannot occupy their capacity.
@@ -163,6 +164,9 @@ pending requests and Git dirty/locked state; it preserves branches and commits.
 branches across restart/archive. Concurrent sessions in the same checkout do not
 claim each other's changes. Linked worktrees remain independent. Provider-native
 metadata can seed Codex history; idle sessions keep their historical associations.
+Session branch tracking and worktree mutations each have a single owner behind a
+bounded Tokio mailbox. Their blocking Git and SQLite operations run on dedicated
+threads; worktree listings do not have to wait for the mutation queue.
 
 GitHub operations use authenticated `gh` through bounded subprocesses. Discovery
 follows recorded branches and stacked bases, deduplicating canonical PR URLs.

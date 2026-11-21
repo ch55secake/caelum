@@ -110,6 +110,59 @@ fn history_and_controls_progress_while_background_workers_are_occupied() {
 }
 
 #[test]
+fn saturated_command_lane_applies_backpressure_without_blocking_controls() {
+    let background = Gate::default();
+    let (entered, started) = mpsc::channel();
+    let (wake, wakes) = mpsc::channel();
+    let mut runtime = Runtime::with_executor(
+        {
+            let background = background.clone();
+            Arc::new(move |command| {
+                if matches!(command, Command::Open(_)) {
+                    let _ = entered.send(());
+                    background.wait();
+                }
+                Ok(Reply::Done)
+            })
+        },
+        Arc::new(move || {
+            let _ = wake.send(());
+        }),
+    );
+    let _release = Release(background, Gate::default());
+    for id in 0..8 {
+        runtime
+            .submit(id, Command::Open("/project".into()))
+            .unwrap();
+    }
+    for _ in 0..8 {
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+    for id in 8..1032 {
+        runtime
+            .submit(id, Command::Open("/project".into()))
+            .unwrap();
+    }
+    assert!(runtime
+        .submit(1032, Command::Open("/project".into()))
+        .is_err());
+    runtime
+        .submit(
+            1033,
+            Command::Cancel(SessionKey {
+                scope: scope(Provider::OpenCode, "/project"),
+                id: "session".into(),
+            }),
+        )
+        .unwrap();
+    wakes.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(
+        runtime.drain().as_slice(),
+        [Event::Completed(1033, Ok(Reply::Done))]
+    ));
+}
+
+#[test]
 fn blocking_requests_run_independently_and_wake_the_consumer() {
     let (release, gate) = mpsc::channel();
     let gate = Mutex::new(gate);
