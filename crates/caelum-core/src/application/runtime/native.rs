@@ -5,6 +5,9 @@ use crate::{
 };
 use std::{path::PathBuf, sync::Arc};
 
+#[cfg(test)]
+mod tests;
+
 impl Runtime {
     /// Desktop-side workers for a native VM window. No provider event subscriptions or laptop
     /// checkout watchers are started. Reject project operations even if misrouted by a caller.

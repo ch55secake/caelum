@@ -343,10 +343,21 @@ async fn exchange(
     };
     let write = async {
         while let Some(request) = rx.recv().await {
-            let mut data = Vec::new();
-            if let Err(e) = protocol::write_frame(&mut data, &request) {
-                return e.to_string();
-            }
+            let data = match protocol::encode(&request) {
+                Ok(data) => data,
+                Err(e) => {
+                    let id = request.0;
+                    out.send(Notice::Event(Box::new(Event::Completed(
+                        id,
+                        Err(e.to_string()),
+                    ))))
+                    .await;
+                    if let Some(active) = link.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                        active.pending.remove(&id);
+                    }
+                    continue;
+                }
+            };
             if output.write_all(&data).await.is_err() || output.flush().await.is_err() {
                 return "Could not write to the VM connection.".into();
             }

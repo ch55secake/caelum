@@ -6,7 +6,7 @@ Caelum integrates with the locally installed Codex CLI through its official app-
 
 1. Install the [Codex CLI](https://developers.openai.com/codex/cli) and make `codex` available on `PATH`. Finder launches also discover Homebrew, Nix, npm-global, Volta, Bun, mise/asdf and nvm installations. The child PATH includes the selected installation's runtime directory. If the executable is elsewhere, add it to `PATH` before launching Caelum.
 2. Sign in from a terminal with `codex login`. Check the current auth state with `codex login status`.
-3. Open a project in Caelum. Codex sessions are listed by the selected project's working directory; new threads use Codex's `workspaceWrite` sandbox and `unlessTrusted` approval policy.
+3. Open a project in Caelum. Codex sessions are listed by the selected project's working directory; new threads request the `workspace-write` sandbox and `untrusted` approval policy.
 
 Caelum relies on Codex-managed credentials and does not copy or store them. Missing installation and authentication appear with setup guidance in the relevant session/model picker and **Settings → Providers**. Use **Refresh status** after installing or signing in.
 

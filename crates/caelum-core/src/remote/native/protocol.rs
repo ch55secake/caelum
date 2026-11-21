@@ -40,13 +40,35 @@ pub(super) fn read_frame<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<
     serde_json::from_slice(&bytes).map_err(io::Error::other)
 }
 
-pub(super) fn write_frame<W: Write, T: Serialize>(w: &mut W, value: &T) -> io::Result<()> {
-    let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
-    if bytes.len() > LIMIT {
-        return Err(io::Error::other("Native workspace response exceeds 32 MiB"));
+/// Bound the encoder as well as the reader: large tool histories or pasted attachments
+/// must not allocate an unbounded temporary buffer before their size is checked.
+pub(super) fn encode(value: &impl Serialize) -> io::Result<Vec<u8>> {
+    struct Buffer(Vec<u8>);
+    impl Write for Buffer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes.len() > LIMIT + 4 - self.0.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Native workspace frame exceeds 32 MiB",
+                ));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
-    w.write_all(&(bytes.len() as u32).to_be_bytes())?;
-    w.write_all(&bytes)?;
+    let mut frame = Buffer(vec![0; 4]);
+    serde_json::to_writer(&mut frame, value)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let length = (frame.0.len() - 4) as u32;
+    frame.0[..4].copy_from_slice(&length.to_be_bytes());
+    Ok(frame.0)
+}
+
+pub(super) fn write_frame<W: Write, T: Serialize>(w: &mut W, value: &T) -> io::Result<()> {
+    w.write_all(&encode(value)?)?;
     w.flush()
 }
 

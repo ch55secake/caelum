@@ -10,8 +10,10 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
+from contextlib import nullcontext
 
 import asyncssh  # Only needed on the fixture host.
+from native_responses import model
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +23,7 @@ CLI = ROOT / "target/debug/caelum"
 BOOT = (ROOT / "crates/caelum-core/src/remote/native/bootstrap.sh").read_text()
 
 
-async def run(home, real_opencode):
+async def run(home, real_opencode, real_codex, api, calls):
     project = home / "project"
     project.mkdir()
     binary = home / ".local/bin"
@@ -34,8 +36,9 @@ async def run(home, real_opencode):
     shutil.copy2(CLI, peer)
     for name in ("opencode", "codex"):
         source = ROOT / f"crates/caelum-core/src/{name}/tests/fixtures"
-        if name == "opencode" and real_opencode:
-            (binary / name).symlink_to(Path(real_opencode).resolve())
+        installed = real_opencode if name == "opencode" else real_codex
+        if installed:
+            (binary / name).symlink_to(Path(installed).resolve())
             continue
         elif name == "opencode":
             shutil.copy2(source / "managed_server.py", binary / name)
@@ -43,6 +46,31 @@ async def run(home, real_opencode):
             shutil.copy2(source / "server.py", binary / "codex.py")
             (binary / name).write_text('#!/bin/sh\n[ "$1" = login ] && exit 0\nexec python3 "$HOME/.local/bin/codex.py"\n')
         (binary / name).chmod(0o700)
+
+    if real_opencode:
+        remote["CAELUM_TEST_KEY"] = "test-key"
+        (project / "opencode.json").write_text(json.dumps({
+            "$schema": "https://opencode.ai/config.json", "model": "fixture/checkout",
+            "providers": {"fixture": {
+                "package": "@opencode/ai/providers/openai-compatible/responses",
+                "env": ["CAELUM_TEST_KEY"], "settings": {"baseURL": api},
+                "models": {"checkout": {"name": "Checkout fixture"}},
+            }},
+        }))
+    if real_codex:
+        config = home / ".codex"
+        config.mkdir()
+        (config / "config.toml").write_text(f'''model_provider = "fixture"
+model = "gpt-5"
+cli_auth_credentials_store = "file"
+[model_providers.fixture]
+name = "SSH fixture"
+base_url = "{api}"
+wire_api = "responses"
+env_key = "CAELUM_TEST_KEY"
+''')
+        remote.update(CODEX_HOME=str(config), CAELUM_TEST_KEY="test-key")
+        subprocess.run([binary / "codex", "login", "--with-api-key"], env=remote, input=b"test-key\n", check=True)
 
     def git(*args):
         subprocess.run(["git", *args], cwd=project, env=remote, check=True, stdout=subprocess.DEVNULL)
@@ -64,9 +92,14 @@ async def run(home, real_opencode):
     login.write_private_key(home / "client")
     (home / "client").chmod(0o600)
     login.write_public_key(home / "client.pub")
-    phases = ["native_workspace_over_openssh"] if not real_opencode else ["native_new_session_over_openssh", "native_resume_after_vm_stop"]
+    phases = ["native_new_session_over_openssh", "native_resume_after_vm_stop"] if real_opencode or real_codex else ["native_workspace_over_openssh"]
     for phase in phases:
+        previous = len(calls)
         await exercise(home, remote, peer, phase)
+        if phase == "native_new_session_over_openssh":
+            assert len(calls) == 1 if real_codex else len(calls) >= 1
+        elif phase == "native_resume_after_vm_stop":
+            assert len(calls) == previous, "resuming history contacted the model again"
 
 
 async def exercise(home, remote, peer, phase):
@@ -121,7 +154,8 @@ async def exercise(home, remote, peer, phase):
                 await asyncio.sleep(0.02)
         test = await asyncio.create_subprocess_exec(
             "cargo", "test", "--locked", "-p", "caelum-core", phase, "--", "--ignored",
-            cwd=ROOT, env={**os.environ, "CAELUM_NATIVE_SSH_FIXTURE": str(home)},
+            cwd=ROOT, env={**os.environ, "CAELUM_NATIVE_SSH_FIXTURE": str(home),
+                           "CAELUM_NATIVE_SMOKE_PROVIDER": "codex" if "CODEX_HOME" in remote else "opencode"},
         )
         if await test.wait():
             raise RuntimeError("native workspace smoke failed")
@@ -141,10 +175,13 @@ async def exercise(home, remote, peer, phase):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--real-opencode", metavar="BINARY", help="create and resume a real OpenCode session without model inference")
+    providers = parser.add_mutually_exclusive_group()
+    providers.add_argument("--real-opencode", metavar="BINARY", help="stream and cold-resume a real OpenCode session using a loopback Responses fixture")
+    providers.add_argument("--real-codex", metavar="BINARY", help="stream and cold-resume a real Codex thread using a loopback Responses fixture")
     args = parser.parse_args()
     subprocess.run(["cargo", "build", "--locked", "-p", "caelum-cli"], check=True, cwd=ROOT)
     # sockaddr_un is only 104 bytes on macOS; some TMPDIRs alone occupy most of that.
     parent = Path(tempfile.gettempdir()).resolve()
     with tempfile.TemporaryDirectory(prefix="cw-", dir=parent if len(os.fsencode(parent)) < 34 else "/tmp") as temp:
-        asyncio.run(run(Path(temp).resolve(), args.real_opencode))
+        with model() if args.real_codex or args.real_opencode else nullcontext((None, [])) as (api, calls):
+            asyncio.run(run(Path(temp).resolve(), args.real_opencode, args.real_codex, api, calls))

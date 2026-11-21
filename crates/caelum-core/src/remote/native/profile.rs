@@ -11,7 +11,7 @@ use std::{
 };
 
 fn owner(parent: &Path, machine: &MachineId) -> PathBuf {
-    parent.with_extension("native").join(digest(
+    parent.with_added_extension("native").join(digest(
         &serde_json::to_vec(machine).expect("machine identity"),
     ))
 }

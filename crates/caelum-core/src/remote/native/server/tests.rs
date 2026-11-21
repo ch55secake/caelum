@@ -32,6 +32,25 @@ fn request(c: &mut UnixStream, id: u64, op: Op) -> (Result<Reply, String>, Vec<E
 }
 
 #[test]
+fn oversized_history_fails_its_request_without_disconnect_or_partial_frame() {
+    let (mut local, peer) = UnixStream::pair().unwrap();
+    let mut peer = Some(peer);
+    deliver(
+        &mut peer,
+        Event::Completed(
+            7,
+            Ok(Reply::Generated("x".repeat(super::super::protocol::LIMIT))),
+        ),
+    );
+    assert!(matches!(event(&mut local),Event::Completed(7,Err(e)) if e.contains("32 MiB")));
+    deliver(&mut peer, Event::Completed(8, Ok(Reply::Done)));
+    assert!(matches!(
+        event(&mut local),
+        Event::Completed(8, Ok(Reply::Done))
+    ));
+}
+
+#[test]
 fn reconnect_reads_native_history_and_files_without_replaying_a_provider_turn() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");
@@ -147,6 +166,13 @@ fn reconnect_reads_native_history_and_files_without_replaying_a_provider_turn() 
         }),
     );
     assert!(matches!(recovered,Ok(Reply::Resumed(_,p)) if !p.data.is_empty()));
+    let moved = SessionKey {
+        scope: scope(Provider::OpenCode),
+        id: "ses_foreign".into(),
+    };
+    assert!(
+        matches!(request(&mut next,3,Op::Resume(moved)).0,Err(e) if e.contains("outside the selected VM checkout"))
+    );
     assert!(!path.exists(), "reconnecting replayed the Codex prompt");
     tx.send(Action::Shutdown).unwrap();
     drop(next);

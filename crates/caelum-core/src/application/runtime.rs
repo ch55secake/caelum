@@ -72,6 +72,20 @@ impl Default for ProviderRuntime {
 }
 
 impl ProviderRuntime {
+    /// Persist Git attribution and review metadata beside the workspace that owns the reads.
+    pub(crate) fn open_metadata(&self, path: &std::path::Path) -> Result<(), String> {
+        *self.review_cache.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(crate::github::cache::Cache::for_store(path));
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            let db = crate::database::WorkspaceDatabase::open(parent.join("branches.sqlite3"))
+                .map_err(|e| e.to_string())?;
+            *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
+                crate::session_branches::SessionBranches::new(Some(db));
+        }
+        Ok(())
+    }
+
     pub fn shutdown(&self) {
         self.remote.shutdown();
         self.updates.shutdown();
@@ -168,18 +182,9 @@ impl ProviderRuntime {
             Command::Notify(_) => Err("Desktop notifications require a desktop handler".into()),
             Command::Task(task) => return task.execute(self).map(Reply::Task),
             Command::Load(store) => {
-                *self.review_cache.lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(crate::github::cache::Cache::for_store(&store.0));
                 store.migrate_default()?;
                 let snapshot = store.load()?;
-                if let Some(parent) = store.0.parent().filter(|p| !p.as_os_str().is_empty()) {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                    let database =
-                        crate::database::WorkspaceDatabase::open(parent.join("branches.sqlite3"))
-                            .map_err(|e| e.to_string())?;
-                    *self.branches.lock().unwrap_or_else(|e| e.into_inner()) =
-                        crate::session_branches::SessionBranches::new(Some(database));
-                }
+                self.open_metadata(&store.0)?;
                 return Ok(Reply::Snapshot(snapshot.map(Box::new)));
             }
             Command::Save(store, state) => return store.save(state).map(|()| Reply::Done),

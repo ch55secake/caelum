@@ -54,9 +54,11 @@ see the [desktop development guide](../apps/desktop/README.md).
 
 `nix develop -c python3 scripts/dev/smoke_native_workspace.py` exercises the
 desktop transport and headless CLI over a pinned loopback SSH connection, using
-a temporary Git checkout and provider fixtures. To exercise a real OpenCode V2
-binary across a worker restart and host-key change without model inference, pass
-`--real-opencode /path/to/opencode`. Both modes use a temporary home.
+a temporary Git checkout and provider fixtures. To stream a real provider turn
+and recover the history after a worker restart and host-key change, pass
+`--real-opencode /path/to/opencode` or `--real-codex /path/to/codex`. A loopback
+Responses fixture supplies the model output and checks that reconnecting does
+not ask for another answer. All modes use a temporary home.
 
 An unreleased desktop needs a peer from the same source revision: extract
 `usr/bin/caelum` from that build’s Linux AppImage for the VM architecture and

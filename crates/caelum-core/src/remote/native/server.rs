@@ -1,6 +1,6 @@
 //! A single, checkout-owned provider runtime outlives SSH connections. No TCP listener.
 use super::protocol::{admitted, read_frame, write_frame, CommandFrame, ServerFrame, VERSION};
-use crate::application::{Event, ProviderRuntime, Runtime};
+use crate::application::{Event, ProviderRuntime, Reply, Runtime};
 use crate::remote::{checkout::repo_name, github_slug};
 use std::{
     collections::HashMap,
@@ -138,6 +138,12 @@ fn serve(socket: &Path, root: String, repository: String) -> Result<(), String> 
         .open(socket.with_extension("lock"))
         .map_err(error)?;
     lock.try_lock().map_err(error)?;
+    let providers = ProviderRuntime::default();
+    let state = socket
+        .parent()
+        .expect("checkout socket directory")
+        .join(super::digest(repository.to_ascii_lowercase().as_bytes()));
+    providers.open_metadata(&state.join("checkout"))?;
     if socket.exists() {
         fs::remove_file(socket).map_err(error)?;
     }
@@ -153,7 +159,6 @@ fn serve(socket: &Path, root: String, repository: String) -> Result<(), String> 
         }
     });
     let wake = tx.clone();
-    let providers = ProviderRuntime::default();
     let runtime = Runtime::with_providers(providers.clone(), move || {
         let _ = wake.try_send(Action::Wake);
     });
@@ -276,7 +281,17 @@ fn dispatch(
                 let Some(id) = pending.remove(&seq) else {
                     continue;
                 };
-                Event::Completed(id, result)
+                // A local multi-project workspace can follow a session to another worktree.
+                // This attachment is bound to exactly one remote Git root.
+                match result {
+                    Ok(Reply::SessionMoved(change)) if change.project.path != root => {
+                        Event::Completed(
+                            id,
+                            Err("This session moved outside the selected VM checkout.".into()),
+                        )
+                    }
+                    result => Event::Completed(id, result),
+                }
             } else {
                 event
             };
@@ -291,7 +306,24 @@ fn dispatch(
 
 fn deliver(client: &mut Option<UnixStream>, event: Event) {
     if let Some(c) = client.as_mut() {
-        if write_frame(c, &ServerFrame::from(event)).is_err() {
+        let reply = if let Event::Completed(id, _) = &event {
+            Some(*id)
+        } else {
+            None
+        };
+        let sent = write_frame(c, &ServerFrame::from(event)).or_else(|e| {
+            // Serialization has written no bytes. Fail this read instead of dropping the
+            // tunnel and repeatedly fetching the same oversized history on reconnect.
+            if let Some(id) = reply.filter(|_| e.kind() == io::ErrorKind::InvalidData) {
+                write_frame(
+                    c,
+                    &ServerFrame::from(Event::Completed(id, Err(e.to_string()))),
+                )
+            } else {
+                Err(e)
+            }
+        });
+        if sent.is_err() {
             let _ = c.shutdown(Shutdown::Both);
             *client = None;
         }

@@ -286,8 +286,8 @@ impl CodexProvider {
         let connection = self.connection(&project)?;
         let mut params = json!({
             "cwd": project.path().to_string_lossy(),
-            "approvalPolicy": "unlessTrusted",
-            "sandbox": "workspaceWrite",
+            "approvalPolicy": "untrusted",
+            "sandbox": "workspace-write",
             "serviceName": "caelum",
             "model": model
         });

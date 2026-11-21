@@ -51,6 +51,7 @@ for raw in sys.stdin:
         deleted.add(params['threadId'])
         result = {}
     elif method == 'thread/start':
+        assert params['approvalPolicy'] == 'untrusted' and params['sandbox'] == 'workspace-write'
         models['thread-new'] = params.get('model') or 'default-model'
         efforts['thread-new'] = 'medium'
         result = {'thread': {'id': 'thread-new', 'preview': '', 'name': None}, 'model': models['thread-new'], 'reasoningEffort': efforts['thread-new']}

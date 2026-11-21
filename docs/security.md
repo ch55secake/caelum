@@ -15,7 +15,7 @@ Provider adapters submit `PermissionRequest` values that retain provider-specifi
 - There is no persistent allow-all decision.
 - Timeouts, cancellation, app shutdown, unknown IDs, and dropped waiters resolve as denied.
 
-The Codex adapter routes app-server command-execution and file-change approval requests through this broker. Caelum responds with a one-request `accept` or `decline`; unsupported request methods are rejected instead of being silently granted. Codex runs with its `workspaceWrite` sandbox and `unlessTrusted` approval policy. Review those provider-managed sandbox semantics separately from Caelum's own filesystem boundary.
+The Codex adapter routes app-server command-execution and file-change approval requests through this broker. Caelum responds with a one-request `accept` or `decline`; unsupported request methods are rejected instead of being silently granted. New threads request Codex's `workspace-write` sandbox and `untrusted` approval policy. Review those provider-managed sandbox semantics separately from Caelum's own filesystem boundary.
 
 The OpenCode adapter maps server `permission.asked` requests to the same broker and responds with OpenCode's one-shot `once` or `reject` decision. It never answers `always`. OpenCode applies its own project permissions and tool sandboxing; those provider-managed rules do not become Caelum filesystem restrictions.
 

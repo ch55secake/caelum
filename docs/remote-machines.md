@@ -195,7 +195,7 @@ thread. **Pin stats to VM composer** keeps process activity visible on the VM.
 
 The default lifetime is **1 h**. For longer work, choose **8 h**, **24 h**,
 or **Until stopped**. Boat automatically moves a timed VM’s deadline forward
-while an agent prompt is running or waiting, even if Caelum is closed.
+while a managed Boat prompt is running or waiting, even if Caelum is closed.
 Standalone commands and services don’t renew it. In machine stats, **Set from
 now** changes the remaining time without interrupting the turn. **Until stopped**
 keeps billing until you stop the VM; trials require a timer of at most 2 h.

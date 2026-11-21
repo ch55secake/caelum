@@ -181,6 +181,10 @@ def main() -> None:
         subprocess.run([str(tool), "--no-appstream", "--runtime-file", str(runtime), str(app), str(image)], check=True, env={**os.environ, "ARCH": arch, "VERSION": version, "APPIMAGE_EXTRACT_AND_RUN": "1"})
         if command(image, "--appimage-extract-and-run", "--version") != f"Caelum {version}":
             raise SystemExit("AppImage startup/version verification failed")
+        # Exercise exactly the extraction used by the VM, outside the desktop library bundle.
+        command(image, "--appimage-extract", "usr/bin/caelum", cwd=directory)
+        if command(directory / "squashfs-root/usr/bin/caelum", "--version") != f"caelum {version}":
+            raise SystemExit("Extracted workspace peer version does not match the desktop")
         print(image)
 
 
