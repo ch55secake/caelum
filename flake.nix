@@ -38,7 +38,7 @@
               clippy
               gnumake
               pkg-config
-              python3
+              (python3.withPackages (p: [ p.asyncssh ]))
               rust-analyzer
               rustc
               rustfmt

@@ -135,10 +135,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"data": [{"id": "msg_old", "type": "user", "text": "Oldest"}], "cursor": {"previous": None, "next": None}})
                 return
             assert query["order"] == ["desc"] and query["limit"] == ["50"]
-            self.send_json({"data": [
+            history = [
                 {"id": "msg_assistant", "type": "assistant", "content": [{"type": "text", "text": "Earlier answer"}, {"id": "tool_1", "type": "tool", "name": "bash", "state": {"status": "completed", "input": {"command": "cargo test"}, "content": [{"type": "text", "text": "All passed"}]}}]},
                 {"id": "msg_user", "type": "user", "text": "Earlier prompt"}
-            ], "cursor": {"previous": None, "next": "older+opaque/=="}})
+            ]
+            if os.path.exists(os.path.join(PROJECT, "ssh-smoke")) and os.path.exists(os.path.join(PROJECT, "prompt-request.json")):
+                with open(os.path.join(PROJECT, "prompt-request.json")) as sent:
+                    history[:0] = [{"id": "msg_smoke_reply", "type": "assistant", "content": [{"type": "text", "text": "SSH smoke answer"}]},
+                                   {"id": "msg_smoke", "type": "user", "text": json.load(sent)["text"]}]
+            self.send_json({"data": history, "cursor": {"previous": None, "next": "older+opaque/=="}})
         elif path == "/api/model":
             self.send_json({"data": [
                 {"id": "model/a", "providerID": "local", "name": "Model A", "enabled": True, "limit": {"context": 200000}, "variants": [{"id": "low"}, {"id": "high"}]},
@@ -282,6 +287,8 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("delivery") == "queue":
                 INBOX.setdefault(body["id"], {"id": body["id"], "type": "user", "delivery": "queue", "payload": {"text": body["text"]}})
             self.send_json({"data": {"id": "msg_input", "type": "user", "text": body["text"]}})
+            if os.path.exists(os.path.join(PROJECT, "ssh-smoke")):
+                TITLE_EVENTS.put({"type": "session.text.delta", "location": {"directory": PROJECT}, "data": {"sessionID": "ses_fake", "assistantMessageID": "msg_smoke_reply", "delta": "SSH smoke answer"}})
         elif path == "/api/session/ses_fake/generate":
             assert set(body) == {"prompt"}
             if os.path.exists(os.path.join(PROJECT, "generate-error")):

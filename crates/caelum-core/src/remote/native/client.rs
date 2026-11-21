@@ -69,14 +69,25 @@ impl Client {
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let root = target.root()?;
+        Self::with_tunnel(root, target.repository.clone(), wake, async move || {
+            ssh::open(&target, &parent_store).await
+        })
+    }
+
+    pub(super) fn with_tunnel(
+        root: String,
+        repository: String,
+        wake: impl Fn() + Send + Sync + 'static,
+        mut open: impl AsyncFnMut() -> Result<ssh::Tunnel, String> + Send + 'static,
+    ) -> Result<Self, String> {
         Self::with_connection(root.clone(), wake, async move |link, out| {
-            let mut tunnel = match ssh::open(&target, &parent_store).await {
+            let mut tunnel = match open().await {
                 Ok(tunnel) => tunnel,
                 Err(e) => return e,
             };
             let problem = session(
                 &root,
-                &target.repository,
+                &repository,
                 link,
                 out,
                 &mut tunnel.child.stdout.take().expect("piped stdout"),
@@ -91,7 +102,7 @@ impl Client {
             match status {
                 Some(66) => "Could not install the matching Caelum workspace peer from the Linux release. Check the VM’s network and desktop version.".into(),
                 Some(65) => "The native workspace needs an x86_64 or aarch64 Linux VM.".into(),
-                Some(255) => "SSH disconnected. Resume a stopped VM, then reconnect to verify its new address and host key.".into(),
+                Some(255) => "The verified SSH connection closed. Check that the VM is running, then reconnect to refresh its address and host key.".into(),
                 _ => problem,
             }
         })

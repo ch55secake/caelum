@@ -1,4 +1,5 @@
 use super::*;
+mod workspace;
 use crate::remote::{Host, MachineId};
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;

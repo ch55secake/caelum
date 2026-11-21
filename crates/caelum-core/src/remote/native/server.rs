@@ -4,7 +4,8 @@ use crate::application::{Event, ProviderRuntime, Runtime};
 use crate::remote::{checkout::repo_name, github_slug};
 use std::{
     collections::HashMap,
-    fs, io,
+    fs,
+    io::{self, Read, Write},
     net::Shutdown,
     os::unix::{
         fs::DirBuilderExt,
@@ -21,10 +22,20 @@ use std::{
 /// Entry point of `caelum workspace-peer`. stdout is exclusively framed data in attach mode.
 pub fn run_peer(mode: &str, repository: &str) -> Result<(), String> {
     let name = repo_name(repository)?;
-    let root = format!("/home/user/{name}");
-    verify(&root, repository)?;
     let home = std::env::var_os("HOME").ok_or("No VM home directory")?;
-    let dir = PathBuf::from(home).join(".local/state/caelum/peers");
+    let home = PathBuf::from(home).canonicalize().map_err(error)?;
+    let root = home
+        .join(name)
+        .into_os_string()
+        .into_string()
+        .map_err(|_| "Invalid VM checkout path")?;
+    if let Err(e) = verify(&root, repository) {
+        if mode == "attach" {
+            let _ = write_frame(&mut io::stdout().lock(), &ServerFrame::Error(e.clone()));
+        }
+        return Err(e);
+    }
+    let dir = home.join(".local/state/caelum/peers");
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -94,8 +105,20 @@ fn attach(socket: &Path, repository: &str) -> Result<(), String> {
         let _ = io::copy(&mut io::stdin().lock(), &mut out);
         let _ = out.shutdown(Shutdown::Write);
     });
-    io::copy(&mut connection, &mut io::stdout().lock()).map_err(error)?;
-    Ok(())
+    // Stdout is line-buffered, but a JSON frame need not contain a newline. Flush
+    // each socket read; otherwise Ready and small interactive events can wait forever.
+    let mut stdout = io::stdout().lock();
+    let mut buffer = [0; 16 * 1024];
+    loop {
+        let n = connection.read(&mut buffer).map_err(error)?;
+        if n == 0 {
+            return Ok(());
+        }
+        stdout
+            .write_all(&buffer[..n])
+            .and_then(|_| stdout.flush())
+            .map_err(error)?;
+    }
 }
 
 enum Action {
@@ -103,7 +126,6 @@ enum Action {
     Request(u64, Box<CommandFrame>),
     Closed(u64),
     Wake,
-    #[cfg(test)]
     Shutdown,
 }
 
@@ -121,6 +143,7 @@ fn serve(socket: &Path, root: String, repository: String) -> Result<(), String> 
     }
     let listener = UnixListener::bind(socket).map_err(error)?;
     let (tx, rx) = mpsc::sync_channel(128);
+    shutdown_on_signal(tx.clone())?;
     let requests = tx.clone();
     thread::spawn(move || {
         for conn in listener.incoming().map_while(Result::ok) {
@@ -134,7 +157,31 @@ fn serve(socket: &Path, root: String, repository: String) -> Result<(), String> 
     let runtime = Runtime::with_providers(providers.clone(), move || {
         let _ = wake.try_send(Action::Wake);
     });
-    dispatch(root, repository, providers, runtime, tx, rx)
+    let result = dispatch(root, repository, providers, runtime, tx, rx);
+    let _ = fs::remove_file(socket);
+    result
+}
+
+fn shutdown_on_signal(tx: mpsc::SyncSender<Action>) -> Result<(), String> {
+    use tokio::signal::unix::{signal, SignalKind};
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .map_err(error)?;
+    let (mut term, mut interrupt) = {
+        let _enter = rt.enter();
+        (
+            signal(SignalKind::terminate()).map_err(error)?,
+            signal(SignalKind::interrupt()).map_err(error)?,
+        )
+    };
+    thread::spawn(move || {
+        rt.block_on(async {
+            tokio::select! { _=term.recv()=>(), _=interrupt.recv()=>() }
+        });
+        let _ = tx.send(Action::Shutdown);
+    });
+    Ok(())
 }
 
 fn dispatch(
@@ -152,7 +199,6 @@ fn dispatch(
     runtime.watch_checkouts(vec![root.clone()]);
     for action in rx {
         match action {
-            #[cfg(test)]
             Action::Shutdown => break,
             Action::Attach(mut conn) => {
                 conn.set_write_timeout(Some(Duration::from_secs(5)))

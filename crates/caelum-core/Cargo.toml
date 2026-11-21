@@ -21,7 +21,7 @@ sha2 = "0.11"
 tempfile = "3"
 thiserror.workspace = true
 time = { version = "0.3", features = ["parsing"] }
-tokio = { version = "1", features = ["rt", "time", "sync", "macros", "process", "io-util"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "macros", "process", "io-util", "signal"] }
 zeroize = "1"
 uuid = { version = "1", features = ["v4"] }
 

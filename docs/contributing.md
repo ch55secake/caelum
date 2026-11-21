@@ -52,6 +52,17 @@ Core tests use fake provider processes and local HTTP servers for deterministic
 protocol, recovery and lifecycle checks. Real-service smoke tests are opt-in;
 see the [desktop development guide](../apps/desktop/README.md).
 
+`nix develop -c python3 scripts/dev/smoke_native_workspace.py` exercises the
+desktop transport and headless CLI over a pinned loopback SSH connection, using
+a temporary Git checkout and provider fixtures. To exercise a real OpenCode V2
+binary across a worker restart and host-key change without model inference, pass
+`--real-opencode /path/to/opencode`. Both modes use a temporary home.
+
+An unreleased desktop needs a peer from the same source revision: extract
+`usr/bin/caelum` from that build’s Linux AppImage for the VM architecture and
+install it as `~/.local/lib/caelum-peer/v<workspace-version>/caelum` on the VM
+(mode `0700`). Published desktop builds do this automatically over SSH.
+
 For visual changes, run `make previews` and inspect light/dark, inspector,
 compact and settings scenes. Native frame measurements are described in
 [performance](performance/README.md).
